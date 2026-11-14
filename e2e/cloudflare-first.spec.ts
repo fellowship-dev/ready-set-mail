@@ -96,7 +96,7 @@ test('connect Cloudflare with a token, review and write the records, land on the
 
   await expect(page.getByRole('button', { name: 'Go to overview' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Go to overview' }).click();
-  await expect(page).toHaveURL(/#\/(w\/[^/]+\/)?$/);
+  await expect(page).toHaveURL(/#\/(w\/[^/]+\/?)?$/);
   for (const z of ['brightwave-mail.com', 'harbor-lane.org', 'quietfield.net']) await expect(page.getByText(z).first()).toBeVisible({ timeout: 30_000 });
 
   // What the fake received: only the planned writes, nothing at a zone apex, nothing existing removed except what the plan said.

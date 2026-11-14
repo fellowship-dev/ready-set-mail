@@ -1,5 +1,5 @@
 // Real-browser walk of the onboarding screens (Playwright chromium) with layout assertions and screenshots.
-//   node e2e/support/onboarding-walk.mjs [--only selfhost|hosted|before]
+//   node e2e/support/onboarding-walk.mjs [--only selfhost|hosted|claims|before]
 // Needs `npm run build:dashboard` (and for `before`: ~/work/main-wt with its dashboard built). Shots: ~/work/shots/<mode>-<width>-<nn>-<step>.png
 // (before: before-hosted-<width>-claim.png). One line per shot: `OK|FAIL <file> scrollW/innerW clipped=<n>`.
 // Counts (fields typed, clicks) are kept per flow and printed as `COUNT ...`. Only fictitious names from the fake are used.
@@ -230,7 +230,8 @@ async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold 
       for (const [state, domain] of states) {
         if (prefix === 'before' && state !== 'other-provider') continue;
         await page.goto(`${inst.url}/#/add`);
-        const dom = page.getByRole('textbox').first(); await dom.waitFor(); await dom.fill(domain);
+        await wait(1500);
+        const dom = page.getByRole('textbox').first(); await dom.waitFor(); await dom.fill(domain); await wait(300); if ((await dom.inputValue()) !== domain) { await dom.fill(domain); }
         await btn(page, /^(Continue|Add domain)/).first().click();
         const rec = page.getByRole('group', { name: 'DNS record to add' });
         await (prefix === 'before' ? page.getByText(/_readysetmail/).first() : rec).waitFor({ timeout: 20000 });
@@ -260,6 +261,7 @@ try {
     await selfhostWalk(browser, 375, 812, 8811); await selfhostWalk(browser, 1440, 900, 8812); await selfhostWalk(browser, 1920, 1080, 8813);
     await selfhostSpecial(browser, 8814);
   }
+  if (only === 'claims') await claimStates(browser, 8824);
   if (!only || only === 'hosted') {
     await hostedWalk(browser, 375, 812, 8821, true); await hostedWalk(browser, 375, 812, 8822, false); await hostedWalk(browser, 1440, 900, 8823, true);
     await claimStates(browser, 8824);
