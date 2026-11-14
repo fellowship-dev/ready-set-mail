@@ -135,12 +135,12 @@ describe('deprovisionDomain', () => {
 
   it('resolves without throwing on 404 (idempotent)', async () => {
     mockFetch(404, { success: false, errors: [{ message: 'not found' }] });
-    await expect(deprovisionDomain(ENV, 'gone-id')).resolves.toBeUndefined();
+    await expect(deprovisionDomain(ENV, 'gone-id', 'acme.com')).resolves.toBe(true); // already gone
   });
 
   it('resolves without throwing when fetch fails (network error)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    await expect(deprovisionDomain(ENV, 'some-id')).resolves.toBeUndefined();
+    await expect(deprovisionDomain(ENV, 'some-id', 'acme.com')).resolves.toBe(false); // left in place
   });
 
   it('resolves without calling fetch when credentials are not configured', async () => {
