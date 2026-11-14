@@ -88,6 +88,8 @@ import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
 import { handleConnectionRoutes } from '../connections/routes';
+import { handleOnboardingRoutes } from '../onboarding/routes';
+import { handleDnsHostRoute } from '../domains/dns-host-routes';
 import { TokenEnvelopeError, TokenKeyError } from '../connections/crypto';
 import { handleWorkspaceRoutes, isWorkspaceRoute } from '../workspaces/routes';
 import { handleAccountRoutes, isAccountRoute } from '../account/routes';
@@ -794,6 +796,9 @@ async function _handleApi(
         return err('Failed to fetch zones from Cloudflare', 502);
       }
     }
+
+    const dnsHostResponse = await handleDnsHostRoute(request, tenant, { userId: workspace.userId }); // GET /api/domains/dns-host?name=
+    if (dnsHostResponse) return dnsHostResponse;
 
     // GET /api/domains
     if (path === '/api/domains' && method === 'GET') {
@@ -2021,6 +2026,9 @@ async function _handleApi(
     // /api/cloudflare/* and /api/domains/:id/connection — Cloudflare connections (owner/admin)
     const connectionResponse = await handleConnectionRoutes(request, tenant, ctx, { role: workspace.role, user: userBySession });
     if (connectionResponse) return connectionResponse;
+
+    const onboardingResponse = await handleOnboardingRoutes(request, tenant, ctx, { role: workspace.role, user: userBySession });
+    if (onboardingResponse) return onboardingResponse;
 
     // /api/domains/:id/report-address — a report address without hosted records (MODE=saas with INTAKE_DOMAIN)
     const reportAddressResponse = await handleReportAddressRoutes(request, tenant, ctx, { id: userBySession?.id, email: userBySession?.email });

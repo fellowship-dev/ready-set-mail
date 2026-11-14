@@ -1,3 +1,5 @@
+import { DnsHostLine } from '../../../components/domain/DnsHostLine';
+import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, Button, CheckResult, CheckResultList } from '@ready-set-mail/ui';
 import { useMutation } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
@@ -49,6 +51,7 @@ export function RoutingStep({ status, onNext, onSkip, onRetry, retrying }: StepP
 
 	return (
 		<StepCard title="Reports routing" badge={<SeverityBadge severity={severity} />}>
+			<DnsHostLine domain={status.domain} />
 			<CheckResultList>
 				{mxFailed.length > 0 ? (
 					<CheckResult
@@ -72,6 +75,7 @@ export function RoutingStep({ status, onNext, onSkip, onRetry, retrying }: StepP
 						}
 					>
 						<p className="text-ink-2">This creates MX records for your reports subdomain and a catch-all routing rule that forwards incoming reports to the Ready Set Mail worker.</p>
+						{!status.cf_available ? <ConnectCloudflareLink /> : null}
 						<WriteButton className="mt-2" loading={setup.isPending} onClick={() => setup.mutate()}>
 							Set up email routing
 						</WriteButton>

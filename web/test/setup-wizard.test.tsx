@@ -376,7 +376,7 @@ describe('domain step', () => {
 		await userEvent.type(input, 'not a domain');
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled());
 		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-		expect(await screen.findByText('Enter a valid domain like yourdomain.com')).toBeInTheDocument();
+		expect(await screen.findByText('Enter a domain like yourdomain.com, without https:// or a path.')).toBeInTheDocument();
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 
 		await userEvent.clear(input);

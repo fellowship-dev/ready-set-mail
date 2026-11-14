@@ -5,6 +5,7 @@
 import { forImplicitWorkspace } from '@ready-set-mail/db';
 import type { BoundEnv } from '../index';
 import { mcpInstallation } from '../mcp/discovery';
+import { hasEncryptionKey } from '../connections/crypto';
 import { getMode } from '../tenancy/mode';
 import { bookingUrl, helpUrl, sequenceEnabled } from '../funnel/config';
 import { intakeSetupFindings } from '../reports/auth-status';
@@ -12,7 +13,7 @@ import { reportIntakePreflightItems } from '../hosted/report-intake-check';
 
 export interface PreflightItem {
   /** Stable id for tests and the UI key. */
-  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake';
+  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections';
   /** `action`: something does not work until it is fixed. `note`: works, but worth knowing. */
   severity: 'action' | 'note';
   /** The setting(s) to change, by name. */
@@ -99,6 +100,13 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
     items.push({ id: 'bot_check', severity: 'action', setting: 'TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY', message: 'Sign-up is closed: the bot check is not configured. Set both Turnstile keys to open it.' });
   } else if (secret !== siteKey) {
     items.push({ id: 'bot_check', severity: 'action', setting: 'TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY', message: 'Only one of the two Turnstile keys is set. Set both, or neither.' });
+  }
+
+  // Cloudflare connections are stored encrypted: without the key the dashboard cannot connect Cloudflare.
+  if (!hasEncryptionKey(env)) {
+    items.push(hosted
+      ? { id: 'cloudflare_connections', severity: 'note', setting: 'TOKEN_ENCRYPTION_KEY', message: 'There is no TOKEN_ENCRYPTION_KEY, so customers cannot connect Cloudflare from the dashboard.' }
+      : { id: 'cloudflare_connections', severity: 'action', setting: 'TOKEN_ENCRYPTION_KEY', message: "Cloudflare can't be connected from the dashboard: there is no TOKEN_ENCRYPTION_KEY. Set one: openssl rand -base64 32 | sed 's/^/k1:/' | npx wrangler secret put TOKEN_ENCRYPTION_KEY" });
   }
 
   // Rate limits: a missing ratelimit binding fails open, so the hosted service must have every one.

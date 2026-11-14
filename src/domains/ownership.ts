@@ -15,6 +15,7 @@ import { createResolver, normalizeName, type Resolver } from '@ready-set-mail/dn
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
 import { loadTenant } from '../tenancy/load';
+import { resolverFor } from '../dns/resolver';
 import { removeAuthRecord, removeHostedRecords } from './remove';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
@@ -69,8 +70,16 @@ function newToken(): string {
 
 const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
 
-/** Does an active Cloudflare connection of this workspace have the domain's zone on its allow-list? */
-export async function provenByCloudflare(tenant: TenantContext, domain: string): Promise<boolean> {
+/**
+ * Does an active Cloudflare connection of this workspace manage the domain's zone, as a real delegation?
+ *  - the zone is on the allow-list of an active connection, and Cloudflare says now that it is `active` and a `full` setup
+ *    (a `partial`, CNAME-style setup or a `secondary` zone does not mean the account controls the domain's DNS);
+ *  - the zone's own name servers (Cloudflare's `name_servers`) are the ones public DNS delegates the zone name to. When either
+ *    side cannot be read the answer is "not proven" and the TXT proof is the way (the safer fallback);
+ *  - hosted: not when a parent or a child of the name is verified in another workspace; that takes the TXT proof.
+ */
+export async function provenByCloudflare(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<boolean> {
+  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return false;
   const q = tenant.scope.connections;
   for (const c of await q.list()) {
     if (c.status !== 'active') continue;
@@ -82,12 +91,25 @@ export async function provenByCloudflare(tenant: TenantContext, domain: string):
     // The stored allow-list can be stale (zone moved away, expired): ask Cloudflare now, through the connection.
     for (const zone of zones) {
       try {
-        const live = await (await tenant.connections.clientFor(c.id)).getZone(zone.zone_id) as { name?: string; status?: string };
-        if (live.status === 'active' && live.name?.toLowerCase() === zone.zone_name.toLowerCase()) return true;
+        const live = await (await tenant.connections.clientFor(c.id)).getZone(zone.zone_id);
+        if (live.status !== 'active' || live.type !== 'full' || live.name?.toLowerCase() !== zone.zone_name.toLowerCase()) continue;
+        if (await delegatedTo(resolver, zone.zone_name.toLowerCase(), live.name_servers)) return true;
       } catch { /* unreachable or refused: not proven */ }
     }
   }
   return false;
+}
+
+/** Public NS records of the zone name are exactly Cloudflare's name servers for it. Unreadable on either side: false. */
+async function delegatedTo(resolver: Resolver, zoneName: string, nameServers: string[] | undefined): Promise<boolean> {
+  const want = new Set((nameServers ?? []).map(normalizeName));
+  if (want.size === 0) return false;
+  try {
+    const r = await resolver.resolve(zoneName, 'NS');
+    if (r.status !== 'ok') return false;
+    const have = r.answers.map(a => normalizeName(a.data));
+    return have.length > 0 && have.every(h => want.has(h));
+  } catch { return false; }
 }
 
 type ProofRow = { id: number; domain: string; verified_via: string };
@@ -232,7 +254,7 @@ export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, 
     return { kind: 'taken' };
   }
   if (await provenByParent(tenant, claim.domain)) { await evictLegacyHolder(tenant, claim.domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  if (await provenByCloudflare(tenant, claim.domain)) { await evictLegacyHolder(tenant, claim.domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
+  if (await provenByCloudflare(tenant, claim.domain, resolver)) { await evictLegacyHolder(tenant, claim.domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
   const txt = await provenByTxt(claim, resolver);
   await tenant.scope.claims.recordCheck(claim.id, txt.ok ? null : (txt.reason ?? null));
   if (txt.ok) await evictLegacyHolder(tenant, claim.domain, 'txt');

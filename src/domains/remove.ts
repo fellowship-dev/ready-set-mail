@@ -27,5 +27,5 @@ export async function removeAuthRecord(tenant: TenantContext, domain: DomainRow,
     resource_type: 'dns_record', resource_id: domain.dns_record_id, resource_name: recordName,
     before_value: { type: 'TXT', name: recordName, content: 'v=DMARC1;', ttl: 3600 },
   }, ctx);
-  await deprovisionDomain(tenant, domain.dns_record_id).catch(e => console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e));
+  await deprovisionDomain(tenant, domain.dns_record_id, domain.domain).catch(e => console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e));
 }

@@ -14,7 +14,7 @@ export function WizardHeader({ backTo, backLabel = 'Back to domain', title, subt
 				</Link>
 			</Button>
 			<h1 className="text-2xl font-bold tracking-tight">{title}</h1>
-			{subtitle ? <p className="text-sm text-ink-2">{subtitle}</p> : null}
+			{subtitle ? <p className="max-w-prose text-sm text-ink-2">{subtitle}</p> : null}
 		</header>
 	);
 }

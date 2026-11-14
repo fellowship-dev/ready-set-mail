@@ -125,13 +125,13 @@ describe('legacy records in the base zone (installs from before per-domain zones
     expect(warn.mock.calls.flat().join(' ')).toMatch(/legacy location/);
   });
 
-  it('deletes a record that is only in the base zone, and logs it', async () => {
+  it('does not delete a record in the base zone whose name lies outside that zone: the write policy refuses the delete, and it is only warned about', async () => {
     const cf = world();
     const rec = cf.seed('zone-acme', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: rec.id, tls_rpt_record_id: null, cname_record_id: null });
-    expect(cf.records.get('zone-acme')).toEqual([]);
-    expect(warn.mock.calls.flat().join(' ')).toMatch(/legacy location/);
+    expect(cf.records.get('zone-acme')).toHaveLength(1);
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/outside zone/);
   });
 
   it('prefers the domain\'s own zone, and does not touch the base zone when the record is there', async () => {

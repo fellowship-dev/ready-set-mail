@@ -156,16 +156,17 @@ async function deleteDnsRecord(
   tenant: TenantContext,
   domain: string,
   recordId: string,
+  expect: { type: string; name: string },
   audit?: MtaStsAuditOpts,
 ): Promise<void> {
   const cf = await tenant.cfFor(domain);
   const zone = await cf.zoneFor(domain);
   try {
-    let deleted = await cf.deleteDnsRecord(zone.id, recordId); // already gone is fine
+    let deleted = await cf.deleteDnsRecord(zone.id, recordId, expect); // already gone is fine
     const legacy = deleted ? undefined : tenant.legacyZoneId(zone.id);
     if (legacy) {
       // Not in the domain's zone: installs from before per-domain zones created it in the base zone.
-      deleted = await cf.deleteDnsRecord(legacy, recordId);
+      deleted = await cf.deleteDnsRecord(legacy, recordId, expect);
       if (deleted) console.warn(`[mta-sts] record ${recordId} was in the base zone (legacy location); deleted there`);
     }
   } catch (e) {
@@ -296,8 +297,12 @@ export async function deprovisionMtaSts(
   ids: { mta_sts_record_id: string | null; tls_rpt_record_id: string | null; cname_record_id: string | null },
   audit?: MtaStsAuditOpts,
 ): Promise<void> {
-  const tasks = [ids.mta_sts_record_id, ids.tls_rpt_record_id, ids.cname_record_id]
-    .filter(Boolean)
-    .map(id => deleteDnsRecord(tenant, domain, id!, audit).catch(e => console.warn(`[mta-sts] deprovision ${id}:`, e)));
+  const tasks = [
+    { id: ids.mta_sts_record_id, expect: { type: 'TXT', name: `_mta-sts.${domain}` } },
+    { id: ids.tls_rpt_record_id, expect: { type: 'TXT', name: `_smtp._tls.${domain}` } },
+    { id: ids.cname_record_id, expect: { type: 'CNAME', name: `mta-sts.${domain}` } },
+  ]
+    .filter(t => t.id)
+    .map(t => deleteDnsRecord(tenant, domain, t.id!, t.expect, audit).catch(e => console.warn(`[mta-sts] deprovision ${t.id}:`, e)));
   await Promise.all(tasks);
 }

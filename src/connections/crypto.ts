@@ -77,6 +77,9 @@ export class TokenMaterial {
   toString(): string { return 'TokenMaterial [redacted]'; }
   [Symbol.for('nodejs.util.inspect.custom')](): string { return 'TokenMaterial { [redacted] }'; }
 }
+/** Is a key configured at all (not whether it parses)? For the setup checklist. */
+export const hasEncryptionKey = (env: CryptoEnv): boolean => !!env.TOKEN_ENCRYPTION_KEY?.trim();
+
 
 interface ParsedKey { kid: string; raw: Uint8Array }
 

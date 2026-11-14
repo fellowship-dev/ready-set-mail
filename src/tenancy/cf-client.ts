@@ -13,6 +13,23 @@ import type { Mode } from './mode';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 
+/**
+ * Testing only: CLOUDFLARE_API_BASE_URL points the client at a local fake Cloudflare (e2e/support/fake-cloudflare.mjs).
+ * It is honoured ONLY for `http://127.0.0.1:<port>` or `http://localhost:<port>` (strict parse: no userinfo, path,
+ * query or fragment), so a stray or malicious value can never send a real token to a remote host. Anything else is
+ * ignored and the real Cloudflare API is used.
+ */
+export function cfApiBase(override?: string | null): string {
+  if (!override) return CF_API;
+  const raw = override.trim();
+  if (!/^http:\/\/(127\.0\.0\.1|localhost):[0-9]{1,5}\/?$/.test(raw)) return CF_API;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && Number(u.port) > 0) return `http://${u.hostname}:${u.port}/client/v4`;
+  } catch { /* not a URL: ignored */ }
+  return CF_API;
+}
+
 export interface CfErrorDetail { code?: number; message: string }
 
 /** Base class for every failure talking to Cloudflare. */
@@ -143,6 +160,8 @@ export interface CfClientOptions {
    * request with, or null. (OAuth access tokens: refresh once, then retry.)
    */
   onUnauthorized?: () => Promise<string | null>;
+  /** The CLOUDFLARE_API_BASE_URL env value; see cfApiBase (localhost only, otherwise ignored). */
+  apiBaseUrl?: string | null;
 }
 
 export interface CfRequestOptions {
@@ -152,7 +171,12 @@ export interface CfRequestOptions {
   dns?: DnsWriteContext;
 }
 
-export interface DnsWriteContext { cnameTargets?: string[]; allowedApexes?: string[] }
+export interface DnsWriteContext {
+  cnameTargets?: string[];
+  allowedApexes?: string[];
+  /** DELETE only: the record being removed. The write policy decides on this, so a delete is as constrained as a create. */
+  expect?: { type: string; name: string };
+}
 
 interface CfEnvelope<T> { success?: boolean; result?: T; errors?: CfErrorDetail[] }
 
@@ -186,6 +210,7 @@ export class CfClient {
   readonly #zones = new Map<string, Promise<CfZone | null>>();
   readonly #zoneNames = new Map<string, string>();
   readonly #mode: Mode;
+  readonly #base: string;
   readonly #dnsWritePolicy?: CfClientOptions['dnsWritePolicy'];
 
   /** `token` may be a function, called for every request (so an expiring token is refreshed lazily). */
@@ -195,6 +220,7 @@ export class CfClient {
     this.#policy = opts.policy;
     this.#onUnauthorized = opts.onUnauthorized;
     this.#mode = opts.mode ?? 'selfhost';
+    this.#base = cfApiBase(opts.apiBaseUrl);
     this.#dnsWritePolicy = opts.dnsWritePolicy;
     // Looked up per call (not captured) so stubbing globalThis.fetch in tests works.
     this.#fetch = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -232,8 +258,8 @@ export class CfClient {
     const w = {
       method,
       zoneName: this.#zoneNames.get(zoneId) ?? this.#policy?.zoneName?.(zoneId),
-      type: b.type as string | undefined,
-      name: b.name as string | undefined,
+      type: method === 'DELETE' ? ctx?.expect?.type : (b.type as string | undefined),
+      name: method === 'DELETE' ? ctx?.expect?.name : (b.name as string | undefined),
       content: b.content as string | undefined,
       patchKeys: Object.keys(b),
       cnameTargets: ctx?.cnameTargets,
@@ -244,11 +270,11 @@ export class CfClient {
   }
 
   async #send<T>(method: string, path: string, opts: CfRequestOptions, retried: boolean): Promise<T> {
-    const url = new URL(CF_API + path);
+    const url = new URL(this.#base + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
-    const shown = url.pathname.slice(new URL(CF_API).pathname.length) + url.search;
+    const shown = url.pathname.slice(new URL(this.#base).pathname.length) + url.search;
 
     // Resolved first: a token that cannot be produced (broken connection) is its own error, not a network failure.
     const bearer = await this.#bearer();
@@ -334,7 +360,7 @@ export class CfClient {
     return hit;
   }
 
-  getZone(zoneId: string): Promise<{ id: string; name: string; account?: { id: string } }> {
+  getZone(zoneId: string): Promise<{ id: string; name: string; status?: string; type?: string; name_servers?: string[]; account?: { id: string } }> {
     return this.request('GET', `/zones/${zoneId}`);
   }
 
@@ -365,9 +391,9 @@ export class CfClient {
   }
 
   /** Idempotent: a record that is already gone is not an error. Returns whether something was deleted. */
-  async deleteDnsRecord(zoneId: string, recordId: string): Promise<boolean> {
+  async deleteDnsRecord(zoneId: string, recordId: string, expect: { type: string; name: string }): Promise<boolean> {
     try {
-      await this.request('DELETE', `/zones/${zoneId}/dns_records/${recordId}`);
+      await this.request('DELETE', `/zones/${zoneId}/dns_records/${recordId}`, { dns: { expect } });
       return true;
     } catch (e) {
       if (!(e instanceof CfNotFoundError)) throw e;

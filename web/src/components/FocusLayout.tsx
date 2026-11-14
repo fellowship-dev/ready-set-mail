@@ -27,7 +27,7 @@ export function FocusLayout({ children, exitTo = '/', exitLabel = 'Exit' }: { ch
 					</Link>
 				</div>
 			</header>
-			<main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8 sm:px-6">
+			<main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl space-y-6 px-4 py-8 sm:px-6">
 				<TalkToMaxScope>{children}</TalkToMaxScope>
 			</main>
 		</div>

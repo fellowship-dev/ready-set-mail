@@ -31,5 +31,5 @@ export async function signIn(page: Page) {
  // Assert status only: response bodies can contain private account diagnostics.
  expect(response.status()).toBe(configured ? 200 : 201);
  await page.goto('/');
- await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
+ await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" })).or(page.getByRole('heading', { name: "Let's set up Ready Set Mail" }))).toBeVisible();
 }

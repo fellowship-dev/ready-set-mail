@@ -101,7 +101,7 @@ export class HostedRecordWriter {
       if (e instanceof HostedNameError && /not found/.test(e.message)) return false; // already gone
       throw e;
     }
-    return this.#cf.deleteDnsRecord(this.zone.id, recordId);
+    return this.#cf.deleteDnsRecord(this.zone.id, recordId, { type: 'TXT', name });
   }
 
   /** Every record of the zone (read-only), for the daily diff and the quota count. */
