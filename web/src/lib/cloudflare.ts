@@ -57,7 +57,20 @@ export const fetchZones = (connection: CfConnection) =>
 		: api<{ zones: CfZone[] }>(`/api/cloudflare/connections/${encodeURIComponent(connection.id)}/zones`).then((r) => r.zones);
 export const setZones = (connectionId: string, zoneIds: string[]) =>
 	api<{ zones: { id: string; name: string }[] }>(`/api/cloudflare/connections/${encodeURIComponent(connectionId)}/zones`, { method: 'PUT', body: { zone_ids: zoneIds } });
-export const fetchDnsState = (names: string[]) => api<{ states: DnsState[] }>(`/api/onboarding/dns-state?names=${encodeURIComponent(names.join(','))}`).then((r) => r.states);
+/** The server reads at most 10 names per request (each costs several DNS subrequests): ask in batches of 10, and again for whatever it says remains. */
+export const DNS_STATE_BATCH = 10;
+export async function fetchDnsState(names: string[]): Promise<DnsState[]> {
+	const out: DnsState[] = [];
+	let todo = [...names];
+	for (let guard = 0; todo.length > 0 && guard < 20; guard++) {
+		const batch = todo.slice(0, DNS_STATE_BATCH);
+		const r = await api<{ states: DnsState[]; capped?: boolean; remaining?: string[] }>(`/api/onboarding/dns-state?names=${encodeURIComponent(batch.join(','))}`);
+		out.push(...r.states);
+		// Whatever the server cut from this batch, plus the names not asked yet.
+		todo = [...(r.capped ? r.remaining ?? [] : []), ...todo.slice(DNS_STATE_BATCH)];
+	}
+	return out;
+}
 export const linkDomain = (domainId: number, connectionId: string | null) =>
 	api<{ ok: true }>(`/api/domains/${domainId}/connection`, { method: 'PUT', body: { connection_id: connectionId } });
 

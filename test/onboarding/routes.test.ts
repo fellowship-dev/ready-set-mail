@@ -39,6 +39,19 @@ describe('onboarding routes', () => {
     expect(down.states[0]).toMatchObject({ spf: 'error', dmarc: { state: 'error' }, mx: null });
   });
 
+  it('dns-state reads at most 10 names per request and says what remains', async () => {
+    const w = await world();
+    const names = Array.from({ length: 13 }, (_, i) => `d${i}.example.com`);
+    const r = await json(await w.api(w.A.token, 'GET', `/api/onboarding/dns-state?names=${names.join(',')}`));
+    expect(r.states.map((s: any) => s.name)).toEqual(names.slice(0, 10));
+    expect(r.capped).toBe(true);
+    expect(r.remaining).toEqual(names.slice(10));
+    const few = await json(await w.api(w.A.token, 'GET', '/api/onboarding/dns-state?names=d0.example.com,d1.example.com'));
+    expect(few.capped).toBeUndefined();
+    expect(few.remaining).toBeUndefined();
+    expect(few.states).toHaveLength(2);
+  });
+
   it('plans a DMARC create, applies it, and is satisfied afterwards', async () => {
     const w = await world();
     await connected(w);

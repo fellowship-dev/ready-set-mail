@@ -1,6 +1,6 @@
 // /api/onboarding/* — the one-click Cloudflare onboarding (owner/admin, the caller's workspace only).
 //
-//   GET  /api/onboarding/dns-state?names=a.com,b.com   public DNS state per name (max 50)
+//   GET  /api/onboarding/dns-state?names=a.com,b.com   public DNS state per name; at most 10 are read per request (see MAX_STATE_NAMES)
 //   POST /api/onboarding/dns-plan    { domain_ids }                    what each step would write, from Cloudflare's current records
 //   POST /api/onboarding/dns-apply   { domain_ids, step, plan_id }     perform one step's writes; 409 plan_changed when the plan moved
 //   POST /api/onboarding/first-check { domain_ids }                    store the first DNS read so the overview shows real levels
@@ -17,7 +17,14 @@ import { failureCode, plainCloudflareError } from './errors';
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
 
+/** Names accepted in one query string. */
 const MAX_NAMES = 50;
+/**
+ * Names actually read per request. Each name costs about 3 to 5 DNS-over-HTTPS subrequests (TXT, DMARC with its parent, MX),
+ * and a Worker on the free plan may make 50 subrequests per request: 10 names stay well inside that. A longer list is cut
+ * and the response says so (`capped`, `remaining`); the dashboard asks again for the rest, 10 at a time.
+ */
+export const MAX_STATE_NAMES = 10;
 const MAX_DOMAINS = 50;
 
 export interface OnboardingCaller { role?: string; user: { id: string; email: string } | null }
@@ -131,7 +138,10 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
       const key = caller.user?.id ? `user:${caller.user.id}` : `ws:${tenant.workspaceId}`;
       if (!(await tenant.env.DNS_PREVIEW_LIMITER.limit({ key })).success) return json({ error: 'Checked too often. Try again in a minute.', code: 'rate_limited', retry_after: 60 }, 429);
     }
-    return json({ states: await Promise.all(clean.map(n => dnsState(n, resolverFor(tenant.env)))) });
+    const read = clean.slice(0, MAX_STATE_NAMES);
+    const remaining = clean.slice(MAX_STATE_NAMES);
+    const states = await Promise.all(read.map(n => dnsState(n, resolverFor(tenant.env))));
+    return json(remaining.length ? { states, capped: true, remaining } : { states });
   }
 
   if (request.method !== 'POST') return null;
