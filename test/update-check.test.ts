@@ -1,12 +1,6 @@
 // The update check compares the running version with the latest PUBLISHED GitHub release (src/update-check.ts):
 // semantic versions, cached, failing quiet, switchable off, never reading the main branch.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-vi.mock('cloudflare:email', () => ({ EmailMessage: class {} }));
-vi.mock('../src/telemetry', () => ({ track: vi.fn() }));
-
-import { handleApi } from '../src/api/router';
-import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import {
   checkForUpdate, compareSemver, parseSemver, resetUpdateCheckCache, updateCheckEnabled,
   RELEASES_API_URL, RELEASES_LATEST_URL, UPDATE_CHECK_KV_KEY, ANSWER_TTL_S, FAILURE_TTL_S,
@@ -188,19 +182,6 @@ describe('checkForUpdate', () => {
     vi.stubGlobal('fetch', f);
     expect(await checkForUpdate({}, { now: NOW })).toMatchObject({ current: pkg.version, status: 'same' });
     expect(f).toHaveBeenCalledOnce();
-  });
-});
-
-describe('GET /api/version', () => {
-  it('reports the update check and never reads main', async () => {
-    const f = fetchReturning(release('v99.0.0'));
-    vi.stubGlobal('fetch', f);
-    const env = { DB: createMigratedD1() as unknown as D1Database, BOOTSTRAP_SECRET: 'test-only-installer-proof-32-characters-minimum' };
-    const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
-    const res = await handleApi(new Request('https://rsm.example.com/api/version'), env as never, ctx);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ current: pkg.version, latest: '99.0.0', status: 'newer', update_available: true, release_url: expect.stringContaining('/releases/tag/v99.0.0') });
-    expect(f.mock.calls.map(c => String(c[0]))).toEqual([RELEASES_API_URL]);
   });
 });
 

@@ -106,15 +106,15 @@ describe('buildWeeklyDigestHtml', () => {
     expect(html).toContain('rua@reports.acme.com');
   });
 
-  it('shows update notice when latestVersion differs', () => {
-    const html = buildWeeklyDigestHtml(makeParams({ latestVersion: '2.0.0', currentVersion: '1.0.0' }));
+  it('shows update notice when a newer release is passed in', () => {
+    const html = buildWeeklyDigestHtml(makeParams({ update: { current: '1.0.0', latest: '2.0.0', release_url: 'https://github.com/fellowship-dev/ready-set-mail/releases/tag/v2.0.0', upgrade_url: 'https://github.com/fellowship-dev/ready-set-mail/blob/v2.0.0/packages/db/UPGRADING.md' } }));
     expect(html).toContain('v2.0.0');
     expect(html).toContain('v1.0.0');
   });
 
-  it('omits update notice when on current version', () => {
-    const html = buildWeeklyDigestHtml(makeParams({ latestVersion: '1.0.0', currentVersion: '1.0.0' }));
-    expect(html).not.toContain('Update available');
+  it('omits update notice without an update', () => {
+    const html = buildWeeklyDigestHtml(makeParams({ update: null }));
+    expect(html).not.toContain('is available');
   });
 
   it('is valid HTML with doctype', () => {

@@ -120,7 +120,15 @@ git pull && npm install && npm run deploy
 
 `npm run deploy` builds the dashboard, applies new migrations, then deploys, using your `wrangler.local.jsonc`. Until the migrations are applied the Worker answers 503 and inbound report mail is refused for the sender to retry, so do not deploy without them. Back up the database first if you want a rollback point: `npm run wrangler -- d1 export DB --remote --output backup.sql`. Details and rollback: [packages/db/UPGRADING.md](../packages/db/UPGRADING.md).
 
-`GET /api/version` on your instance compares its version with the repository's.
+Coming from 1.x (v1.2.0 or earlier)? That is a new install next to the old one, not an upgrade: see [CHANGELOG.md](../CHANGELOG.md#upgrading-from-1x).
+
+### Update check
+
+The dashboard (a notice, and the Version row in Settings) and the weekly digest tell you when a newer **published release** exists, name it, and link its release notes and this upgrade guide. `GET /api/version` returns the same answer: `current`, `latest`, `status` (`newer`, `same`, `older` when you run something ahead of the latest release, `unknown` when GitHub could not be reached, `off`), `release_url` and `upgrade_url`.
+
+How it checks: one plain, unauthenticated `GET` of `https://api.github.com/repos/fellowship-dev/ready-set-mail/releases/latest` (falling back to the `github.com/fellowship-dev/ready-set-mail/releases/latest` redirect when GitHub rate-limits the API). The request carries no token, cookie or instance identifier, and its User-Agent does not include your version. The answer is cached in memory and in your `OAUTH_KV` namespace (6 hours, 1 hour after a failure), so page views and digests do not each call GitHub. It compares semantic versions and ignores pre-releases; it never reads the main branch, so a version bump there tells no one to upgrade before the release exists. This is separate from telemetry, which stays off unless you opt in.
+
+To turn it off, set the variable `UPDATE_CHECK` to `off` (`vars` in your `wrangler.local.jsonc`, then `npm run deploy`); the Worker then makes no request and shows "update check off". The hosted service (`MODE=saas`) never checks.
 
 ## Uninstall
 

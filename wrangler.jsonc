@@ -112,5 +112,7 @@
 		// Cloudflare from the dashboard instead (needs the TOKEN_ENCRYPTION_KEY secret, which `npm run setup` sets).
 		// Optional HOSTED_SERVICE_URL (https): the hosted free tier. When set, /llms.txt, the MCP instructions, the
 		// setup pages and /api/version mention it once; unset, nothing mentions a hosted service (src/hosted-service.ts).
+		// Optional UPDATE_CHECK=off: no request to GitHub for the latest published release (GET /api/version and the digest;
+		// docs/self-hosting.md#update-check).
 	}
 }
