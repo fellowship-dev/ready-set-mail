@@ -1,6 +1,6 @@
 // `npm run setup`: install, resume and uninstall. Everything that touches the outside world comes in
 // through `deps`, so tests run the same code against a fake Cloudflare API and a fake Wrangler.
-import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, appendFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, appendFileSync, statSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
 import { parseArgs, UsageError, USAGE } from './args.mjs';
@@ -13,7 +13,7 @@ import {
   defaultConfigDir, instanceDir, ensurePrivateDir, emptyState, readState, writeState, statePath,
   foreignCollisions, uninstallSelection, workerOwnership, hasDeletedRecords, live, archiveDir, archiveInstanceFiles,
 } from './state.mjs';
-import { loadOrCreateSecrets, withSecretsFile, existingBackups, PROOF_FILE } from './secrets.mjs';
+import { loadOrCreateSecrets, withSecretsFile, withTempFile, existingBackups, PROOF_FILE } from './secrets.mjs';
 import { createUi } from './ui.mjs';
 
 /** How long a setup link works. */
@@ -81,7 +81,7 @@ export async function main(argv, deps) {
   } catch (e) {
     const message = describeError(e, mode);
     ui.line('');
-    ui.line(`Setup stopped: ${message}`);
+    ui.line(`${mode === 'uninstall' ? 'Uninstall' : 'Setup'} stopped: ${message}`);
     if (!(e instanceof Failure) && deps.env.RSM_SETUP_DEBUG && e?.stack) ui.line(e.stack);
     if (opts.json) ui.json({ ok: false, error: ui.redact(message) });
     return e instanceof UsageError ? 2 : 1;
@@ -528,14 +528,13 @@ async function uninstall(opts, deps, ui) {
     // would resolve it through whatever wrangler.jsonc is in the checkout (the tracked placeholder, or a
     // fork's own database) and export the wrong thing.
     const exportConfig = join(archive, 'export.wrangler.json');
-    writeFileSync(exportConfig, JSON.stringify({ name: names.worker, account_id: account.id, d1_databases: [{ binding: 'DB', database_name: d1.name, database_id: d1.id }] }, null, 2) + '\n', { mode: 0o600 });
-    try {
-      await runLogged(deps, ui, log, 'Exporting the database', 'wrangler', ['d1', 'export', 'DB', '--remote', '--output', file, '--config', exportConfig], { accountId: account.id, uninstall: true });
-    } finally {
-      try { unlinkSync(exportConfig); } catch { /* already gone */ }
-    }
+    // Removed afterwards, also on Ctrl-C or SIGTERM while Wrangler runs. Wrangler creates the export under a
+    // 077 umask (only the owner can read it from the first byte), and its mode is set to 0600 regardless.
+    await withTempFile(exportConfig, JSON.stringify({ name: names.worker, account_id: account.id, d1_databases: [{ binding: 'DB', database_name: d1.name, database_id: d1.id }] }, null, 2) + '\n', () =>
+      runLogged(deps, ui, log, 'Exporting the database', 'wrangler', ['d1', 'export', 'DB', '--remote', '--output', file, '--config', exportConfig], { accountId: account.id, uninstall: true, umask: 0o077 }),
+    deps.proc ?? process);
     let size = 0;
-    try { size = statSync(file).size; } catch { /* missing */ }
+    try { size = statSync(file).size; chmodSync(file, 0o600); } catch { /* missing */ }
     if (size === 0) fail(`The database export ${file} is ${existsSync(file) ? 'empty' : 'missing'}, so nothing was deleted. Run the uninstall again, or add --no-export to delete without an export.`);
     ui.ok(`exported to ${file} (${size} bytes)`);
   }

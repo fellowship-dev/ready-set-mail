@@ -11,7 +11,7 @@ import {
 import { foreignCollisions, uninstallSelection, workerOwnership, hasDeletedRecords, writeState, readState, emptyState, statePath } from '../../scripts/setup/state.mjs';
 import { labelPath, CloudflareError } from '../../scripts/setup/cloudflare.mjs';
 import { EventEmitter } from 'node:events';
-import { generateProof, generateEncryptionKey, isValidEncryptionKey, loadOrCreateSecrets, withSecretsFile } from '../../scripts/setup/secrets.mjs';
+import { generateProof, generateEncryptionKey, isValidEncryptionKey, loadOrCreateSecrets, withSecretsFile, withTempFile } from '../../scripts/setup/secrets.mjs';
 import { satisfiesEngines, setupLink, setupToken, SETUP_LINK_TTL_SECONDS, describeError } from '../../scripts/setup/install.mjs';
 import { createHmac } from 'node:crypto';
 import { wranglerArgs } from '../../scripts/wrangler.mjs';
@@ -218,6 +218,14 @@ describe('secrets', () => {
     expect(again).toMatchObject({ proof: first.proof, key: first.key, created: [] });
     expect(() => loadOrCreateSecrets(dir, { mayReuse: false })).toThrow(/already exists/);
     expect(readFileSync(first.proofPath, 'utf8').trim()).toBe(first.proof);
+  });
+  it('withTempFile writes 0600, refuses nothing silently and always removes the file', async () => {
+    const dir = tmp();
+    const p = join(dir, 'x.json');
+    let mode = 0;
+    await withTempFile(p, '{}', async () => { mode = statSync(p).mode & 0o777; });
+    expect(mode).toBe(0o600);
+    expect(existsSync(p)).toBe(false);
   });
   it('the deploy secrets file exists only while it is used', async () => {
     const dir = tmp();
