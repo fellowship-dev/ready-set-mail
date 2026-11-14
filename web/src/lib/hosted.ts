@@ -51,6 +51,23 @@ export function useHostedConfig(): boolean {
 	return q.data?.enabled === true && q.data.records === true;
 }
 
+/**
+ * Every hosted domain's status in one request (GET /api/hosted/statuses), for the overview; each domain's own cache entry
+ * is seeded from it, so a domain page opened next needs no second request. A domain not in the map is not hosted.
+ */
+export function useHostedStatuses(enabled: boolean) {
+	const qc = useQueryClient();
+	return useQuery({
+		queryKey: ['hosted-statuses'] as const,
+		enabled,
+		queryFn: async () => {
+			const { statuses } = await api<{ statuses: Record<string, HostedStatus> }>('/api/hosted/statuses');
+			for (const [id, s] of Object.entries(statuses)) qc.setQueryData(hostedKey(Number(id)), s);
+			return statuses;
+		},
+	});
+}
+
 export function useHostedStatus(domainId: number) {
 	const configEnabled = useHostedConfig();
 	return useQuery({

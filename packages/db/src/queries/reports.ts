@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../client';
 import { aggregateReports, domains, reportRecords, tlsReports } from '../schema';
 import { counted, type CountingMode } from './counting';
@@ -104,8 +104,11 @@ export interface DomainCheckSummary {
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
 	spf_lookup_count: number | null;
-	/** pct= of the applicable DMARC record at the last read (null: not read yet). */
+	/** The governing DMARC record at the last read (0012): pct=, p=, sp= as written (null: no tag), and whether its rua= names this domain's reports address (1/0). dmarc_p null with a policy: not read since 0012. */
 	dmarc_pct: number | null;
+	dmarc_p: string | null;
+	dmarc_sp: string | null;
+	dmarc_rua: number | null;
 }
 
 export interface UncountedSummary {
@@ -142,6 +145,61 @@ interface EvidenceSummaryRow {
   report_count: number;
   latest_period_end: number | null;
   latest_received_at: number | null;
+}
+
+/**
+ * Stored DNS facts plus report totals for the window. Report totals and record counts are summed in separate subqueries:
+ * joining report_records straight onto aggregate_reports repeats each report once per record, which multiplied the totals.
+ * Both subqueries apply the workspace's counting filter (`C`, see counting.ts), so a hosted workspace's rates count only counted reports.
+ */
+function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL, tail: SQL): SQL {
+	return sql`
+		SELECT
+			d.id            AS domain_id,
+			d.domain,
+			d.dmarc_policy,
+			d.spf_record,
+			d.dns_checked_at,
+			d.dns_check_attempted_at,
+			d.dns_check_status,
+			d.dmarc_issue,
+			d.dmarc_inherited_from,
+			d.dns_last_good_status,
+			d.spf_lookup_count,
+			d.dmarc_pct,
+			d.dmarc_p,
+			d.dmarc_sp,
+			d.dmarc_rua,
+			COALESCE(ar.total, 0)     AS total_messages,
+			COALESCE(ar.pass, 0)      AS pass_messages,
+			COALESCE(ar.fail, 0)      AS fail_messages,
+			COALESCE(rr.total, 0)     AS dkim_total,
+			COALESCE(rr.dkim_pass, 0) AS dkim_pass,
+			COALESCE(rr.total, 0)     AS spf_total,
+			COALESCE(rr.spf_pass, 0)  AS spf_pass,
+			COALESCE(m.enabled, 0)    AS mta_sts_enabled,
+			m.mode                    AS mta_sts_mode
+		FROM domains d
+		LEFT JOIN (
+			SELECT domain_id, SUM(total_count) AS total, SUM(pass_count) AS pass, SUM(fail_count) AS fail
+			FROM aggregate_reports
+			WHERE workspace_id = ${A} AND date_begin >= ${since} AND ${C('aggregate_reports')}
+			GROUP BY domain_id
+		) ar ON ar.domain_id = d.id
+		LEFT JOIN (
+			SELECT a.domain_id,
+				SUM(r.count) AS total,
+				SUM(CASE WHEN r.dkim_result = 'pass' THEN r.count ELSE 0 END) AS dkim_pass,
+				SUM(CASE WHEN r.spf_result  = 'pass' THEN r.count ELSE 0 END) AS spf_pass
+			FROM report_records r
+			JOIN aggregate_reports a ON a.id = r.report_id AND a.workspace_id = ${A}
+			WHERE r.workspace_id = ${A} AND a.date_begin >= ${since} AND ${C('a')}
+			GROUP BY a.domain_id
+		) rr ON rr.domain_id = d.id
+		LEFT JOIN mta_sts_config m ON m.domain_id = d.id AND m.workspace_id = ${A}
+		WHERE d.workspace_id = ${A} ${where}
+		${tail}
+	`;
 }
 
 /** Which time a report window is measured on: the period it covers (`date_begin`) or when it was received (`created_at`). */
@@ -457,37 +515,16 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		},
 
 		async checkSummary(domainId: number, since: number): Promise<DomainCheckSummary | null> {
-			const rows = await db.all<DomainCheckSummary>(sql`
-				SELECT
-					d.id            AS domain_id,
-					d.domain,
-					d.dmarc_policy,
-					d.spf_record,
-					d.dns_checked_at,
-					d.dns_check_attempted_at,
-					d.dns_check_status,
-					d.dmarc_issue,
-					d.dmarc_inherited_from,
-					d.dns_last_good_status,
-					d.spf_lookup_count,
-					d.dmarc_pct,
-					COALESCE(SUM(ar.total_count), 0) AS total_messages,
-					COALESCE(SUM(ar.pass_count),  0) AS pass_messages,
-					COALESCE(SUM(ar.fail_count),  0) AS fail_messages,
-					COALESCE(SUM(rr.count), 0)       AS dkim_total,
-					COALESCE(SUM(CASE WHEN rr.dkim_result = 'pass' THEN rr.count ELSE 0 END), 0) AS dkim_pass,
-					COALESCE(SUM(rr.count), 0)       AS spf_total,
-					COALESCE(SUM(CASE WHEN rr.spf_result  = 'pass' THEN rr.count ELSE 0 END), 0) AS spf_pass,
-					COALESCE(m.enabled, 0)           AS mta_sts_enabled,
-					m.mode                           AS mta_sts_mode
-				FROM domains d
-				LEFT JOIN aggregate_reports ar ON ar.domain_id = d.id AND ar.workspace_id = ${A} AND ar.date_begin >= ${since} AND ${C('ar')}
-				LEFT JOIN report_records rr    ON rr.report_id = ar.id AND rr.workspace_id = ${A}
-				LEFT JOIN mta_sts_config m     ON m.domain_id = d.id AND m.workspace_id = ${A}
-				WHERE d.workspace_id = ${A} AND d.id = ${domainId}
-				GROUP BY d.id, d.domain, d.dmarc_policy, d.spf_record, d.dns_checked_at, d.dns_check_attempted_at, d.dns_check_status, d.dmarc_issue, d.dmarc_inherited_from, d.dns_last_good_status, d.spf_lookup_count, d.dmarc_pct, m.enabled, m.mode
-			`);
+			const rows = await db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.id = ${domainId}`, sql``));
 			return rows[0] ?? null;
+		},
+
+		/**
+		 * checkSummary for every live domain in the workspace, by id, a page at a time (`afterId` is the last id of the previous
+		 * page). One query for the overview instead of one request per domain.
+		 */
+		async checkSummaries(since: number, page: { afterId?: number; limit: number }): Promise<DomainCheckSummary[]> {
+			return db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.evicted_at IS NULL AND d.id > ${page.afterId ?? 0}`, sql`ORDER BY d.id LIMIT ${page.limit}`));
 		},
 
 		// ── TLS-RPT ───────────────────────────────────────────────

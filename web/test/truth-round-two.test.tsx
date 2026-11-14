@@ -104,15 +104,28 @@ describe('item 10: read-only members do not get the Upgrade button', () => {
 				routes: {
 					'GET /api/domains': { domains: [domain] },
 					'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-10-20', total: 100, passed: 99, failed: 1 }] },
+					// The stored read after the live one: p=none sending reports here, 99 of 100 reported messages pass.
+					'GET /api/domains/1/check-summary': {
+						domain_id: 1, domain: 'example.com', dmarc_policy: 'none', spf_record: 'v=spf1 -all', dns_checked_at: Math.floor(Date.now() / 1000) - 60, dns_check_attempted_at: Math.floor(Date.now() / 1000) - 60,
+						dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 99, fail_messages: 1,
+						dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1,
+					},
 					'GET /api/domains/1/sources': { sources: [] },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=none', cf_managed: false },
+					'GET /api/domains/1/onboarding-status': {
+						domain_id: 1, domain: 'example.com', rua_address: '', cf_available: false, dmarc: { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none' },
+						spf: { record: 'v=spf1 -all', lookup_count: 1, flattening_active: false }, dkim: { selectors: [{ name: 'k._domainkey.example.com', record: 'v=DKIM1; p=AAA' }], source: 'doh' },
+						routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
+					},
 				},
 			},
 		);
 
-	it('owner sees it', async () => {
+	it('owner sees it, and the same step leads the page as an approval', async () => {
 		detail('owner');
+		expect(await screen.findByRole('link', { name: 'Review the change' })).toHaveAttribute('href', '/domains/1/dmarc-wizard');
+		await userEvent.click(screen.getByRole('button', { name: /^Reports/ }));
 		expect(await screen.findByRole('link', { name: 'Upgrade to quarantine' })).toBeInTheDocument();
 	});
 

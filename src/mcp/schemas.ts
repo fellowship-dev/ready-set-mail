@@ -4,6 +4,8 @@ export const hostname = z.string().min(3).max(253).regex(/^(?:[a-z0-9](?:[a-z0-9
 export const domainInput = selector.extend({ domain: hostname });
 export const reportInput = domainInput.extend({ days: z.number().int().min(1).max(90).optional() });
 export const metricsInput = reportInput.extend({ source: z.enum(['dmarc', 'tls', 'google', 'inbox_placement']).optional() });
+/** The DMARC policy in force and next step, as the dashboard shows them (packages/dns-checks/src/dmarc-next-step.ts). Null: no stored summary. */
+const dmarc = z.object({ policy_in_force: z.record(z.string(), z.unknown()), next_step: z.record(z.string(), z.unknown()).nullable(), steps: z.array(z.record(z.string(), z.unknown())) }).nullable();
 export const outputSchema = z.object({
  schema: z.literal('ready-set-mail-tool/v1'), summary: z.string(),
  data: z.record(z.string(), z.unknown()), evidence: z.array(z.object({ href: z.string(), label: z.string() })),
@@ -21,8 +23,8 @@ export const toolOutputs = Object.freeze({
  inspect_domain: outputSchema.extend({data:z.object({dns:z.record(z.string(),z.unknown())})}),
  add_domain: outputSchema.extend({data:z.object({enrollment:z.record(z.string(),z.unknown())})}),
  verify_domain: outputSchema.extend({data:z.object({verified:z.boolean().optional(),enrollment:z.record(z.string(),z.unknown()).optional(),reason:z.string().optional(),claim:z.record(z.string(),z.unknown()).optional()})}),
- get_email_report: outputSchema.extend({data:z.object({resource,report})}),
+ get_email_report: outputSchema.extend({data:z.object({resource,report,dmarc})}),
  query_email_metrics: outputSchema.extend({data:z.object({resource,coverage,domain:z.object({id:z.number(),domain:z.string()}),sections:z.record(z.string(),z.unknown())})}),
- plan_remediation: outputSchema.extend({data:z.object({resource,coverage,domain:z.object({id:z.number(),domain:z.string()}),fixes:z.array(z.record(z.string(),z.unknown()))})}),
+ plan_remediation: outputSchema.extend({data:z.object({resource,coverage,domain:z.object({id:z.number(),domain:z.string()}),fixes:z.array(z.record(z.string(),z.unknown())),dmarc})}),
  get_source_status: outputSchema.extend({data:z.object({resource,intake:z.record(z.string(),z.unknown()),sources:z.record(z.string(),z.object({status:z.string(),reason:z.string().optional()})),connect:z.object({google:z.string(),instruction:z.string()})})}),
 });

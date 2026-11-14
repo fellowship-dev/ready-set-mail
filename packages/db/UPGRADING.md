@@ -13,6 +13,9 @@ Local dev database: `npm run migrate:local`.
 ## Reports connected at
 
 Migration `0011_reports_connected_at.sql` is additive: one nullable `domains.reports_connected_at` column, set when a hosted domain's reports are connected to the fixed report address and cleared when they are disconnected. Apply it before serving the new Worker (the schema guard requires it). Existing rows stay NULL.
+## DMARC enforcement level
+
+Migration `0012_dmarc_enforcement.sql` is additive: nullable `domains.dmarc_p`, `domains.dmarc_sp` and `domains.dmarc_rua` columns (the governing DMARC record's p=, sp= and whether it sends reports here); the existing `domains.dmarc_pct` column is now written by each DNS check. Apply it before serving the new Worker (the schema guard requires it). Until a domain is read from DNS again its enforcement level is shown as not known yet.
 
 ## Settled claims
 

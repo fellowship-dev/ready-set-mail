@@ -25,14 +25,29 @@ async function seed() {
 describe('reports.checkSummary', () => {
   it('summarises DMARC pass/fail and DKIM/SPF rates for the window', async () => {
     const { q, id } = await seed();
-    // NOTE: carried over unchanged from the original query. The report totals are SUMmed over a join
-    // with report_records, so they are multiplied by the number of records in each report (2 here).
-    // Fixing that is a behaviour change, deliberately out of scope for the db lane.
+    // One report of 1,000 messages with two records: the totals are the report's, not multiplied by its records.
     expect(await q.reports.checkSummary(id, NOW - 30 * 86400)).toEqual({
       domain_id: id, domain: 'example.com', dmarc_policy: 'reject', spf_record: 'v=spf1 ~all', dns_checked_at: null, dns_check_attempted_at: null, dns_check_status: null, dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: null,
-      total_messages: 2000, pass_messages: 1960, fail_messages: 40,
+      total_messages: 1000, pass_messages: 980, fail_messages: 20,
       dkim_total: 1000, dkim_pass: 950, spf_total: 1000, spf_pass: 950,
-      mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: null, dmarc_pct: null,
+      mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: null, dmarc_pct: null, dmarc_p: null, dmarc_sp: null, dmarc_rua: null,
+    });
+  });
+
+  it('counts each report once however many records it has, and records once however many reports there are', async () => {
+    const { q, id } = await seed();
+    const rep = await q.reports.insertAggregate({
+      domain_id: id, org_name: 'microsoft', report_id: 'r2', date_begin: NOW - 3600, date_end: NOW,
+      total_count: 300, pass_count: 290, fail_count: 10, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'counted',
+    });
+    await q.reports.insertRecords([
+      { report_id: Number(rep.meta.last_row_id), source_ip: '3.3.3.3', count: 100, disposition: 'none', dkim_result: 'pass', spf_result: 'fail', dkim_domain: null, spf_domain: null, header_from: 'example.com' },
+      { report_id: Number(rep.meta.last_row_id), source_ip: '4.4.4.4', count: 100, disposition: 'none', dkim_result: 'pass', spf_result: 'pass', dkim_domain: null, spf_domain: null, header_from: 'example.com' },
+      { report_id: Number(rep.meta.last_row_id), source_ip: '5.5.5.5', count: 100, disposition: 'none', dkim_result: 'fail', spf_result: 'pass', dkim_domain: null, spf_domain: null, header_from: 'example.com' },
+    ]);
+    expect(await q.reports.checkSummary(id, NOW - 30 * 86400)).toMatchObject({
+      total_messages: 1300, pass_messages: 1270, fail_messages: 30,
+      dkim_total: 1300, dkim_pass: 1150, spf_total: 1300, spf_pass: 1150,
     });
   });
 
@@ -56,5 +71,77 @@ describe('reports.checkSummary', () => {
     const { db, id } = await seed();
     db.sqlite.exec("INSERT INTO workspaces (id, name) VALUES ('ws_b', 'B')");
     expect(await forWorkspace(db, 'ws_b').reports.checkSummary(id, 0)).toBeNull();
+  });
+
+  it('carries the governing record\'s pct=, p=, sp= and SPF lookup count the overview needs', async () => {
+    const { db, q, id } = await seed();
+    await q.domains.recordDnsCheck(id, { spf_record: 'v=spf1 ~all', dmarc: { policy: 'reject', issue: null, inherited_from: null, pct: 10, p: 'reject', sp: 'none', rua: ['rua@r.test'] }, at: NOW });
+    db.sqlite.prepare('UPDATE domains SET spf_lookup_count = 12 WHERE id = ?').run(id);
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ dmarc_pct: 10, dmarc_p: 'reject', dmarc_sp: 'none', dmarc_rua: 1, spf_lookup_count: 12 });
+  });
+
+  it('stores only whether the record sends reports to this domain\'s address, never the addresses', async () => {
+    const { db, q, id } = await seed();
+    const facts = (rua: string[]) => ({ spf_record: 'v=spf1 ~all', dmarc: { policy: 'quarantine', issue: null, inherited_from: 'parent.test', pct: 100, p: 'reject', sp: 'quarantine', rua }, at: NOW });
+    await q.domains.recordDnsCheck(id, facts(['dmarc-rua@dmarc.service.gov.uk']));
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ dmarc_p: 'reject', dmarc_sp: 'quarantine', dmarc_rua: 0 });
+    await q.domains.recordDnsCheck(id, facts(['other@x.test', 'RUA@R.TEST']));
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ dmarc_rua: 1 });
+    // An empty reports address never matches.
+    db.sqlite.prepare("UPDATE domains SET rua_address = '' WHERE id = ?").run(id);
+    await q.domains.recordDnsCheck(id, facts(['']));
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ dmarc_rua: 0 });
+    const row = db.sqlite.prepare('SELECT * FROM domains WHERE id = ?').get(id) as Record<string, unknown>;
+    expect(JSON.stringify(row)).not.toContain('dmarc-rua@dmarc.service.gov.uk');
+  });
+
+  it('counts only reports the workspace\'s counting mode counts, in both the totals and the record counts', async () => {
+    const { db, id } = await seed();
+    const all = forWorkspace(db, IMPLICIT_WORKSPACE_ID, { counting: 'all' });
+    // 1,000 more messages from a sender that is not authenticated: a hosted (registry) workspace must not count them.
+    const rep = await all.reports.insertAggregate({
+      domain_id: id, org_name: 'spoof', report_id: 'r-unauth', date_begin: NOW - 600, date_end: NOW,
+      total_count: 1000, pass_count: 0, fail_count: 1000, raw_xml: null, reporter_auth: 'fail', reporter_tier: 'unauthenticated',
+    });
+    await all.reports.insertRecords([{ report_id: Number(rep.meta.last_row_id), source_ip: '6.6.6.6', count: 1000, disposition: 'none', dkim_result: 'fail', spf_result: 'fail', dkim_domain: null, spf_domain: null, header_from: 'example.com' }]);
+    const since = NOW - 30 * 86400;
+    expect(await forWorkspace(db, IMPLICIT_WORKSPACE_ID, { counting: 'registry' }).reports.checkSummary(id, since)).toMatchObject({ total_messages: 1000, pass_messages: 980, dkim_total: 1000 });
+    expect(await all.reports.checkSummary(id, since)).toMatchObject({ total_messages: 2000, pass_messages: 980, dkim_total: 2000 });
+    const [batch] = await forWorkspace(db, IMPLICIT_WORKSPACE_ID, { counting: 'registry' }).reports.checkSummaries(since, { limit: 10 });
+    expect(batch).toMatchObject({ total_messages: 1000, pass_messages: 980, dkim_total: 1000 });
+  });
+});
+
+describe('reports.checkSummary: the reviewer\'s counting case', () => {
+  it('a hosted workspace: 10 counted messages (8 pass) and 1,000 unregistered ones read 10 / 8, not 1010 / 8', async () => {
+    const db = createMigratedD1();
+    const all = forWorkspace(db, IMPLICIT_WORKSPACE_ID, { counting: 'all' });
+    const id = Number((await all.domains.insert({ domain: 'h.example', rua_address: 'rua@r.test' })).meta.last_row_id);
+    await all.reports.insertAggregate({ domain_id: id, org_name: 'google.com', report_id: 'c', date_begin: NOW - 600, date_end: NOW, total_count: 10, pass_count: 8, fail_count: 2, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'counted' });
+    await all.reports.insertAggregate({ domain_id: id, org_name: 'unknown.example', report_id: 'u', date_begin: NOW - 600, date_end: NOW, total_count: 1000, pass_count: 0, fail_count: 1000, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'unknown' });
+    expect(await all.reports.checkSummary(id, 0)).toMatchObject({ total_messages: 1010, pass_messages: 8 });
+    expect(await forWorkspace(db, IMPLICIT_WORKSPACE_ID, { counting: 'registry' }).reports.checkSummary(id, 0)).toMatchObject({ total_messages: 10, pass_messages: 8 });
+  });
+});
+
+describe('reports.checkSummaries (the overview batch)', () => {
+  it('returns every live domain of the workspace in id order, a page at a time, with the same totals as checkSummary', async () => {
+    const { db, q, id } = await seed();
+    const ids = [id];
+    for (const d of ['b.com', 'c.com', 'd.com']) ids.push(Number((await q.domains.insert({ domain: d, rua_address: 'rua@r.test' })).meta.last_row_id));
+    db.sqlite.prepare("UPDATE domains SET evicted_at = 1 WHERE domain = 'c.com'").run();
+    const since = NOW - 30 * 86400;
+    const first = await q.reports.checkSummaries(since, { limit: 2 });
+    expect(first.map((r) => r.domain)).toEqual(['example.com', 'b.com']);
+    expect(first[0]).toEqual(await q.reports.checkSummary(id, since));
+    const second = await q.reports.checkSummaries(since, { afterId: first.at(-1)!.domain_id, limit: 2 });
+    expect(second.map((r) => r.domain)).toEqual(['d.com']);
+    expect(second[0]).toMatchObject({ total_messages: 0, dkim_total: 0 });
+  });
+
+  it('never returns another workspace\'s domains', async () => {
+    const { db } = await seed();
+    db.sqlite.exec("INSERT INTO workspaces (id, name) VALUES ('ws_b', 'B')");
+    expect(await forWorkspace(db, 'ws_b').reports.checkSummaries(0, { limit: 50 })).toEqual([]);
   });
 });

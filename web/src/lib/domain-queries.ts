@@ -77,9 +77,39 @@ export const domainKeys = {
 };
 
 export const fetchSummary = (id: number) => api<DomainCheckSummary>(`/api/domains/${id}/check-summary`);
+
+/** GET /api/domains/summaries: every domain's summary, a page at a time. */
+interface SummaryPage {
+	summaries: DomainCheckSummary[];
+	next_after: number | null;
+	window_days: number;
+}
+
+/**
+ * Every domain's check summary for the overview: one request per 200 domains instead of one per domain. Each summary is
+ * also written to the per-domain cache, so opening a domain page does not ask again.
+ */
+export function useDomainSummaries(enabled: boolean) {
+	const qc = useQueryClient();
+	return useQuery({
+		queryKey: ['domain-summaries'],
+		enabled,
+		queryFn: async () => {
+			const all: DomainCheckSummary[] = [];
+			let after: number | null = 0;
+			while (after !== null) {
+				const page: SummaryPage = await api<SummaryPage>(`/api/domains/summaries${after ? `?after=${after}` : ''}`);
+				all.push(...page.summaries);
+				after = page.next_after;
+			}
+			for (const s of all) qc.setQueryData(domainKeys.summary(s.domain_id), s);
+			return new Map(all.map((s) => [s.domain_id, s]));
+		},
+	});
+}
 export const fetchStats = (id: number, days: number) => api<DomainStats>(`/api/domains/${id}/stats?days=${days}`);
 
-export const useCheckSummary = (id: number) => useQuery({ queryKey: domainKeys.summary(id), queryFn: () => fetchSummary(id) });
+export const useCheckSummary = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.summary(id), queryFn: () => fetchSummary(id), enabled });
 export const useStats = (id: number, days: number) =>
 	useQuery({ queryKey: domainKeys.stats(id, days), queryFn: () => fetchStats(id, days), placeholderData: (prev) => prev });
 export const useWizardState = (id: number) => useQuery({ queryKey: domainKeys.wizard(id), queryFn: () => api<WizardState>(`/api/domains/${id}/wizard-state`) });
@@ -96,7 +126,7 @@ export const useMonitorSubs = (id: number) =>
 
 /** After a change to a domain: refresh the list and everything cached for it. */
 export function invalidateDomain(qc: QueryClient, id: number): Promise<unknown> {
-	return Promise.all([qc.invalidateQueries({ queryKey: ['domains'] }), qc.invalidateQueries({ queryKey: domainKeys.all(id) })]);
+	return Promise.all([qc.invalidateQueries({ queryKey: ['domains'] }), qc.invalidateQueries({ queryKey: ['domain-summaries'] }), qc.invalidateQueries({ queryKey: ['hosted-statuses'] }), qc.invalidateQueries({ queryKey: domainKeys.all(id) })]);
 }
 
 export function useInvalidateDomain(id: number) {

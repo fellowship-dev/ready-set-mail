@@ -1830,6 +1830,27 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "dmarc_sp": {
+          "name": "dmarc_sp",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dmarc_p": {
+          "name": "dmarc_p",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dmarc_rua": {
+          "name": "dmarc_rua",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

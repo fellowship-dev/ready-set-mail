@@ -1,5 +1,6 @@
 import { forWorkspace } from '@ready-set-mail/db';
 import { checkDomain, createResolver, DOH_ENDPOINTS } from '@ready-set-mail/dns-checks';
+import { dmarcSteps, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { buildReport } from '@ready-set-mail/report';
 import { authorizeResource, authorizedDomains } from '../../access/resolve';
 import { getDomainReport } from '../../reports/service';
@@ -45,6 +46,19 @@ export async function listResources(context: ToolContext, input: { workspaceId?:
  }
  return result(`${resources.length} authorized ${products ? 'products' : 'domains'}.`, { [products ? 'products' : 'domains']: resources });
 }
+/**
+ * The DMARC policy in force and the next step, from the same stored facts and 30-day totals as the dashboard's overview
+ * row and domain page (packages/dns-checks/src/dmarc-next-step.ts), so the agent and the dashboard say the same thing.
+ * The reports address is never returned (offered records leave rua= out).
+ */
+async function dmarcNextStep(tenant: { scope: { reports: { checkSummary(id: number, since: number): Promise<any> } } }, domain: { id: number; domain: string; rua_address: string | null }, now = Date.now() / 1000) {
+ const s = await tenant.scope.reports.checkSummary(domain.id, Math.floor(now) - 30 * 86400);
+ if (!s) return null;
+ const read = s.dns_checked_at !== null || s.dmarc_policy !== null || s.dmarc_issue !== null;
+ const policy_in_force = policyInForce(domain.domain, s, read);
+ const steps = dmarcSteps(domain.domain, policy_in_force, { reportsAddress: !!domain.rua_address?.trim(), ruaAddress: null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 } });
+ return { policy_in_force, next_step: steps[0] ?? null, steps };
+}
 async function report(context: ToolContext, input: DomainInput, action: 'reports:read' | 'metrics:read' | 'remediation:plan' | 'resources:read') {
  const resolved = await resourceContext(context, input, action);
  const domain = await resolved.tenant.scope.domains.getByName(input.domain);
@@ -52,20 +66,21 @@ async function report(context: ToolContext, input: DomainInput, action: 'reports
  // Every report runs the full live DNS check (two resolvers); see ../rate-limit.ts.
  await spendDnsCheck(context.env, resolved.subject.principalId, resolved.tenant.workspaceId);
  const data = await getDomainReport(resolved.tenant, domain.id, { ...context.reportOptions, days: input.days ?? context.reportOptions?.days });
+ const dmarc = await dmarcNextStep(resolved.tenant as any, domain, context.reportOptions?.now);
  const base = mcpInstallation(context.env).issuer;
- return { data, resource: resolved.resource, evidence: [{ href: `${base}/#/w/${encodeURIComponent(resolved.tenant.workspaceId)}/domains/${domain.id}`, label: 'Private domain evidence report (authorized browser access required)' }] };
+ return { data, dmarc, resource: resolved.resource, evidence: [{ href: `${base}/#/w/${encodeURIComponent(resolved.tenant.workspaceId)}/domains/${domain.id}`, label: 'Private domain evidence report (authorized browser access required)' }] };
 }
 export async function getEmailReport(context: ToolContext, input: DomainInput) {
- const { data, resource, evidence } = await report(context, input, 'reports:read');
- return result(`Email health for ${input.domain}: ${data.dns.findings.length} configuration findings; domain aggregates are shared-domain coverage. Missing telemetry is explicitly unavailable.`, { resource, report: data }, evidence);
+ const { data, dmarc, resource, evidence } = await report(context, input, 'reports:read');
+ return result(`Email health for ${input.domain}: ${data.dns.findings.length} configuration findings; domain aggregates are shared-domain coverage. Missing telemetry is explicitly unavailable.${dmarc?.next_step ? ` DMARC next step: ${dmarc.next_step.do}.` : ''}`, { resource, report: data, dmarc }, evidence);
 }
 export async function queryMetrics(context: ToolContext, input: DomainInput & { source?: 'dmarc' | 'tls' | 'google' | 'inbox_placement' }) {
  const { data, resource, evidence } = await report(context, input, 'metrics:read');
  return result(`Observed email metrics for ${input.domain}; unavailable values are not zero.`, { resource, coverage: data.coverage, domain: data.domain, sections: input.source ? { [input.source]: data.sections[input.source] } : data.sections }, evidence);
 }
 export async function planRemediation(context: ToolContext, input: DomainInput) {
- const { data, resource, evidence } = await report(context, input, 'remediation:plan');
- return result(`${data.remediation.length} proposed fixes for ${input.domain}. Apply changes separately, then repeat inspection.`, { resource, domain: data.domain, coverage: data.coverage, fixes: data.remediation }, evidence);
+ const { data, dmarc, resource, evidence } = await report(context, input, 'remediation:plan');
+ return result(`${data.remediation.length} proposed fixes for ${input.domain}.${dmarc?.next_step ? ` DMARC next step (as the dashboard shows it): ${dmarc.next_step.do}.` : ''} Apply changes separately, then repeat inspection.`, { resource, domain: data.domain, coverage: data.coverage, fixes: data.remediation, dmarc }, evidence);
 }
 export async function inspectDomain(context: ToolContext, input: DomainInput) {
  const { subject, tenant } = await resourceContext(context, input, 'diagnostics:run');
