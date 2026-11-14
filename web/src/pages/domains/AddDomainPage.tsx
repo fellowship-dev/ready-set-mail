@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { Alert, Badge, Button, CheckResult, CheckResultList, FieldError, FieldHint, Input, Label, PageHeader, RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
@@ -275,6 +276,7 @@ export function AddDomainPage() {
 					) : (
 						<Input id="domain-input" placeholder="yourcompany.com" value={input} onChange={(e) => setInput(e.target.value)} autoFocus autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={(add.isError && !planLimitOf(add.error)) || undefined} aria-describedby={add.isError && !planLimitOf(add.error) ? 'domain-error' : undefined} />
 					)}
+					{!zonesQ.isPending && !zones ? <ConnectCloudflareLink /> : null}
 					{add.isError && !planLimitOf(add.error) ? <FieldError id="domain-error">{errorMessage(add.error)}</FieldError> : null}
 					{add.isError && !planLimitOf(add.error) ? <DomainRefusalHelp error={add.error} /> : null}
 					{add.isError && planLimitOf(add.error) ? <PlanLimitNotice limit={planLimitOf(add.error)!} /> : null}

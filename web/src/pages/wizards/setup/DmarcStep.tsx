@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, CheckResult, CheckResultList, RecordBlock, StatusDot, toast } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -183,6 +184,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 								) : null}
 								<CopyButton text={recommended} />
 							</div>
+							{!cf_available ? <ConnectCloudflareLink /> : null}
 							{apply.isError ? (
 								<Alert variant="danger" title="Could not apply the record">
 									{errorMessage(apply.error)}

@@ -95,6 +95,7 @@ const MembersPage = lazy(() => import('./pages/members/MembersPage').then((m) =>
 const DmarcWizardPage = lazy(() => import('./pages/wizards/DmarcWizardPage').then((m) => ({ default: m.DmarcWizardPage })));
 const MtaStsPage = lazy(() => import('./pages/wizards/MtaStsPage').then((m) => ({ default: m.MtaStsPage })));
 const CloudflareWizardPage = lazy(() => import('./pages/wizards/cloudflare/CloudflareWizardPage').then((m) => ({ default: m.CloudflareWizardPage })));
+const ConnectCloudflarePage = lazy(() => import('./pages/cloudflare/ConnectCloudflarePage').then((m) => ({ default: m.ConnectCloudflarePage })));
 const SetupWizardPage = lazy(() => import('./pages/wizards/SetupWizardPage').then((m) => ({ default: m.SetupWizardPage })));
 const SpfFlattenPage = lazy(() => import('./pages/wizards/SpfFlattenPage').then((m) => ({ default: m.SpfFlattenPage })));
 
@@ -147,6 +148,7 @@ function AppRoutes() {
 			<Route element={<Gate><Outlet /></Gate>}>
 				<Route path="setup" element={<Wizard><SetupWizardPage /></Wizard>} />
 				<Route path="setup/cloudflare" element={<Wizard><CloudflareWizardPage /></Wizard>} />
+				<Route path="cloudflare/connect" element={<Wizard><ConnectCloudflarePage /></Wizard>} />
 				<Route path="onboarding" element={<Navigate to="/setup" replace />} />
 				<Route path="domains/:id/setup" element={<WizardFor render={() => <SetupWizardPage />} />} />
 				<Route path="domains/:id/setup/:step" element={<WizardFor render={() => <SetupWizardPage />} />} />

@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { Button, CheckResult, CheckResultList, RecordBlock, Skeleton, toast, type CheckStatus } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
@@ -186,6 +187,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 							) : (
 								<p className="text-ink-2">Add this record at your DNS provider. Ready Set Mail cannot change DNS for this domain.</p>
 							)}
+							{!cfAvailable ? <ConnectCloudflareLink /> : null}
 						</>
 					) : null}
 				</div>

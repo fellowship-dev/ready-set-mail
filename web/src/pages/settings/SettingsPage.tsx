@@ -12,6 +12,7 @@ import { DangerZone } from './DangerZone';
 import { WorkspaceSection } from './WorkspaceSection';
 import { AgentConnectionsSection } from './AgentConnectionsSection';
 import { MetricConnectionsSection } from './MetricConnectionsSection';
+import { CloudflareSection } from './CloudflareSection';
 import { SetupCheck } from '../../components/SetupCheck';
 
 interface VersionInfo {
@@ -69,6 +70,7 @@ export function SettingsPage() {
 
 			<WorkspaceSection />
 
+			<CloudflareSection />
 			<AgentConnectionsSection />
 			<MetricConnectionsSection />
 

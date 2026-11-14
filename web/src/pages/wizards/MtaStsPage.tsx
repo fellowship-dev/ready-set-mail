@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { Alert, Badge, Button } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -174,6 +175,7 @@ export function MtaStsPage() {
 								MTA-STS needs Cloudflare DNS and Workers to publish the policy, and no Cloudflare connection is configured.
 							</Alert>
 						) : null}
+						{!status.available && !active ? <ConnectCloudflareLink /> : null}
 
 						<StepFooter
 							start={

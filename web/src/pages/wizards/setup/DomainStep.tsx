@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { FieldError, FieldHint, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
@@ -176,6 +177,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 							'The domain you own, without www or a path.'
 						)}
 					</FieldHint>
+					{!zones.isPending && zoneList.length === 0 ? <ConnectCloudflareLink /> : null}
 					{error ? <FieldError>{error}</FieldError> : null}
 					{save.isError && !atLimit ? <DomainRefusalHelp error={save.error} /> : null}
 					{atLimit ? <PlanLimitNotice limit={atLimit} /> : null}
