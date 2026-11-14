@@ -26,11 +26,18 @@ export function req(method: string, path: string, opts: { key?: string; body?: u
   if (opts.key) headers['x-api-key'] = opts.key;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   let body = opts.body;
-  if (/^\/api\/auth\/(signup|login|setup)$/.test(path) && body && typeof body === 'object' && !('cf_turnstile_token' in body)) body = { ...body, cf_turnstile_token: 'ok' };
+  if (/^\/api\/auth\/(signup|login|setup|resend-verification)$/.test(path) && body && typeof body === 'object' && !('cf_turnstile_token' in body)) body = { ...body, cf_turnstile_token: 'ok' };
   return new Request(`${BASE}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
 }
 
 export const call = (env: Env, ...args: Parameters<typeof req>) => handleApi(req(...args), env, ctx);
+
+/** The verification token in an emailed link (`<origin>/#/welcome/<token>`: the token travels in the fragment). */
+export const welcomeTokenIn = (text: string): string => decodeURIComponent(text.match(/\/#\/welcome\/([^\s]+)/)![1]!);
+
+/** The welcome page's POST: confirm the address and choose the password, in one step. */
+export const completeWelcome = (env: Env, token: string, password: string, opts: { ip?: string; headers?: Record<string, string> } = {}) =>
+  call(env, 'POST', '/api/auth/welcome', { body: { token, password }, ...opts });
 
 export async function setupOwner(env: Env, email = 'owner@example.com', password = 'correct-horse-battery') {
   const res = await call(env, 'POST', '/api/auth/setup', { body: { email, password } });

@@ -12,6 +12,7 @@ import { DnsTools } from '../../components/domain/DnsTools';
 import { DoThisNext } from '../../components/domain/DoThisNext';
 import { FailingSources } from '../../components/domain/FailingSources';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
+import { ConnectReports } from '../../components/reports/ConnectReports';
 import { Rollout } from '../../components/domain/Rollout';
 import { ReportsNotConnected, useReportsNotConnected } from '../../components/ReportsNotConnected';
 import { Disclosure, ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section } from '../../components/states';
@@ -205,6 +206,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
 	const nxdomain = !!onboarding.data?.nxdomain;
+	// Hosted: the self-host reporting-address block never applies (the reports panel shows the address).
+	const hostedMode = useHosted();
 
 	// Reading DNS here also stores what it found (the overview's "checked when"), so refresh the stored summary after it.
 	const readAt = onboarding.dataUpdatedAt;
@@ -282,6 +285,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 
 			{/* A name that does not resolve has nothing to host. */}
 			{nxdomain ? null : <HostedPanel key={domain.id} domainId={domain.id} />}
+			{/* Hosted with report intake, once connected: connected → published → received. Before that, ReportsNotConnected
+			    carries the Connect reports action. Renders nothing elsewhere. */}
+			{reportsOff || nxdomain ? null : <ConnectReports domain={domain} />}
 
 			<div className="space-y-3">
 				<Disclosure
@@ -294,7 +300,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 
 				{/* Hosted, before report intake: no reports can arrive, so the report sections say so once instead of showing zeros. */}
 				{reportsOff ? (
-					<ReportsNotConnected domain={domain.domain} />
+					<ReportsNotConnected domain={domain.domain} domainId={domain.id} />
 				) : (
 				<Disclosure
 						title="Reports"
@@ -354,6 +360,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 								</Alert>
 							) : null}
 							{stats.isPending ? <ListSkeleton rows={1} label="Loading daily results" /> : stats.isError ? null : <DailyChart domainId={domain.id} stats={stats.data.stats} days={days} />}
+							{hostedMode ? null : (
 							<div className="space-y-2">
 								<p className="text-sm font-semibold text-ink-1">Reporting address</p>
 								{hasReportAddress(domain.rua_address) ? (
@@ -367,6 +374,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 									<p className="text-sm text-ink-2">No reports address is configured for this domain, so there is no rua= value to add yet.</p>
 								)}
 							</div>
+							)}
 							<Link className="inline-block text-sm text-brand-ink underline underline-offset-4" to={`/domains/${domain.id}/reports`}>
 								All reports
 							</Link>

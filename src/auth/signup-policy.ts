@@ -12,6 +12,8 @@ import { verifyBootstrapProof, consumeBootstrapProof } from './bootstrap';
 import { APIError } from 'better-auth/api';
 import { authLookups, forWorkspace, forImplicitWorkspace, globalQueries, IMPLICIT_WORKSPACE_ID, type MembershipRole } from '@ready-set-mail/db';
 import { isSaas, type AuthEnv } from './config';
+import { hostedSignupClosed, SIGNUP_CLOSED_MESSAGE } from './bot-protection';
+import { defaultWorkspaceName } from './names';
 
 export type SignupIntent =
   | { kind: 'external' }
@@ -40,6 +42,8 @@ export async function assertMaySignUp(env: AuthEnv, intent: SignupIntent, email:
   const db = env.DB as D1Database;
   const reject = (message: string) => { throw new APIError('FORBIDDEN', { message }); };
 
+  // Hosted with sign-up closed (no bot protection): no account is created by any route, an OAuth callback included.
+  if (await hostedSignupClosed(env)) reject(SIGNUP_CLOSED_MESSAGE);
   if (intent.kind === 'invitee') {
     const invite = await authLookups(db).inviteByToken(intent.token);
     if (!isSaas(env) || !invite || invite.used_at || invite.expires_at < now() || invite.email !== email) reject('invite not found or expired');
@@ -97,7 +101,8 @@ export async function provisionUser(
     return fail('invite not found or expired');
   } else if (isSaas(env)) {
     const workspaceId = `ws_${crypto.randomUUID().replace(/-/g, '')}`;
-    await globalQueries(db).workspaces.create(workspaceId, `${user.name || user.email}'s workspace`);
+    // Hosted sign-up gives no name (it is asked for after the address is proven), so this starts from the email's domain.
+    await globalQueries(db).workspaces.create(workspaceId, defaultWorkspaceName(user.name === user.email ? '' : user.name, user.email));
     await forWorkspace(db, workspaceId).team.addMember(user.id, 'owner');
     placed = { workspaceId, role: 'owner' };
   } else {

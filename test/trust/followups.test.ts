@@ -1,8 +1,7 @@
 // Follow-ups: evicting a legacy domain holder safely, and invitees who sign up through an invite.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, makeEnv, signupVerified, ctx } from '../auth/helpers';
-import { handleApi } from '../../src/api/router';
+import { call, makeEnv, signupVerified, completeWelcome, welcomeTokenIn } from '../auth/helpers';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { HOSTED_ENV } from '../hosted/world';
 import { runRetention } from '../../src/lifecycle/retention';
@@ -32,7 +31,7 @@ describe('evicting a legacy holder', () => {
   async function evicted() {
     const w = await world();
     const ins = w.db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address, workspace_id, verified_via, dns_record_id) VALUES (50, 'acme.com', 'x', ?, 'legacy', 'rec-auth')").run(w.A.ws);
-    w.db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, workspace_id) VALUES (500, 50, 'Google', 'r1', unixepoch() - 86400, unixepoch(), ?)").run(w.A.ws);
+    w.db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, workspace_id, reporter_auth, reporter_tier) VALUES (500, 50, 'Google', 'r1', unixepoch() - 86400, unixepoch(), ?, 'pass', 'counted')").run(w.A.ws);
     w.db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, workspace_id) VALUES (500, '1.2.3.4', 5, 'none', ?)").run(w.A.ws);
     w.db.sqlite.prepare("INSERT INTO intake_tokens (domain_id, workspace_id, token_hash) VALUES (50, ?, 'h')").run(w.A.ws);
     w.db.sqlite.prepare("INSERT INTO hosted_domains (domain_id, workspace_id, hosted_id, zone_key, dmarc_record_id) VALUES (50, ?, 'hid', 'z1', 'rec-dmarc')").run(w.A.ws);
@@ -105,9 +104,7 @@ describe('signing up through an invite (hosted)', () => {
     expect((await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'password-123' } })).status).toBe(201);
     expect(w.rows('SELECT COUNT(*) n FROM workspaces')[0].n).toBe(before); // no new workspace
     // verify (as the emailed link would), choose a password, sign in
-    const link = new URL(((w.send.mock.calls.at(-1) as any)[0].text as string).match(/https?:\/\/\S+verify-email\S+/)![0]);
-    const verified = await handleApi(new Request(`https://ia.example.com${link.pathname}${link.search}`), w.env, ctx);
-    const reset = await call(w.env, 'POST', '/api/auth/reset', { body: { token: verified.headers.get('location')!.split('/').pop(), password: 'chosen-password-1' } });
+    const reset = await completeWelcome(w.env, welcomeTokenIn((w.send.mock.calls.at(-1) as any)[0].text), 'chosen-password-1');
     const session = (await json(reset)).token as string;
     const me = await call(w.env, 'GET', '/api/me', { key: session });
     expect(me.status).toBe(200);
@@ -131,7 +128,7 @@ describe('detached (evicted) domains are invisible everywhere except export', ()
     ins.run(60, 'live.com', 'x', w.A.ws, 'txt', null, null);
     ins.run(61, 'evicted-61.invalid', 'x', w.A.ws, 'legacy', 1700000000, 'gone.com');
     for (const [rid, did, rep] of [[600, 60, 'live-r'], [601, 61, 'gone-r']] as const) {
-      w.db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, workspace_id) VALUES (?, ?, 'Google', ?, unixepoch() - 86400, unixepoch(), 10, 5, 5, ?)").run(rid, did, rep, w.A.ws);
+      w.db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, workspace_id, reporter_auth, reporter_tier) VALUES (?, ?, 'Google', ?, unixepoch() - 86400, unixepoch(), 10, 5, 5, ?, 'pass', 'counted')").run(rid, did, rep, w.A.ws);
       w.db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, spf_result, header_from, workspace_id) VALUES (?, ?, 10, 'none', 'fail', 'fail', 'x', ?)").run(rid, did === 60 ? '198.51.100.1' : '198.51.100.99', w.A.ws);
     }
     return { w, q: forWorkspace(w.env.DB, w.A.ws) };
@@ -195,9 +192,7 @@ describe('a login with no workspace can start its own', () => {
     const w = await world();
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
     await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'password-123' } });
-    const link = new URL(((w.send.mock.calls.at(-1) as any)[0].text as string).match(/https?:\/\/\S+verify-email\S+/)![0]);
-    const verified = await handleApi(new Request(`https://ia.example.com${link.pathname}${link.search}`), w.env, ctx);
-    const session = (await json(await call(w.env, 'POST', '/api/auth/reset', { body: { token: verified.headers.get('location')!.split('/').pop(), password: 'chosen-password-1' } }))).token as string;
+    const session = (await json(await completeWelcome(w.env, welcomeTokenIn((w.send.mock.calls.at(-1) as any)[0].text), 'chosen-password-1'))).token as string;
     // the owner revokes the invite
     const id = (await json(await call(w.env, 'GET', '/api/team/invites', { key: w.A.token }))).invites[0].id;
     expect((await call(w.env, 'DELETE', `/api/team/invites/${id}`, { key: w.A.token })).status).toBe(200);

@@ -16,6 +16,10 @@ import type { SignupIntent } from './signup-policy';
 import { currentUser, passesCsrfCheck } from './session';
 import { verifyBootstrapProof } from './bootstrap';
 import { verifyTurnstile } from './turnstile';
+import { hostedSignupClosed, SIGNUP_CLOSED_MESSAGE, turnstileSecret, turnstileSiteKey } from './bot-protection';
+import { clearSigninFailures, completeWelcome, legacyVerifyLinkPage, readVerificationToken, recordSigninFailure, signinWait, welcomeAttemptAllowed } from './welcome';
+import { cleanName } from './names';
+import { deviceCookie, knownDevice, rotateDeviceEpoch } from './device';
 import { helpUrl } from '../funnel/config';
 import { emailCheckAvailable } from '../hosted/config';
 import { hostedServiceUrl } from '../hosted-service';
@@ -45,7 +49,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Better Auth endpoints reachable from outside, as `METHOD /path`. */
 const PASSTHROUGH: readonly RegExp[] = [
   /^GET \/get-session$/,
-  /^GET \/verify-email$/,
   /^POST \/sign-in\/social$/,
   /^GET \/callback\/(github|google)$/,
   /^GET \/error$/,
@@ -91,6 +94,14 @@ function callAuth(
   }));
 }
 
+/** Too many failed sign-ins for one address: the same answer whether or not it has an account. */
+function throttled(seconds: number): Response {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  const out = err(`Too many sign-in attempts for this address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or reset your password to sign in now.`, 429, 'signin_throttled');
+  out.headers.set('retry-after', String(seconds));
+  return out;
+}
+
 /** Better Auth's error → our `{ error }` shape, keeping its status. */
 async function authError(res: Response, fallback: string): Promise<Response> {
   const body = await res.json().catch(() => null) as { message?: string } | null;
@@ -123,23 +134,27 @@ async function limited(env: Env, request: Request): Promise<boolean> {
   return !success;
 }
 
-/** The Turnstile secret in force: hosted env var, else the platform setting. Used by the bot check and by the status route, so both agree. */
-const turnstileSecret = async (env: Env) => (isSaas(env) ? env.TURNSTILE_SECRET_KEY : undefined) || (await platform(env).settings.get('turnstile_secret_key'))?.value || undefined;
-
-/** The public site key the page renders the widget with. */
-const turnstileSiteKey = async (env: Env) => (isSaas(env) && env.TURNSTILE_SITE_KEY ? env.TURNSTILE_SITE_KEY : (await platform(env).settings.get('turnstile_site_key'))?.value) || null;
-
 /**
  * Bot check. A configured Turnstile secret (hosted: TURNSTILE_SECRET_KEY; else the platform setting) requires a valid
- * token. Hosted fails closed: without a secret nobody can sign up, so a misconfiguration cannot turn Ready Set Mail into
- * an open mail relay. Returns the refusal, or null to carry on.
+ * token. Hosted sign-up fails closed: without both keys nobody can create an account, so a misconfiguration cannot turn
+ * Ready Set Mail into an open mail relay. Sign-in is never locked by missing keys: closed means no NEW accounts, and an
+ * existing user signs in without the check (the page cannot render it). The mail a sign-in can trigger (an unverified
+ * account's link) is capped per address (verificationMailAllowed), and sign-in is rate limited per IP. When the keys ARE
+ * configured, sign-in keeps the check. Returns the refusal, or null to carry on.
  */
-async function botCheck(env: Env, request: Request, token: string | undefined): Promise<Response | null> {
+async function botCheck(env: Env, request: Request, token: string | undefined, purpose: 'signup' | 'signin'): Promise<Response | null> {
+  if (await hostedSignupClosed(env)) return purpose === 'signup' ? err(SIGNUP_CLOSED_MESSAGE, 503) : null;
   const secret = await turnstileSecret(env);
-  if (!secret) return isSaas(env) ? err('sign-up is unavailable: bot protection is not configured on this service', 503) : null;
+  if (!secret) return null;
   if (!token || !(await verifyTurnstile(token, secret, request.headers.get('CF-Connecting-IP') ?? ''))) return err('Bot check failed', 403);
   return null;
 }
+
+/**
+ * A random password nobody is told, for a hosted account created before its mailbox is proven. It cannot be used to
+ * sign in, and verification replaces it with the password the mailbox owner chooses.
+ */
+const unusablePassword = (): string => [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
 
 /** Creates a user through Better Auth under the given sign-up intent and returns its session response. */
 async function signUp(
@@ -180,25 +195,26 @@ export async function handleAuthRoute(
     // when they are signed in; an anonymous visitor gets the self-host instance's, or nothing in saas.
     const t = await tenantFor();
     const mine = !saas || !!t.userId ? t : null;
-    const [siteKey, secret, customDomainRow, telemetryRow] = await Promise.all([
+    const [siteKey, closed, customDomainRow, telemetryRow] = await Promise.all([
       turnstileSiteKey(env),
-      saas ? turnstileSecret(env) : null,
+      hostedSignupClosed(env),
       mine?.scope.settings.get('custom_domain') ?? null,
       mine?.scope.settings.get('telemetry_opted_in') ?? null,
     ]);
     const existingDomains = mine ? await mine.scope.domains.list() : [];
     const baseDomain = mine?.settings.baseDomain;
-    // Hosted without bot protection: sign-up and login both fail closed (503, see botCheck: a login of an unverified address sends mail),
-    // and the page cannot render the widget without the site key. Say so, so the page does not offer a form that cannot work.
-    const noBotProtection = saas && (!secret || !siteKey);
+    // Hosted without bot protection: no new accounts (sign-up answers 503), while existing users still sign in and reset
+    // their password (see botCheck). Say exactly that, so the page offers sign-in and no sign-up form.
+    const noBotProtection = closed;
     return json({
       configured,
       mode: saas ? 'saas' : 'self-host',
       // Self-host only, and only when HOSTED_SERVICE_URL is set: the installer-proof screen mentions it once.
       ...(hostedServiceUrl(env) ? { hosted_service_url: hostedServiceUrl(env) } : {}),
       signup_open: saas && !noBotProtection,
-      signin_available: !noBotProtection,
+      signin_available: true,
       ...(noBotProtection ? { signup_unavailable_reason: 'bot_protection_not_configured' } : {}),
+      // Closed: an OAuth login still signs in an existing user; the user-creation hook refuses a new account.
       oauth_providers: enabledOAuthProviders(env),
       prefill: { name: '', email: '' },
       telemetry_default: telemetryRow?.value === 'true',
@@ -229,14 +245,18 @@ export async function handleAuthRoute(
       || '';
     if (isSetup && !(await verifyBootstrapProof(env, bootstrapProof))) return err('installer proof required', 403);
     const body = await readJson<{ name?: string; email?: string; password?: string; telemetry?: boolean; cf_turnstile_token?: string }>(request);
-    if (!body.email || !body.password) return err('email and password are required', 400);
-    if (body.password.length < 8) return err('password must be at least 8 characters', 400);
+    // Hosted sign-up asks for the email only: the person chooses their password once, on the welcome page the emailed link
+    // opens (POST /api/auth/welcome). A password sent here anyway (older clients, scripts) is replaced there like any
+    // password set before the mailbox was proven.
+    if (!body.email || (isSetup && !body.password)) return err(isSetup ? 'email and password are required' : 'email is required', 400);
+    if (body.password !== undefined && body.password !== '' && body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (!EMAIL_RE.test(body.email)) return err('invalid email', 400);
-    { const bot = await botCheck(env, request, body.cf_turnstile_token); if (bot) return bot; }
+    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signup'); if (bot) return bot; }
 
     const email = body.email.toLowerCase().trim();
     const { res, user } = await signUp(env, request, ctx, isSetup ? { kind: 'setup', bootstrapProof } : { kind: 'signup' }, {
-      name: body.name?.trim() || email, email, password: body.password,
+      // Hosted: no name before the address is proven (it would be whoever typed it); the welcome page asks for one.
+      name: (isSetup ? cleanName(body.name) : '') || email, email, password: body.password || unusablePassword(),
     });
     if (!res.ok || !user) return authError(res, 'sign-up failed');
 
@@ -262,16 +282,27 @@ export async function handleAuthRoute(
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
     const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string }>(request);
     if (!body.email || !body.password) return err('email and password are required', 400);
-    { const bot = await botCheck(env, request, body.cf_turnstile_token); if (bot) return bot; }
+    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signin'); if (bot) return bot; }
+    const email = body.email.toLowerCase().trim();
+    // Per-address failure throttle (10 in 15 minutes), counted the same for addresses with no account, whether or not the
+    // bot check is configured. A password reset (or choosing one from the emailed link) clears it.
+    const wait = await signinWait(env, email);
+    if (wait) {
+      // A device that signed in to this very account before skips the per-address lock (the per-IP limits still apply).
+      const known = await globalQueries(env.DB).users.byEmail(email);
+      if (!known || !(await knownDevice(env, request, known.id))) return throttled(wait);
+    }
 
     const auth = await createAuth(env, request, { ctx });
-    const res = await callAuth(auth, env, request, '/sign-in/email', { body: { email: body.email.toLowerCase().trim(), password: body.password } });
+    const res = await callAuth(auth, env, request, '/sign-in/email', { body: { email, password: body.password } });
     if (!res.ok) {
       if (res.status === 429) return authError(res, 'too many requests');
       // Right password, unproven mailbox (hosted): Better Auth has just sent a fresh verification email.
       if (res.status === 403) return err('verify your email address first — we sent you a new link', 403, 'email_not_verified');
+      await recordSigninFailure(env, email);
       return err('invalid credentials', 401);
     }
+    await clearSigninFailures(env, email);
 
     const { user } = await res.clone().json() as { user: { id: string; email: string } };
     auditUser(env, ctx, user.id, {
@@ -280,38 +311,52 @@ export async function handleAuthRoute(
       resource_type: 'user', resource_id: user.id, resource_name: user.email,
       meta: { ip: request.headers.get('CF-Connecting-IP') ?? 'unknown' },
     });
-    return sessionResponse(request, res, {});
+    const out = sessionResponse(request, res, {});
+    out.headers.append('set-cookie', await deviceCookie(env, user.id, baseUrl(env, url.origin).startsWith('https://')));
+    return out;
   }
 
   // ── POST /api/auth/resend-verification — always the same answer ──
   if (path === '/api/auth/resend-verification' && method === 'POST') {
     if (!isSaas(env)) return err('email verification is not used on this instance', 404);
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
-    const body = await readJson<{ email?: string }>(request);
+    const body = await readJson<{ email?: string; cf_turnstile_token?: string }>(request);
     if (!body.email) return err('email is required', 400);
+    // The same bot check as sign-up (and closed when sign-up is): an address's mail allowance is not free to spend.
+    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signup'); if (bot) return bot; }
     const auth = await createAuth(env, request, { ctx });
     const res = await callAuth(auth, env, request, '/send-verification-email', { body: { email: body.email.toLowerCase().trim(), callbackURL: '/' } });
     if (res.status === 429) return authError(res, 'too many requests');
     return json({ ok: true });
   }
 
-  // ── GET /api/auth/verify-email — the emailed link ──
-  // Proving the mailbox must not hand over an account whose password someone else chose, so a password set before
-  // the address was verified is discarded, every session ends, and the person who clicked sets their own.
-  if (path === '/api/auth/verify-email' && method === 'GET') {
+  // ── GET /api/auth/verify-email — links sent before the welcome-page design ──
+  // Changes nothing and creates nothing: a page moves the token into the welcome page's fragment (no Location carries it).
+  if (path === '/api/auth/verify-email' && method === 'GET') return legacyVerifyLinkPage();
+
+  // ── POST /api/auth/welcome — the emailed link's page: confirm the address and choose the password, in one step ──
+  // See src/auth/welcome.ts. Opening the link does nothing; this POST verifies, replaces any earlier password, ends every
+  // session and signs in. A token works until a password has been chosen with it, for its whole lifetime, from any device.
+  if (path === '/api/auth/welcome' && method === 'POST') {
+    if (!isSaas(env)) return err('email verification is not used on this instance', 404);
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
-    let verified: { id: string } | null = null;
-    const auth = await createAuth(env, request, { ctx, onEmailVerified: u => { verified = u; } });
-    const res = await auth.handler(new Request(request.url, { method: 'GET', headers: request.headers }));
-    if (!verified) return res;
-    const q = globalQueries(env.DB);
-    const { id } = verified as { id: string };
-    if (!(await q.users.hasPassword(id))) return res;
-    await q.users.discardPassword(id);
-    await q.sessions.revokeAll(id);
-    const token = [...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2, '0')).join('');
-    await q.verifications.createResetToken(id, token, Math.floor(Date.now() / 1000));
-    return new Response(null, { status: 302, headers: { location: `/#/reset/${token}` } });
+    const body = await readJson<{ token?: string; password?: string; name?: string }>(request);
+    if (!body.token || !body.password) return err('token and password are required', 400);
+    if (body.password.length < 8) return err('password must be at least 8 characters', 400);
+    if (!(await welcomeAttemptAllowed(env, body.token, clientIp(request)))) return err('Too many requests — try again later', 429);
+    const read = await readVerificationToken(env, body.token);
+    if ('refused' in read) return err(read.refused === 'link_expired' ? 'this link has expired' : 'this link is not valid', read.refused === 'link_expired' ? 410 : 400, read.refused);
+    const done = await completeWelcome(env, read.email, body.password, typeof body.name === 'string' ? body.name : '');
+    if ('refused' in done) return err(done.refused === 'link_used' ? 'a password was already chosen with this link' : 'this link is not valid', done.refused === 'link_used' ? 409 : 400, done.refused);
+    await clearSigninFailures(env, read.email);
+    auditUser(env, ctx, done.userId, {
+      actor_id: done.userId, actor_email: read.email, actor_type: 'user',
+      action: 'auth.email_verified', resource_type: 'user', resource_id: done.userId, resource_name: read.email,
+      meta: { ip: clientIp(request), password: 'chosen' },
+    });
+    const auth = await createAuth(env, request, { ctx });
+    const login = await callAuth(auth, env, request, '/sign-in/email', { body: { email: read.email, password: body.password } });
+    return login.ok ? sessionResponse(request, login, {}) : json({ token: null });
   }
 
   // ── POST /api/auth/logout ───────────────────────────────────
@@ -363,6 +408,7 @@ export async function handleAuthRoute(
     const auth = await createAuth(env, request, { ctx });
     const reset = await callAuth(auth, env, request, '/reset-password', { body: { newPassword: body.password, token: body.token } });
     if (!reset.ok) return reset.status === 429 ? authError(reset, 'too many requests') : err('reset link is invalid or has expired', 400);
+    await clearSigninFailures(env, user.email); // whoever was guessing this account's password no longer holds the person up
     auditUser(env, ctx, user.id, {
       actor_id: user.id, actor_email: user.email, actor_type: 'user',
       action: 'auth.password_reset', resource_type: 'user', resource_id: user.id,
@@ -415,19 +461,24 @@ export async function handleAuthRoute(
 
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
     const body = await readJson<{ name?: string; password?: string }>(request);
-    if (!body.name || !body.password) return err('name and password are required', 400);
-    if (body.password.length < 8) return err('password must be at least 8 characters', 400);
+    // Hosted: the invitee chooses a password once, after verifying (as at sign-up), so none is asked for here.
+    // Hosted: no name either; it is given on the welcome page, after the address is proven.
+    if (!isSaas(env) && (!cleanName(body.name) || !body.password)) return err('name and password are required', 400);
+    if (body.password && body.password.length < 8) return err('password must be at least 8 characters', 400);
 
     // Hosted: holding the link is not proof of owning the address. The invitee gets an ordinary login with no workspace of its
     // own (it must be verified, and sets its password at verification) and then accepts while signed in as that verified address.
     if (isSaas(env)) {
-      const created = await signUp(env, request, ctx, { kind: 'invitee', token: invite.token }, { name: body.name.trim(), email: invite.email, password: body.password });
+      // Closed sign-up creates no account here either. Said explicitly: Better Auth turns a refusal from the user-creation hook
+      // into its generic "check your email" answer while email verification is required, which would look like success.
+      if (await hostedSignupClosed(env)) return err(SIGNUP_CLOSED_MESSAGE, 503);
+      const created = await signUp(env, request, ctx, { kind: 'invitee', token: invite.token }, { name: invite.email, email: invite.email, password: body.password || unusablePassword() });
       if (!created.res.ok) return authError(created.res, 'could not create account');
       return sessionResponse(request, created.res, { verification_required: true, invite_pending: true }, 201);
     }
 
     const { res, user } = await signUp(env, request, ctx, { kind: 'invite', token: invite.token }, {
-      name: body.name.trim(), email: invite.email, password: body.password,
+      name: cleanName(body.name), email: invite.email, password: body.password!, // required above for self-host
     });
     if (!res.ok || !user) return authError(res, 'could not accept invite');
     // Self-host: an invited teammate is verified by the invite itself (there is no verification mail to rely on).
@@ -458,7 +509,12 @@ export async function handleAuthRoute(
       try { parsed = JSON.parse(body as string); } catch { return err('Invalid JSON body', 400); }
       body = JSON.stringify({ ...parsed, revokeOtherSessions: true });
     }
+    // "Sign out everywhere": whoever it is must be known before their sessions go.
+    const everywhere = method === 'POST' && (rel === '/revoke-sessions' || rel === '/revoke-other-sessions');
+    const caller = everywhere ? await currentUser(request, env, ctx).catch(() => null) : null;
     const res = await auth.handler(new Request(request.url, { method, headers, body }));
+    // It also ends this account's device cookies' skip of the per-address sign-in lock (a password change does by itself).
+    if (everywhere && caller && res.ok) await rotateDeviceEpoch(env, caller.id);
     if (fromBrowser(request) && res.headers.has('set-auth-token')) {
       // Same rule as sessionResponse: a browser holds its session in the cookie only.
       const clean = new Response(res.body, res);

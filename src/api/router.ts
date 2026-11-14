@@ -83,7 +83,10 @@ import { handleAccessRoutes } from '../access/routes';
 import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
+import { handleReportAddressRoutes } from '../hosted/report-address-routes';
 import { handleAnalyticsRoutes } from '../analytics/routes';
+import { reportVisibility, reporterMix } from '../reports/visibility';
+import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
 import { handleConnectionRoutes } from '../connections/routes';
 import { TokenEnvelopeError, TokenKeyError } from '../connections/crypto';
 import { handleWorkspaceRoutes, isWorkspaceRoute } from '../workspaces/routes';
@@ -104,7 +107,8 @@ import { getMode } from '../tenancy/mode';
 import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
-import { admitDomain, claimView, listClaims, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, demoteOrphanedSubdomains, listClaims, settleClaims, verifyClaim } from '../domains/ownership';
+import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, assertDomainRoom, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError } from '@ready-set-mail/db';
 import { planLimitResponse } from '../hosted/plan-limits';
@@ -163,7 +167,8 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 
 function withSecurityHeaders(response: Response, saas = false): Response {
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+  // A page that set its own Referrer-Policy (the old-style verification link's page: no-referrer) keeps it.
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!(k === 'Referrer-Policy' && headers.has(k))) headers.set(k, v);
   if (saas) headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -266,6 +271,9 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   }
 
   await tenant.scope.domains.delete(id);
+  // Subdomains admitted only through this domain are no longer proven by anything (src/domains/ownership.ts).
+  const orphaned = await demoteOrphanedSubdomains(tenant);
+  if (orphaned.length) console.warn(`[domains] ${orphaned.length} subdomain(s) of ${domain.domain} lost their proof and are now unproven`);
 
   logAudit(tenant, {
     actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user',
@@ -279,10 +287,19 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   return new Response(null, { status: 204 });
 }
 
+/** A stored report as the API shows it: whether it counts toward the numbers, and without the storing attempt's internal id. */
+function withCounted<T extends { reporter_auth: string | null; reporter_tier?: string | null; reporter_identity?: string | null; report_id?: string; ingest_token?: string | null }>(tenant: TenantContext, r: T): Omit<T, 'ingest_token'> & { counted: boolean } {
+  const { ingest_token: _ingest, ...rest } = r;
+  const counted = tenant.scope.counting === 'all' ? true : tenant.scope.counting === 'authenticated' ? r.reporter_auth === 'pass' : r.reporter_tier === 'counted';
+  // stored as '<identity>|<id from the report>' (every tier); a plain id is a legacy row
+  const report_id = r.report_id && r.reporter_identity && r.report_id.startsWith(r.reporter_identity + '|') ? r.report_id.slice(r.reporter_identity.length + 1) : r.report_id;
+  return { ...rest, ...(report_id !== undefined ? { report_id } : {}), counted };
+}
+
 async function getReports(tenant: TenantContext, url: URL): Promise<Response> {
   const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '30', 10), 100);
   const results = await tenant.scope.reports.recent(limit);
-  return json({ reports: results });
+  return json({ reports: results.map((r) => withCounted(tenant, r)), report_counting: tenant.scope.counting });
 }
 
 async function getReport(tenant: TenantContext, reportId: string): Promise<Response> {
@@ -295,7 +312,7 @@ async function getReport(tenant: TenantContext, reportId: string): Promise<Respo
 
   const records = await tenant.scope.reports.records(id);
 
-  return json({ report, records });
+  return json({ report: withCounted(tenant, report), records });
 }
 
 async function getCheckResults(tenant: TenantContext): Promise<Response> {
@@ -322,8 +339,9 @@ async function getDomainStatsSummary(tenant: TenantContext, domainId: string, ur
   const days = Math.min(isNaN(rawDays) ? 30 : rawDays, 90);
   const since = Math.floor(Date.now() / 1000) - days * 86400;
 
-  const results = await tenant.scope.reports.dailyStats(id, since);
-  return json({ domain: domain.domain, days, stats: results });
+  const [results, visibility] = await Promise.all([tenant.scope.reports.dailyStats(id, since), reportVisibility(tenant, id, since)]);
+  // `stats` counts only what counts (REPORT_COUNTING); the rest says what was left out and what could not be stored.
+  return json({ domain: domain.domain, days, stats: results, ...visibility });
 }
 
 async function exportDomainData(tenant: TenantContext, domainId: string): Promise<Response> {
@@ -335,11 +353,11 @@ async function exportDomainData(tenant: TenantContext, domainId: string): Promis
 
   const results = await tenant.scope.reports.exportData(id);
 
-  const header = 'date,org_name,total_count,pass_count,fail_count,source_ip,header_from,spf_result,spf_domain,dkim_result,dkim_domain,record_count,disposition\n';
+  const header = 'date,org_name,total_count,pass_count,fail_count,source_ip,header_from,spf_result,spf_domain,dkim_result,dkim_domain,record_count,disposition,counted\n';
   const rows = results.map(r =>
     [r.date, r.org_name, r.total_count, r.pass_count, r.fail_count,
      r.source_ip ?? '', r.header_from ?? '', r.spf_result ?? '', r.spf_domain ?? '',
-     r.dkim_result ?? '', r.dkim_domain ?? '', r.record_count ?? '', r.disposition ?? '']
+     r.dkim_result ?? '', r.dkim_domain ?? '', r.record_count ?? '', r.disposition ?? '', r.counted ? 'yes' : 'no']
     .map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
   ).join('\n');
 
@@ -352,7 +370,7 @@ async function exportDomainData(tenant: TenantContext, domainId: string): Promis
   });
 }
 
-async function getDomainCheckSummary(tenant: TenantContext, domainId: string): Promise<Response> {
+async function getDomainCheckSummary(tenant: TenantContext, domainId: string, ctx?: ExecutionContext): Promise<Response> {
   const id = parseInt(domainId, 10);
   if (isNaN(id)) return err('invalid domain id', 400);
 
@@ -360,10 +378,13 @@ async function getDomainCheckSummary(tenant: TenantContext, domainId: string): P
   if (!domain) return err('domain not found', 404);
 
   const since = Math.floor(Date.now() / 1000) - 30 * 86400;
-  const summary = await tenant.scope.reports.checkSummary(id, since);
+  const [summary, visibility] = await Promise.all([tenant.scope.reports.checkSummary(id, since), reportVisibility(tenant, id, since)]);
   if (!summary) return err('check summary not found', 404);
+  // Stored before pct= was recorded: the level stands (marked not re-checked); this view starts the refresh that records it.
+  // Several views at once: the first to reserve it runs the one refresh.
+  if (ctx && needsPctRecheck(summary) && (await reservePctRecheck(tenant, id))) ctx.waitUntil(recheckStoredDns(tenant, id, domain.domain));
 
-  return json(summary);
+  return json({ ...summary, ...visibility });
 }
 
 /** Page size for /api/domains/summaries: the overview asks for all of a workspace's domains, a page at a time. */
@@ -664,6 +685,8 @@ async function _handleApi(
 
   const leadResponse = await handleLeadRoutes(request, env, instanceOwner);
   if (leadResponse) return leadResponse;
+  const reporterResponse = await handleUnknownReporterRoutes(request, env, instanceOwner);
+  if (reporterResponse) return reporterResponse;
 
   try {
     // POST /api/settings/base-domain — wizard step 0: set the base domain
@@ -718,6 +741,8 @@ async function _handleApi(
         throw e;
       }
       if (created !== null) await settleClaims(tenant, domain);
+      // Hosted, proven through a parent domain or a Cloudflare zone: store the first DNS read, so the overview shows the real level.
+      if (created !== null && isClaimProof(admission.via)) await recordFirstDnsCheck(tenant, created, domain);
       await refreshTenant(tenant);
       const zoneId = tenant.settings.zoneId;
       const cfAccountId = tenant.settings.cfAccountId;
@@ -789,7 +814,7 @@ async function _handleApi(
       await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending
       const outcome = await verifyClaim(tenant, claim);
       if (outcome.kind === 'taken') return json({ error: 'another workspace has already verified this domain', code: 'domain_taken', claim: claimView({ ...claim, status: 'lost' }) }, 409);
-      if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);
+      if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, ...(outcome.code ? { code: outcome.code } : {}), claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);
       const result = await commitVerifiedDomain(tenant, claim.domain, outcome.via, userBySession?.email, ctx, userBySession?.id);
       return json(result, result.resumed ? 200 : 201);
     }
@@ -866,7 +891,7 @@ async function _handleApi(
     // GET /api/domains/:id/check-summary — DMARC/SPF/DKIM/MTA-STS summary for PDF report
     const checkSummaryMatch = path.match(/^\/api\/domains\/([^/]+)\/check-summary$/);
     if (checkSummaryMatch && method === 'GET') {
-      return await getDomainCheckSummary(tenant, checkSummaryMatch[1]);
+      return await getDomainCheckSummary(tenant, checkSummaryMatch[1], ctx);
     }
     const healthReportMatch = path.match(/^\/api\/domains\/(\d+)\/health-report$/);
     if (healthReportMatch && method === 'GET') {
@@ -1432,8 +1457,12 @@ async function _handleApi(
       const nextStep = plan?.step ?? null;
 
       // Safety: block if pass rate is below threshold
-      const blocked = passRate !== null && passRate < PASS_RATE_THRESHOLD;
-      const blockReason = blocked
+      // Advice rests on counted data from a major reporter (Google or Microsoft), never on uncounted data alone.
+      const noMajorReporter = tenant.scope.counting === 'registry' && passRate !== null && !reporterMix(await tenant.scope.reports.counted(id, since30d)).major;
+      const blocked = (passRate !== null && passRate < PASS_RATE_THRESHOLD) || noMajorReporter;
+      const blockReason = noMajorReporter
+        ? 'No counted report from Google or Microsoft yet — advice needs at least one'
+        : blocked
         ? `Pass rate is ${passRate}% — must be ≥${PASS_RATE_THRESHOLD}% to advance`
         : null;
 
@@ -1992,6 +2021,10 @@ async function _handleApi(
     // /api/cloudflare/* and /api/domains/:id/connection — Cloudflare connections (owner/admin)
     const connectionResponse = await handleConnectionRoutes(request, tenant, ctx, { role: workspace.role, user: userBySession });
     if (connectionResponse) return connectionResponse;
+
+    // /api/domains/:id/report-address — a report address without hosted records (MODE=saas with INTAKE_DOMAIN)
+    const reportAddressResponse = await handleReportAddressRoutes(request, tenant, ctx, { id: userBySession?.id, email: userBySession?.email });
+    if (reportAddressResponse) return reportAddressResponse;
 
     // /api/domains/:id/hosted — hosted records (MODE=saas only)
     const hostedResponse = await handleHostedRoutes(request, tenant, ctx, { id: userBySession?.id, email: userBySession?.email });

@@ -518,7 +518,7 @@ describe('domain page for a name that does not resolve', () => {
 						dns_check_status: nxdomain ? 'nxdomain' : 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: nxdomain ? 'nxdomain' : 'ok', total_messages: 0, pass_messages: 0, fail_messages: 0,
 						dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: null, dmarc_sp: null,
 					},
-					'GET /api/hosted/config': { enabled: true, records: true },
+					'GET /api/hosted/config': { enabled: true, reports: false, records: true },
 					'GET /api/domains/7/hosted': { enabled: false },
 				},
 			},

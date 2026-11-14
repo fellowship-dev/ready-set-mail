@@ -33,8 +33,9 @@ describe('email verification', () => {
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: 'Create an account' }));
 		await user.type(screen.getByLabelText('Email'), 'new@example.com');
-		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
-		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
+		// Hosted sign-up asks for the email only: the password is chosen once, on the page the emailed link opens.
+		expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Create account' }));
 		return user;
 	}
@@ -49,7 +50,7 @@ describe('email verification', () => {
 		expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
 		expect(screen.getByLabelText('Verification email address')).toHaveTextContent('new@example.com');
 		await user.click(screen.getByRole('button', { name: 'Resend verification email' }));
-		expect(await screen.findByText(/Verification email sent/)).toBeInTheDocument();
+		expect(await screen.findByText('If this address is waiting to be confirmed, a new link is on its way. It can take a minute to arrive.')).toBeInTheDocument();
 		expect(calls.find((c) => c.path === '/api/auth/resend-verification')?.body).toEqual({ email: 'new@example.com' });
 	});
 
