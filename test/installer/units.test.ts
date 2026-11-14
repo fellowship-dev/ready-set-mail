@@ -26,7 +26,7 @@ describe('flags', () => {
   });
   it.each([
     [['--name', 'Ready_Set'], /lowercase/],
-    [['--name', '-x'], /lowercase/],
+    [['--name', 'x-'], /lowercase/],
     [['--name', 'a'.repeat(64)], /1-63/],
     [['--url', 'http://mail.example.com'], /https/],
     [['--url', 'https://mail.example.com/app'], /origin only/],

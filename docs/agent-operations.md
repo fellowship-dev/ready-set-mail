@@ -4,33 +4,13 @@ The same installation serves its dashboard, HTTP API and MCP endpoint. Self-host
 
 ## Installer setup
 
-Each installation needs its own migrated D1 database, `OAUTH_KV` namespace and canonical HTTPS origin. Do not reuse another installation's OAuth namespace, database or credentials. In `wrangler.jsonc`, replace the D1 database id and `REPLACE_WITH_INSTALLATION_OAUTH_KV_ID` with the resources you created:
+Install with `npm run setup` ([self-hosting guide](self-hosting.md)). It gives the installation its own D1 database, `OAUTH_KV` namespace and canonical HTTPS origin (`BETTER_AUTH_URL`, the workers.dev address unless you pass `--url`), generates the private first-owner proof (`BOOTSTRAP_SECRET`) and `TOKEN_ENCRYPTION_KEY` without printing them, backs both up to `~/.config/ready-set-mail/<name>/` (mode 0600), deploys with them, and prints one setup link. Doing it by hand: [manual install](self-hosting.md#manual-install). Never reuse another installation's OAuth namespace, database or credentials.
 
-```sh
-npx wrangler d1 create ready-set-mail
-npx wrangler kv namespace create OAUTH_KV
-```
+`BETTER_AUTH_URL` must be the exact public origin: no path, query, fragment or embedded credentials; an explicitly configured HTTPS port is part of it. `PUBLIC_BASE_URL` is accepted as an origin fallback for MCP, but `BETTER_AUTH_URL` keeps browser auth, callbacks and agent issuer aligned. A request sent to a different origin is refused. Preserve the configured Worker-first routes for `/mcp`, `/oauth/*` and OAuth discovery; an SPA fallback must not serve those endpoints.
 
-Set `BETTER_AUTH_URL` in Worker vars to the exact public origin, for example `https://mail.example.com`. It must have no path, query, fragment or embedded credentials. An explicitly configured HTTPS port is part of that origin. `PUBLIC_BASE_URL` is accepted as an origin fallback for MCP, but setting `BETTER_AUTH_URL` keeps browser auth, callbacks and agent issuer aligned. A request sent to a different origin is refused. Preserve the configured Worker-first routes for `/mcp`, `/oauth/*` and OAuth discovery; an SPA fallback must not serve those endpoints.
+**The first owner.** Whoever opens the setup link first becomes the owner; the installer prints it once, with that warning. The proof travels in the link's fragment (after `#`), which browsers never send to the server. The dashboard reads it there and sends it only in the `X-Ready-Set-Mail-Bootstrap` header alongside the owner account form; it is not a JSON-body field. Where the dashboard asks for the proof instead, paste it from the backup file through a trusted local editor. As an agent, **never ask for the proof or a password in chat**, and never put the proof in a log, a commit or anywhere but that one link handed to the person who should own the instance. The configured value must be at least 32 characters; accepted submissions are capped at 512. A proof is consumed by successful owner setup and cannot reopen signup. Email/password setup does not require SMTP, Google or GitHub sign-in. Social sign-in cannot claim first ownership.
 
-Before deployment and first-owner setup, generate an installer-held random proof in a **new private file outside the checkout**. For example:
-
-```sh
-mkdir -p "$HOME/.config/ready-set-mail"
-chmod 700 "$HOME/.config/ready-set-mail"
-bootstrap_file="$HOME/.config/ready-set-mail/bootstrap-proof"
-(umask 077; set -C; openssl rand -hex 32 > "$bootstrap_file")
-```
-
-Stop if the file already exists; use a new private path instead of overwriting an existing proof. The commands do not print its value. Upload through standard input:
-
-```sh
-npx wrangler secret put BOOTSTRAP_SECRET < "$bootstrap_file"
-```
-
-Store the proof privately (for example, in the installer's password manager). Open the file through a trusted local editor when entering it into the browser's masked **Installer proof** field. Never print it, paste it into agent chat, put it in a URL or commit it. The dashboard sends it only in `X-Ready-Set-Mail-Bootstrap`, alongside the owner account form; the proof is not a JSON-body field. The configured value must be at least 32 characters; accepted submissions are capped at 512 characters. A proof is consumed after successful owner setup and cannot reopen signup. Email/password setup does not require SMTP, Google or GitHub sign-in. Social sign-in cannot claim first ownership.
-
-Apply migrations and build before serving the new code (`npm run deploy` performs build → migration → deploy). The one-click deployment is a starting point: it does not remove the namespace, canonical-origin or installer-proof steps. Creating a deployment is separate from verifying its browser and MCP behavior.
+Upgrades build, migrate and deploy in that order (`npm run deploy`). Creating a deployment is separate from verifying its browser and MCP behavior.
 
 ## First useful report
 

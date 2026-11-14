@@ -1,12 +1,7 @@
-# Ready Set Mail Worker — secrets
-# Deploy button: fill these in during setup.
-# CLI: copy to .dev.vars for local dev, or set via: wrangler secret put <NAME>
+# Ready Set Mail Worker: optional secrets for local development (`npm run dev`).
+# Copy to .dev.vars (git-ignored). A deployed instance gets its secrets from `npm run setup`
+# (docs/self-hosting.md); set others there with `npm run wrangler -- secret put <NAME>`.
 
-# ── Cloudflare API token (runtime) ───────────────────────────────────────────
-# See README → "Before you start" for step-by-step instructions and required permissions.
-# ⚠️  This is NOT the same token the deploy button auto-creates for deployment.
+# Optional: a Cloudflare API token the Worker uses to write DNS and Email Routing.
+# Permissions and what each is for: docs/self-hosting.md#permissions
 CLOUDFLARE_API_TOKEN=
-
-# Your Cloudflare Zone ID — find it at:
-# dash.cloudflare.com → click your domain → right sidebar → Zone ID
-CLOUDFLARE_ZONE_ID=
