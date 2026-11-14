@@ -89,6 +89,7 @@ import { reportVisibility, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
 import { handleConnectionRoutes } from '../connections/routes';
 import { handleOnboardingRoutes } from '../onboarding/routes';
+import { handleDnsHostRoute } from '../domains/dns-host-routes';
 import { TokenEnvelopeError, TokenKeyError } from '../connections/crypto';
 import { handleWorkspaceRoutes, isWorkspaceRoute } from '../workspaces/routes';
 import { handleAccountRoutes, isAccountRoute } from '../account/routes';
@@ -795,6 +796,9 @@ async function _handleApi(
         return err('Failed to fetch zones from Cloudflare', 502);
       }
     }
+
+    const dnsHostResponse = await handleDnsHostRoute(request, tenant, { userId: workspace.userId }); // GET /api/domains/dns-host?name=
+    if (dnsHostResponse) return dnsHostResponse;
 
     // GET /api/domains
     if (path === '/api/domains' && method === 'GET') {
