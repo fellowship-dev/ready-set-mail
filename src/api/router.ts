@@ -76,6 +76,7 @@
 import type { BoundEnv as Env } from '../index';
 import { AuthError } from './auth';
 import { version } from '../../package.json';
+import { checkForUpdate } from '../update-check';
 import { hostedServiceUrl } from '../hosted-service';
 import { globals } from '../db/scope';
 import { handleAuthRoute } from '../auth/routes';
@@ -501,33 +502,12 @@ async function _handleApi(
     return json({ ok: true, version, ts: Date.now() });
   }
 
-  // GET /api/version — compares running version against latest GitHub release
-  // Cached for 24h per-instance via CF Cache API — one GitHub request per day max
+  // GET /api/version — the running version against the latest PUBLISHED GitHub release (src/update-check.ts:
+  // semantic-version comparison, cached in memory and OAUTH_KV, 5 s timeout, "unknown" when GitHub cannot be reached,
+  // off with UPDATE_CHECK=off and in MODE=saas). Never reads the main branch.
   if (path === '/api/version' && method === 'GET') {
-    const GH_RAW = 'https://raw.githubusercontent.com/fellowship-dev/ready-set-mail/main/package.json';
-    const cacheKey = new Request(GH_RAW);
-    let latest: string | null = null;
-    try {
-      const cached = await caches.default.match(cacheKey);
-      if (cached) {
-        const pkg = await cached.json() as { version: string };
-        latest = pkg.version;
-      } else {
-        const res = await fetch(GH_RAW);
-        if (res.ok) {
-          const pkg = await res.json() as { version: string };
-          latest = pkg.version;
-          ctx.waitUntil(caches.default.put(cacheKey, new Response(JSON.stringify(pkg), {
-            headers: { 'Cache-Control': 'max-age=86400', 'Content-Type': 'application/json' },
-          })));
-        }
-      }
-    } catch { /* GitHub unreachable — return current only */ }
     return json({
-      current: version,
-      latest,
-      update_available: latest !== null && latest !== version,
-      release_url: 'https://github.com/fellowship-dev/ready-set-mail/releases/latest',
+      ...(await checkForUpdate(env)),
       // Only when HOSTED_SERVICE_URL is set on a self-hosted installation (src/hosted-service.ts).
       ...(hostedServiceUrl(env) ? { hosted_service_url: hostedServiceUrl(env) } : {}),
     });

@@ -11,22 +11,11 @@ import type { DomainWeeklyStat, FailingSource } from '@ready-set-mail/db';
 import { buildWeeklyDigestHtml } from '../email/html-templates';
 import { sendNonTransactional } from '../mail/compliance';
 import { ownerMailer } from '../mail/mailer';
-import { version } from '../../package.json';
+import { checkForUpdate, type UpdateInfo } from '../update-check';
 import { uncountedNotice } from '../reports/visibility';
 
-const GH_RAW = 'https://raw.githubusercontent.com/fellowship-dev/ready-set-mail/main/package.json';
-const RELEASE_URL = 'https://github.com/fellowship-dev/ready-set-mail/releases/latest';
-
-async function fetchLatestVersion(): Promise<string | null> {
-  try {
-    const res = await fetch(GH_RAW);
-    if (!res.ok) return null;
-    const pkg = await res.json() as { version: string };
-    return pkg.version ?? null;
-  } catch {
-    return null;
-  }
-}
+/** The update line of a digest: only when a newer published release exists (src/update-check.ts). */
+export type DigestUpdate = Pick<UpdateInfo, 'current' | 'latest' | 'release_url' | 'upgrade_url'>;
 
 // ── Formatting ────────────────────────────────────────────────
 
@@ -84,7 +73,7 @@ export function buildDigestBody(
   weekLabel: string,
   ruaAddress: string,
   reportsDomain: string,
-  latestVersion: string | null = null,
+  update: DigestUpdate | null = null,
 ): string {
   const lines: string[] = [
     `Hi ${recipientName},`,
@@ -106,10 +95,11 @@ export function buildDigestBody(
     lines.push('');
   }
 
-  if (latestVersion && latestVersion !== version) {
+  if (update?.latest) {
     lines.push('─────────────────────────────');
-    lines.push(`📦 Update available: v${latestVersion} (you're on v${version})`);
-    lines.push(`${RELEASE_URL}`);
+    lines.push(`📦 Ready Set Mail v${update.latest} is available (you're on v${update.current}).`);
+    lines.push(`Release notes: ${update.release_url}`);
+    lines.push(`How to upgrade: ${update.upgrade_url}`);
     lines.push('');
   }
 
@@ -159,11 +149,6 @@ export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now())
   }
   const ruaAddress = `rua@${rd}`;
 
-  const latestVersion = await fetchLatestVersion();
-  if (latestVersion && latestVersion !== version) {
-    console.log(`[digest] update available: v${latestVersion} (running v${version})`);
-  }
-
   // Single-tenant: get admin user email for digest delivery
   const q = tenant.scope;
   const admin = await q.team.firstAdmin();
@@ -188,7 +173,13 @@ export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now())
       }
     }
 
-    const body = buildDigestBody(admin.name ?? 'there', stats, sourcesByDomain, weekLabel, ruaAddress, rd, latestVersion);
+    // Only for a digest that is sent. Off in MODE=saas and with UPDATE_CHECK=off; cached, so a run over many
+    // workspaces makes at most one GitHub call.
+    const check = await checkForUpdate(tenant.env);
+    const update: DigestUpdate | null = check.status === 'newer' ? check : null;
+    if (update) console.log(`[digest] update available: v${update.latest} (running v${update.current})`);
+
+    const body = buildDigestBody(admin.name ?? 'there', stats, sourcesByDomain, weekLabel, ruaAddress, rd, update);
     const html = buildWeeklyDigestHtml({
       recipientName: admin.name ?? 'there',
       stats,
@@ -196,8 +187,7 @@ export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now())
       weekLabel,
       ruaAddress,
       reportsDomain: rd,
-      latestVersion,
-      currentVersion: version,
+      update,
       brand: tenant.brand,
     });
     const hasIssues = stats.some(s => s.fail_messages > 0 || !s.dmarc_policy || s.dmarc_policy === 'none');

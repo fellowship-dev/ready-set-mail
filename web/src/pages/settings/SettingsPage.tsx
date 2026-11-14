@@ -18,8 +18,36 @@ import { SetupCheck } from '../../components/SetupCheck';
 interface VersionInfo {
 	current: string;
 	latest: string | null;
+	status?: 'newer' | 'same' | 'older' | 'unknown' | 'off';
 	update_available: boolean;
 	release_url: string;
+	upgrade_url?: string;
+}
+
+/** What the update check found, in words. "Could not check" is never shown as "up to date". */
+function versionNote(v: VersionInfo): React.ReactNode {
+	const status = v.status ?? (v.update_available ? 'newer' : v.latest && v.latest === v.current ? 'same' : 'unknown');
+	if (status === 'newer' && v.latest) {
+		return (
+			<>
+				<a className="text-brand-ink underline underline-offset-4" href={v.release_url} target="_blank" rel="noreferrer">
+					v{v.latest} available
+				</a>
+				{v.upgrade_url ? (
+					<>
+						{' · '}
+						<a className="text-brand-ink underline underline-offset-4" href={v.upgrade_url} target="_blank" rel="noreferrer">
+							How to upgrade
+						</a>
+					</>
+				) : null}
+			</>
+		);
+	}
+	if (status === 'same') return <span className="text-ink-2">(up to date)</span>;
+	if (status === 'older') return <span className="text-ink-2">(newer than the latest release, v{v.latest})</span>;
+	if (status === 'off') return <span className="text-ink-2">(update check off)</span>;
+	return <span className="text-ink-2">(could not check for updates)</span>;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -101,14 +129,7 @@ export function SettingsPage() {
 									<span className="text-ink-2">Could not check for updates</span>
 								) : (
 									<>
-										v{version.data.current}{' '}
-										{version.data.update_available ? (
-											<a className="text-brand-ink underline underline-offset-4" href={version.data.release_url} target="_blank" rel="noreferrer">
-												v{version.data.latest} available
-											</a>
-										) : (
-											<span className="text-ink-2">(up to date)</span>
-										)}
+										v{version.data.current} {versionNote(version.data)}
 									</>
 								)}
 							</Row>

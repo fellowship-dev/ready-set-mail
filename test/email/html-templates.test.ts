@@ -56,8 +56,7 @@ describe('buildWeeklyDigestHtml', () => {
       weekLabel: 'Mar 24, 2025',
       ruaAddress: 'rua@reports.acme.com',
       reportsDomain: 'reports.acme.com',
-      latestVersion: null,
-      currentVersion: '1.0.0',
+      update: null,
       ...overrides,
     };
   }
