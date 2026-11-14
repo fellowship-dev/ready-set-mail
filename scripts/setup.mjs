@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { main } from './setup/install.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const wranglerBin = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler');
+// macOS and Linux. Windows is not supported directly; WSL works like Linux.
+const wranglerBin = join(repoRoot, 'node_modules', '.bin', 'wrangler');
 // Never hand a generated secret to a child process through the environment.
 const SCRUB = ['BOOTSTRAP_SECRET', 'TOKEN_ENCRYPTION_KEY', 'BETTER_AUTH_SECRET'];
 

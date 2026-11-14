@@ -17,9 +17,9 @@
 		"run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*", "/health", "/llms.txt"]
 	},
 	"compatibility_date": "2025-03-01",
-	// Set explicitly so Wrangler's defaults never decide: the Worker answers at https://<name>.<your-subdomain>.workers.dev,
-	// and per-version preview URLs are off (an installation serves one origin, its BETTER_AUTH_URL).
-	"workers_dev": true,
+	// Per-version preview URLs are off: an installation serves one origin, its BETTER_AUTH_URL.
+	// workers_dev is deliberately not set here: `npm run setup` sets it in wrangler.local.jsonc (true unless the
+	// account has no workers.dev subdomain), so an instance on its own domain that copies this file keeps its setting.
 	"preview_urls": false,
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 	"observability": {

@@ -22,10 +22,12 @@ Options:
   --config-dir <dir>     Where state and backups are kept (default: ~/.config/ready-set-mail)
   --new-link             Print a fresh owner setup link for --name (no redeploy)
   --uninstall            Delete what this installer created for --name (asks you to type the name)
+  --no-export            With --uninstall: do not export the database to the backup folder first
   --confirm <name>       With --uninstall and no terminal: the name, typed in advance
   --help, -h             Show this help
 
 Credentials: set CLOUDFLARE_API_TOKEN, or log in once with \`npx wrangler login\`.
+Runs on macOS and Linux (on Windows, use WSL).
 `;
 
 const OPTIONS = {
@@ -40,6 +42,7 @@ const OPTIONS = {
   uninstall: { type: 'boolean' },
   'new-link': { type: 'boolean' },
   confirm: { type: 'string' },
+  'no-export': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 };
 
@@ -86,14 +89,16 @@ export function parseArgs(argv) {
     uninstall: !!v.uninstall,
     newLink: !!v['new-link'],
     confirm: v.confirm ?? null,
+    noExport: !!v['no-export'],
   };
   if (opts.accountId !== null && !/^[0-9a-f]{32}$/.test(opts.accountId)) {
     throw new UsageError('--account-id must be a 32-character Cloudflare account ID');
   }
   if (opts.uninstall && (opts.url || opts.resume || opts.dryRun)) {
-    throw new UsageError('--uninstall takes only --name, --account-id, --confirm, --yes, --json and --config-dir');
+    throw new UsageError('--uninstall takes only --name, --account-id, --confirm, --no-export, --yes, --json and --config-dir');
   }
   if (opts.newLink && (opts.uninstall || opts.url || opts.resume || opts.dryRun)) throw new UsageError('--new-link takes only --name, --json and --config-dir');
+  if (opts.noExport && !opts.uninstall) throw new UsageError('--no-export is only used with --uninstall');
   if (opts.confirm !== null && !opts.uninstall) throw new UsageError('--confirm is only used with --uninstall');
   return opts;
 }

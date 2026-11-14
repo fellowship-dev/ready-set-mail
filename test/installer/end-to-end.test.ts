@@ -2,11 +2,12 @@
 // the exact sequence of API calls and commands, the files it leaves, and that no secret is printed
 // except inside the one setup link.
 import { describe, expect, it } from 'vitest';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, statSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
 import { main } from '../../scripts/setup/install.mjs';
+import { ratelimitBase } from '../../scripts/setup/config.mjs';
 import { createFakeCloudflare, fakeDeps, TOKEN, ACCOUNT, OTHER_ACCOUNT } from './fake-cloudflare.mjs';
 
 /** A throwaway checkout: the files the installer reads, and a stub where npm install would have put Wrangler. */
@@ -29,11 +30,18 @@ const expectedLink = (url: string, expiry = EXPIRY) =>
   `${url}/#/setup?t=${expiry}.${createHmac('sha256', PROOF).update(`setup-link:${expiry}`).digest('base64url')}`;
 /** Sentences that frighten instead of help. None may appear in any output. */
 const SCARE = /whoever|do not share|don't share|first (person|one)|becomes the owner|warning|keep it safe/i;
+/** The one allowed proof sentence (until every instance accepts the link). */
+const FALLBACK = /^If the page asks for an installer proof, paste the contents of \S+\/bootstrap-proof\.$/;
 const NEWEST = readFileSync('packages/db/src/ready.ts', 'utf8').match(/REQUIRED_MIGRATION = '([^']+)'/)![1];
 
 async function run(argv: string[], opts: Parameters<typeof fakeDeps>[0]) {
   const d = fakeDeps(opts);
   const code = await main(argv, d.deps);
+  const all = d.out.join('') + d.err.join('');
+  // No path a person can reach ends in an unexplained error, and the secrets never appear.
+  expect(all).not.toMatch(/unexpected error/i);
+  expect(all).not.toContain(PROOF);
+  expect(all).not.toContain(KEY);
   return { code, out: d.out.join(''), err: d.err.join('') };
 }
 
@@ -51,13 +59,24 @@ describe('npm run setup (fake Cloudflare)', () => {
       'GET /accounts/<acct>/d1/database',
       'GET /accounts/<acct>/storage/kv/namespaces',
       'GET /accounts/<acct>/workers/subdomain',
+      // Rate-limit ids already used by other Workers in the account (none here).
+      'GET /accounts/<acct>/workers/scripts',
       'POST /accounts/<acct>/d1/database',
       'POST /accounts/<acct>/storage/kv/namespaces',
       '$ npm run build:dashboard',
       '$ wrangler d1 migrations apply DB --remote --config wrangler.local.jsonc',
+      // Re-read just before deploying: a Worker that appeared since must be ours.
+      'GET /accounts/<acct>/workers/scripts',
+      'GET /accounts/<acct>/d1/database',
+      'GET /accounts/<acct>/storage/kv/namespaces',
       '$ wrangler deploy --config wrangler.local.jsonc --secrets-file <file>',
+      // Recorded only after the deploy, with the identity Cloudflare reports.
+      'GET /accounts/<acct>/workers/scripts',
+      'GET /accounts/<acct>/d1/database',
+      'GET /accounts/<acct>/storage/kv/namespaces',
+      'GET /accounts/<acct>/workers/scripts/ready-set-mail/settings',
       'GET https://ready-set-mail.<sub>.workers.dev/health',
-      'POST /accounts/<acct>/d1/database/<id>/query'.replace('<id>', fake.world.d1[0].id),
+      `POST /accounts/<acct>/d1/database/${fake.world.d1[0].id}/query`,
       'GET https://ready-set-mail.<sub>.workers.dev/api/auth/status',
     ]);
 
@@ -77,7 +96,9 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(r.out).not.toContain(KEY);
     expect(r.out).not.toContain(PROOF);
     expect(r.out).not.toMatch(SCARE);
-    expect(r.out).toContain(`Ready Set Mail is running at https://ready-set-mail.example.workers.dev. Open this link to create your owner account:\n\n  ${expectedLink('https://ready-set-mail.example.workers.dev')}\n\nThe link works once and expires in 15 minutes. Need a new one? npm run setup -- --new-link --name ready-set-mail\n`);
+    expect(r.out).toContain(`Ready Set Mail is running at https://ready-set-mail.example.workers.dev. Open this link to create your owner account:\n\n  ${expectedLink('https://ready-set-mail.example.workers.dev')}\n\nThe link works once and expires in 15 minutes. Need a new one? npm run setup -- --new-link --name ready-set-mail\nIf the page asks for an installer proof, paste the contents of ${join(home, '.config', 'ready-set-mail', 'ready-set-mail', 'bootstrap-proof')}.\n`);
+    // The only sentence about the proof is the neutral fallback line.
+    expect(r.out.split('\n').filter(l => /proof/i.test(l) && !/first-owner/.test(l))).toEqual([expect.stringMatching(FALLBACK)]);
     expect(r.out).toContain('git pull && npm install && npm run deploy');
     expect(r.out).toContain('npm run setup -- --uninstall --name ready-set-mail');
     expect(r.out).toMatch(/Connect Cloudflare/);
@@ -132,7 +153,7 @@ describe('npm run setup (fake Cloudflare)', () => {
     const fake = createFakeCloudflare({ repoRoot: repo, workers: ['ready-set-mail'], kv: [{ id: 'f'.repeat(32), title: 'ready-set-mail-oauth' }] });
     const r = await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/already has a Worker named "ready-set-mail", a KV namespace named "ready-set-mail-oauth", not created by this installer/);
+    expect(r.out).toMatch(/already has a Worker named "ready-set-mail" \(this installer has no record of deploying it[^)]*\)\), a KV namespace named "ready-set-mail-oauth", not created by this installer/);
     expect(r.out).toMatch(/--name ready-set-mail-2/);
     expect(fake.calls.filter(c => !c.startsWith('GET'))).toEqual([]);
     expect(existsSync(join(repo, 'wrangler.local.jsonc'))).toBe(false);
@@ -177,7 +198,7 @@ describe('npm run setup (fake Cloudflare)', () => {
     const fake = createFakeCloudflare({ repoRoot: repo });
     const r = await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: 'wrong' } });
     expect(r.code).toBe(1);
-    expect(r.out).toMatch(/did not work .*Authentication error/);
+    expect(r.out).toMatch(/is invalid or has expired .*Authentication error.*Create a fresh API token.*Nothing was changed/s);
     expect(r.out).not.toContain('wrong');
   });
 
@@ -204,15 +225,88 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(fake.world.secrets['ready-set-mail']).toEqual({ BOOTSTRAP_SECRET: PROOF, TOKEN_ENCRYPTION_KEY: KEY });
   });
 
-  it('a Worker that went up before the run died is still ours on --resume', async () => {
+  it('a Worker an interrupted deploy created is adopted on --resume only because it is bound to our database and namespace', async () => {
     const { repo, home } = sandbox();
     const fake = createFakeCloudflare({ repoRoot: repo });
-    fake.world.failNext.d1 = 1; // migrations fail: nothing deployed yet
+    fake.world.deployCreatesThenFails = true;
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(1);
+    expect(fake.world.workers.has('ready-set-mail')).toBe(true);
+    const dir = join(home, '.config', 'ready-set-mail', 'ready-set-mail');
+    expect(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).created.worker).toBeUndefined();
+    const again = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(again.code).toBe(0);
+    expect(again.out).toMatch(/bound to this installation's database and namespace/);
+    const w = fake.world.workers.get('ready-set-mail');
+    expect(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).created.worker).toMatchObject({ name: 'ready-set-mail', created_on: w.created_on });
+  });
+
+  it('BLOCKER 1: a deploy that failed before the Worker existed, then someone else deploys that name: --resume and --uninstall refuse and change nothing', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    fake.world.failNext.deploy = 1;
     expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(1);
     expect(fake.world.workers.size).toBe(0);
-    expect((await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
-    // Deploy recorded the Worker; a third resume sees the existing Worker as ours, not a collision.
-    expect((await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    // Someone else's Worker with the default name.
+    fake.world.workers.set('ready-set-mail', { created_on: '2026-11-15T09:00:00Z', d1Id: 'their-db', kvId: 'their-kv' });
+    fake.calls.length = 0;
+    const resume = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(resume.code).toBe(1);
+    expect(resume.out).toMatch(/already has a Worker named "ready-set-mail" \(this installer has no record of deploying it \(its DB binding is their-db/);
+    expect(fake.calls.filter(c => !c.startsWith('GET'))).toEqual([]);
+
+    const un = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(un.code).toBe(1);
+    expect(un.out).toMatch(/is not the one this installer deployed: this installer has no record of deploying it.*Nothing was deleted/s);
+    expect(fake.calls.filter(c => c.startsWith('DELETE') || c.startsWith('$'))).toEqual([]);
+    expect(fake.world.workers.get('ready-set-mail')).toMatchObject({ d1Id: 'their-db' });
+    expect(fake.world.d1).toHaveLength(1);
+  });
+
+  it('BLOCKER 1: a stale state file (our Worker was replaced by another of the same name) is refused by --resume and --uninstall', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    // Ours was deleted out of band; someone deploys a new one under the name, even bound to the same ids.
+    const ours = fake.world.workers.get('ready-set-mail');
+    fake.world.workers.set('ready-set-mail', { ...ours, created_on: '2026-12-01T00:00:00Z' });
+    fake.calls.length = 0;
+    const resume = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(resume.code).toBe(1);
+    expect(resume.out).toMatch(/created at 2026-12-01T00:00:00Z, but the Worker this installer deployed was created at/);
+    const un = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(un.code).toBe(1);
+    expect(fake.calls.filter(c => !c.startsWith('GET'))).toEqual([]);
+  });
+
+  it('BLOCKER 1: a copied state file whose Worker identity matches but whose bindings point elsewhere is refused', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    const ours = fake.world.workers.get('ready-set-mail');
+    fake.world.workers.set('ready-set-mail', { ...ours, d1Id: 'someone-elses-db' });
+    fake.calls.length = 0;
+    const un = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(un.code).toBe(1);
+    expect(un.out).toMatch(/its DB binding is someone-elses-db.*not this installation's database/s);
+    expect(fake.calls.filter(c => !c.startsWith('GET'))).toEqual([]);
+    const resume = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(resume.code).toBe(1);
+    expect(fake.calls.filter(c => !c.startsWith('GET'))).toEqual([]);
+  });
+
+  it('BLOCKER 1: a Worker that appears between the name check and the deploy is not deployed over', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    const realRun = fake.run;
+    let armed = true;
+    const d = fakeDeps({ fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    d.deps.run = async (cmd: string, args: string[], o: object) => {
+      if (armed && args[1] === 'migrations') { armed = false; fake.world.workers.set('ready-set-mail', { created_on: 'x', d1Id: 'other', kvId: 'other' }); }
+      return realRun(cmd, args, o);
+    };
+    expect(await main(['--yes'], d.deps)).toBe(1);
+    expect(d.out.join('')).toMatch(/now exists that this installer did not deploy.*Nothing was deployed/s);
+    expect(fake.calls).not.toContain('$ wrangler deploy --config wrangler.local.jsonc --secrets-file <file>');
   });
 
   it('when an owner already exists it prints no link', async () => {
@@ -226,7 +320,7 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(r.out).toMatch(/already has an owner/);
   });
 
-  it('uninstall lists what it will delete, needs the typed name, and deletes only what it created', async () => {
+  it('uninstall lists what it will delete, needs the typed name, exports the database, deletes only what it created, and moves the backups aside', async () => {
     const { repo, home } = sandbox();
     const fake = createFakeCloudflare({ repoRoot: repo, workers: ['someone-else'], d1: [{ id: 'e'.repeat(32), name: 'someone-else' }] });
     expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
@@ -237,27 +331,92 @@ describe('npm run setup (fake Cloudflare)', () => {
     const wrong = await run(['--uninstall'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN }, tty: true, answers: ['ready'] });
     expect(wrong.code).toBe(1);
     expect(wrong.out).toMatch(/did not match\. Nothing was deleted/);
-    expect(fake.calls.filter(c => c.startsWith('DELETE'))).toEqual([]);
+    expect(fake.calls.filter(c => c.startsWith('DELETE') || c.includes('d1 export'))).toEqual([]);
 
     fake.calls.length = 0;
     const r = await run(['--uninstall'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN }, tty: true, answers: ['ready-set-mail'] });
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/This will permanently delete[\s\S]*Worker "ready-set-mail"[\s\S]*D1 database "ready-set-mail"[\s\S]*KV namespace "ready-set-mail-oauth"[\s\S]*wrangler.local.jsonc/);
-    expect(fake.calls.filter(c => c.startsWith('DELETE'))).toEqual([
+    expect(r.out).toMatch(/This will permanently delete[\s\S]*Worker "ready-set-mail"[\s\S]*D1 database "ready-set-mail"[\s\S]*KV namespace "ready-set-mail-oauth"[\s\S]*wrangler.local.jsonc[\s\S]*the database is exported/);
+    const destructive = fake.calls.filter(c => c.startsWith('DELETE') || c.startsWith('$'));
+    expect(destructive).toEqual([
+      '$ wrangler d1 export ready-set-mail --remote --output',
       'DELETE /accounts/<acct>/workers/scripts/ready-set-mail',
-      expect.stringMatching(/^DELETE \/accounts\/<acct>\/d1\/database\/[0-9a-f]{32}$/),
+      expect.stringMatching(/^DELETE \/accounts\/<acct>\/d1\/database\/[0-9a-f-]{36}$/),
       expect.stringMatching(/^DELETE \/accounts\/<acct>\/storage\/kv\/namespaces\/[0-9a-f]{32}$/),
     ]);
-    expect([...fake.world.workers]).toEqual(['someone-else']);
+    expect([...fake.world.workers.keys()]).toEqual(['someone-else']);
     expect(fake.world.d1.map(d => d.name)).toEqual(['someone-else']);
     expect(existsSync(join(repo, 'wrangler.local.jsonc'))).toBe(false);
-    // Backups stay; a second uninstall finds nothing recorded.
-    expect(existsSync(join(home, '.config', 'ready-set-mail', 'ready-set-mail', 'token-encryption-key'))).toBe(true);
+    // Backups and the export are moved into a dated folder, never deleted.
+    const dir = join(home, '.config', 'ready-set-mail', 'ready-set-mail');
+    const archive = readdirSync(dir).filter(f => f.startsWith('removed-'));
+    expect(archive).toEqual(['removed-20261114-120000']);
+    expect(readdirSync(join(dir, archive[0])).sort()).toEqual(['bootstrap-proof', 'ready-set-mail-d1-export.sql', 'setup.log', 'state.json', 'token-encryption-key']);
+    expect(readFileSync(join(dir, archive[0], 'token-encryption-key'), 'utf8').trim()).toBe(KEY);
+    expect(r.out).toContain(`are in ${join(dir, archive[0])}`);
     const twice = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
     expect(twice.code).toBe(1);
-    expect(twice.out).toMatch(/already removed/);
-    // And the name is free for a fresh install again.
-    expect((await run(['--yes'], { fake, repoRoot: repo, home: join(home, 'other'), env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect(twice.out).toMatch(/No install of "ready-set-mail" is recorded/);
+  });
+
+  it('BLOCKER 2: installing the same name again after uninstall works, in the same home', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect((await run(['--uninstall', '--confirm', 'ready-set-mail', '--no-export'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect(fake.calls.some(c => c.includes('d1 export'))).toBe(false);
+    const again = await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(again.code).toBe(0);
+    expect(again.out).toMatch(/generated; backups written/);
+    expect(fake.world.workers.has('ready-set-mail')).toBe(true);
+  });
+
+  it('BLOCKER 2: secret backups with no state are found before anything is created, with a plain message', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    const dir = join(home, '.config', 'ready-set-mail', 'ready-set-mail');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'token-encryption-key'), 'k1:old\n');
+    const r = await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/already holds secret backups \(token-encryption-key\).*Nothing was changed\. Move them into a subfolder/s);
+    expect(fake.calls).toEqual([]);
+    expect(readFileSync(join(dir, 'token-encryption-key'), 'utf8')).toBe('k1:old\n');
+  });
+
+  it('a partial uninstall blocks --resume until it is finished, and the second uninstall finishes it', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    fake.world.failDelete = 'kv';
+    const first = await run(['--uninstall', '--confirm', 'ready-set-mail', '--no-export'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(first.code).toBe(1);
+    expect(first.out).toMatch(/Cloudflare refused a request: DELETE \/accounts\/<account>\/storage\/kv\/namespaces\/<namespace> failed: 7000: simulated outage.*Run the uninstall again/s);
+    const resume = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(resume.code).toBe(1);
+    expect(resume.out).toMatch(/uninstall of "ready-set-mail" started but did not finish/);
+    fake.calls.length = 0;
+    const second = await run(['--uninstall', '--confirm', 'ready-set-mail', '--no-export'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(second.code).toBe(0);
+    expect(fake.calls.filter(c => c.startsWith('DELETE'))).toEqual([expect.stringMatching(/storage\/kv\/namespaces/)]);
+    expect(fake.world.kv).toEqual([]);
+  });
+
+  it('--url with no workers.dev subdomain says what to attach, deploys without workers.dev and checks only the database', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo, subdomain: null });
+    const r = await run(['--yes', '--url', 'https://mail.example.com'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/--url only sets this address\. After setup, attach mail\.example\.com to the Worker "ready-set-mail"/);
+    expect(r.out).toMatch(/no workers\.dev address, preview URLs off/);
+    expect(fake.world.lastDeployConfig).toMatchObject({ workers_dev: false, vars: { BETTER_AUTH_URL: 'https://mail.example.com' } });
+    expect(fake.calls.filter(c => c.includes('workers.dev') || c.includes('example.com'))).toEqual([]);
+    expect(r.out).toContain(expectedLink('https://mail.example.com'));
+    const other = sandbox();
+    const fresh = createFakeCloudflare({ repoRoot: other.repo, subdomain: null });
+    const none = await run(['--yes'], { fake: fresh, repoRoot: other.repo, home: other.home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(none.code).toBe(1);
+    expect(none.out).toMatch(/no workers\.dev subdomain yet.*Nothing was changed/s);
   });
 
   it('--new-link mints a fresh link from the backup: no Cloudflare call, no redeploy, no secret printed', async () => {
@@ -294,6 +453,41 @@ describe('npm run setup (fake Cloudflare)', () => {
     for (const f of ['README.md', 'docs/self-hosting.md', 'docs/coding-agents.md', 'docs/agent-operations.md']) {
       expect(readFileSync(f, 'utf8'), f).not.toMatch(/whoever opens|do not share it|first person to open|first becomes the owner/i);
     }
+  });
+
+  it('an expired login says so and suggests logging in again', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    const r = await run(['--yes'], { fake, repoRoot: repo, home, authToken: 'expired-token' });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/credential from your Wrangler login is invalid or has expired \(GET \/accounts failed: 9109: Invalid access token\)\. Log in again with `npx wrangler login`\. Nothing was changed\./);
+  });
+
+  it('each instance gets its own rate-limit namespace ids, past any id another Worker uses, kept on resume', async () => {
+    const { repo, home } = sandbox();
+    const base = ratelimitBase('ready-set-mail');
+    const taken = [0, 1, 2, 3, 4, 5].map(i => String(base + i));
+    const fake = createFakeCloudflare({ repoRoot: repo, workers: [{ name: 'other', created_on: 'x', d1Id: null, kvId: null, ratelimitIds: [taken[3]] }] });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    const ids = fake.world.lastDeployConfig.unsafe.bindings.map((b: { namespace_id: string }) => b.namespace_id);
+    expect(ids).toEqual([0, 1, 2, 3, 4, 5].map(i => String(base + 10 + i)));
+    expect(ids).not.toContain('1001');
+    // A second instance in the same account: its own block.
+    const second = sandbox();
+    fake.world.repoRoot = second.repo;
+    expect((await run(['--yes', '--name', 'rsm-two'], { fake, repoRoot: second.repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    fake.world.repoRoot = repo;
+    const ids2 = fake.world.lastDeployConfig.unsafe.bindings.map((b: { namespace_id: string }) => b.namespace_id);
+    expect(ids2.filter((id: string) => ids.includes(id))).toEqual([]);
+    // Resume keeps the first instance's ids and says it redeploys.
+    const again = await run(['--yes', '--resume'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(again.code).toBe(0);
+    expect(fake.world.lastDeployConfig.unsafe.bindings.map((b: { namespace_id: string }) => b.namespace_id)).toEqual(ids);
+    expect(again.out).toMatch(/Redeploy +Worker "ready-set-mail"/);
+    expect(again.out).toMatch(/sent again unchanged/);
+    expect(again.out).toMatch(/cron triggers \(already running/);
+    expect(again.out).toMatch(/ok: redeployed/);
+    expect(again.out).not.toMatch(/first version|start running|generated here/);
   });
 
   it('usage errors exit 2 before touching anything', async () => {

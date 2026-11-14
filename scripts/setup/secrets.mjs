@@ -18,6 +18,11 @@ export function generateEncryptionKey(randomBytes = nodeRandomBytes) {
   return `k1:${randomBytes(32).toString('base64')}`;
 }
 
+/** Secret backups already in the folder (paths). Checked before anything is created. */
+export function existingBackups(dir) {
+  return [PROOF_FILE, KEY_FILE].map(f => join(dir, f)).filter(p => existsSync(p));
+}
+
 export function isValidEncryptionKey(value) {
   const m = /^k1:([A-Za-z0-9+/]+={0,2})$/.exec(value);
   return !!m && Buffer.from(m[1], 'base64').length === 32;
@@ -62,13 +67,20 @@ export function loadOrCreateSecrets(dir, { randomBytes, mayReuse }) {
  * Run `fn(path)` with a 0600 JSON secrets file for `wrangler deploy --secrets-file`, removed afterwards
  * whatever happens. It lives in the private instance folder, never in the checkout.
  */
-export async function withSecretsFile(dir, secrets, fn) {
+export async function withSecretsFile(dir, secrets, fn, proc = process) {
   const path = join(dir, '.deploy-secrets.json');
-  try { unlinkSync(path); } catch { /* none left over */ }
+  const remove = () => { try { unlinkSync(path); } catch { /* already gone */ } };
+  remove();
   writeFileSync(path, JSON.stringify(secrets), { mode: 0o600, flag: 'wx' });
+  // Ctrl-C or a kill while Wrangler runs: remove the file, then exit as the signal would have.
+  const onSignal = (signal) => { remove(); proc.exit(signal === 'SIGINT' ? 130 : 143); };
+  proc.once('SIGINT', onSignal);
+  proc.once('SIGTERM', onSignal);
   try {
     return await fn(path);
   } finally {
-    try { unlinkSync(path); } catch { /* already gone */ }
+    proc.removeListener('SIGINT', onSignal);
+    proc.removeListener('SIGTERM', onSignal);
+    remove();
   }
 }

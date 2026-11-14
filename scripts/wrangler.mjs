@@ -14,7 +14,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** The arguments to hand Wrangler, or { error } when the command cannot work with the tracked placeholders. */
 export function wranglerArgs(args, { localExists, trackedHasPlaceholders }) {
-  const explicit = args.some(a => a === '--config' || a === '-c' || a.startsWith('--config='));
+  const explicit = args.some(a => a === '--config' || a === '-c' || a.startsWith('--config=') || a.startsWith('-c='));
   if (explicit) return { args };
   if (localExists) return { args: [...args, '--config', LOCAL_CONFIG] };
   const remote = !args.includes('--dry-run') && (args[0] === 'deploy' || args.includes('--remote') || args[0] === 'secret' || args[0] === 'versions');
@@ -37,7 +37,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.stderr.write(`${r.error}\n`);
     process.exit(1);
   }
-  const bin = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'wrangler.cmd' : 'wrangler');
+  const bin = join(repoRoot, 'node_modules', '.bin', 'wrangler'); // macOS and Linux; on Windows use WSL
   const res = spawnSync(bin, r.args, { stdio: 'inherit', cwd: repoRoot });
   process.exit(res.status ?? 1);
 }

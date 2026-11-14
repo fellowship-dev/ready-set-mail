@@ -45,10 +45,33 @@ export function workersDevUrl(worker, subdomain) {
 
 /**
  * The local config for one installation: the tracked config with this installation's name, ids,
- * origin and account, workers.dev serving on and preview URLs off. Throws when the tracked config
+ * origin and account, workers.dev serving on (off when the account has none) and preview URLs off. Throws when the tracked config
  * no longer has the shape this depends on, rather than writing a config that deploys the wrong thing.
  */
-export function generateLocalConfig(tracked, { name, accountId, d1Id, kvId, url }) {
+/** Rate-limit binding names in wrangler.jsonc, in order. */
+export function ratelimitBindings(cfg) {
+  return (cfg.unsafe?.bindings ?? []).filter(b => b.type === 'ratelimit');
+}
+
+/**
+ * First of this instance's rate-limit namespace ids. Cloudflare keys a rate-limit counter by its
+ * namespace_id within the account, so two installs with the repository's 1001-1006 would share counters.
+ * Deterministic from the name (stable across resumes and upgrades), in steps of 10, from 10000 up.
+ */
+export function ratelimitBase(name) {
+  let h = 2166136261;
+  for (const ch of name) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  return 10000 + (h % 99000) * 10;
+}
+
+/** The first base at or after `start` whose block of `count` ids misses every id in `used`. */
+export function freeRatelimitBase(start, count, used) {
+  let base = start;
+  while ([...Array(count).keys()].some(i => used.has(String(base + i)))) base += 10;
+  return base;
+}
+
+export function generateLocalConfig(tracked, { name, accountId, d1Id, kvId, url, workersDev = true, ratelimitBase: rlBase = null }) {
   const cfg = structuredClone(tracked);
   const names = resourceNames(name);
   const d1 = (cfg.d1_databases ?? []).filter(d => d.binding === 'DB');
@@ -59,9 +82,11 @@ export function generateLocalConfig(tracked, { name, accountId, d1Id, kvId, url 
   d1[0].database_name = names.d1;
   d1[0].database_id = d1Id;
   kv[0].id = kvId;
-  cfg.workers_dev = true;
+  // Set here, not in the tracked file, so an existing instance on its own domain never gains a workers.dev address by copying it.
+  cfg.workers_dev = workersDev;
   cfg.preview_urls = false;
   cfg.vars = { ...(cfg.vars ?? {}), WORKER_NAME: names.worker, BETTER_AUTH_URL: url };
+  if (rlBase !== null) ratelimitBindings(cfg).forEach((b, i) => { b.namespace_id = String(rlBase + i); });
   // `npm run deploy` builds the dashboard before migrating; Wrangler's own build hook would build it a second time.
   delete cfg.build;
   return cfg;
