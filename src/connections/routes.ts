@@ -18,6 +18,8 @@ import type { TenantContext } from '../tenancy/context';
 import {
   CfAuthError,
   CfConnectionError,
+  CfIncompleteListError,
+  incompleteListMessage,
   CfZoneNotAllowedError,
   CfZoneNotFoundError,
 } from '../tenancy/cf-client';
@@ -394,6 +396,7 @@ function connectionFailure(e: unknown): Response {
     return json({ error: e.message, code: `cf_connection_${e.code}`, connection_id: e.connectionId }, 409);
   }
   if (e instanceof CfZoneNotAllowedError) return json({ error: e.message, code: 'cf_zone_not_allowed', connection_id: e.connectionId }, 403);
+  if (e instanceof CfIncompleteListError) return err(incompleteListMessage(e), 502, 'cf_list_incomplete');
   if (e instanceof CfAuthError) return err('Cloudflare refused the request: check the token and its permissions', 502, 'cf_auth');
   throw e;
 }

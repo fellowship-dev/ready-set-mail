@@ -305,11 +305,12 @@ describe('BASE_DOMAIN lazy init', () => {
 // ── DELETE /api/domains/:id ───────────────────────────────────
 
 describe('DELETE /api/domains/:id', () => {
-  it('returns 204 when domain exists', async () => {
+  it('returns ok with nothing kept when domain exists', async () => {
     const env = makeEnv();
     seedDomain(env, { id: 5, domain: 'acme.com', dns_record_id: null });
     const res = await handleApi(req('DELETE', '/api/domains/5'), env, ctx);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, kept: [] });
     expect(rows(env, 'SELECT id FROM domains')).toEqual([]);
   });
 

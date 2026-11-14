@@ -78,7 +78,7 @@ export function CloudflareWizardPage() {
 		const n = w.ids.length;
 		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n } }));
 		const noun = w.rules > 0 ? (n === 1 ? 'change' : 'changes') : n === 1 ? 'record' : 'records';
-		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? ' and checked' : ''}`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
+		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? ' and checked' : `, ${n - w.verified} not checked`}`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
 	};
 
 	const index = Math.max(0, steps.indexOf(progress.step));

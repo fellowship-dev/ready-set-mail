@@ -1,3 +1,4 @@
+import type { KeptRecord } from '../../lib/removal-notice';
 import { Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from 'lucide-react';
@@ -27,9 +28,11 @@ function ToolCard(p: ToolProps) {
 	const qc = useQueryClient();
 	const [open, setOpen] = useState(false);
 	const disable = useMutation({
-		mutationFn: () => api(p.disablePath, { method: 'DELETE' }),
-		onSuccess: async () => {
-			toast({ title: `${p.title} disabled`, variant: 'success' });
+		mutationFn: () => api<{ kept?: KeptRecord[] } | undefined>(p.disablePath, { method: 'DELETE' }),
+		onSuccess: async (res) => {
+			const kept = res?.kept ?? [];
+			// A record the customer changed is not deleted: say which, so it is not mistaken for a clean removal.
+			toast({ title: `${p.title} disabled`, ...(kept.length ? { description: `Kept ${kept.length} DNS ${kept.length === 1 ? 'record' : 'records'} you changed: ${kept.map((k) => `${k.type} ${k.name} (${k.reason})`).join('; ')}.` } : {}), variant: kept.length ? 'warning' : 'success' });
 			setOpen(false);
 			await qc.invalidateQueries({ queryKey: p.disableKey });
 		},
