@@ -22,7 +22,8 @@ export default withMcpAuthorization(coreWorker, createInboxMcpHandler());`;
   modules: [{ type: 'ESModule', path: 'worker.mjs', contents: bundled.outputFiles[0].text }],
   compatibilityDate: '2026-05-22', compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
   kvNamespaces: ['OAUTH_KV'], d1Databases: ['DB'], bindings: { BETTER_AUTH_URL: origin },
-  ratelimits: { MCP_LIMITER: { simple: { limit: CONNECTION, period: 60 } }, API_LIMITER: { simple: { limit: WORKSPACE, period: 60 } }, AUTH_LIMITER: { simple: { limit: REGISTER, period: 60 } }, OAUTH_TOKEN_LIMITER: { simple: { limit: TOKEN, period: 60 } }, MCP_ANON_LIMITER: { simple: { limit: ANONYMOUS, period: 60 } } },
+  // namespace_id mirrors wrangler.jsonc: miniflare keys each counter by its namespace, so every limiter needs its own.
+  ratelimits: { MCP_LIMITER: { namespace_id: '1004', simple: { limit: CONNECTION, period: 60 } }, API_LIMITER: { namespace_id: '1002', simple: { limit: WORKSPACE, period: 60 } }, AUTH_LIMITER: { namespace_id: '1001', simple: { limit: REGISTER, period: 60 } }, OAUTH_TOKEN_LIMITER: { namespace_id: '1005', simple: { limit: TOKEN, period: 60 } }, MCP_ANON_LIMITER: { namespace_id: '1006', simple: { limit: ANONYMOUS, period: 60 } } },
  });
  const db = await runtime.getD1Database('DB');
  await db.prepare('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL)').run();
