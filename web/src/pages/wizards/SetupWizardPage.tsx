@@ -38,8 +38,8 @@ function Frame({ title, subtitle, skipTo, wizard, current, children }: { title: 
 			<header className="space-y-3">
 				<div className="flex items-start justify-between gap-3">
 					<div className="min-w-0 space-y-1">
-						<h1 className="text-2xl font-bold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
-						<p className="text-sm text-ink-2">{subtitle}</p>
+						<h1 className="text-xl font-bold tracking-tight sm:text-2xl [overflow-wrap:anywhere]">{title}</h1>
+						<p className="text-sm text-ink-2 max-sm:hidden">{subtitle}</p>
 					</div>
 					<Button asChild variant="ghost" size="sm" className="shrink-0">
 						<Link to={skipTo}>Skip setup</Link>

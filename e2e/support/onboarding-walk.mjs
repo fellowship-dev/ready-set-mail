@@ -34,7 +34,7 @@ function driver(page) {
 async function measure(page) {
   return page.evaluate(() => {
     const clipped = [...document.querySelectorAll('code, input[readonly], .font-mono, [data-record-value]')]
-      .filter((e) => e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).display !== 'inline').length;
+      .filter((e) => e.clientWidth > 1 && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).display !== 'inline').length;
     return { scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth, clipped };
   });
 }
@@ -218,8 +218,8 @@ async function hostedWalk(browser, width, height, port, tokenKey) {
 }
 
 /** The ownership step in three states, at 375x667 and 1440x900, with above-the-fold assertions. */
-async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold = true } = {}) {
-  const inst = await startInstance({ mode: 'hosted', port, tokenKey: false, cwd, dohNs: { 'harbor-lane.org': ['ns1.domaincontrol.com'], 'brightwave-mail.com': ['ns1.ns.cloudflare.com'] } });
+async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold = true, tokenKey = false, only: onlyState = null } = {}) {
+  const inst = await startInstance({ mode: 'hosted', port, tokenKey, cwd, dohNs: { 'harbor-lane.org': ['ns1.domaincontrol.com'], 'brightwave-mail.com': ['ns1.ns.cloudflare.com'] } });
   const states = [['cloudflare', 'brightwave-mail.com'], ['other-provider', 'harbor-lane.org'], ['unknown', 'quietfield.net']];
   for (const [w, h] of [[375, 667], [1440, 900]]) {
     const { ctx, page } = await newPage(browser, w, h);
@@ -229,11 +229,23 @@ async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold 
       await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20000 });
       for (const [state, domain] of states) {
         if (prefix === 'before' && state !== 'other-provider') continue;
+        if (onlyState && state !== onlyState) continue;
         await page.goto(`${inst.url}/#/add`);
         await wait(1500);
         const dom = page.getByRole('textbox').first(); await dom.waitFor(); await dom.fill(domain); await wait(300); if ((await dom.inputValue()) !== domain) { await dom.fill(domain); }
         await btn(page, /^(Continue|Add domain)/).first().click();
         const rec = page.getByRole('group', { name: 'DNS record to add' });
+        if (tokenKey) {
+          // Connect offered and DNS at Cloudflare: the first screen must show the primary "Connect Cloudflare" (no record needed).
+          const connectBtn = btn(page, 'Connect Cloudflare').first();
+          await connectBtn.waitFor({ timeout: 20000 }); await wait(1500);
+          const name = `${prefix}-${w}-claim-${state}`;
+          await snap(page, name, { fullPage: false });
+          const bb = await connectBtn.boundingBox(); const okC = !!bb && bb.y + bb.height <= h;
+          if (!okC) failures++;
+          console.log(`${okC ? 'OK' : 'FAIL'} fold ${name} connect.bottom=${bb && Math.round(bb.y + bb.height)} viewportH=${h}`);
+          continue;
+        }
         await (prefix === 'before' ? page.getByText(/_readysetmail/).first() : rec).waitFor({ timeout: 20000 });
         await wait(1500);
         const name = prefix === 'before' ? `before-hosted-${w}-claim` : `hosted-${w}-claim-${state}`;
@@ -261,7 +273,7 @@ try {
     await selfhostWalk(browser, 375, 812, 8811); await selfhostWalk(browser, 1440, 900, 8812); await selfhostWalk(browser, 1920, 1080, 8813);
     await selfhostSpecial(browser, 8814);
   }
-  if (only === 'claims') await claimStates(browser, 8824);
+  if (only === 'claims') { await claimStates(browser, 8824); await claimStates(browser, 8825, { prefix: 'hosted-connect', tokenKey: true, only: 'cloudflare' }); }
   if (!only || only === 'hosted') {
     await hostedWalk(browser, 375, 812, 8821, true); await hostedWalk(browser, 375, 812, 8822, false); await hostedWalk(browser, 1440, 900, 8823, true);
     await claimStates(browser, 8824);

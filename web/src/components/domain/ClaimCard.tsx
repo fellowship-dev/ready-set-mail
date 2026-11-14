@@ -106,9 +106,9 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const connect = () => navigate(`/cloudflare/connect?back=${encodeURIComponent(pathname + search)}`);
 
 	return (
-		<div className="space-y-4 rounded-lg border border-line p-4" data-testid={`claim-${claim.id}`}>
+		<div className="space-y-4 rounded-lg border border-line p-4 max-sm:space-y-2 max-sm:border-0 max-sm:p-0" data-testid={`claim-${claim.id}`}>
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<h3 className="font-mono text-base font-semibold [overflow-wrap:anywhere]">{claim.domain}</h3>
+				<h3 className="font-mono text-base font-semibold [overflow-wrap:anywhere] max-sm:sr-only">{claim.domain}</h3>
 				<Badge variant={lost ? 'danger' : 'warning'}>{lost ? 'Claimed elsewhere' : 'Waiting for verification'}</Badge>
 			</div>
 			{lost ? (

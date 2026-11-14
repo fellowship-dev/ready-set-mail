@@ -2,7 +2,7 @@ import { Card, CardContent } from '@ready-set-mail/ui';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 /** The card every wizard step lives in. The heading takes focus on mount so a step change is announced. */
-export function StepCard({ title, badge, children, focusHeading = true }: { title: ReactNode; badge?: ReactNode; children: ReactNode; focusHeading?: boolean }) {
+export function StepCard({ title, badge, children, focusHeading = true, compactOnPhone = false }: { title: ReactNode; badge?: ReactNode; children: ReactNode; focusHeading?: boolean; /** Phones: keep the heading for screen readers only and tighten the padding, so the one thing to do stays on the first screen. */ compactOnPhone?: boolean }) {
 	const id = useId();
 	const ref = useRef<HTMLHeadingElement>(null);
 	useEffect(() => {
@@ -10,10 +10,10 @@ export function StepCard({ title, badge, children, focusHeading = true }: { titl
 	}, [focusHeading]);
 	return (
 		<Card role="region" aria-labelledby={id}>
-			<CardContent className="space-y-4 sm:p-6 [&>p]:max-w-prose">
+			<CardContent className={`space-y-4 sm:p-6 [&>p]:max-w-prose${compactOnPhone ? ' max-sm:space-y-2 max-sm:p-3' : ''}`}>
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
 					{badge}
-					<h2 id={id} ref={ref} tabIndex={-1} className="text-xl font-semibold tracking-tight outline-none">
+					<h2 id={id} ref={ref} tabIndex={-1} className={`text-xl font-semibold tracking-tight outline-none${compactOnPhone ? ' max-sm:sr-only' : ''}`}>
 						{title}
 					</h2>
 				</div>

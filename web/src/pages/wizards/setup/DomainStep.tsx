@@ -77,7 +77,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 
 	if (claim) {
 		return (
-			<StepCard title="Verify you own this domain" focusHeading={false}>
+			<StepCard title="Verify you own this domain" focusHeading={false} compactOnPhone>
 				<ClaimCard claim={claim} preview onVerified={(d) => onDomainSet(d.id)} onRemoved={() => setClaim(null)} />
 			</StepCard>
 		);
@@ -94,7 +94,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 	const waiting = hosted && !adding ? (claims.data ?? []).filter((c) => c.status === 'pending').sort((a, b) => Number(b.domain === requested) - Number(a.domain === requested)) : [];
 	if (waiting.length > 0) {
 		return (
-			<StepCard title={waiting.length === 1 ? 'Verify you own this domain' : 'Verify you own these domains'} focusHeading={false}>
+			<StepCard title={waiting.length === 1 ? 'Verify you own this domain' : 'Verify you own these domains'} focusHeading={false} compactOnPhone>
 				<div className="space-y-4">
 					<p className="text-sm text-ink-2">
 						{waiting.length === 1

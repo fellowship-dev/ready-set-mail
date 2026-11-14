@@ -32,7 +32,7 @@ describe('#/setup?proof=<proof>', () => {
 			routes: { 'POST /api/auth/setup': () => ((done = true), { ok: true, has_domain: false }), 'GET /api/me': () => (done ? me('owner') : fail(401)) },
 		});
 		expect(await screen.findByRole('heading', { name: 'Create the owner account' })).toBeInTheDocument();
-		expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup$/);
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup$/));
 		expect(screen.queryByLabelText('Installer proof')).not.toBeInTheDocument();
 		expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain(PROOF);
 		const user = userEvent.setup();
