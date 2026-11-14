@@ -5,7 +5,8 @@
 //   POST /api/onboarding/dns-apply   { domain_ids, step, plan_id }     perform one step's writes; 409 plan_changed when the plan moved
 //   POST /api/onboarding/first-check { domain_ids }                    store the first DNS read so the overview shows real levels
 
-import { createResolver, isSpfRecord, lookupDmarc, lookupMx, normalizeDomainName } from '@ready-set-mail/dns-checks';
+import { isSpfRecord, lookupDmarc, lookupMx, normalizeDomainName, type Resolver } from '@ready-set-mail/dns-checks';
+import { resolverFor } from '../dns/resolver';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { recordFirstDnsCheck } from '../domains/first-check';
@@ -22,8 +23,7 @@ export interface OnboardingCaller { role?: string; user: { id: string; email: st
 
 export const isOnboardingRoute = (path: string) => path.startsWith('/api/onboarding/');
 
-async function dnsState(name: string) {
-  const resolver = createResolver();
+async function dnsState(name: string, resolver: Resolver) {
   const [txt, dmarc, mx] = await Promise.all([
     resolver.txt(name).catch(() => ({ status: 'error' as const, records: [] as string[] })),
     lookupDmarc(resolver, name).catch(() => null),
@@ -86,10 +86,6 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
       }
       return;
     }
-    case 'enable':
-      // Best effort, as in ensureEmailRouting: it may already be on, and the endpoint needs a broader permission.
-      try { await x.cf.request('PUT', `/zones/${x.zoneId}/email/routing/enable`); } catch { /* the catch-all below fails loudly if routing is really off */ }
-      return;
     case 'catch_all':
       await x.cf.request('PUT', `/zones/${x.zoneId}/email/routing/rules/catch_all`, {
         body: { actions: [{ type: 'worker', value: [tenant.workerName] }], enabled: true, matchers: [{ type: 'all' }], name: `catch-all → ${tenant.workerName}` },
@@ -118,7 +114,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
       const key = caller.user?.id ? `user:${caller.user.id}` : `ws:${tenant.workspaceId}`;
       if (!(await tenant.env.DNS_PREVIEW_LIMITER.limit({ key })).success) return json({ error: 'Checked too often. Try again in a minute.', code: 'rate_limited', retry_after: 60 }, 429);
     }
-    return json({ states: await Promise.all(clean.map(dnsState)) });
+    return json({ states: await Promise.all(clean.map(n => dnsState(n, resolverFor(tenant.env)))) });
   }
 
   if (request.method !== 'POST') return null;
@@ -142,7 +138,10 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     for (const w of writes) {
       if (w.action === 'none') continue;
       try {
-        await applyWrite(tenant, w, exec.get(w.id)!, ctx, caller);
+        const x = exec.get(w.id);
+        // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
+        if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
+        await applyWrite(tenant, w, x, ctx, caller);
         results.push({ id: w.id, ok: true });
       } catch (e) {
         const code = failureCode(e);
@@ -159,7 +158,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     for (const id of [...new Set(input.ids)]) {
       const d = await tenant.scope.domains.getById(id);
       if (!d) continue;
-      results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain)) !== null });
+      results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain, { resolver: resolverFor(tenant.env) })) !== null });
     }
     return json({ results });
   }

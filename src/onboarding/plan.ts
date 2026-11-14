@@ -1,9 +1,10 @@
 // The DNS plan of the one-click onboarding: what each step would write, computed from Cloudflare's current records.
 // Nothing here writes. apply.ts performs a step's writes from the same plan.
 
-import { createResolver, lookupDmarc, type Resolver } from '@ready-set-mail/dns-checks';
+import { lookupDmarc, type Resolver } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
+import { resolverFor } from '../dns/resolver';
 import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError } from './errors';
 
@@ -24,7 +25,7 @@ export interface NotWritten { domain?: string; what: string; reason: string; lin
 export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotWritten[] }
 
 /** What apply needs beyond the public write: the zone and record to touch. */
-export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'mx_delete' | 'catch_all' | 'enable' }
+export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'mx_delete' | 'catch_all' }
 
 
 const CF_MX: readonly { readonly content: string; readonly priority: number }[] = Object.freeze([
@@ -61,7 +62,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
   const notWritten: NotWritten[] = [];
   const reportsDomain = tenant.settings.reportsDomain || null;
   const rua = reportsDomain ? `rua@${reportsDomain}` : null;
-  const resolver = createResolver();
+  const resolver = resolverFor(tenant.env);
 
   const rows = (await Promise.all([...new Set(domainIds)].map(id => tenant.scope.domains.getById(id)))).filter(<T>(r: T | null | undefined): r is T => !!r);
   let selectedBase = false;
@@ -159,22 +160,30 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
           mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: want.content, priority: want.priority, action: present ? 'none' : 'create', before: null, reason: present ? 'Already in place.' : 'Receives the DMARC reports sent to this domain.' });
           exec.set(id, { cf, zoneId, kind: 'mx' });
         }
-        let enabled = true;
-        try { enabled = !!(await cf.request<{ enabled?: boolean }>('GET', `/zones/${zoneId}/email/routing`))?.enabled; } catch { /* unreadable: treated as off, enabling is harmless */ enabled = false; }
-        let catchAll = false;
-        try {
-          const rule = await cf.request<{ enabled?: boolean; actions?: { type: string; value?: string[] }[] }>('GET', `/zones/${zoneId}/email/routing/rules/catch_all`);
-          catchAll = !!(rule?.enabled && rule.actions?.some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName)));
-        } catch { /* no catch-all rule yet */ }
-        if (!enabled && !catchAll) {
-          mailbox.push({ id: 'enable', domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: zoneName, content: 'Enable Email Routing', action: 'rule', before: null, reason: 'Email Routing is off for this zone.' });
-          exec.set('enable', { cf, zoneId, kind: 'enable' });
+        // Email Routing is never turned on from here: Cloudflare's zone-level enable adds and locks MX and SPF records at the
+        // zone apex, which can break the zone's existing mail. Off is reported, and left to the owner.
+        let routingOn: boolean | null = null;
+        try { routingOn = !!(await cf.request<{ enabled?: boolean }>('GET', `/zones/${zoneId}/email/routing`))?.enabled; } catch { /* unreadable: say nothing about it */ }
+        if (routingOn === false) {
+          notWritten.push({ what: 'Email Routing', reason: `Email Routing is off for ${zoneName}. Turning it on changes the mail records of ${zoneName} itself, so Ready Set Mail leaves that to you: in Cloudflare, open ${zoneName} → Email → Email Routing and follow its steps. Then run this step again.` });
         }
-        mailbox.push({
-          id: 'catch_all', domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: reportsDomain, content: `Every address at ${reportsDomain} → this Worker`,
-          action: catchAll ? 'none' : 'rule', before: null, reason: catchAll ? 'Already in place.' : 'Delivers report emails to Ready Set Mail.',
-        });
-        exec.set('catch_all', { cf, zoneId, kind: 'catch_all' });
+        // Cloudflare's catch-all rule belongs to the zone, not to the reports subdomain: one rule for every address of the zone.
+        let rule: { enabled?: boolean; actions?: { type: string; value?: string[] }[] } | null = null;
+        try { rule = await cf.request('GET', `/zones/${zoneId}/email/routing/rules/catch_all`); } catch { /* no catch-all rule yet */ }
+        const action = rule?.enabled ? rule.actions?.[0] : undefined;
+        const ours = !!action && action.type === 'worker' && (action.value ?? []).includes(tenant.workerName);
+        const theirs = !!action && !ours;
+        if (theirs) {
+          const now = action!.type === 'forward' ? `forwards to ${(action!.value ?? []).join(', ') || 'a mailbox'}` : action!.type === 'worker' ? `sends mail to the Worker ${(action!.value ?? []).join(', ')}` : action!.type === 'drop' ? 'drops the mail' : `does "${action!.type}"`;
+          notWritten.push({ what: 'Catch-all rule', reason: `${zoneName} already has a catch-all rule that ${now}. Ready Set Mail does not replace it. To receive reports here, change it to send mail to the Worker ${tenant.workerName}, or add an address rule yourself.` });
+        } else {
+          mailbox.push({
+            id: 'catch_all', domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: reportsDomain,
+            content: `Catch-all rule for ${zoneName}: mail to any address at ${zoneName} without its own rule goes to this Worker`,
+            action: ours ? 'none' : 'rule', before: null, reason: ours ? 'Already in place.' : 'Delivers report emails to Ready Set Mail.',
+          });
+          exec.set('catch_all', { cf, zoneId, kind: 'catch_all' });
+        }
         writes.push(...mailbox);
       } catch (e) {
         notWritten.push({ what: 'Reports mailbox', reason: plainCloudflareError(e) });

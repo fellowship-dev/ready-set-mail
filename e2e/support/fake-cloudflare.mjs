@@ -7,6 +7,13 @@
 // Point the Worker at it with CLOUDFLARE_API_BASE_URL=http://127.0.0.1:<port> (the Worker honours only localhost
 // URLs). Any bearer token is accepted except one that starts with "bad" (answered 401, like a revoked token).
 //
+// It also answers DNS-over-HTTPS JSON queries (GET /dns-query?name=&type=, application/dns-json: TXT, MX, NS, A, AAAA, CNAME)
+// from the same records, so a run can set DOH_BASE_URL=http://127.0.0.1:<port> and never read public DNS for these made-up
+// names. Names inside a seeded zone are never NXDOMAIN (no record is NODATA); names outside every zone are NXDOMAIN.
+//
+// Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
+// harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
+//
 // Test helpers (not part of Cloudflare's API): GET /__state, POST /__reset.
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -20,9 +27,19 @@ function hex(seed) { return createHash('sha256').update(seed).digest('hex').slic
 function freshState() {
   let seq = 0;
   const zones = ZONE_NAMES.map(name => ({ id: hex(`zone:${name}`), name, status: 'active', account: { id: ACCOUNT.id, name: ACCOUNT.name } }));
+  const seeded = [
+    ['brightwave-mail.com', { type: 'TXT', name: '_dmarc.brightwave-mail.com', content: 'v=DMARC1; p=quarantine; pct=50' }],
+    ['quietfield.net', { type: 'MX', name: 'quietfield.net', content: 'mail.quietfield.net', priority: 10 }],
+  ];
+  const records = new Map(zones.map(z => [z.id, []])); // zone id -> records
+  const now = new Date().toISOString();
+  for (const [zoneName, r] of seeded) {
+    const z = zones.find(x => x.name === zoneName);
+    records.get(z.id).push({ id: hex(`seed:${r.type}:${r.name}`), zone_id: z.id, zone_name: z.name, ttl: 1, proxied: false, comment: null, created_on: now, modified_on: now, ...r });
+  }
   return {
     zones,
-    records: new Map(zones.map(z => [z.id, []])), // zone id -> records
+    records,
     routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null }])),
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
@@ -59,6 +76,22 @@ export function createFakeCloudflare() {
     // Test helpers.
     if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses });
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
+
+    // DNS-over-HTTPS (application/dns-json) from the in-memory records.
+    if (method === 'GET' && url.pathname === '/dns-query') {
+      const name = (url.searchParams.get('name') ?? '').toLowerCase().replace(/\.$/, '');
+      const type = (url.searchParams.get('type') ?? 'A').toUpperCase();
+      const CODES = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28 };
+      const zone = [...st.zones].filter(z => name === z.name || name.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
+      const reply = body => { res.writeHead(200, { 'Content-Type': 'application/dns-json' }); res.end(JSON.stringify(body)); };
+      if (!zone || !CODES[type]) return reply({ Status: zone ? 0 : 3, Question: [{ name, type: CODES[type] ?? 1 }] });
+      const rows = type === 'NS' && name === zone.name
+        ? [{ data: 'ns1.fake-dns.invalid.' }, { data: 'ns2.fake-dns.invalid.' }]
+        : st.records.get(zone.id).filter(r => r.name === name && r.type === type).map(r => ({
+            data: type === 'TXT' ? JSON.stringify(stripQuotes(r.content)) : type === 'MX' ? `${r.priority ?? 0} ${r.content}.` : r.type === 'CNAME' || type === 'NS' ? `${r.content}.` : r.content,
+          }));
+      return reply({ Status: 0, Question: [{ name, type: CODES[type] }], ...(rows.length ? { Answer: rows.map(r => ({ name, type: CODES[type], TTL: 60, data: r.data })) } : {}) });
+    }
 
     const prefix = '/client/v4';
     if (!url.pathname.startsWith(prefix)) return notFound();

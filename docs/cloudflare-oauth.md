@@ -70,6 +70,8 @@ The current baseline includes the Cloudflare connection tables; apply all curren
 
 `CLOUDFLARE_API_BASE_URL` (var, testing only) sends every Cloudflare API call to a local fake instead of `api.cloudflare.com`; the end-to-end suite uses `e2e/support/fake-cloudflare.mjs` this way. It is honoured only when it is exactly `http://127.0.0.1:<port>` or `http://localhost:<port>`; any other value (a remote host, https, a path, credentials) is ignored and the real API is used, so it can never redirect a real token elsewhere. Leave it unset in production.
 
+`DOH_BASE_URL` (var, testing only) does the same for the DNS-over-HTTPS lookups of the onboarding routes: the fake also answers `/dns-query`, so local runs never read public DNS for its made-up zones. Same localhost-only rule. The existing `onboarding-status` route still reads public DNS.
+
 ## How it works
 
 * **Storage.** `cloudflare_connections` holds `token_envelope`: `ia1.<key id>.<iv>.<ciphertext>`, AES-256-GCM via WebCrypto,

@@ -48,6 +48,7 @@ export interface Env {
   GOOGLE_POSTMASTER_CLIENT_SECRET?: string;
   // Cloudflare (secrets — set via wrangler secret put)
   CLOUDFLARE_API_BASE_URL?: string;  // testing only: a local fake Cloudflare, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
+  DOH_BASE_URL?: string;  // testing only: a local fake DoH server, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
   CLOUDFLARE_API_TOKEN?: string; // EMAIL token: email routing + DNS writes
   // Cloudflare connections (docs/cloudflare-oauth.md)
   TOKEN_ENCRYPTION_KEY?: string;     // secret: AES-256 key(s) for stored Cloudflare tokens, `kid:base64,…` (first seals); `openssl rand -base64 32`
