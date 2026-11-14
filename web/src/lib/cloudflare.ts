@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { keys } from './queries';
+import { useSession } from './session';
 
 /** Cloudflare connections of the workspace (src/connections/routes.ts, docs/cloudflare-oauth.md). Never holds a token after a request. */
 export interface CfConnection {
@@ -60,9 +61,9 @@ export const fetchDnsState = (names: string[]) => api<{ states: DnsState[] }>(`/
 export const linkDomain = (domainId: number, connectionId: string | null) =>
 	api<{ ok: true }>(`/api/domains/${domainId}/connection`, { method: 'PUT', body: { connection_id: connectionId } });
 
-/** GET connections. `retry: false`: a refusal (403 member, hosted without Cloudflare) is an answer, not a blip. */
+/** GET connections. `retry: false` and no refetch on mount: a refusal (403 member, hosted without Cloudflare) is an answer, not a blip (a refetch would flip FirstScreen back to its skeleton and remount in a loop). */
 export function useCfConnections(enabled = true) {
-	return useQuery({ queryKey: cfKeys.connections, queryFn: fetchConnections, retry: false, staleTime: 15_000, enabled });
+	return useQuery({ queryKey: cfKeys.connections, queryFn: fetchConnections, retry: false, retryOnMount: false, staleTime: 15_000, enabled });
 }
 
 /** A connection that can be used right away: the server token, or an active stored one with at least one allowed zone. */
@@ -77,6 +78,32 @@ export function activeConnection(c: CfConnections | undefined): CfConnection | n
 
 export function useCfZones(connection: CfConnection | null) {
 	return useQuery({ queryKey: cfKeys.zones(connection?.id ?? ''), queryFn: () => fetchZones(connection!), enabled: !!connection, retry: false });
+}
+
+/**
+ * What the domain forms may ask Cloudflare. Owners and admins only; no usable connection means no zone request at all
+ * (GET /api/zones answers 400 without a token and would log a console error on every first-run screen).
+ */
+export function useCfOffer() {
+	const { canWrite } = useSession();
+	const conns = useCfConnections(canWrite);
+	const connection = usableConnection(conns.data);
+	const zones = useCfZones(connection);
+	const zoneList = (zones.data ?? []).filter((z) => z.allowed);
+	return {
+		connection,
+		/** Allowed zones of the usable connection; empty while loading or without one. */
+		zoneList,
+		/** The connections offer or the zone list is still loading. */
+		pending: canWrite && (conns.isPending || (!!connection && zones.isPending)),
+		/** Cloudflare can be connected, or already is. False until known, for members, and where the instance cannot offer it. */
+		canConnect: cloudflareAvailable(conns.data),
+	};
+}
+
+/** Whether the instance supports Cloudflare at all: OAuth, token paste, or a connection that already exists. */
+export function cloudflareAvailable(c: CfConnections | undefined): boolean {
+	return !!c && (c.oauth.available || c.token_paste || activeConnection(c) !== null);
 }
 
 export function useDnsState(names: string[]) {

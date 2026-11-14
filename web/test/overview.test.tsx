@@ -338,3 +338,13 @@ describe('OverviewPage: every counted domain has a row, at any depth', () => {
 		expect(items[2]!.className).toMatch(/sm:pl-16/);
 	});
 });
+
+describe('OverviewPage: verified domains first, then the ones waiting', () => {
+	it('lists the domains section above "Waiting for verification"', async () => {
+		const claim = { id: 5, domain: 'acme.com', status: 'pending', txt_name: '_readysetmail.acme.com', txt_value: 'v=1', created_at: 1700000000, last_checked_at: null, last_error: null };
+		renderOverview({ routes: { 'GET /api/domains': { domains: [domain(1, 'example.com')], pending_claims: [claim] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com'), 'GET /api/domains/1/stats': stats(99) } });
+		const verified = await screen.findByRole('region', { name: 'Your domains' });
+		const waiting = await screen.findByRole('region', { name: 'Waiting for verification' });
+		expect(verified.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+});

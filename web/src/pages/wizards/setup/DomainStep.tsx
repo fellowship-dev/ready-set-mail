@@ -1,6 +1,6 @@
 import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { FieldError, FieldHint, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type FormEvent } from 'react';
 import { ClaimCard } from '../../../components/domain/ClaimCard';
 import { StepCard } from '../../../components/wizard/StepCard';
@@ -8,18 +8,14 @@ import { StepFooter } from '../../../components/wizard/StepNav';
 import { WriteButton } from '../../../components/states';
 import { DomainRefusalHelp } from '../../../components/TalkToMax';
 import { PlanLimitNotice, planLimitOf } from '../../../components/PlanLimitNotice';
-import { api, errorMessage } from '../../../lib/api';
-import { useDomainClaims } from '../../../lib/queries';
+import { api } from '../../../lib/api';
+import { INVALID_DOMAIN_TEXT, domainErrorMessage } from '../../../lib/domain-errors';
+import { useCfOffer } from '../../../lib/cloudflare';
+import { keys, useDomainClaims } from '../../../lib/queries';
 import { normalizeDomainInput } from '../../../lib/domain-input';
 import { useHosted } from '../../../lib/session';
 import { clearSignupDomainIf, readSignupDomain } from '../../../lib/signup-intent';
 import type { DomainClaim } from '../../../lib/types';
-
-interface Zone {
-	id: string;
-	name: string;
-	status: string;
-}
 
 interface BaseDomainResult {
 	ok: boolean;
@@ -45,12 +41,13 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 	/** The person chose "Add a different domain" over the claims already waiting. */
 	const [adding, setAdding] = useState(false);
 	const hosted = useHosted();
+	const qc = useQueryClient();
 	// Hosted: claims made on an earlier visit, still waiting for their DNS proof. Coming back, the person lands on them, not on an empty field.
 	const claims = useDomainClaims();
 
-	// A failed zone lookup (no Cloudflare token, API down) just means typing the domain by hand.
-	const zones = useQuery({ queryKey: ['zones'], queryFn: () => api<{ zones: Zone[] }>('/api/zones').then((r) => r.zones), retry: false });
-	const zoneList = zones.data ?? [];
+	// No usable Cloudflare connection means no zone request: the domain is typed by hand.
+	const cf = useCfOffer();
+	const zoneList = cf.zoneList;
 	// A prefilled domain that is not one of the listed zones is typed, not picked.
 	const showSelect = !manual && zoneList.length > 0 && (domain === '' || zoneList.some((z) => z.name === domain));
 
@@ -58,7 +55,11 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 		mutationFn: (d: string) => api<BaseDomainResult>('/api/settings/base-domain', { method: 'POST', body: { domain: d } }),
 		onSuccess: (r, d) => {
 			clearSignupDomainIf(d);
-			if (r.pending && r.claim) setClaim(r.claim);
+			// The claim now exists on the server: a cached list from before it would hide it when this screen is opened again.
+			if (r.pending && r.claim) {
+				setClaim(r.claim);
+				void qc.invalidateQueries({ queryKey: keys.domains });
+			}
 			else if (r.domain_id !== undefined) onDomainSet(r.domain_id);
 		},
 	});
@@ -67,7 +68,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 		e.preventDefault();
 		const d = normalizeDomainInput(domain);
 		if (!d || !DOMAIN_PATTERN.test(d)) {
-			setValidation('Enter a valid domain like yourdomain.com');
+			setValidation(INVALID_DOMAIN_TEXT);
 			return;
 		}
 		setValidation('');
@@ -112,7 +113,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 	}
 
 	const atLimit = save.isError ? planLimitOf(save.error) : null;
-	const error = validation || (save.isError && !atLimit ? errorMessage(save.error) : '');
+	const error = validation || (save.isError && !atLimit ? domainErrorMessage(save.error) : '');
 	return (
 		<StepCard title={title ?? (hosted ? 'Which domain do you send email from?' : "What's your main domain?")} focusHeading={false}>
 			<form onSubmit={submit} className="space-y-4" noValidate>
@@ -171,13 +172,13 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 									Enter it manually
 								</button>
 							</>
-						) : zones.isPending ? (
+						) : cf.pending ? (
 							'Looking up the domains in your Cloudflare account…'
 						) : (
 							'The domain you own, without www or a path.'
 						)}
 					</FieldHint>
-					{!zones.isPending && zoneList.length === 0 ? <ConnectCloudflareLink /> : null}
+					{!cf.pending && zoneList.length === 0 && cf.canConnect ? <ConnectCloudflareLink /> : null}
 					{error ? <FieldError>{error}</FieldError> : null}
 					{save.isError && !atLimit ? <DomainRefusalHelp error={save.error} /> : null}
 					{atLimit ? <PlanLimitNotice limit={atLimit} /> : null}

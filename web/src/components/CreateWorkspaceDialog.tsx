@@ -1,6 +1,7 @@
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, FieldError, Input } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
 import { errorMessage } from '../lib/api';
+import { useCfOffer } from '../lib/cloudflare';
 import { setupSeenKey } from '../lib/workspace';
 import { switchToWorkspace, useCreateWorkspace } from '../lib/workspaces';
 import { Field } from '../pages/auth/AuthLayout';
@@ -28,9 +29,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 				<form onSubmit={submit} className="space-y-4">
 					<DialogHeader>
 						<DialogTitle>Create workspace</DialogTitle>
-						<DialogDescription>
-							A workspace keeps its own domains, reports, members and Cloudflare connections. You will be its owner; invite people from its Members page.
-						</DialogDescription>
+						<WorkspaceDescription />
 					</DialogHeader>
 					<Field id="workspace-name" label="Workspace name">
 						<Input id="workspace-name" required autoFocus maxLength={80} placeholder="Lexgo" value={name} onChange={(e) => setName(e.target.value)} />
@@ -48,5 +47,15 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 				</form>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/** Cloudflare is named only where it can be connected on this instance (mounted with the open dialog, so it asks then). */
+function WorkspaceDescription() {
+	const { canConnect } = useCfOffer();
+	return (
+		<DialogDescription>
+			A workspace keeps its own {canConnect ? 'domains, reports, members and Cloudflare connections.' : 'domains, reports and members.'} You will be its owner; invite people from its Members page.
+		</DialogDescription>
 	);
 }
