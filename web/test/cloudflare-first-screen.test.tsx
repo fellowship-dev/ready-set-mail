@@ -44,6 +44,7 @@ describe('first screen: Cloudflare first', () => {
 		expect(screen.getByRole('heading', { name: "I'll add DNS records myself" })).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Connect Cloudflare' }));
+		expect(screen.queryByText('Connect Cloudflare to write this for you')).toBeNull(); // the card next to the form already says it
 		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/setup/cloudflare'));
 		expect(JSON.parse(sessionStorage.getItem('rsm_cf_wizard:ws_default')!).step).toBe('connect');
 	});

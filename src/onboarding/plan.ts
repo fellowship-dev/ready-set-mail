@@ -1,7 +1,7 @@
 // The DNS plan of the one-click onboarding: what each step would write, computed from Cloudflare's current records.
 // Nothing here writes. apply.ts performs a step's writes from the same plan.
 
-import { lookupDmarc, type Resolver } from '@ready-set-mail/dns-checks';
+import { lookupDmarc, organizationalDomain, type Resolver } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
@@ -39,6 +39,12 @@ const isCfMx = (c: string) => /\.mx\.cloudflare\.net\.?$/i.test(c.trim());
 async function sha256Hex(s: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
   return [...d].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Same organisational domain (public-suffix aware): `brightwave-mail.com` and `reports.brightwave-mail.com`. */
+export function sameOrganisation(a: string, b: string): boolean {
+  const x = organizationalDomain(a);
+  return !!x && x === organizationalDomain(b);
 }
 
 const setupLink = (domainId: number) => `/domains/${domainId}/setup`;
@@ -115,8 +121,9 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       exec.set(id, { cf, zoneId: zone.id, recordId: existing?.id, domainId: d.id, kind: 'dmarc' });
     }
 
-    // Report authorisation: <d>._report._dmarc.<reports domain> (self-host).
-    if (reportsDomain && reportsCf) {
+    // Report authorisation: <d>._report._dmarc.<reports domain> (self-host). Not needed when both names share an organisational
+    // domain (RFC 7489 §7.1: external-destination verification only applies to a different organisation).
+    if (reportsDomain && reportsCf && !sameOrganisation(d.domain, reportsDomain)) {
       const authName = `${d.domain}._report._dmarc.${reportsDomain}`;
       let present = !!d.dns_record_id;
       if (!present) {
@@ -133,7 +140,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         reason: present ? 'Already lets this domain send reports to Ready Set Mail.' : `Lets ${d.domain} send its reports to ${reportsDomain}.`,
       });
       exec.set(id, { cf: reportsCf.cf, zoneId: reportsCf.zoneId, domainId: d.id, kind: 'auth' });
-    } else if (reportsDomain && reportsError) {
+    } else if (reportsDomain && reportsError && !sameOrganisation(d.domain, reportsDomain)) {
       notWritten.push({ domain: d.domain, what: 'Report authorisation', step: 'dmarc', reason: reportsError, link: setupLink(d.id) });
     }
   }

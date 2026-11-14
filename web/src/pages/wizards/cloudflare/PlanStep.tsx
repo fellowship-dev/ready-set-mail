@@ -1,4 +1,4 @@
-import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ready-set-mail/ui';
+import { Alert, Button } from '@ready-set-mail/ui';
 import { Check, Copy } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
@@ -131,6 +131,54 @@ function Status({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verifie
 	);
 }
 
+/** A record name with break opportunities only after dots, so a label is never split (a last resort aside). */
+function DottedName({ name }: { name: string }) {
+	const parts = name.split(/(?<=\.)/);
+	return (
+		<>
+			{parts.map((p, i) => (
+				<Fragment key={i}>
+					{p}
+					{i < parts.length - 1 ? <wbr /> : null}
+				</Fragment>
+			))}
+		</>
+	);
+}
+
+const typeOf = (w: PlanWrite) => (w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type);
+
+/** From md: name, type, value and change on one line under the domain heading; the name column has room, the change column is narrow. */
+function WideRow({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+	return (
+		<li className="grid grid-cols-[minmax(0,5fr)_3rem_minmax(0,4fr)_8rem] items-start gap-x-4 py-3 text-sm">
+			<div className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{w.type === 'EMAIL_ROUTING' ? null : <DottedName name={w.name} />}</div>
+			<div className="text-ink-2">{typeOf(w)}</div>
+			<div className="min-w-0">
+				<ValueCell w={w} />
+			</div>
+			<div className="min-w-0 text-sm">
+				<Status w={w} ok={ok} verified={verified} error={error} />
+			</div>
+		</li>
+	);
+}
+
+/** Below md: one compact block per record under the domain heading: name, "TXT · New record", value with Copy. */
+function StackedRow({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+	return (
+		<li className="min-w-0 space-y-1 py-3 text-sm">
+			{w.type === 'EMAIL_ROUTING' ? null : <p className="font-mono text-xs [overflow-wrap:anywhere]"><DottedName name={w.name} /></p>}
+			<div className="flex flex-wrap items-baseline gap-x-2 text-ink-2">
+				<span>{typeOf(w)}</span>
+				<span aria-hidden>·</span>
+				<Status w={w} ok={ok} verified={verified} error={error} />
+			</div>
+			<ValueCell w={w} />
+		</li>
+	);
+}
+
 export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProps) {
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -257,6 +305,16 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	else primary = { label: `Write ${remaining.length} ${hasRule ? (remaining.length === 1 ? 'change' : 'changes') : remaining.length === 1 ? 'record' : 'records'}`, onClick: () => void write(planId, writes) };
 
 	const noneToShow = !loading && !loadError && writes.length === 0;
+	const groups = writes.reduce<{ domain: string; writes: PlanWrite[] }[]>((acc, w) => {
+		const g = acc.find((x) => x.domain === w.domain);
+		if (g) g.writes.push(w);
+		else acc.push({ domain: w.domain, writes: [w] });
+		return acc;
+	}, []);
+	const zones = [...new Set(writes.map((w) => w.zone))];
+	const oneZone = zones.length === 1 ? zones[0] : null;
+	const showIntro = !loading && !loadError && writes.length > 0 && !finished && !(satisfied && !failedSome);
+	const intro = stepKey === 'reports_mailbox' ? 'Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press Write.' : 'Ready Set Mail will write these records to Cloudflare. Nothing changes until you press Write.';
 
 	return (
 		<div className="space-y-4">
@@ -265,55 +323,19 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 			{errors._ ? <Alert variant="danger">{errors._}</Alert> : null}
 			{!loading && !loadError && satisfied && !finished && !failedSome ? <p className="font-medium text-ink-1">Already in place</p> : null}
 			{finished ? <Alert variant="success">Done. Every record below is written.</Alert> : null}
-			{noneToShow || writes.length === 0 ? null : wide ? (
-				<Table label="Records for this step" className="table-fixed">
-					<TableHeader>
-						<TableRow>
-							<TableHead className="w-[14%]">Domain</TableHead>
-							<TableHead className="w-[20%]">Record</TableHead>
-							<TableHead className="w-[8%]">Type</TableHead>
-							<TableHead className="w-[40%]">Value</TableHead>
-							<TableHead>Change</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{writes.map((w) => (
-							<TableRow key={w.id}>
-								<TableCell className="align-top [overflow-wrap:anywhere]">{w.domain}</TableCell>
-								<TableCell className="align-top font-mono text-xs [overflow-wrap:anywhere]">{w.type === 'EMAIL_ROUTING' ? '' : w.name}</TableCell>
-								<TableCell className="align-top">{w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type}</TableCell>
-								<TableCell className="align-top">
-									<ValueCell w={w} />
-								</TableCell>
-								<TableCell className="align-top">
-									<Status w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />
-								</TableCell>
-							</TableRow>
-						))}
-					</TableBody>
-				</Table>
-			) : (
-				<ul aria-label="Records for this step" className="space-y-3">
-					{writes.map((w) => (
-						<li key={w.id} className="min-w-0 space-y-2 rounded-lg border border-line p-3 text-sm">
-							<Field label="Domain">
-								<span className="font-medium [overflow-wrap:anywhere]">{w.domain}</span>
-							</Field>
-							{w.type === 'EMAIL_ROUTING' ? null : (
-								<Field label="Record">
-									<span className="font-mono text-xs [overflow-wrap:anywhere]">{w.name}</span>
-								</Field>
-							)}
-							<Field label="Type">{w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type}</Field>
-							<Field label="Value">
-								<ValueCell w={w} />
-							</Field>
-							<Field label="Change">
-								<Status w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />
-							</Field>
-						</li>
+			{showIntro ? <p className="max-w-prose text-sm text-ink-2">{intro}</p> : null}
+			{showIntro && oneZone ? <p className="text-sm text-ink-2">In your Cloudflare zone <span className="font-medium text-ink-1">{oneZone}</span>.</p> : null}
+			{noneToShow || writes.length === 0 ? null : (
+				<div className="space-y-5" role="group" aria-label="Records for this step">
+					{groups.map((g) => (
+						<section key={g.domain} aria-label={g.domain} className="space-y-1">
+							<h3 className="text-base font-semibold max-md:[overflow-wrap:anywhere] md:whitespace-nowrap">{g.domain}</h3>
+							<ul className="divide-y divide-line border-y border-line">
+								{g.writes.map((w) => (wide ? <WideRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} /> : <StackedRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />))}
+							</ul>
+						</section>
 					))}
-				</ul>
+				</div>
 			)}
 			{notWritten.length > 0 ? (
 				<ul className="space-y-1 text-sm text-ink-2">

@@ -30,7 +30,7 @@ interface BaseDomainResult {
 export const DOMAIN_PATTERN = /^[a-z0-9.-]+\.[a-z]{2,}$/;
 
 /** Step 1, only when the instance has no domain yet: choose the home-base domain that receives all reports. */
-export function DomainStep({ onDomainSet, secondary = false, title }: { onDomainSet: (domainId: number) => void; /** The Cloudflare card beside this one carries the primary button. */ secondary?: boolean; title?: string }) {
+export function DomainStep({ onDomainSet, secondary = false, title, hideConnectLink = false }: { onDomainSet: (domainId: number) => void; /** The Cloudflare card beside this one carries the primary button. */ secondary?: boolean; title?: string; /** The first screen shows the Connect Cloudflare card right next to this form, so the link would say it twice. */ hideConnectLink?: boolean }) {
 	const fieldId = useId();
 	const hintId = useId();
 	// The domain asked for on the website, if any: a prefill the person confirms with Continue.
@@ -178,7 +178,7 @@ export function DomainStep({ onDomainSet, secondary = false, title }: { onDomain
 							'The domain you own, without www or a path.'
 						)}
 					</FieldHint>
-					{!cf.pending && zoneList.length === 0 && cf.canConnect ? <ConnectCloudflareLink /> : null}
+					{!hideConnectLink && !cf.pending && zoneList.length === 0 && cf.canConnect ? <ConnectCloudflareLink /> : null}
 					{error ? <FieldError>{error}</FieldError> : null}
 					{save.isError && !atLimit ? <DomainRefusalHelp error={save.error} /> : null}
 					{atLimit ? <PlanLimitNotice limit={atLimit} /> : null}

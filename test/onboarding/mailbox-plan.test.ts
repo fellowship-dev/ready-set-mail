@@ -59,3 +59,27 @@ describe('reports mailbox plan (self-host)', () => {
     expect(mail(plan).writes.find((x: any) => x.id === 'mx-del:old')).toMatchObject({ action: 'delete', before: '10 mail.example.net' });
   });
 });
+
+describe('report authorisation record', () => {
+  const dmarcStep = (plan: any) => plan.steps.find((s: any) => s.key === 'dmarc').writes.map((w: any) => w.id);
+  it('is skipped when the policy domain and the reports domain share an organisational domain', async () => {
+    const { tenant } = setup({ routing: true, catchAll: null });
+    const cf = await tenant.cfFor();
+    cf.listDnsRecords = async (_z: string, q: { type?: string }) => (q.type === 'TXT' ? [{ id: 'x', content: 'v=DMARC1; p=none' }] : []);
+    const { plan } = await buildPlan(tenant, [1]); // a-corp.com reporting to reports.a-corp.com
+    expect(dmarcStep(plan)).toEqual(['dmarc:1']); // and no auth:1
+  });
+  it('is planned for another organisation', async () => {
+    const { tenant } = setup({ routing: true, catchAll: null });
+    tenant.scope.domains.getById = async (id: number) => ({ id, domain: 'other-org.net', dns_record_id: null });
+    const own = { zoneFor: async () => ({ id: 'z2', name: 'other-org.net' }), listDnsRecords: async (_z: string, q: { type?: string; name?: string }) => (q.type === 'TXT' && q.name?.startsWith('_dmarc') ? [{ id: 'x', content: 'v=DMARC1; p=none' }] : []), request: async () => ({}) };
+    tenant.cfFor = async () => own;
+    const { plan } = await buildPlan(tenant, [1]);
+    expect(dmarcStep(plan)).toEqual(expect.arrayContaining(['dmarc:1', 'auth:1']));
+  });
+  it('knows the public suffix list: co.uk names of different organisations are not the same', async () => {
+    const { sameOrganisation } = await import('../../src/onboarding/plan');
+    expect(sameOrganisation('a.co.uk', 'reports.a.co.uk')).toBe(true);
+    expect(sameOrganisation('a.co.uk', 'b.co.uk')).toBe(false);
+  });
+});

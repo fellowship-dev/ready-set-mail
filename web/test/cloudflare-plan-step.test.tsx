@@ -70,7 +70,7 @@ describe('PlanStep', () => {
 		await screen.findByText('This zone is not allowed.');
 		onePrimary('Try again');
 		expect(screen.getByText('Written')).toBeInTheDocument();
-		expect(screen.getByText('example.com')).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'example.com' })).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Try again' }));
 		await screen.findByRole('button', { name: 'Next' });
 		const apply = calls.filter(c => c.path === '/api/onboarding/dns-apply');
@@ -135,21 +135,31 @@ describe('PlanStep write results and layout', () => {
 		expect(screen.getAllByText('Written')).toHaveLength(1);
 	});
 
-	it('stacks each write below md and uses the table from md', async () => {
+	it('starts with the intro line, groups the writes by domain, and lays out compact rows (stacked below md, one line from md)', async () => {
 		const orig = window.matchMedia;
 		const { unmount } = renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': plan(two) } });
-		await screen.findByText('Write 2 records', { selector: 'button' }).catch(() => {});
+		expect(await screen.findByText('Ready Set Mail will write these records to Cloudflare. Nothing changes until you press Write.')).toBeInTheDocument();
+		expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
 		expect(await screen.findAllByRole('listitem')).toHaveLength(2);
 		expect(screen.queryByRole('table')).toBeNull();
 		unmount();
 		window.matchMedia = ((q: string) => ({ ...orig(q), matches: true })) as typeof window.matchMedia;
 		try {
 			renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': plan(two) } });
-			expect(await screen.findByRole('table')).toBeInTheDocument();
-			expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+			expect(await screen.findAllByRole('listitem')).toHaveLength(2);
+			expect(screen.queryByRole('columnheader', { name: 'Domain' })).toBeNull(); // no repeated Domain column
 		} finally {
 			window.matchMedia = orig;
 		}
+	});
+	it('the mailbox step says it writes the routing rule too, and names a single zone once', async () => {
+		const writes = [
+			{ id: 'mx:route1.mx.cloudflare.net', domain: 'reports.example.com', zone: 'example.com', type: 'MX', name: 'reports.example.com', content: 'route1.mx.cloudflare.net', priority: 40, action: 'create', before: null, reason: '' },
+			{ id: 'catch_all', domain: 'reports.example.com', zone: 'example.com', type: 'EMAIL_ROUTING', name: 'reports.example.com', content: 'Catch-all rule for example.com: …', action: 'rule', before: null, reason: '' },
+		];
+		renderApp(<PlanStep stepKey="reports_mailbox" domainIds={[1]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': { plan_id: 'p', steps: [{ key: 'reports_mailbox', satisfied: false, writes }], not_written: [] } } });
+		expect(await screen.findByText('Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press Write.')).toBeInTheDocument();
+		expect(screen.getByText(/In your Cloudflare zone/)).toHaveTextContent('example.com');
 	});
 });
 

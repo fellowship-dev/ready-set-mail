@@ -21,7 +21,7 @@ export function FirstScreen({ onDomainSet }: { onDomainSet: (domainId: number) =
 	const conns = useCfConnections(canWrite);
 	const manual = (secondary: boolean) => (
 		<div ref={manualRef}>
-			<DomainStep onDomainSet={onDomainSet} secondary={secondary} title="I'll add DNS records myself" />
+			<DomainStep onDomainSet={onDomainSet} secondary={secondary} title="I'll add DNS records myself" hideConnectLink />
 		</div>
 	);
 	const plain = <DomainStep onDomainSet={onDomainSet} />;
