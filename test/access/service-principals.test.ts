@@ -40,6 +40,11 @@ describe('service principals and HTTP isolation', () => {
   expect(await authorizedDomains(f.db,f.resolved.access,{workspaceId:'ws_default',productId:f.b.id})).toEqual([]);
   await expect(new AccessService(f.db,f.resolved.access).createPrincipal('ws_default','escalate','service')).rejects.toThrow();
  });
+ it('does not allow GET /api/domains/:id, which has no handler, to delegated credentials', async () => {
+  const f = await productFixture();
+  const principal = {kind:'service' as const,viaCookie:false,user:null,workspaceId:'ws_default',role:'admin' as const,access:f.resolved.access};
+  await expect(authorizeHttpRequest(new Request(`https://i.test/api/domains/${f.domains[0].id}?product_id=${f.a.id}`),f.db,principal)).rejects.toThrow('route not available to delegated credentials');
+ });
  it('denies the next authorization after key/grant revocation and principal disable without deleting history',async () => {
   for (const type of ['credentials','grants','principals'] as const) {
    const f = await productFixture(), target = {workspaceId:'ws_default',productId:f.a.id,domain:f.domains[0].domain};

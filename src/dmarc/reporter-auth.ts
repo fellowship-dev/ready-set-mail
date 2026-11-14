@@ -22,7 +22,7 @@
 
 import { organizationalDomain } from '@ready-set-mail/dns-checks';
 import { authProof, parseAuthResults } from '../email/parse-headers';
-import { readAuthHeaders, selectTrusted, type AuthHeaders } from '../email/sender-proof';
+import { readAuthHeaders, resultsOverclaim, selectTrusted, type AuthHeaders } from '../email/sender-proof';
 import { registryCandidates, reportEmailAccepted, type KnownReporter, type RegistryEnv } from './known-reporters';
 
 export type ReporterTier = 'counted' | 'unknown' | 'unauthenticated';
@@ -75,13 +75,9 @@ export function carrierFromHeaders(headers: AuthHeaders | undefined, env: Authse
   // The header could not be tokenized cleanly (RFC 8601, src/email/auth-results.ts): nothing in it is believed.
   if (sel.kind === 'malformed') return fail(sel.failure === 'too_long' ? 'authres_too_long' : sel.failure === 'unsupported_version' ? 'authres_version_unsupported' : 'authres_malformed', 'present', { detail: sel.detail });
   const parsed = parseAuthResults(sel.value);
-  // A receiver writes one dkim result per DKIM-Signature it verified, and one dmarc result per message. More dkim results (other than
-  // "none") than the message has signatures, or more than one dmarc result, means part of the header was not written by the receiver: a
-  // sender-chosen value copied back unquoted (smtp.helo=x;dkim=pass(c)header.d=google.com). Nothing in it is believed.
-  const dkimResults = parsed?.dkimAll.filter((d) => d.result !== 'none').length ?? 0;
-  if ((headers.dkimSignatures !== undefined && dkimResults > headers.dkimSignatures) || (parsed?.dmarcAll.length ?? 0) > 1) {
-    return fail('authres_malformed', 'present', { detail: `${dkimResults} dkim results for ${headers.dkimSignatures ?? '?'} signatures, ${parsed?.dmarcAll.length ?? 0} dmarc results` });
-  }
+  // More dkim or dmarc results than the receiver can have written: nothing in the header is believed (resultsOverclaim).
+  const overclaim = resultsOverclaim(headers, parsed);
+  if (overclaim) return fail('authres_malformed', 'present', { detail: overclaim });
   const proof = authProof(parsed);
   // EVERY dkim=pass counts (a message can carry several signatures); the one aligned with the From organisation wins, else the first passing one.
   const dkimOrg = fromOrg && proof.dkimPassOrgs.includes(fromOrg) ? fromOrg : proof.dkimPassOrgs[0] ?? null;

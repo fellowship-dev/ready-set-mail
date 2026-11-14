@@ -52,6 +52,8 @@ export interface BulkImportItem {
 	help_url?: string | null;
 	dns_record_id?: string | null;
 	manual_dns?: boolean;
+	/** status 'imported': its first DNS read was stored (true), or it was not checked yet (false). */
+	dns_checked?: boolean;
 }
 
 export interface BulkImportResponse {
