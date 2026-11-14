@@ -99,7 +99,7 @@ export class TenantContext {
   cf(): CfClient | null {
     if (!this.#cfToken) return null;
     if (!this.#cf) {
-      this.#cf = new CfClient(this.#cfToken, { fetch: this.#fetch, mode: this.mode });
+      this.#cf = new CfClient(this.#cfToken, { fetch: this.#fetch, mode: this.mode, apiBaseUrl: this.env.CLOUDFLARE_API_BASE_URL });
       const { zoneId, zoneName, cfAccountId } = this.settings;
       if (zoneId && zoneName) this.#cf.seedZone({ id: zoneId, name: zoneName, cfAccountId });
     }

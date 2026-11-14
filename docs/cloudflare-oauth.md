@@ -66,6 +66,10 @@ Worker vars (`wrangler.jsonc` `vars`) unless marked secret.
 OAuth is offered when the client id, authorize URL and token URL are set **and** `TOKEN_ENCRYPTION_KEY` is configured.
 The current baseline includes the Cloudflare connection tables; apply all current migrations with `npm run migrate` before serving the Worker. Google Postmaster uses a separate owner grant while sharing the token-encryption key format; see [agent operations](agent-operations.md#google-postmaster-is-a-separate-owner-connection).
 
+### Testing
+
+`CLOUDFLARE_API_BASE_URL` (var, testing only) sends every Cloudflare API call to a local fake instead of `api.cloudflare.com`; the end-to-end suite uses `e2e/support/fake-cloudflare.mjs` this way. It is honoured only when it is exactly `http://127.0.0.1:<port>` or `http://localhost:<port>`; any other value (a remote host, https, a path, credentials) is ignored and the real API is used, so it can never redirect a real token elsewhere. Leave it unset in production.
+
 ## How it works
 
 * **Storage.** `cloudflare_connections` holds `token_envelope`: `ia1.<key id>.<iv>.<ciphertext>`, AES-256-GCM via WebCrypto,

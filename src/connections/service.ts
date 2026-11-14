@@ -29,7 +29,7 @@ import {
   type OAuthTokens,
 } from './oauth';
 
-export type ConnectionEnv = CryptoEnv & OAuthEnv & { MODE?: string };
+export type ConnectionEnv = CryptoEnv & OAuthEnv & { MODE?: string; CLOUDFLARE_API_BASE_URL?: string };
 
 /** What the connection layer needs from its tenant. */
 export interface ConnectionHost {
@@ -142,7 +142,7 @@ export class ConnectionService {
   /** Validate a pasted API token with Cloudflare, then store it encrypted. Zones start unallowed. */
   async addToken(p: { token: string; label?: string; createdBy?: string | null }): Promise<PublicConnection> {
     const crypt = this.crypt;
-    const cf = new CfClient(p.token, { fetch: this.#host.fetch });
+    const cf = new CfClient(p.token, { fetch: this.#host.fetch, apiBaseUrl: this.#host.env.CLOUDFLARE_API_BASE_URL });
     let verified: { status: string; expires_on?: string };
     try {
       verified = await cf.verifyToken();
@@ -172,7 +172,7 @@ export class ConnectionService {
   async addOAuth(p: { tokens: OAuthTokens; label?: string; createdBy?: string | null; replace?: string }): Promise<PublicConnection> {
     const crypt = this.crypt;
     const q = this.#host.scope.connections;
-    const cf = new CfClient(p.tokens.material.access(), { fetch: this.#host.fetch });
+    const cf = new CfClient(p.tokens.material.access(), { fetch: this.#host.fetch, apiBaseUrl: this.#host.env.CLOUDFLARE_API_BASE_URL });
     const account = await this.#soleAccount(cf);
     const scopes = p.tokens.scopes.join(' ') || null;
 
@@ -217,7 +217,7 @@ export class ConnectionService {
     const existing = await q.getSecret(id);
     if (!existing) throw new CfConnectionError('missing', id);
     if (existing.auth_type !== 'token') throw new ConnectionInputError('only pasted-token connections take a new token; reconnect OAuth connections through OAuth');
-    const cf = new CfClient(token, { fetch: this.#host.fetch });
+    const cf = new CfClient(token, { fetch: this.#host.fetch, apiBaseUrl: this.#host.env.CLOUDFLARE_API_BASE_URL });
     try {
       const v = await cf.verifyToken();
       if (v.status !== 'active') throw new ConnectionInputError(`this API token is not active (${v.status})`);
@@ -363,6 +363,7 @@ export class ConnectionService {
 
     return new CfClient(async () => (await this.#current(id)).material.access(), {
       fetch: this.#host.fetch,
+      apiBaseUrl: this.#host.env.CLOUDFLARE_API_BASE_URL,
       policy,
       mode,
       onUnauthorized: () => this.#unauthorized(id),

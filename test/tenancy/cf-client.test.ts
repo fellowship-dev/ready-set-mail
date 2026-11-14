@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { inspect } from 'node:util';
 import {
   CfApiError, CfAuthError, CfClient, CfNetworkError, CfNotConfiguredError, CfNotFoundError, CfZoneNotFoundError,
-  cfErrorText, zoneCandidates,
+  cfApiBase, cfErrorText, zoneCandidates,
 } from '../../src/tenancy/cf-client';
 import { FakeCloudflare } from '../helpers/cf-fake';
 
@@ -178,5 +178,28 @@ describe('TenantContext never leaks the env secrets', () => {
     expect(out).not.toContain(TOKEN);
     expect(out).not.toContain('api-key-secret');
     expect(out).toContain('ws_default');
+  });
+});
+
+describe('CLOUDFLARE_API_BASE_URL guard', () => {
+  const REAL = 'https://api.cloudflare.com/client/v4';
+  it('honours only http://127.0.0.1:<port> and http://localhost:<port>', () => {
+    expect(cfApiBase('http://127.0.0.1:8788')).toBe('http://127.0.0.1:8788/client/v4');
+    expect(cfApiBase('http://localhost:9999/')).toBe('http://localhost:9999/client/v4');
+  });
+  it('ignores everything else and uses the real API', () => {
+    for (const v of [undefined, '', 'not a url', 'https://127.0.0.1:8788', 'http://127.0.0.1', 'http://evil.example:80', 'http://127.0.0.1.evil.example:80',
+      'http://localhost:80@evil.example', 'http://user:pw@localhost:80', 'http://127.0.0.1:8788/path', 'http://localhost:8788?x=1', 'http://localhost:8788#x',
+      'http://[::1]:8788', 'http://0.0.0.0:8788', 'http://localhost.evil.example:8788', 'ftp://localhost:21']) {
+      expect(cfApiBase(v), String(v)).toBe(REAL);
+    }
+  });
+  it('a client sends its requests to the honoured base, and to the real API otherwise', async () => {
+    const urls: string[] = [];
+    const fetchStub = (async (u: string) => { urls.push(u); return new Response(JSON.stringify({ success: true, result: [] })); }) as unknown as typeof fetch;
+    await new CfClient(TOKEN, { fetch: fetchStub, apiBaseUrl: 'http://127.0.0.1:8788' }).listAccounts();
+    await new CfClient(TOKEN, { fetch: fetchStub, apiBaseUrl: 'https://evil.example' }).listAccounts();
+    expect(urls[0]).toBe('http://127.0.0.1:8788/client/v4/accounts?per_page=50');
+    expect(urls[1]).toBe(`${REAL}/accounts?per_page=50`);
   });
 });
