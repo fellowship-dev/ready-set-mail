@@ -10,7 +10,8 @@ import { ClaimLinkProvider } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
 import { AuthPage } from './pages/auth/AuthPage';
-import { ClaimPage } from './pages/auth/ClaimPage';
+import { ClaimPage } from './pages/setup/ClaimPage';
+import { OwnerSetupPage } from './pages/setup/OwnerSetupPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
 import { NoWorkspacePage } from './pages/auth/NoWorkspacePage';
@@ -19,7 +20,7 @@ import { WelcomePage } from './pages/auth/WelcomePage';
 
 /** Waits for the session, then shows the app, the sign-in screen (deep link preserved) or a "server unreachable" state. */
 function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
-	const { state, retry, me } = useSession();
+	const { state, retry, me, status } = useSession();
 	if (state === 'loading') return <div className="mx-auto max-w-2xl p-8"><PageSkeleton label="Starting up" /></div>;
 	if (state === 'unreachable') {
 		return (
@@ -32,7 +33,7 @@ function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 's
 			</div>
 		);
 	}
-	if (state === 'anon') return <AuthPage initialMode={initialMode} />;
+	if (state === 'anon') return status && !status.configured && status.mode !== 'saas' ? <OwnerSetupPage /> : <AuthPage initialMode={initialMode} />;
 	if (me && me.workspace_id == null) return <NoWorkspacePage />;
 	return <>{children}</>;
 }

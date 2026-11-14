@@ -1,8 +1,8 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ClaimPage } from '../src/pages/auth/ClaimPage';
-import { AuthPage } from '../src/pages/auth/AuthPage';
+import { ClaimPage } from '../src/pages/setup/ClaimPage';
+import { OwnerSetupPage } from '../src/pages/setup/OwnerSetupPage';
 import { ClaimLinkProvider } from '../src/lib/claim-link';
 import { Route, Routes, useLocation } from 'react-router';
 import { fail, me, renderApp } from './render';
@@ -21,7 +21,7 @@ function Harness() {
 			<Where />
 			<Routes>
 				<Route path="/claim/:token" element={<ClaimPage />} />
-				<Route path="*" element={<AuthPage />} />
+				<Route path="*" element={<OwnerSetupPage />} />
 			</Routes>
 		</ClaimLinkProvider>
 	);
@@ -66,7 +66,7 @@ describe('setup link', () => {
 	});
 
 	it('without a link, leads with the instruction and keeps the proof behind a disclosure', async () => {
-		renderApp(<AuthPage />, { role: null, status: unconfigured });
+		renderApp(<OwnerSetupPage />, { role: null, status: unconfigured });
 		expect(await screen.findByText(/Open the setup link printed when you deployed/)).toBeInTheDocument();
 		expect(screen.getByText('I have an installer proof')).toBeInTheDocument();
 	});
