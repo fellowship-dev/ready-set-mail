@@ -23,14 +23,21 @@ function childEnv(accountId) {
 }
 
 /** Run a command with no terminal attached (Wrangler then answers its own prompts with the default), capturing output. */
-function run(cmd, args, { accountId, inherit = false } = {}) {
+function run(cmd, args, { accountId, inherit = false, umask } = {}) {
   return new Promise((resolve) => {
     const bin = cmd === 'wrangler' ? wranglerBin : cmd;
-    const child = spawn(bin, args, {
-      cwd: repoRoot,
-      env: childEnv(accountId),
-      stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
-    });
+    // A child inherits the umask in force when it is spawned: set it for this one child only.
+    const previous = umask !== undefined ? process.umask(umask) : undefined;
+    let child;
+    try {
+      child = spawn(bin, args, {
+        cwd: repoRoot,
+        env: childEnv(accountId),
+        stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+      });
+    } finally {
+      if (previous !== undefined) process.umask(previous);
+    }
     let output = '';
     child.stdout?.on('data', (d) => { output += d; });
     child.stderr?.on('data', (d) => { output += d; });

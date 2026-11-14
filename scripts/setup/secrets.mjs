@@ -64,14 +64,13 @@ export function loadOrCreateSecrets(dir, { randomBytes, mayReuse }) {
 }
 
 /**
- * Run `fn(path)` with a 0600 JSON secrets file for `wrangler deploy --secrets-file`, removed afterwards
- * whatever happens. It lives in the private instance folder, never in the checkout.
+ * Run `fn(path)` with a 0600 file holding `content`, removed afterwards whatever happens: on success, on an
+ * error, and on Ctrl-C or SIGTERM while `fn` runs (then the process exits as the signal would have).
  */
-export async function withSecretsFile(dir, secrets, fn, proc = process) {
-  const path = join(dir, '.deploy-secrets.json');
+export async function withTempFile(path, content, fn, proc = process) {
   const remove = () => { try { unlinkSync(path); } catch { /* already gone */ } };
   remove();
-  writeFileSync(path, JSON.stringify(secrets), { mode: 0o600, flag: 'wx' });
+  writeFileSync(path, content, { mode: 0o600, flag: 'wx' });
   // Ctrl-C or a kill while Wrangler runs: remove the file, then exit as the signal would have.
   const onSignal = (signal) => { remove(); proc.exit(signal === 'SIGINT' ? 130 : 143); };
   proc.once('SIGINT', onSignal);
@@ -83,4 +82,9 @@ export async function withSecretsFile(dir, secrets, fn, proc = process) {
     proc.removeListener('SIGTERM', onSignal);
     remove();
   }
+}
+
+/** The JSON secrets file for `wrangler deploy --secrets-file`, in the private instance folder, never in the checkout. */
+export function withSecretsFile(dir, secrets, fn, proc = process) {
+  return withTempFile(join(dir, '.deploy-secrets.json'), JSON.stringify(secrets), fn, proc);
 }
