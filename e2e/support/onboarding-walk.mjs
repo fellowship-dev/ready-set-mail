@@ -1,5 +1,5 @@
 // Real-browser walk of the onboarding screens (Playwright chromium) with layout assertions and screenshots.
-//   node e2e/support/onboarding-walk.mjs [--only selfhost|hosted|claims|before]
+//   node e2e/support/onboarding-walk.mjs [--only selfhost|hosted|claims|before|count]
 // Needs `npm run build:dashboard` (and for `before`: ~/work/main-wt with its dashboard built). Shots: ~/work/shots/<mode>-<width>-<nn>-<step>.png
 // (before: before-hosted-<width>-claim.png). One line per shot: `OK|FAIL <file> scrollW/innerW clipped=<n>`.
 // Counts (fields typed, clicks) are kept per flow and printed as `COUNT ...`. Only fictitious names from the fake are used.
@@ -188,11 +188,11 @@ async function hostedSignUp(page, d, inst, email) {
 
 const DNS = { 'harbor-lane.org': ['ns1.domaincontrol.com'], 'quietfield.net': ['ns1.ns.cloudflare.com'] };
 
-async function hostedWalk(browser, width, height, port, tokenKey) {
-  const inst = await startInstance({ mode: 'hosted', port, tokenKey, dohNs: { 'harbor-lane.org': ['ns1.domaincontrol.com'], 'brightwave-mail.com': ['ns1.ns.cloudflare.com'] } });
+async function hostedWalk(browser, width, height, port, tokenKey, { cwd = REPO, tag = '' } = {}) {
+  const inst = await startInstance({ mode: 'hosted', port, tokenKey, cwd, dohNs: { 'harbor-lane.org': ['ns1.domaincontrol.com'], 'brightwave-mail.com': ['ns1.ns.cloudflare.com'] } });
   const { ctx, page } = await newPage(browser, width, height);
   const d = driver(page);
-  const shot = shooter(page, tokenKey ? 'hosted' : 'hosted-nokey', width);
+  const shot = shooter(page, tag || (tokenKey ? 'hosted' : 'hosted-nokey'), width);
   try {
     await hostedSignUp(page, d, inst, `owner-${width}@harbor-lane.org`);
     await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20000 });
@@ -202,16 +202,39 @@ async function hostedWalk(browser, width, height, port, tokenKey) {
     await dom.waitFor();
     await d.type(dom, 'harbor-lane.org');
     await d.click(btn(page, /^(Continue|Add domain)/).first(), 'Add domain');
-    await page.getByRole('group', { name: 'DNS record to add' }).waitFor({ timeout: 20000 });
+    await page.getByRole('group', { name: 'DNS record to add' }).or(page.getByText(/_readysetmail/).first()).first().waitFor({ timeout: 20000 });
     await shot('domain-added');
     console.log(`COUNT hosted${tokenKey ? '' : '-nokey'}-${width} sign-up -> domain added (pending claim): fields=${d.c.fields} clicks=${d.c.clicks} [${d.c.log.join(', ')}]`);
-    if (tokenKey && width === 375) {
-      // token path against the fake to the overview
+    if (tokenKey) {
+      // Token path against the fake, all the way to the overview (hosted: zone allow-list proves ownership; DMARC has no rua).
+      d.reset();
       await page.goto(`${inst.url}/#/setup/cloudflare`);
-      const connect = btn(page, 'Connect Cloudflare');
-      if (await connect.count()) { await connect.first().click(); }
       const tok = page.getByLabel('Cloudflare API token');
-      if (await tok.count()) { await tok.fill('fake-token-for-local-walk'); await btn(page, 'Connect', { exact: true }).click(); await wait(2500); await shot('token-connected'); }
+      await tok.waitFor({ timeout: 20000 });
+      await d.type(tok, 'fake-token-for-local-walk');
+      await d.click(btn(page, 'Connect', { exact: true }), 'Connect');
+      await btn(page, 'Next').waitFor({ timeout: 20000 });
+      await d.click(btn(page, 'Select all'), 'Select all');
+      await d.click(btn(page, 'Next'), 'Next (zones)');
+      await btn(page, /^Add \d+ domains?/).waitFor({ timeout: 20000 });
+      await page.getByText(/DMARC (p=|missing|inherited)/).first().waitFor({ timeout: 20000 });
+      await shot('token-domains');
+      await d.click(btn(page, /^Add \d+ domains?/), 'Add domains');
+      for (let i = 0; i < 12; i++) {
+        await wait(1200);
+        if (await page.getByRole('button', { name: 'Go to overview' }).count()) break;
+        const write = page.getByRole('button', { name: /^Write \d+ (record|change)/ });
+        const next = page.getByRole('button', { name: 'Next', exact: true });
+        if (await write.count()) { await d.click(write.first(), 'Write'); await next.waitFor({ timeout: 20000 }); await shot(`token-plan-written-${i + 1}`); await d.click(next, 'Next'); }
+        else if (await next.count() && await next.first().isEnabled()) await d.click(next.first(), 'Next');
+      }
+      await btn(page, 'Go to overview').waitFor({ timeout: 30000 });
+      await shot('token-done');
+      await d.click(btn(page, 'Go to overview'), 'Go to overview');
+      await page.getByRole('heading', { level: 1 }).first().waitFor();
+      await wait(1500);
+      await shot('token-overview');
+      console.log(`COUNT hosted-${width} token path: connect -> overview: fields=${d.c.fields} clicks=${d.c.clicks} [${d.c.log.join(', ')}]`);
     }
   } catch (e) { failures++; console.log(`FAIL hosted-${tokenKey ? 'key' : 'nokey'}-${width} walk: ${String(e.message).split('\n')[0]}`); await page.screenshot({ path: path.join(SHOTS, `hosted-${tokenKey ? 'key' : 'nokey'}-${width}-error.png`) }).catch(() => {}); }
   await ctx.close(); await inst.stop();
@@ -273,6 +296,7 @@ try {
     await selfhostWalk(browser, 375, 812, 8811); await selfhostWalk(browser, 1440, 900, 8812); await selfhostWalk(browser, 1920, 1080, 8813);
     await selfhostSpecial(browser, 8814);
   }
+  if (only === 'count') { await hostedWalk(browser, 375, 812, 8841, false, { cwd: WT, tag: 'before-hosted-count' }); await hostedWalk(browser, 375, 812, 8842, false); }
   if (only === 'claims') { await claimStates(browser, 8824); await claimStates(browser, 8825, { prefix: 'hosted-connect', tokenKey: true, only: 'cloudflare' }); }
   if (!only || only === 'hosted') {
     await hostedWalk(browser, 375, 812, 8821, true); await hostedWalk(browser, 375, 812, 8822, false); await hostedWalk(browser, 1440, 900, 8823, true);
