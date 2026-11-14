@@ -68,6 +68,31 @@ async function createOwner(page, d, inst) {
   return link;
 }
 
+/** Plan steps: one primary writes AND advances ("Write N records and continue"); "Next" only where everything is in place. */
+async function planSteps(page, d, shot, prefix) {
+  let wrote = 0;
+  for (let i = 0; i < 12; i++) {
+    await wait(1200);
+    if (await page.getByRole('button', { name: 'Go to overview' }).count()) return;
+    const write = page.getByRole('button', { name: /^Write \d+ (record|change)s?( and continue)?$/ });
+    const next = page.getByRole('button', { name: 'Next', exact: true });
+    if (await write.count()) {
+      wrote++;
+      await shot(`${prefix}plan-before-write-${wrote}`);
+      await d.click(write.first(), 'Write and continue');
+      await page.getByText(/written to Cloudflare/).or(page.getByRole('button', { name: 'Go to overview' })).first().waitFor({ timeout: 30000 });
+      await wait(400);
+      await shot(`${prefix}plan-after-write-${wrote}`);
+    } else if (await next.count() && await next.first().isEnabled()) await d.click(next.first(), 'Next');
+  }
+}
+
+/** Hosted/self-host first screen with Cloudflare offered: the manual form sits behind a quiet button. */
+async function revealManual(page, d) {
+  const b = btn(page, "I'll add DNS records myself");
+  if (await b.count()) await d.click(b, "I'll add DNS records myself");
+}
+
 // ---------------------------------------------------------------- self-host
 async function selfhostWalk(browser, width, height, port) {
   const inst = await startInstance({ mode: 'selfhost', port });
@@ -94,7 +119,6 @@ async function selfhostWalk(browser, width, height, port) {
     await btn(page, 'Next').waitFor({ timeout: 20000 });
     await page.getByRole('checkbox').first().waitFor();
     await shot('zones');
-    await d.click(btn(page, 'Select all'), 'Select all');
     await d.click(btn(page, 'Next'), 'Next (zones)');
     await btn(page, /^Add \d+ domains?/).waitFor({ timeout: 20000 });
     await page.getByText(/DMARC (p=|missing|inherited)/).first().waitFor({ timeout: 20000 });
@@ -102,22 +126,7 @@ async function selfhostWalk(browser, width, height, port) {
     // Domains arrive ticked? If not, tick all.
     if (await btn(page, /^Add \d+ domains?/).isDisabled()) { for (const cb of await page.getByRole('checkbox').all()) { await d.click(cb, 'tick'); } }
     await d.click(btn(page, /^Add \d+ domains?/), 'Add domains');
-    // Plan steps: each has one primary button that writes (or "Next" when already in place).
-    let i = 0;
-    for (; i < 12; i++) {
-      await wait(1200);
-      const done = page.getByRole('button', { name: 'Go to overview' });
-      if (await done.count()) break;
-      const write = page.getByRole('button', { name: /^Write \d+ (record|change)/ });
-      const next = page.getByRole('button', { name: 'Next', exact: true });
-      if (await write.count()) {
-        if (i < 3) await shot(`plan-before-write-${i + 1}`);
-        await d.click(write.first(), 'Write');
-        await next.waitFor({ timeout: 20000 });
-        if (i < 3) await shot(`plan-after-write-${i + 1}`);
-        await d.click(next, 'Next');
-      } else if (await next.count() && await next.first().isEnabled()) { await d.click(next.first(), 'Next'); }
-    }
+    await planSteps(page, d, shot, '');
     await btn(page, 'Go to overview').waitFor({ timeout: 30000 });
     await shot('done');
     await d.click(btn(page, 'Go to overview'), 'Go to overview');
@@ -209,6 +218,7 @@ async function hostedWalk(browser, width, height, port, tokenKey, { cwd = REPO, 
     await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20000 });
     await wait(1000);
     await shot('first-screen');
+    await revealManual(page, d);
     const dom = page.getByRole('textbox').first();
     await dom.waitFor();
     await d.type(dom, 'harbor-lane.org');
@@ -225,20 +235,12 @@ async function hostedWalk(browser, width, height, port, tokenKey, { cwd = REPO, 
       await d.type(tok, 'fake-token-for-local-walk');
       await d.click(btn(page, 'Connect', { exact: true }), 'Connect');
       await btn(page, 'Next').waitFor({ timeout: 20000 });
-      await d.click(btn(page, 'Select all'), 'Select all');
       await d.click(btn(page, 'Next'), 'Next (zones)');
       await btn(page, /^Add \d+ domains?/).waitFor({ timeout: 20000 });
       await page.getByText(/DMARC (p=|missing|inherited)/).first().waitFor({ timeout: 20000 });
       await shot('token-domains');
       await d.click(btn(page, /^Add \d+ domains?/), 'Add domains');
-      for (let i = 0; i < 12; i++) {
-        await wait(1200);
-        if (await page.getByRole('button', { name: 'Go to overview' }).count()) break;
-        const write = page.getByRole('button', { name: /^Write \d+ (record|change)/ });
-        const next = page.getByRole('button', { name: 'Next', exact: true });
-        if (await write.count()) { await d.click(write.first(), 'Write'); await next.waitFor({ timeout: 20000 }); await shot(`token-plan-written-${i + 1}`); await d.click(next, 'Next'); }
-        else if (await next.count() && await next.first().isEnabled()) await d.click(next.first(), 'Next');
-      }
+      await planSteps(page, d, shot, 'token-');
       await btn(page, 'Go to overview').waitFor({ timeout: 30000 });
       await shot('token-done');
       await d.click(btn(page, 'Go to overview'), 'Go to overview');
@@ -266,6 +268,7 @@ async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold 
         if (onlyState && state !== onlyState) continue;
         await page.goto(`${inst.url}/#/add`);
         await wait(1500);
+        await revealManual(page, d);
         const dom = page.getByRole('textbox').first(); await dom.waitFor(); await dom.fill(domain); await wait(300); if ((await dom.inputValue()) !== domain) { await dom.fill(domain); }
         await btn(page, /^(Continue|Add domain)/).first().click();
         const rec = page.getByRole('group', { name: 'DNS record to add' });
@@ -300,19 +303,47 @@ async function claimStates(browser, port, { cwd = REPO, prefix = 'hosted', fold 
   await inst.stop();
 }
 
+/** Self-host, manual first-screen path: link -> owner form -> "I'll add DNS records myself" -> domain -> records. */
+async function manualPath(browser, port) {
+  const inst = await startInstance({ mode: 'selfhost', port });
+  const { ctx, page } = await newPage(browser, 1440, 900);
+  const d = driver(page); const shot = shooter(page, 'selfhost-manual', 1440);
+  try {
+    await createOwner(page, d, inst);
+    await page.locator('#email').waitFor();
+    d.reset();
+    await d.type(page.locator('#email'), 'owner@harbor-lane.org');
+    await d.type(page.locator('#password'), 'correct-horse-battery');
+    await d.type(page.locator('#confirm'), 'correct-horse-battery');
+    await d.click(btn(page, 'Create account'), 'Create account');
+    await btn(page, "I'll add DNS records myself").waitFor({ timeout: 20000 });
+    await d.click(btn(page, "I'll add DNS records myself"), "I'll add DNS records myself");
+    await shot('manual-revealed');
+    await d.type(page.getByRole('textbox').first(), 'harbor-lane.org');
+    await d.click(btn(page, 'Continue').first(), 'Continue');
+    await page.getByText(/SPF/).first().waitFor({ timeout: 30000 });
+    await shot('records');
+    console.log(`COUNT selfhost-1440 manual first-screen path (to the first record screen): fields=${d.c.fields} clicks=${d.c.clicks} [${d.c.log.join(', ')}]`);
+  } catch (e) { failures++; console.log(`FAIL manual-path: ${String(e.message).split('\n')[0]}`); await page.screenshot({ path: path.join(SHOTS, 'selfhost-manual-error.png') }).catch(() => {}); }
+  await ctx.close(); await inst.stop();
+}
+
 // Headless chromium needs its system libraries; if they are not installed, put them on LD_LIBRARY_PATH (see header).
 const browser = await chromium.launch();
 try {
   if (!only || only === 'selfhost') {
     await selfhostWalk(browser, 375, 812, 8811); await selfhostWalk(browser, 1440, 900, 8812); await selfhostWalk(browser, 1920, 1080, 8813);
     await selfhostSpecial(browser, 8814);
+    await manualPath(browser, 8815);
   }
+  if (only === 'manual') await manualPath(browser, 8815);
   if (only === 'count') { await hostedWalk(browser, 375, 812, 8841, false, { cwd: WT, tag: 'before-hosted-count' }); await hostedWalk(browser, 375, 812, 8842, false); }
   if (only === 'special') await selfhostSpecial(browser, 8814);
   if (only === 'claims') { await claimStates(browser, 8824); await claimStates(browser, 8825, { prefix: 'hosted-connect', tokenKey: true, only: 'cloudflare' }); }
   if (!only || only === 'hosted') {
     await hostedWalk(browser, 375, 812, 8821, true); await hostedWalk(browser, 375, 812, 8822, false); await hostedWalk(browser, 1440, 900, 8823, true);
     await claimStates(browser, 8824);
+    await claimStates(browser, 8825, { prefix: 'hosted-connect', tokenKey: true, only: 'cloudflare' });
   }
   if (!only || only === 'before') await claimStates(browser, 8831, { cwd: WT, prefix: 'before', fold: false });
 } finally { await browser.close(); }
