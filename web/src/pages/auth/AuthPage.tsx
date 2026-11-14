@@ -5,9 +5,11 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { bindSignupDomainToEmail, readSignupDomain } from '../../lib/signup-intent';
 import { useSession } from '../../lib/session';
 import { TalkToMax } from '../../components/TalkToMax';
-import { CheckEmail } from './CheckEmail';
+import { CodeStep, needsCode, type CodeRequired } from './CodeStep';
 import { AuthLayout, Field } from './AuthLayout';
 import { useHumanCheck } from './Turnstile';
+import { PasswordInput } from './PasswordInput';
+import { TermsAgreement } from './LegalLinks';
 import { HostedAlternative } from '../../components/HostedAlternative';
 
 const PROVIDER_LABELS: Record<string, string> = { github: 'GitHub', google: 'Google' };
@@ -19,6 +21,7 @@ type Mode = 'setup' | 'signup' | 'signin';
  *  - first run on a self-hosted instance (no owner yet): create the owner account;
  *  - hosted mode: sign in, or create an account when sign-up is open;
  *  - otherwise: sign in (a self-hosted instance is closed after setup: new people come in by invite).
+ * Sign-up and sign-in end with the 6-digit code emailed to the address, when the server asks for one.
  */
 export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const { status, signedIn } = useSession();
@@ -32,8 +35,8 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const [telemetry, setTelemetry] = useState(status?.telemetry_default ?? false);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
-	/** Set when the server wants the address verified before it opens a session. */
-	const [verifyFor, setVerifyFor] = useState<string | null>(null);
+	/** Set when the server emailed a code and waits for it. */
+	const [pending, setPending] = useState<CodeRequired | null>(null);
 	const check = useHumanCheck(status?.turnstile_site_key);
 
 	if (!status) return null;
@@ -51,37 +54,40 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	// The installer-proof screen is self-host only: the hosted service never asks a registrant for one.
 	const mode: Mode = !status.configured && !hosted ? 'setup' : creating && status.signup_open ? 'signup' : 'signin';
 	const registering = mode !== 'signin';
-	// Hosted sign-up asks for the email only: the password is chosen once, on the page the verification link opens.
-	const asksPassword = mode !== 'signup';
 	const providers = status.oauth_providers.filter((p) => p in PROVIDER_LABELS);
+	const endpoint = mode === 'setup' ? '/api/auth/setup' : mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
+
+	/** Sign-up or sign-in, with a bot-check token; also what "Send a new code" repeats. */
+	async function request(token: string | null) {
+		const turnstile = token ? { cf_turnstile_token: token } : {};
+		const body = mode === 'setup' ? { name, email, password, telemetry, ...turnstile } : { email, password, ...turnstile };
+		return api<CodeRequired | { has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
+	}
+
+	async function finish(hasDomain?: boolean) {
+		await signedIn();
+		// A new owner with no domain yet goes straight to the setup wizard; a hosted account lands where sign-up always did.
+		if (mode === 'setup' && hasDomain === false) navigate('/setup', { replace: true });
+		else navigate('/', { replace: true });
+	}
 
 	async function submit(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
 		setError('');
+		if (registering && password.length < 8) return setError('Password must be at least 8 characters.');
 		if (mode === 'setup') {
-			if (password.length < 8) return setError('Password must be at least 8 characters.');
 			if (password !== confirm) return setError('Passwords do not match.');
+			if (bootstrapProof.length < 32) return setError('Installer proof must be at least 32 characters.');
 		}
-		if (mode === 'setup' && bootstrapProof.length < 32) return setError('Installer proof must be at least 32 characters.');
 		setBusy(true);
 		try {
-			const turnstile = check.token ? { cf_turnstile_token: check.token } : {};
-			const endpoint = mode === 'setup' ? '/api/auth/setup' : mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
-			const body = mode === 'setup' ? { name, email, password, telemetry, ...turnstile } : mode === 'signup' ? { email, ...turnstile } : { email, password, ...turnstile };
 			if (mode === 'signup') bindSignupDomainToEmail(email);
-			const res = await api<{ verification_required?: boolean; has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
+			const res = await request(check.token);
 			setBootstrapProof('');
-			if (res.verification_required) {
-				setVerifyFor(email);
-				return;
-			}
-			await signedIn();
-			// A new owner with no domain yet goes straight to the setup wizard.
-			if (registering && res.has_domain === false) navigate('/setup', { replace: true });
-			else navigate('/', { replace: true });
+			if (needsCode(res)) return setPending(res);
+			await finish((res as { has_domain?: boolean }).has_domain);
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 403 && (err.body as { code?: string } | undefined)?.code === 'email_not_verified') setVerifyFor(email);
-			else if (mode === 'setup' && err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
+			if (mode === 'setup' && err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
 			else setError(errorMessage(err));
 		} finally {
 			setBusy(false);
@@ -100,8 +106,26 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 		}
 	}
 
-	// "Back to sign in" opens sign-in, whichever form led here.
-	if (verifyFor) return <CheckEmail email={verifyFor} onBack={() => { setVerifyFor(null); setCreating(false); setError(''); }} />;
+	if (pending) {
+		return (
+			<CodeStep
+				email={pending.email}
+				purpose={pending.purpose}
+				onSubmit={async (code) => {
+					await api('/api/auth/code', { method: 'POST', body: { code } });
+					await finish();
+				}}
+				onResend={async (token) => {
+					const res = await request(token);
+					if (needsCode(res)) setPending(res);
+				}}
+				onChangeEmail={() => {
+					setPending(null);
+					setError('');
+				}}
+			/>
+		);
+	}
 
 	const requestedDomain = mode === 'signup' ? readSignupDomain() : null;
 	const title = mode === 'setup' ? 'Create your account' : mode === 'signup' ? 'Create an account' : 'Sign in';
@@ -110,7 +134,7 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 			? 'This creates the account that owns this instance. It needs the installer proof, a secret only the person who deployed it holds. There is no default password.'
 			: mode === 'signup'
 				? hosted
-					? 'See where your domains stand and what to fix, checked from live DNS. DMARC reports are not connected yet.'
+					? 'See where your domains stand and what to fix, checked from live DNS.'
 					: 'Start monitoring your domains.'
 				: undefined;
 
@@ -123,20 +147,22 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 			) : null}
 			<form onSubmit={submit} className="space-y-4" noValidate={false}>
 				{mode === 'setup' ? <Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" required minLength={32} autoComplete="off" value={bootstrapProof} onChange={e => setBootstrapProof(e.target.value)} /></Field> : null}
-				{/* Hosted sign-up asks for no name: one typed before the address is proven could be anyone's; the welcome page asks. */}
+				{/* Hosted sign-up asks for no name: one typed before the address is proven could be anyone's; Settings has it. */}
 				{mode === 'setup' ? (
 					<Field id="name" label="Your name (optional)">
 						<Input id="name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Jane Smith" />
 					</Field>
 				) : null}
-				<Field id="email" label="Email" hint={mode === 'signup' ? "We'll email you a link. It opens a page where you choose your password and are signed in." : registering ? (hosted ? 'Used to sign in.' : 'Used to sign in and to receive monitoring alerts.') : undefined}>
-					<Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@yourcompany.com" aria-describedby={registering ? 'email-hint' : undefined} />
+				<Field id="email" label="Email" hint={mode === 'signup' ? "We'll email you a 6-digit code to confirm it." : registering ? (hosted ? 'Used to sign in.' : 'Used to sign in and to receive monitoring alerts.') : undefined}>
+					<Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete={registering ? 'email' : 'username'} placeholder="you@yourcompany.com" aria-describedby={registering ? 'email-hint' : undefined} />
 				</Field>
-				{asksPassword ? (
-					<Field id="password" label="Password" hint={registering ? 'At least 8 characters.' : undefined}>
-						<Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete={registering ? 'new-password' : 'current-password'} aria-describedby={registering ? 'password-hint' : undefined} />
-					</Field>
-				) : null}
+				<Field id="password" label="Password" hint={registering ? 'At least 8 characters.' : undefined}>
+					{mode === 'setup' ? (
+						<Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" aria-describedby="password-hint" />
+					) : (
+						<PasswordInput id="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={registering ? 8 : undefined} autoComplete={registering ? 'new-password' : 'current-password'} aria-describedby={registering ? 'password-hint' : undefined} />
+					)}
+				</Field>
 				{mode === 'setup' ? (
 					<Field id="confirm" label="Confirm password">
 						<Input id="confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
@@ -153,6 +179,7 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 				) : null}
 				{check.widget}
 				{error ? <FieldError>{error}</FieldError> : null}
+				{mode === 'signup' ? <TermsAgreement /> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={!check.ready}>
 					{mode === 'signin' ? 'Sign in' : 'Create account'}
 				</Button>

@@ -26,18 +26,54 @@ export function req(method: string, path: string, opts: { key?: string; body?: u
   if (opts.key) headers['x-api-key'] = opts.key;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   let body = opts.body;
-  if (/^\/api\/auth\/(signup|login|setup|resend-verification)$/.test(path) && body && typeof body === 'object' && !('cf_turnstile_token' in body)) body = { ...body, cf_turnstile_token: 'ok' };
+  if (/^\/api\/auth\/(signup|login|setup|forgot)$/.test(path) && body && typeof body === 'object' && !('cf_turnstile_token' in body)) body = { ...body, cf_turnstile_token: 'ok' };
   return new Request(`${BASE}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
 }
 
 export const call = (env: Env, ...args: Parameters<typeof req>) => handleApi(req(...args), env, ctx);
 
-/** The verification token in an emailed link (`<origin>/#/welcome/<token>`: the token travels in the fragment). */
-export const welcomeTokenIn = (text: string): string => decodeURIComponent(text.match(/\/#\/welcome\/([^\s]+)/)![1]!);
+/** Wait for the work routes hand to waitUntil (code mail is sent in the background). */
+export const flushBackground = () => Promise.all((ctx.waitUntil as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(c => c[0]));
 
-/** The welcome page's POST: confirm the address and choose the password, in one step. */
-export const completeWelcome = (env: Env, token: string, password: string, opts: { ip?: string; headers?: Record<string, string> } = {}) =>
-  call(env, 'POST', '/api/auth/welcome', { body: { token, password }, ...opts });
+/** A capturing mail binding on this env (hosted tests get one if they did not bring their own). */
+export function mailbox(env: Env): { send: ReturnType<typeof vi.fn> } {
+  if (!env.SEND_EMAIL) (env as { SEND_EMAIL?: unknown }).SEND_EMAIL = { send: vi.fn(async () => {}) };
+  return env.SEND_EMAIL as unknown as { send: ReturnType<typeof vi.fn> };
+}
+
+type Mail = { to: string[]; subject: string; text: string };
+/** Every mail sent to this address so far, oldest first. */
+export const mailsTo = (env: Env, email: string): Mail[] =>
+  mailbox(env).send.mock.calls.map(c => c[0] as Mail).filter(m => m.to.includes(email.toLowerCase()));
+
+/** The code in the newest code email to this address (after the background sends finished). */
+export async function lastCodeFor(env: Env, email: string): Promise<string> {
+  await flushBackground();
+  const m = mailsTo(env, email).filter(x => /^\d{6} is your Ready Set Mail code$/.test(x.subject)).at(-1);
+  if (!m) throw new Error(`no code email to ${email}`);
+  return m.subject.slice(0, 6);
+}
+
+/** The pending-attempt cookie (`name=value`) a code step answered with. */
+export function pendingCookieOf(res: Response): string {
+  const c = ((res.headers as Headers & { getSetCookie(): string[] }).getSetCookie()).find(x => /^(__Host-)?rsm_pending=./.test(x));
+  if (!c) throw new Error('no pending-attempt cookie');
+  return c.split(';')[0]!;
+}
+
+/** Type a code in the browser that holds `cookie`. */
+export const enterCode = (env: Env, cookie: string, code: string, opts: { ip?: string; headers?: Record<string, string> } = {}) =>
+  call(env, 'POST', '/api/auth/code', { body: { code }, ip: opts.ip, headers: { cookie, ...opts.headers } });
+
+/** Password, then the emailed code. Returns the session token (scripts get one in the body). */
+export async function loginWithCode(env: Env, email: string, password: string, opts: { ip?: string } = {}): Promise<string> {
+  mailbox(env);
+  const res = await call(env, 'POST', '/api/auth/login', { body: { email, password }, ip: opts.ip });
+  if (res.status !== 200) throw new Error(`login failed: ${res.status} ${await res.text()}`);
+  const done = await enterCode(env, pendingCookieOf(res), await lastCodeFor(env, email), opts);
+  if (done.status !== 200) throw new Error(`code failed: ${done.status} ${await done.text()}`);
+  return (await done.json() as { token: string }).token;
+}
 
 export async function setupOwner(env: Env, email = 'owner@example.com', password = 'correct-horse-battery') {
   const res = await call(env, 'POST', '/api/auth/setup', { body: { email, password } });
@@ -51,36 +87,24 @@ export async function inviteAndAccept(env: Env, ownerToken: string, email: strin
   if (inv.status !== 201) throw new Error(`invite failed: ${inv.status} ${await inv.text()}`);
   const { token } = await inv.json() as { token: string };
   const acc = await call(env, 'POST', `/api/invites/${token}`, { body: { name: email.split('@')[0], password } });
-  if (acc.status !== 201) throw new Error(`accept failed: ${acc.status} ${await acc.text()}`);
-  const { token: session, invite_pending } = await acc.json() as { token: string | null; invite_pending?: boolean };
-  if (session) return session;
-  // Hosted: the link alone proves nothing. The invitee gets an ordinary account, verifies it (as the emailed link would),
-  // signs in and accepts the invite as that verified address.
-  const sql = (env.DB as unknown as TestDb).sqlite;
-  sql.prepare('UPDATE users SET email_verified = 1 WHERE email = ?').run(email.toLowerCase());
-  const login = await call(env, 'POST', '/api/auth/login', { body: { email, password } });
-  if (login.status !== 200) throw new Error(`login failed: ${login.status} ${await login.text()}`);
-  const bearer = (await login.json() as { token: string }).token;
-  if (invite_pending) {
-    const done = await call(env, 'POST', `/api/invites/${token}`, { key: bearer, body: {} });
-    if (done.status !== 200) throw new Error(`accept failed: ${done.status} ${await done.text()}`);
-    // Tests act as a plain member of the inviting workspace: leave the personal workspace sign-up created out of it.
-    const inviting = (sql.prepare('SELECT workspace_id FROM invites WHERE token = ?').get(token) as { workspace_id: string }).workspace_id;
-    sql.prepare('DELETE FROM memberships WHERE user_id = (SELECT id FROM users WHERE email = ?) AND workspace_id != ?').run(email.toLowerCase(), inviting);
-  }
-  return bearer;
+  if (acc.status === 201) return (await acc.json() as { token: string }).token; // self-host: the invite signs in
+  if (acc.status !== 200) throw new Error(`accept failed: ${acc.status} ${await acc.text()}`);
+  // Hosted: the link alone proves nothing. The code emailed to the invited address sets the password, verifies it and accepts.
+  const done = await enterCode(env, pendingCookieOf(acc), await lastCodeFor(env, email));
+  if (done.status !== 200) throw new Error(`code failed: ${done.status} ${await done.text()}`);
+  return (await done.json() as { token: string }).token;
 }
 
 
 /**
- * Hosted sign-up as a verified user: sign up (no session yet: the mailbox is unproven), mark the address verified as
- * clicking the emailed link would, then log in. Returns the session token.
+ * Hosted sign-up as a verified user: email and password, then the emailed code (typed in the same "browser"). Returns the
+ * session token the code step opens.
  */
-export async function signupVerified(env: Env, email: string, password = 'password-123', name = email) {
-  const res = await call(env, 'POST', '/api/auth/signup', { body: { name, email, password } });
-  if (res.status !== 201) throw new Error(`signup failed: ${res.status} ${await res.text()}`);
-  (env.DB as unknown as TestDb).sqlite.prepare('UPDATE users SET email_verified = 1 WHERE email = ?').run(email.toLowerCase());
-  const login = await call(env, 'POST', '/api/auth/login', { body: { email, password } });
-  if (login.status !== 200) throw new Error(`login failed: ${login.status} ${await login.text()}`);
-  return (await login.json() as { token: string }).token;
+export async function signupVerified(env: Env, email: string, password = 'password-123', _name = email) {
+  mailbox(env);
+  const res = await call(env, 'POST', '/api/auth/signup', { body: { email, password } });
+  if (res.status !== 200) throw new Error(`signup failed: ${res.status} ${await res.text()}`);
+  const done = await enterCode(env, pendingCookieOf(res), await lastCodeFor(env, email));
+  if (done.status !== 200) throw new Error(`code failed: ${done.status} ${await done.text()}`);
+  return (await done.json() as { token: string }).token;
 }

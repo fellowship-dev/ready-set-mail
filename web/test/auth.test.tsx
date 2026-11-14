@@ -127,36 +127,117 @@ describe('hosted sign-up', () => {
 	});
 });
 
+describe('the 6-digit code step', () => {
+	const HOSTED = { mode: 'saas' as const, configured: true, signup_open: true, turnstile_site_key: null, legal: { terms_url: 'https://readysetmail.com/terms', privacy_url: 'https://readysetmail.com/privacy', operator_name: 'Fellowship.dev, Inc.' } };
+
+	it('sign-in: password, then the code screen; the sixth digit signs in; "Send a new code" repeats the sign-in', async () => {
+		let done = false;
+		const { calls } = renderApp(<AuthPage />, {
+			role: null,
+			status: HOSTED as any,
+			routes: {
+				'POST /api/auth/login': { code_required: true, purpose: 'signin', email: 'a@example.com', expires_in: 600 },
+				'POST /api/auth/code': () => ((done = true), { purpose: 'signin' }),
+				'GET /api/me': () => (done ? me('owner') : fail(401)),
+			},
+		});
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText('Email'), 'a@example.com');
+		await user.type(screen.getByLabelText('Password'), 'correct-horse');
+		await user.click(screen.getByRole('button', { name: 'Sign in' }));
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to a@example.com' })).toBeInTheDocument();
+		expect(screen.getByText(/Your password was right\. Enter the code from the email to finish signing in\./)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Send a new code' }));
+		await waitFor(() => expect(calls.filter((c) => c.path === '/api/auth/login')).toHaveLength(2));
+		expect(calls.filter((c) => c.path === '/api/auth/login')[1]!.body).toEqual({ email: 'a@example.com', password: 'correct-horse' });
+		await user.type(screen.getByLabelText('6-digit code'), '654321');
+		await waitFor(() => expect(meFetches(calls)).toBeGreaterThan(1));
+		expect(calls.find((c) => c.path === '/api/auth/code')?.body).toEqual({ code: '654321' });
+	});
+
+	it('sign-up (hosted): email, one password with Show, the agreement above the button, then the code', async () => {
+		const { calls } = renderApp(<AuthPage initialMode="signup" />, {
+			role: null,
+			status: HOSTED as any,
+			routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } },
+		});
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText('Email'), 'new@example.com');
+		const password = screen.getByLabelText('Password');
+		await user.type(password, 'long-enough-1');
+		expect(screen.queryByLabelText('Confirm password')).toBeNull();
+		expect(password).toHaveAttribute('type', 'password');
+		await user.click(screen.getByRole('button', { name: 'Show password' }));
+		expect(password).toHaveAttribute('type', 'text');
+		expect(screen.queryByText(/DMARC reports are not connected yet/)).toBeNull();
+		const agreement = screen.getByText(/By creating an account you agree to the/);
+		expect(agreement).toHaveTextContent('By creating an account you agree to the Terms and the Privacy Policy.');
+		const button = screen.getByRole('button', { name: 'Create account' });
+		expect(agreement.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		await user.click(button);
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		expect(calls.find((c) => c.path === '/api/auth/signup')?.body).toEqual({ email: 'new@example.com', password: 'long-enough-1' });
+		await user.click(screen.getByRole('button', { name: 'Use a different email' }));
+		expect(await screen.findByLabelText('Email')).toHaveValue('new@example.com');
+	});
+
+	it('the terms links open in a new tab; the hosted footer has Terms, Privacy and nothing on self-host', async () => {
+		const { unmount } = renderApp(<AuthPage initialMode="signup" />, { role: null, status: HOSTED as any });
+		const links = await screen.findAllByRole('link', { name: 'Terms' });
+		for (const l of links) {
+			expect(l).toHaveAttribute('href', 'https://readysetmail.com/terms');
+			expect(l).toHaveAttribute('target', '_blank');
+		}
+		expect(screen.getByRole('navigation', { name: 'Legal and help' })).toBeInTheDocument();
+		unmount();
+		renderApp(<AuthPage />, { role: null, status: { mode: 'self-host', configured: true, legal: { terms_url: null, privacy_url: null, operator_name: null } } as any });
+		await screen.findByLabelText('Email');
+		expect(screen.queryByRole('navigation', { name: 'Legal and help' })).toBeNull();
+		expect(screen.queryByRole('link', { name: 'Terms' })).toBeNull();
+	});
+});
+
 describe('forgot and reset', () => {
-	it('gives the same answer for any email', async () => {
-		renderApp(<ForgotPage />, { role: null, routes: { 'POST /api/auth/forgot': { ok: true } } });
+	it('asks for the email, then one screen with the code and the new password; saving it signs in', async () => {
+		let reset = false;
+		const { calls } = renderApp(
+			<Routes>
+				<Route path="/forgot" element={<ForgotPage />} />
+				<Route path="/" element={<p>home</p>} />
+			</Routes>,
+			{
+				role: null,
+				route: '/forgot',
+				routes: {
+					'POST /api/auth/forgot': { code_required: true, purpose: 'reset', email: 'whoever@example.com', expires_in: 600 },
+					'POST /api/auth/reset': () => ((reset = true), { purpose: 'reset' }),
+					'GET /api/me': () => (reset ? me('owner') : fail(401)),
+				},
+			},
+		);
 		const user = userEvent.setup();
 		await user.type(await screen.findByLabelText('Email'), 'whoever@example.com');
-		await user.click(screen.getByRole('button', { name: 'Send reset link' }));
-		expect(await screen.findByText(/If an account exists for/)).toHaveTextContent('whoever@example.com');
+		await user.click(screen.getByRole('button', { name: 'Send code' }));
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to whoever@example.com' })).toBeInTheDocument();
+		expect(screen.getByText(/Enter the code from the email and choose a new password\. Then you are signed in\./)).toBeInTheDocument();
+		await user.type(screen.getByLabelText('6-digit code'), '123456');
+		expect(calls.some((c) => c.path === '/api/auth/reset')).toBe(false); // the sixth digit moves on to the password
+		await user.type(screen.getByLabelText('New password'), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Set password and sign in' }));
+		expect(await screen.findByText('home')).toBeInTheDocument();
+		expect(calls.find((c) => c.path === '/api/auth/reset')?.body).toEqual({ code: '123456', password: 'long-enough-1' });
 	});
 
-	function resetRoute(token: string) {
-		return (
+	it('an old reset link says to ask for a code, and calls nothing', async () => {
+		const { calls } = renderApp(
 			<Routes>
 				<Route path="/reset/:token" element={<ResetPage />} />
-			</Routes>
+			</Routes>,
+			{ role: null, route: '/reset/abcdefghijkl' },
 		);
-	}
-
-	it('turns a 400 into the expired-link screen', async () => {
-		renderApp(resetRoute('abcdefghijkl'), { role: null, route: '/reset/abcdefghijkl', routes: { 'POST /api/auth/reset': fail(400, 'reset link is invalid or has expired') } });
-		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('New password'), 'long-enough-1');
-		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
-		await user.click(screen.getByRole('button', { name: /Set password/ }));
-		expect(await screen.findByRole('heading', { name: 'Link expired' })).toBeInTheDocument();
-	});
-
-	it('rejects a malformed token without calling the API', async () => {
-		const { calls } = renderApp(resetRoute('x'), { role: null, route: '/reset/short' });
-		expect(await screen.findByRole('heading', { name: 'Link expired' })).toBeInTheDocument();
-		expect(calls.some((c) => c.path === '/api/auth/reset')).toBe(false);
+		expect(await screen.findByRole('heading', { name: 'This reset link no longer works' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Reset your password' })).toHaveAttribute('href', '/forgot');
+		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 	});
 });
 

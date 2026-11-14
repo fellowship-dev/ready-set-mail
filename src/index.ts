@@ -114,7 +114,13 @@ export interface Env {
   PUBLIC_BASE_URL?: string;      // public origin of this Worker, for unsubscribe and confirmation links (falls back to BETTER_AUTH_URL)
   AUTHSERV_ID?: string;          // authserv-id of the receiving server's results (see docs/email-funnel.md); with AUTHSERV_HEADER, REQUIRED for the sequence to enrol anyone
   AUTHSERV_HEADER?: string;      // "ar" (Authentication-Results) or "arc" (ARC-Authentication-Results): the one header kind the receiver adds; REQUIRED for enrolment
-  POSTAL_ADDRESS?: string;       // postal address shown in the footer of non-transactional mail
+  POSTAL_ADDRESS?: string;       // postal address shown in the footer of non-transactional mail (and, when set, of account mail)
+  // Sign-in and legal (docs/hosted.md, "Sign-in codes" and "Terms and privacy")
+  SIGNIN_CODES?: string;         // self-host only: "off" turns the emailed sign-in code off (it is on whenever the instance can send mail); hosted ignores it
+  TERMS_URL?: string;            // https terms page; hosted default SITE_URL/terms. Self-host shows the sign-up agreement only with both TERMS_URL and PRIVACY_URL
+  PRIVACY_URL?: string;          // https privacy policy; hosted default SITE_URL/privacy
+  TERMS_VERSION?: string;        // what a sign-up records as accepted (e.g. a date); default the terms URL
+  OPERATOR_NAME?: string;        // who operates the instance, named in the footer of account mail; hosted default "Fellowship.dev, Inc.", self-host none
   BOOKING_URL?: string;          // booking link in the day-14 note; that step is held until it is set
   HOSTED_SERVICE_URL?: string;   // https URL of the maker-run hosted free tier; unset = no surface mentions a hosted service (src/hosted-service.ts)
   SERVICE_PRICES?: string;       // JSON {"fix":"$…","keepFixed":"$…/mo","bimi":"$…/mo"}: the prices in the day-10 email

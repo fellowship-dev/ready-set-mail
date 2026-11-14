@@ -1,6 +1,6 @@
 // The path from sign-up to a first verified domain, walked before launch (2026-11-13): each friction found there, as the
 // server must now behave.
-//  1. the password is chosen once, on the page the verification link opens (sign-up asks for the email only);
+//  1. the password is typed once, at sign-up, and becomes the account's when the emailed code proves the address;
 //  2. the moment a claim is proven, its first DNS read is stored, so the overview shows the real level;
 //  3. typing a domain that already has a pending claim resumes it;
 //  6. while hosted sign-up is closed, no route creates an account (OAuth included);
@@ -8,13 +8,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { handleOAuthUserInfo } from 'better-auth/oauth2';
-import { call, completeWelcome, ctx, makeEnv, req, signupVerified, welcomeTokenIn } from '../auth/helpers';
+import { call, ctx, enterCode, lastCodeFor, makeEnv, mailsTo, pendingCookieOf, req, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { dohFetch, type Zone } from '../../packages/dns-checks/test/helpers';
 import { __resetPreviewCacheForTests } from '../../src/domains/claim-preview';
 import { createAuth } from '../../src/auth';
-import { VERIFICATION_SUBJECT, verificationEmailText } from '../../src/auth/mail';
-import { VERIFICATION_LINK_HOURS } from '../../src/auth/welcome';
+import { codeEmailText, codeSubject } from '../../src/auth/mail';
 
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
@@ -33,43 +32,41 @@ function hosted(extra: Record<string, unknown> = {}) {
   const send = vi.fn(async () => {});
   const env = makeEnv(db, { ...HOSTED_ENV, SEND_EMAIL: { send }, ...extra });
   const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
-  const lastToken = () => welcomeTokenIn((send.mock.calls.at(-1) as any)[0].text as string);
-  return { db, env, send, rows, lastToken };
+  return { db, env, send, rows };
 }
 
-describe('1. the password is typed once, after the mailbox is proven (the link design itself: welcome-link.test.ts)', () => {
-  it('sign-up takes the email only; the welcome page sets the password and signs the person in', async () => {
+describe('1. the password is typed once, and the emailed code confirms it (the threat model: sign-in-codes.test.ts)', () => {
+  it('sign-up takes the email and a password; the code confirms the address and signs the person in', async () => {
     const w = hosted();
-    const res = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'New@Example.com' } });
-    expect(res.status).toBe(201);
-    expect(await json(res)).toMatchObject({ verification_required: true });
-    expect(res.headers.get('set-cookie')).toBeNull();
-    const chosen = await completeWelcome(w.env, w.lastToken(), 'chosen-once-123');
-    expect(chosen.status).toBe(200);
-    const session = (await json(chosen)).token as string;
+    const res = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'New@Example.com', password: 'chosen-once-123' } });
+    expect(res.status).toBe(200);
+    expect(await json(res.clone())).toMatchObject({ code_required: true, purpose: 'signup' });
+    expect((res.headers as any).getSetCookie().some((c: string) => /session/.test(c))).toBe(false);
+    const done = await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'new@example.com'));
+    expect(done.status).toBe(200);
+    const session = (await json(done)).token as string;
     expect((await call(w.env, 'GET', '/api/me', { key: session })).status).toBe(200);
-    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'chosen-once-123' } })).status).toBe(200);
+    expect((await json(await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'chosen-once-123' } }))).code_required).toBe(true);
   });
 
-  it('nobody can sign in to an account made by sign-up before its link is used: there is no password to know', async () => {
+  it('nobody can sign in to an account made by sign-up before its code is typed: not even with the password typed at sign-up', async () => {
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com' } });
+    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'password-123' } });
     for (const guess of ['', 'password-123', 'cfo@acme.com']) {
       expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: guess } })).status).not.toBe(200);
     }
     expect(w.rows("SELECT COUNT(*) n FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ n: 0 }]);
   });
 
-  it('a hosted invitee is not asked for a password either, and uses the same welcome link', async () => {
+  it('a hosted invitee chooses a password; the code confirms it, signs in and accepts the invite in one step', async () => {
     const w = hosted();
     const owner = await signupVerified(w.env, 'owner@example.com');
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: owner, body: { email: 'friend@example.com' } }));
-    const res = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend' } });
-    expect(res.status).toBe(201);
-    expect(await json(res)).toMatchObject({ verification_required: true, invite_pending: true });
-    expect((w.send.mock.calls.at(-1) as any)[0].text).toMatch(/https:\/\/ia\.example\.com\/#\/welcome\/\S+/);
-    const session = (await json(await completeWelcome(w.env, w.lastToken(), 'friend-password-1'))).token as string;
-    expect((await call(w.env, 'POST', `/api/invites/${inv.token}`, { key: session, body: {} })).status).toBe(200);
+    const res = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'friend-password-1' } });
+    expect(res.status).toBe(200);
+    expect(await json(res.clone())).toMatchObject({ code_required: true, purpose: 'invite' });
+    const done = await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'friend@example.com'));
+    expect((await json(done)).workspace_id).toBe(w.rows('SELECT workspace_id FROM invites')[0].workspace_id);
   });
 
   it('self-host keeps asking for the password at setup', async () => {
@@ -77,18 +74,17 @@ describe('1. the password is typed once, after the mailbox is proven (the link d
     expect((await call(env, 'POST', '/api/auth/setup', { body: { email: 'owner@example.com' } })).status).toBe(400);
   });
 
-  it('the verification email names Ready Set Mail and says what the link does, and for how long', async () => {
+  it('the code email names Ready Set Mail and says what the code is for, and for how long', async () => {
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com' } });
+    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'pass-word-123' } });
+    const code = await lastCodeFor(w.env, 'a@example.com');
     const sent = (w.send.mock.calls.at(-1) as any)[0];
     expect(sent.from.name).toBe('Ready Set Mail');
-    expect(sent.subject).toBe(VERIFICATION_SUBJECT);
-    expect(sent.subject).toBe('Confirm your email for Ready Set Mail');
-    expect(sent.text).toBe(verificationEmailText(sent.text.match(/https:\/\/\S+/)[0]));
-    expect(sent.text).toContain('confirm your email address and choose your Ready Set Mail password');
-    expect(sent.text).toContain(`for ${VERIFICATION_LINK_HOURS} hours`);
-    expect(VERIFICATION_LINK_HOURS).toBe(24);
-    expect(sent.text).not.toMatch(/Inbox ?Angel|next page|verify-email/i);
+    expect(sent.subject).toBe(codeSubject(code));
+    expect(sent.text.startsWith(codeEmailText(code, 'signup', 'https://ia.example.com', null))).toBe(true);
+    expect(sent.text).toContain('It expires in 10 minutes');
+    expect(sent.text).not.toMatch(/Inbox ?Angel|next page|verify-email|#\//i);
+    expect(mailsTo(w.env, 'a@example.com')).toHaveLength(1);
   });
 });
 
@@ -173,25 +169,27 @@ describe('6. hosted sign-up closed: no NEW account by any route; existing users 
     for (const w of closedEnvs()) {
       const status = await json(await call(w.env, 'GET', '/api/auth/status'));
       expect(status).toMatchObject({ signup_open: false, signin_available: true, oauth_providers: ['github'], signup_unavailable_reason: 'bot_protection_not_configured' });
-      expect((await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com' } })).status).toBe(503);
+      expect((await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'pass-word-123' } })).status).toBe(503);
       // an OAuth start creates nothing by itself; the callback's user-creation hook refuses a new account (next test)
       expect((await call(w.env, 'POST', '/api/auth/sign-in/social', { body: { provider: 'github', callbackURL: '/' } })).status).not.toBe(503);
     }
   });
 
-  it('existing verified users still sign in (no bot check while the keys are missing), reset their password and use a pending link', async () => {
+  it('existing verified users still sign in with the code (no bot check while the keys are missing), reset their password and finish a pending sign-up code', async () => {
     const open = hosted();
     await signupVerified(open.env, 'owner@example.com', 'owner-password-1');
-    await call(open.env, 'POST', '/api/auth/signup', { body: { email: 'late@example.com' } }); // signed up before the keys went missing
-    const pending = open.lastToken();
+    const late = await call(open.env, 'POST', '/api/auth/signup', { body: { email: 'late@example.com', password: 'late-password-1' } }); // before the keys went missing
+    const lateCode = await lastCodeFor(open.env, 'late@example.com');
     for (const extra of [{ TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined }, { TURNSTILE_SITE_KEY: undefined }]) {
       const closed = { ...open.env, ...extra } as typeof open.env;
       const login = await call(closed, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'owner-password-1', cf_turnstile_token: '' } });
       expect(login.status).toBe(200);
-      expect((await call(closed, 'POST', '/api/auth/forgot', { body: { email: 'owner@example.com' } })).status).toBe(200);
+      expect((await enterCode(closed, pendingCookieOf(login), await lastCodeFor(open.env, 'owner@example.com'))).status).toBe(200);
+      const forgot = await call(closed, 'POST', '/api/auth/forgot', { body: { email: 'owner@example.com', cf_turnstile_token: '' } });
+      expect(forgot.status).toBe(200);
     }
     const closed = { ...open.env, TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined } as typeof open.env;
-    expect((await completeWelcome(closed, pending, 'late-password-1')).status).toBe(200);
+    expect((await enterCode(closed, pendingCookieOf(late), lateCode)).status).toBe(200);
   });
 
   it('with the keys configured, sign-in keeps the bot check', async () => {

@@ -645,7 +645,9 @@ CREATE TABLE `users` (
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`email_verified` integer DEFAULT 0 NOT NULL,
 	`image` text,
-	`updated_at` integer DEFAULT 0 NOT NULL
+	`updated_at` integer DEFAULT 0 NOT NULL,
+	`terms_accepted_at` integer,
+	`terms_version` text
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `users_email_unique` ON `users` (`email`);--> statement-breakpoint

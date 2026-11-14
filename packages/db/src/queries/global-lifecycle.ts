@@ -235,7 +235,13 @@ export function lifecycleQueries(dbLike: DbLike) {
 				db.update(auditLog).set({ actor_email: null }).where(eq(auditLog.actor_id, userId)),
 				db.update(auditLog).set({ resource_name: null }).where(and(eq(auditLog.resource_type, 'user'), eq(auditLog.resource_id, userId))),
 				db.delete(invites).where(or(sql`lower(${invites.email}) = lower(${email})`, and(isNull(invites.used_at), sql`lower(${invites.invited_by}) = lower(${email})`))),
-				db.delete(verifications).where(or(eq(verifications.value, userId), sql`lower(${verifications.identifier}) = lower(${email})`)),
+				// …and the account's device epoch and any pending sign-in code attempt (src/auth/device.ts, src/auth/codes.ts).
+				db.delete(verifications).where(or(
+					eq(verifications.value, userId),
+					sql`lower(${verifications.identifier}) = lower(${email})`,
+					eq(verifications.identifier, `device-epoch:${userId}`),
+					sql`(${verifications.identifier} LIKE 'signin-code:%' AND json_extract(${verifications.value}, '$.u') = ${userId})`,
+				)),
 				db.delete(passwordResetTokens).where(eq(passwordResetTokens.user_id, userId)),
 				db.delete(apiKeys).where(eq(apiKeys.user_id, userId)),
 				db.delete(sessions).where(eq(sessions.userId, userId)),

@@ -7,6 +7,7 @@ export type AuthEnv = Pick<
   | 'BOOTSTRAP_SECRET' | 'DB' | 'API_KEY' | 'MODE' | 'SAAS_ENABLED' | 'OWNER_EMAIL' | 'BETTER_AUTH_SECRET' | 'BETTER_AUTH_URL' | 'TRUSTED_ORIGINS'
   | 'GITHUB_CLIENT_ID' | 'GITHUB_CLIENT_SECRET' | 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET'
   | 'SEND_EMAIL' | 'TURNSTILE_SECRET_KEY' | 'TURNSTILE_SITE_KEY'
+  | 'SIGNIN_CODES' | 'SITE_URL' | 'TERMS_URL' | 'PRIVACY_URL' | 'TERMS_VERSION' | 'OPERATOR_NAME' | 'POSTAL_ADDRESS'
 >;
 
 /** `MODE=saas`: every signup gets its own workspace. Anything else is self-host: it starts with one implicit workspace. */

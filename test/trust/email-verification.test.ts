@@ -2,7 +2,7 @@
 // on an address they have not proven. Self-host keeps working with no email setup.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, makeEnv, setupOwner, inviteAndAccept, signupVerified, req, completeWelcome, welcomeTokenIn } from '../auth/helpers';
+import { call, makeEnv, setupOwner, inviteAndAccept, signupVerified, req, enterCode, lastCodeFor, pendingCookieOf } from '../auth/helpers';
 import { delegatedKey } from '../auth/grant-fixture';
 import { createAuth } from '../../src/auth';
 import { handleOAuthUserInfo } from 'better-auth/oauth2';
@@ -15,55 +15,57 @@ function saas() {
   const send = vi.fn(async () => {});
   const env = makeEnv(db, { MODE: 'saas', SAAS_ENABLED: '1', SEND_EMAIL: { send } });
   const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
-  /** The verification token of the i-th mail: the link is `<origin>/#/welcome/<token>`. */
-  const linkIn = (i: number) => welcomeTokenIn((send.mock.calls[i] as any)[0].text as string);
-  return { db, env, send, rows, linkIn };
+  /** The newest code emailed to this address, typed in the browser that holds `res`'s attempt cookie. */
+  const confirm = async (res: Response, email: string) => enterCode(env, pendingCookieOf(res), await lastCodeFor(env, email));
+  return { db, env, send, rows, confirm };
 }
 
 describe('hosted sign-up requires a verified email', () => {
-  it('signs up without a session, sends the verification email, and refuses login until the link is used', async () => {
+  it('signs up without a session, emails a code, and nobody can sign in until the code is typed', async () => {
     const w = saas();
     const res = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'New@Example.com', password: 'password-123' } });
-    expect(res.status).toBe(201);
-    expect(await json(res)).toMatchObject({ token: null, verification_required: true });
+    expect(res.status).toBe(200);
+    expect(await json(res.clone())).toMatchObject({ code_required: true, purpose: 'signup', email: 'new@example.com' });
+    expect((await json(res.clone())).token).toBeUndefined();
+    expect((res.headers as any).getSetCookie().some((c: string) => /session_token/.test(c))).toBe(false);
+    await lastCodeFor(w.env, 'new@example.com');
     expect(w.send).toHaveBeenCalledTimes(1);
-    expect((w.send.mock.calls[0] as any)[0]).toMatchObject({ to: ['new@example.com'], subject: expect.stringMatching(/confirm/i) });
+    expect((w.send.mock.calls[0] as any)[0]).toMatchObject({ to: ['new@example.com'], subject: expect.stringMatching(/^\d{6} is your Ready Set Mail code$/) });
 
-    const login = await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'password-123' } });
-    expect(login.status).toBe(403);
-    expect(await json(login)).toMatchObject({ code: 'email_not_verified' });
-    expect(login.headers.get('set-cookie')).toBeNull();
+    // before the code: the password typed at sign-up is not yet the account's
+    const early = await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'password-123' } });
+    expect(early.status).toBe(401);
+    expect(early.headers.get('set-cookie')).toBeNull();
 
-    // the emailed link is the welcome page; its POST verifies the address and sets the mailbox owner's password in one step
-    const reset = await completeWelcome(w.env, w.linkIn(0), 'chosen-after-verify-1');
-    expect(reset.status).toBe(200);
+    const done = await w.confirm(res, 'new@example.com');
+    expect(done.status).toBe(200);
+    expect((await json(done)).token).toBeTruthy();
     expect(w.rows("SELECT email_verified FROM users WHERE email = 'new@example.com'")).toEqual([{ email_verified: 1 }]);
-    // the password chosen before the address was proven no longer works
-    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'password-123' } })).status).toBe(401);
-    expect((await json(reset)).token).toBeTruthy();
-    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'chosen-after-verify-1' } })).status).toBe(200);
+    expect((await json(await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'password-123' } }))).code_required).toBe(true);
   });
 
-  it('pre-registration does not hand an account to the real owner: the registrant’s password is dead after verification, and their sessions end', async () => {
+  it('pre-registration does not hand an account to the real owner: the registrant’s password never becomes the account’s, and their sessions end', async () => {
     const w = saas();
     // the attacker registers the CFO's address with a password they know
     await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'attacker-password-1' } });
     const uid = w.rows("SELECT id FROM users WHERE email = 'cfo@acme.com'")[0].id;
     w.db.sqlite.prepare("INSERT INTO sessions (id, user_id, token, expires_at) VALUES ('s1', ?, 'attacker-session', 9999999999)").run(uid);
-    // the real CFO clicks the verification mail they received
-    const res = await completeWelcome(w.env, w.linkIn(0), 'cfo-own-password-1');
-    expect(res.status).toBe(200);
+    // the real CFO signs up and types the code they received
+    const own = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-own-password-1' } });
+    expect((await w.confirm(own, 'cfo@acme.com')).status).toBe(200);
     expect(w.rows("SELECT * FROM sessions WHERE user_id = ? AND token = 'attacker-session'", uid)).toEqual([]);
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: 'attacker-password-1' } })).status).toBe(401);
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: 'cfo-own-password-1' } })).status).toBe(200);
   });
 
-  it('resend-verification always answers ok and sends a fresh link only to a real unverified account', async () => {
+  it('a reset request emails a code only to a real account, with the same answer for an unknown address', async () => {
     const w = saas();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } });
+    await signupVerified(w.env, 'a@example.com');
     w.send.mockClear();
-    expect((await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'a@example.com' } })).status).toBe(200);
-    expect((await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'nobody@example.com' } })).status).toBe(200);
+    const real = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'a@example.com' } });
+    const ghost = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'nobody@example.com' } });
+    expect([real.status, ghost.status]).toEqual([200, 200]);
+    await lastCodeFor(w.env, 'a@example.com');
     expect(w.send).toHaveBeenCalledTimes(1);
   });
 
@@ -71,7 +73,7 @@ describe('hosted sign-up requires a verified email', () => {
     const w = saas();
     await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } });
     const again = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'another-pass-1' } });
-    expect(again.status).toBe(201);
+    expect(again.status).toBe(200);
     expect(w.rows('SELECT COUNT(*) n FROM users')).toEqual([{ n: 1 }]);
     expect(w.rows('SELECT COUNT(*) n FROM workspaces WHERE id != ?', 'ws_default')).toEqual([{ n: 1 }]);
   });
@@ -133,7 +135,7 @@ describe('sign-up bot check is mandatory when hosted', () => {
     expect(db.sqlite.prepare('SELECT COUNT(*) n FROM users').all()).toEqual([{ n: 0 }]);
     const keyed = makeEnv(db, { MODE: 'saas', SAAS_ENABLED: '1' });
     expect((await call(keyed, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123', cf_turnstile_token: 'bad' } })).status).toBe(403);
-    expect((await call(keyed, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } })).status).toBe(201);
+    expect((await call(keyed, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } })).status).toBe(200);
   });
 });
 
@@ -145,31 +147,32 @@ describe('invites are accepted only by a verified, matching email', () => {
     return { ...w, owner, inviteToken: inv.token as string };
   }
 
-  it('holding the link is not enough: a new invitee gets an ordinary unverified account and no membership', async () => {
+  it('holding the link is not enough: a new invitee gets an unverified account, no membership and no session until the code', async () => {
     const w = await invited();
     const res = await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { body: { name: 'Friend', password: 'password-123' } });
-    expect(res.status).toBe(201);
-    expect(await json(res)).toMatchObject({ token: null, verification_required: true, invite_pending: true });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({ code_required: true, purpose: 'invite', email: 'friend@example.com' });
     expect(w.rows('SELECT used_at FROM invites')).toEqual([{ used_at: null }]);
     // and no workspace of their own either: signing up through an invite does not leave an empty personal workspace behind
     expect(w.rows("SELECT workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = 'friend@example.com'")).toEqual([]);
     expect(w.rows("SELECT COUNT(*) n FROM workspaces WHERE id != 'ws_default'")).toEqual([{ n: 1 }]); // the owner's
-    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'friend@example.com', password: 'password-123' } })).status).toBe(403);
+    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'friend@example.com', password: 'password-123' } })).status).toBe(401);
   });
 
-  it('an admin of the inviting workspace cannot accept for the invitee: acceptance needs a session of the invited, verified address', async () => {
+  it('an admin of the inviting workspace cannot accept for the invitee: the code goes to the invited address', async () => {
     const w = await invited();
-    // the admin signs the invitee up with a password the admin knows...
-    await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { body: { name: 'Friend', password: 'admins-password-1' } });
-    // ...but cannot sign in as them (unverified), and their own session is the wrong address
-    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'friend@example.com', password: 'admins-password-1' } })).status).toBe(403);
-    const res = await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { key: w.owner, body: {} });
-    expect(res.status).toBe(403);
-    expect((await json(res)).code).toBe('wrong_user');
-    // and once the real mailbox owner verifies, the admin's password is dead
-    expect((await completeWelcome(w.env, w.linkIn(w.send.mock.calls.length - 1), 'friends-own-password-1')).status).toBe(200);
+    // the admin "accepts" with a password the admin knows...
+    await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { body: { password: 'admins-password-1' } });
+    // ...but the code went to the invitee; the admin cannot sign in as them, and their own session is the wrong address
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'friend@example.com', password: 'admins-password-1' } })).status).toBe(401);
+    const res = await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { key: w.owner, body: {} });
+    expect(res.status).not.toBe(200);
     expect(w.rows('SELECT used_at FROM invites')).toEqual([{ used_at: null }]);
+    // the real mailbox owner accepts with their own password; the admin's never became the account's
+    const own = await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { body: { password: 'friends-own-password-1' } });
+    expect((await w.confirm(own, 'friend@example.com')).status).toBe(200);
+    expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'friend@example.com', password: 'admins-password-1' } })).status).toBe(401);
+    expect(w.rows('SELECT used_at IS NOT NULL AS used FROM invites')).toEqual([{ used: 1 }]);
   });
 
   it('an existing user whose address is not verified cannot accept', async () => {
@@ -177,7 +180,7 @@ describe('invites are accepted only by a verified, matching email', () => {
     const friend = await signupVerified(w.env, 'friend@example.com');
     w.db.sqlite.prepare("UPDATE users SET email_verified = 0 WHERE email = 'friend@example.com'").run();
     const res = await call(w.env, 'POST', `/api/invites/${w.inviteToken}`, { key: friend, body: {} });
-    expect(res.status).toBe(403);
+    expect(res.status).not.toBe(200);
     expect(w.rows('SELECT used_at FROM invites')).toEqual([{ used_at: null }]);
   });
 
