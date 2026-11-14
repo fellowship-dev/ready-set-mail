@@ -50,7 +50,7 @@ Self-hosting runs the whole product on your own Cloudflare account and makes you
 
 ### Install
 
-You need a Cloudflare account, [Node.js](https://nodejs.org) 22.22.2 or newer (24.15.0+ on the 24 line) and git.
+You need a Cloudflare account, [Node.js](https://nodejs.org) 22.22.2 or newer (24.15.0+ on the 24 line) and git, on macOS or Linux (on Windows, use WSL).
 
 ```bash
 git clone https://github.com/fellowship-dev/ready-set-mail.git
@@ -61,7 +61,7 @@ npm run setup
 
 `npm install` brings Wrangler, Cloudflare's command-line tool, with it. `npm run setup` logs you in to Cloudflare if needed, finds your account, shows what it is about to create and asks once, then creates the database and storage, deploys, checks that the instance answers, and ends with its address and **one link to click to become the owner**. It asks a second question only if your login can see several Cloudflare accounts.
 
-Open the link to create your owner account. It works once and expires in 15 minutes; `npm run setup -- --new-link` prints a new one.
+Open the link to create your owner account. It is valid until your owner account exists, for at most 15 minutes; `npm run setup -- --new-link` prints a new one. If the page asks for an installer proof, paste the contents of `~/.config/ready-set-mail/ready-set-mail/bootstrap-proof`.
 
 Then add your domain in the dashboard: it checks SPF, DKIM and DMARC from live DNS right away and shows the records to change. Letting Ready Set Mail write DNS for you is optional: use **Connect Cloudflare** in the dashboard.
 
@@ -199,7 +199,7 @@ Export what you want to keep and delete each domain in the dashboard (that remov
 npm run setup -- --uninstall --name ready-set-mail
 ```
 
-It lists exactly what it will delete and asks you to type the name; it deletes only what the installer created. Full steps, including Email Routing and token cleanup: [docs/self-hosting.md#uninstall](docs/self-hosting.md#uninstall).
+It lists exactly what it will delete and asks you to type the name; it deletes only what the installer created, after exporting the database next to your backups. Full steps, including Email Routing and token cleanup: [docs/self-hosting.md#uninstall](docs/self-hosting.md#uninstall).
 
 ---
 

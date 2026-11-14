@@ -11,6 +11,21 @@ export class CloudflareError extends Error {
   }
 }
 
+/** An API path with its ids named by kind, for messages: /accounts/<account>/d1/database/<database>. */
+export function labelPath(path) {
+  return path
+    .replace(/^\/accounts\/[^/]+/, '/accounts/<account>')
+    .replace(/\/d1\/database\/[^/]+/, '/d1/database/<database>')
+    .replace(/\/storage\/kv\/namespaces\/[^/]+/, '/storage/kv/namespaces/<namespace>')
+    .replace(/\/workers\/scripts\/[^/]+/, '/workers/scripts/<worker>');
+}
+
+/** Cloudflare's answers for a credential that is invalid, expired or revoked. */
+export const INVALID_CREDENTIAL_CODES = [9109, 10000, 9106, 6003, 6111, 1000];
+export function isInvalidCredential(e) {
+  return e instanceof CloudflareError && (e.status === 401 || e.codes.some(c => INVALID_CREDENTIAL_CODES.includes(c)));
+}
+
 export function createCloudflare({ token, fetch, apiBase = DEFAULT_API_BASE }) {
   if (!token) throw new Error('createCloudflare: no token');
 
@@ -32,7 +47,7 @@ export function createCloudflare({ token, fetch, apiBase = DEFAULT_API_BASE }) {
     if (!res.ok || !data || data.success === false) {
       const errs = data?.errors ?? [];
       const detail = errs.map(e => `${e.code ? `${e.code}: ` : ''}${e.message}`).join('; ') || `HTTP ${res.status}`;
-      throw new CloudflareError(`${method} ${path.replace(/[0-9a-f]{32}/g, '<account>')} failed: ${detail}`, { status: res.status, codes: errs.map(e => e.code) });
+      throw new CloudflareError(`${method} ${labelPath(path)} failed: ${detail}`, { status: res.status, codes: errs.map(e => e.code) });
     }
     return data;
   }
@@ -52,7 +67,16 @@ export function createCloudflare({ token, fetch, apiBase = DEFAULT_API_BASE }) {
 
   return {
     listAccounts: () => all('/accounts', 50).then(r => r.map(a => ({ id: a.id, name: a.name }))),
-    listWorkers: async (accountId) => ((await call('GET', `/accounts/${accountId}/workers/scripts`)).result ?? []).map(s => s.id),
+    /** Workers in the account: name and creation time (the creation time is the Worker's identity across redeploys). */
+    listWorkers: async (accountId) => ((await call('GET', `/accounts/${accountId}/workers/scripts`)).result ?? []).map(s => ({ name: s.id, created_on: s.created_on ?? null })),
+    /** The ids a Worker's DB (D1) and OAUTH_KV (KV) bindings point at, read from its current settings. */
+    async workerBindings(accountId, name) {
+      const bindings = (await call('GET', `/accounts/${accountId}/workers/scripts/${encodeURIComponent(name)}/settings`)).result?.bindings ?? [];
+      const d1 = bindings.find(b => b.name === 'DB' && b.type === 'd1');
+      const kv = bindings.find(b => b.name === 'OAUTH_KV' && b.type === 'kv_namespace');
+      const ratelimitIds = bindings.filter(b => b.type === 'ratelimit' && b.namespace_id !== undefined).map(b => String(b.namespace_id));
+      return { d1Id: d1?.id ?? d1?.database_id ?? null, kvId: kv?.namespace_id ?? null, ratelimitIds };
+    },
     listD1: (accountId) => all(`/accounts/${accountId}/d1/database`, 100).then(r => r.map(d => ({ id: d.uuid, name: d.name }))),
     listKv: (accountId) => all(`/accounts/${accountId}/storage/kv/namespaces`, 100).then(r => r.map(n => ({ id: n.id, title: n.title }))),
     /** The account's workers.dev subdomain, or null when it has none yet. */

@@ -1,6 +1,6 @@
 # Self-hosting Ready Set Mail
 
-Ready Set Mail runs on your own Cloudflare account: one Worker, one D1 database and one KV namespace. You need a Cloudflare account, Node.js 22.22.2 or newer (24.15.0+ on the 24 line) and git.
+Ready Set Mail runs on your own Cloudflare account: one Worker, one D1 database and one KV namespace. You need a Cloudflare account, Node.js 22.22.2 or newer (24.15.0+ on the 24 line) and git, on macOS or Linux. Windows is not supported directly; WSL works like Linux.
 
 Contents: [Install](#install) · [What the installer does](#what-the-installer-does) · [Permissions](#permissions) · [Scheduled jobs](#scheduled-jobs) · [Upgrade](#upgrade) · [Uninstall](#uninstall) · [Manual install](#manual-install) · [Troubleshooting](#troubleshooting)
 
@@ -23,9 +23,10 @@ Ready Set Mail is running at https://ready-set-mail.<your-subdomain>.workers.dev
   https://ready-set-mail.<your-subdomain>.workers.dev/#/setup?t=…
 
 The link works once and expires in 15 minutes. Need a new one? npm run setup -- --new-link --name ready-set-mail
+If the page asks for an installer proof, paste the contents of ~/.config/ready-set-mail/ready-set-mail/bootstrap-proof.
 ```
 
-Open the link and create your account. The link is signed with the instance's first-owner secret and works for 15 minutes, until an owner account exists. `npm run setup -- --new-link --name <name>` prints a fresh one at any time, without redeploying.
+Open the link and create your account. The link is signed with the instance's first-owner secret and is valid until an owner account exists, for at most 15 minutes. If the page asks for an installer proof, paste the contents of `~/.config/ready-set-mail/<name>/bootstrap-proof`. `npm run setup -- --new-link --name <name>` prints a fresh one at any time, without redeploying.
 
 Then add your domain in the dashboard and follow its steps.
 
@@ -35,14 +36,14 @@ Then add your domain in the dashboard and follow its steps.
 |---|---|
 | `--name <name>` | Instance name (default `ready-set-mail`). The Worker and D1 database get this name, the KV namespace `<name>-oauth`. Use another name for a second instance in the same account. |
 | `--account-id <id>` | The account to install into. Also read from `CLOUDFLARE_ACCOUNT_ID`. |
-| `--url <https-origin>` | Serve from your own domain, for example `https://mail.example.com`. You attach that domain to the Worker yourself (Workers & Pages → the Worker → Settings → Domains & Routes). |
+| `--url <https-origin>` | Serve from your own domain, for example `https://mail.example.com`. It only sets the address: after setup, attach that domain to the Worker yourself (Workers & Pages → the Worker → Settings → Domains & Routes). Until then the installer checks the Worker at its workers.dev address; an account without one gets the database check only. |
 | `--yes` | Do not ask for confirmation. |
 | `--dry-run` | Check everything and show the plan, then stop. |
 | `--resume` | Continue an install that stopped part-way. |
 | `--json` | Print one JSON line at the end (human-readable lines go to standard error). |
 | `--config-dir <dir>` | Where state and backups are kept (default `~/.config/ready-set-mail`). |
 | `--new-link` | Print a fresh setup link (15 minutes) for an installed instance, without redeploying. |
-| `--uninstall` | Remove the instance (see [Uninstall](#uninstall)). |
+| `--uninstall` | Remove the instance (see [Uninstall](#uninstall)). `--no-export` skips the database export it makes first. |
 
 **Agents and CI:** pass every input as a flag. Without a terminal the installer never prompts: it stops and names the missing flag (`--yes`, `--account-id`, or `--confirm` for uninstall), and exits non-zero with a plain message on any failure. Credentials come from `CLOUDFLARE_API_TOKEN` (see [Permissions](#permissions)) or an earlier `npx wrangler login`.
 
@@ -58,7 +59,7 @@ The last line of standard output is `{"ok":true,"name":…,"url":…,"setup_link
 2. **Checks your Cloudflare credential** and lists the accounts it can see. It never guesses an account: with several, it asks (or, without a terminal, asks for `--account-id`).
 3. **Checks the names.** If the account already has a Worker, D1 database or KV namespace with the instance's names that this installer did not create, it stops and changes nothing. It never replaces a Worker it did not create. It reads the account's workers.dev subdomain and works out the address: `https://<name>.<subdomain>.workers.dev`.
 4. **Shows the plan** (account, names, address, what will be created, the scheduled jobs) and asks once.
-5. **Creates** the D1 database and the KV namespace, and writes `wrangler.local.jsonc` in your checkout: the tracked `wrangler.jsonc` with your names, ids, account, `BETTER_AUTH_URL` and `WORKER_NAME` filled in, the workers.dev address on and preview URLs off. That file is git-ignored; the tracked file is never edited, so `git pull` stays clean.
+5. **Creates** the D1 database and the KV namespace, and writes `wrangler.local.jsonc` in your checkout: the tracked `wrangler.jsonc` with your names, ids, account, `BETTER_AUTH_URL` and `WORKER_NAME` filled in, the workers.dev address on (off if the account has none) and preview URLs off. The tracked `wrangler.jsonc` leaves `workers_dev` unset, so an instance on its own domain is not changed by it. The six rate limits get namespace ids of their own (derived from the instance name, moved past any id another Worker in the account uses), so two instances in one account never share counters. That file is git-ignored; the tracked file is never edited, so `git pull` stays clean.
 6. **Generates two secrets** without printing them, and backs them up to `~/.config/ready-set-mail/<name>/` (folder mode 0700, files 0600; existing files are never overwritten):
    - `bootstrap-proof`: the first-owner secret (`BOOTSTRAP_SECRET`). Setup links are signed with it; it is only needed until you have created your owner account.
    - `token-encryption-key`: `TOKEN_ENCRYPTION_KEY`, which encrypts the Cloudflare credentials you connect in the dashboard. Keep the backup: without it, Cloudflare connections have to be made again.
@@ -68,7 +69,7 @@ The last line of standard output is `{"ok":true,"name":…,"url":…,"setup_link
 8. **Verifies**: `/health` answers, the database's newest migration is the one this code needs, and the instance reports that it is waiting for its first owner.
 9. **Prints** the address and the setup link, then where the backups are and how to upgrade and remove it.
 
-Every resource is recorded in `~/.config/ready-set-mail/<name>/state.json` the moment it exists. If a run stops (network, a typo in a token, a failed build), fix the cause and run the same command with `--resume`: it continues without creating anything twice. Tool output goes to `setup.log` in the same folder.
+The database and namespace are recorded in `~/.config/ready-set-mail/<name>/state.json` the moment they exist; the Worker is recorded after its deploy succeeds, with the creation time Cloudflare reports. On `--resume`, a Worker with the instance's name is only deployed over if it is that recorded Worker, or if it is bound to the recorded database and namespace (a deploy that was interrupted after Cloudflare created it). Any other Worker with the name stops the run. If a run stops (network, a typo in a token, a failed build), fix the cause and run the same command with `--resume`: it continues without creating anything twice. Tool output goes to `setup.log` in the same folder.
 
 ## Permissions
 
@@ -131,8 +132,8 @@ git pull && npm install && npm run deploy
    npm run setup -- --uninstall --name ready-set-mail
    ```
 
-   It lists exactly what it will delete (the Worker, the D1 database with all its data, the KV namespace, and `wrangler.local.jsonc`), and asks you to type the instance name. It deletes only resources its state file recorded, and only while they still have the recorded ids; anything else with the same name is left alone. Without a terminal, pass `--confirm <name>`.
-4. Optional: in Cloudflare, delete the Email Routing catch-all rule and MX records for the reports domain, and any API tokens you created. Delete `~/.config/ready-set-mail/<name>/` when you no longer need the backups.
+   It lists exactly what it will delete (the Worker, the D1 database with all its data, the KV namespace, and `wrangler.local.jsonc`), and asks you to type the instance name. It deletes only resources its state file recorded, and only while they still have the recorded ids. The Worker must also still be the one it deployed: same creation time, bound to the recorded database and namespace. Otherwise it stops and deletes nothing. Before deleting, it exports the database (`wrangler d1 export`) to `~/.config/ready-set-mail/<name>/removed-<date>/`, and moves the state, the log and both secret backups into that same folder; `--no-export` skips the export. Without a terminal, pass `--confirm <name>`.
+4. Optional: in Cloudflare, delete the Email Routing catch-all rule and MX records for the reports domain, and any API tokens you created. Delete the `removed-<date>` folder when you no longer need the backups and the export. Installing the same name again starts fresh.
 
 ## Manual install
 
