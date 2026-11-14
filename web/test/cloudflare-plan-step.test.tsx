@@ -195,6 +195,29 @@ describe('DoneStep', () => {
 	});
 });
 
+describe('DoneStep lists what is still to write', () => {
+	const write = { id: 'dmarc:2', domain: 'b.example.com', zone: 'example.com', type: 'TXT', name: '_dmarc.b.example.com', content: 'v=DMARC1; p=none', action: 'create' as const, before: null, reason: 'x' };
+	const rule = { id: 'rule:rua', domain: 'reports.example.com', zone: 'example.com', type: 'EMAIL_ROUTING', name: 'rua@reports.example.com', content: 'Address rule: mail to rua@reports.example.com goes to this Worker', action: 'rule' as const, before: null, reason: 'x' };
+	it('names every pending write under "Still to write", keeps the counts true, and goes back to the step that holds it', async () => {
+		const user = userEvent.setup();
+		const back: string[] = [];
+		renderApp(<DoneStep domainIds={[1, 2]} written={{ domains: 2, records: 1 }} notWritten={[]} pending={[{ step: 'dmarc', write }, { step: 'reports_mailbox', write: rule }]} onBack={(s) => back.push(s)} />, { routes: { 'POST /api/onboarding/first-check': { results: [] } } });
+		expect(await screen.findByText('2 domains added, 1 record written, 2 still to write')).toBeInTheDocument();
+		expect(screen.getByText('Still to write')).toBeInTheDocument();
+		expect(screen.getByText('TXT _dmarc.b.example.com: v=DMARC1; p=none')).toBeInTheDocument();
+		expect(screen.getByText(/Address rule rua@reports\.example\.com: Address rule: mail to/)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Back to the DMARC step' }));
+		await user.click(screen.getByRole('button', { name: 'Back to the Reports mailbox step' }));
+		expect(back).toEqual(['dmarc', 'reports_mailbox']);
+	});
+
+	it('nothing pending: no heading, plain counts', async () => {
+		renderApp(<DoneStep domainIds={[1]} written={{ domains: 1, records: 2 }} notWritten={[]} pending={[]} onBack={() => {}} />, { routes: { 'POST /api/onboarding/first-check': { results: [] } } });
+		expect(await screen.findByText('1 domain added, 2 records written')).toBeInTheDocument();
+		expect(screen.queryByText('Still to write')).toBeNull();
+	});
+});
+
 describe('DoneStep waits for the first check', () => {
 	function setup(firstCheck: () => unknown) {
 		const Where = () => <p data-testid="where">{useLocation().pathname}</p>;

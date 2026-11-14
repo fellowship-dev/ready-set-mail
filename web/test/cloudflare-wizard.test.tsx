@@ -271,3 +271,19 @@ describe('Cloudflare wizard: resume', () => {
 		expect(await screen.findByText(/Step 1 of 5/)).toBeInTheDocument();
 	});
 });
+
+describe('Cloudflare wizard: done', () => {
+	it('a write that failed is listed as still to write, and the way back returns to the DMARC step', async () => {
+		sessionStorage.setItem(KEY, JSON.stringify({ step: 'done', domainIds: [1, 2], written: { domains: 2, records: 1 } }));
+		const pending = { id: 'dmarc:2', domain: 'b.example.com', zone: 'example.com', type: 'TXT', name: '_dmarc.b.example.com', content: 'v=DMARC1; p=none', action: 'create', before: null, reason: 'x' };
+		render({
+			'GET /api/cloudflare/connections': offer({ connections: [conn({ zones: [{ id: zone(1).id, name: 'example.com' }] })] }),
+			'POST /api/onboarding/dns-plan': { plan_id: 'p', steps: [{ key: 'dmarc', satisfied: false, writes: [pending] }], not_written: [] },
+			'POST /api/onboarding/first-check': { results: [] },
+		});
+		expect(await screen.findByText('2 domains added, 1 record written, 1 still to write')).toBeInTheDocument();
+		expect(screen.getByText('TXT _dmarc.b.example.com: v=DMARC1; p=none')).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Back to the DMARC step' }));
+		await waitFor(() => expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'dmarc', domainIds: [1, 2] }));
+	});
+});

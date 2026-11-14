@@ -18,7 +18,7 @@ import {
 	type CfStepKey,
 	type CfWizardProgress,
 } from '../../../lib/cloudflare';
-import { fetchPlan, markWizardState } from '../../../lib/dns-plan';
+import { fetchPlan, markWizardState, pendingWrites } from '../../../lib/dns-plan';
 import { useHosted, useSession } from '../../../lib/session';
 import { ConnectStep } from './ConnectStep';
 import { DomainsStep } from './DomainsStep';
@@ -107,7 +107,7 @@ export function CloudflareWizardPage() {
 	} else if (progress.step === 'reports_mailbox') {
 		body = <PlanStep key="mailbox" stepKey="reports_mailbox" domainIds={progress.domainIds} onNext={afterMailbox} onWritten={(w) => addRecords('reports_mailbox', w)} />;
 	} else {
-		body = <Done progress={progress} />;
+		body = <Done progress={progress} onBack={(step) => go(step)} />;
 	}
 
 	return (
@@ -128,7 +128,8 @@ export function CloudflareWizardPage() {
 	);
 }
 
-function Done({ progress }: { progress: CfWizardProgress }) {
+function Done({ progress, onBack }: { progress: CfWizardProgress; onBack: (step: CfStepKey) => void }) {
 	const plan = useQuery({ queryKey: ['dns-plan-not-written', ...progress.domainIds], queryFn: () => fetchPlan(progress.domainIds), enabled: progress.domainIds.length > 0, retry: false });
-	return <DoneStep domainIds={progress.domainIds} written={progress.written} notWritten={plan.data?.not_written ?? []} />;
+	const pending = (plan.data?.steps ?? []).flatMap((s) => pendingWrites(s.writes).map((write) => ({ step: s.key, write })));
+	return <DoneStep domainIds={progress.domainIds} written={progress.written} notWritten={plan.data?.not_written ?? []} pending={pending} onBack={onBack} />;
 }
