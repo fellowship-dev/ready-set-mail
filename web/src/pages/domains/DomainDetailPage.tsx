@@ -20,7 +20,7 @@ import { actionsPending, domainActions } from '../../lib/actions';
 import { errorMessage } from '../../lib/api';
 import { useHostedInfo } from '../../lib/hosted';
 import { domainVerdict, totalsFromSummary, unavailableVerdict, type ReportTotals } from '../../lib/verdict';
-import { invalidDmarcSp } from '../../lib/dmarc-record';
+import { enforcementLevel, invalidDmarcSp, parseDmarcSp } from '../../lib/dmarc-record';
 import { getGuidance, spTag, sumStats, wizardProgress, type GuidanceTone } from '../../lib/dmarc';
 import { domainKeys, useCheckSummary, useDnsCheck, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
 import { formatNumber } from '../../lib/format';
@@ -54,7 +54,10 @@ function LivePolicyBadge({ domain }: { domain: Domain }) {
 	if (dns.isError || dns.data.error) return <Badge variant="outline">DMARC lookup failed{lastKnown}</Badge>;
 	const inherited = onboarding.data?.dmarc.effective;
 	if ((!dns.data.found || !dns.data.current_record) && inherited?.inherited_from && inherited.policy) {
-		return <Badge variant="outline">No record of its own: inherits p={inherited.policy} from {inherited.inherited_from}</Badge>;
+		// Name the tag that sets this name's policy (the parent's sp= when it has one) and its pct= below 100.
+		const tag = parseDmarcSp(inherited.record ?? null) ? 'sp' : 'p';
+		const pct = enforcementLevel(inherited.record ?? null).pct;
+		return <Badge variant="outline">No record of its own: inherits {tag}={inherited.policy}{pct < 100 ? ` at pct=${pct}` : ''} from {inherited.inherited_from}</Badge>;
 	}
 	if (!dns.data.found || !dns.data.current_record) return <Badge variant="outline">No DMARC record found{lastKnown}</Badge>;
 	const live = dns.data.current_record.match(/(^|;\s*)p=([a-z]+)/i)?.[2]?.toLowerCase();

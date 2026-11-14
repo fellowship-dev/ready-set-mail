@@ -266,12 +266,18 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     else if (rate !== null && rate < READY) steps.push(sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
   }
 
-  // An own record whose subdomain policy is weaker than its own.
-  if (!inh && f.policy !== 'none' && f.sp && RANK[f.sp] < RANK[f.policy]) {
-    steps.push({
-      key: 'sp', status: 'improve', do: `Set sp=${f.policy} to enforce subdomains too`, who: 'dns', where: 'self', at: f.at,
-      why: `Mail that fails DMARC from ${name} itself is ${f.policy === 'reject' ? 'rejected' : 'quarantined'}, but subdomains without their own record follow sp=${f.sp}, so failing mail from them is ${f.sp === 'none' ? 'still delivered' : 'quarantined, not rejected'}.`,
-    });
+  // An own record whose subdomain policy is weaker than its own: the subdomains climb the same ladder, one rung at a
+  // time (sp=none -> quarantine -> reject, never past p=), on the same report evidence.
+  if (!inh && f.policy !== 'none' && f.sp && RANK[f.sp] < RANK[f.policy] && !harmful) {
+    const spTarget: Policy = f.sp === 'none' ? 'quarantine' : 'reject';
+    const g = gate(`moving sp to ${spTarget}`, spTarget === 'reject' ? READY_FOR_REJECT : READY);
+    const pctNote = f.pct < 100 ? ` The record's pct=${f.pct} applies to sp= too, so only ${f.pct}% of that mail would be affected until pct is 100.` : '';
+    if (g === 'ready') {
+      steps.push({
+        key: 'sp', status: 'approval', do: `Set sp=${spTarget} to enforce subdomains too`, who: 'dns', where: 'self', at: f.at,
+        why: `${shown}, so your senders look ready. Mail that fails DMARC from ${name} itself is ${f.policy === 'reject' ? 'rejected' : 'quarantined'}, but subdomains without their own record follow sp=${f.sp}, so failing mail from them is ${f.sp === 'none' ? 'still delivered' : 'quarantined, not rejected'}.${pctNote}`,
+      });
+    } else if (g !== 'loading' && !steps.some((s) => s.key === g.key)) steps.push(g);
   }
 
   const sorted = steps.map((s, i) => [s, i] as const).sort((a, b) => STATUS_ORDER.indexOf(a[0].status) - STATUS_ORDER.indexOf(b[0].status) || a[1] - b[1]).map(([s]) => s);
