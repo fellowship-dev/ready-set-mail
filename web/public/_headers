@@ -17,8 +17,9 @@
 /fonts/*
   Cache-Control: public, max-age=2592000, stale-while-revalidate=86400
 
+# no-transform: stops Cloudflare injecting its Web Analytics beacon, which the CSP would block.
 /index.html
-  Cache-Control: no-cache
+  Cache-Control: no-cache, no-transform
 
 /
-  Cache-Control: no-cache
+  Cache-Control: no-cache, no-transform

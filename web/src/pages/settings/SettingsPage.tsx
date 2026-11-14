@@ -5,7 +5,7 @@ import { Moon, Sun } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { api, errorMessage } from '../../lib/api';
-import { useSession } from '../../lib/session';
+import { useHosted, useSession } from '../../lib/session';
 import { setTheme, useTheme } from '../../lib/theme';
 import { Field } from '../auth/AuthLayout';
 import { DangerZone } from './DangerZone';
@@ -34,6 +34,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export function SettingsPage() {
 	const { me, role, status, signOut } = useSession();
 	const { theme } = useTheme();
+	const hosted = useHosted();
 	const qc = useQueryClient();
 	const version = useQuery({ queryKey: ['version'], queryFn: () => api<VersionInfo>('/api/version'), staleTime: 3_600_000, retry: false });
 
@@ -47,7 +48,7 @@ export function SettingsPage() {
 
 	return (
 		<div className="space-y-10">
-			<PageHeader title="Settings" description="Your account and this Ready Set Mail instance." />
+			<PageHeader title="Settings" description={hosted ? 'Your account and workspace.' : 'Your account and this Ready Set Mail instance.'} />
 			<ReadOnlyNotice />
 
 			<Section title="Account">
@@ -87,6 +88,7 @@ export function SettingsPage() {
 				</div>
 			</Section>
 
+			{hosted ? null : (
 			<Section title="Instance">
 				<SetupCheck />
 				<Card>
@@ -137,6 +139,7 @@ export function SettingsPage() {
 					Unattended products use the scoped service credentials above.
 				</p>
 			</Section>
+			)}
 
 			<DangerZone />
 		</div>

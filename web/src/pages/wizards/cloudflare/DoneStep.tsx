@@ -1,7 +1,10 @@
 import { Alert, Button } from '@ready-set-mail/ui';
-import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { clearProgress } from '../../../lib/cloudflare';
 import { appRoute, firstCheck, type NotWritten } from '../../../lib/dns-plan';
+import { useSession } from '../../../lib/session';
 
 export interface DoneStepProps {
 	domainIds: number[];
@@ -13,12 +16,24 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 
 export function DoneStep({ domainIds, written, notWritten }: DoneStepProps) {
 	const navigate = useNavigate();
+	const qc = useQueryClient();
+	const { me } = useSession();
 	const ids = domainIds.join(',');
+	const check = useRef<Promise<unknown>>(Promise.resolve());
+	const [leaving, setLeaving] = useState(false);
 	useEffect(() => {
 		// Best effort: the overview reads DNS itself when this fails.
-		if (domainIds.length) void firstCheck(domainIds).catch(() => {});
+		check.current = domainIds.length ? firstCheck(domainIds).catch(() => {}) : Promise.resolve();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ids]);
+
+	async function finish() {
+		setLeaving(true);
+		await check.current;
+		await Promise.all([qc.invalidateQueries({ queryKey: ['domains'] }), qc.invalidateQueries({ queryKey: ['domain-summaries'] }), qc.invalidateQueries({ queryKey: ['domain-data'] })]).catch(() => {});
+		clearProgress(me?.workspace_id ?? null);
+		navigate('/');
+	}
 
 	return (
 		<div className="space-y-4">
@@ -45,7 +60,9 @@ export function DoneStep({ domainIds, written, notWritten }: DoneStepProps) {
 			) : null}
 			<p className="text-sm text-ink-2">Public DNS can take a few minutes to show the changes.</p>
 			<div>
-				<Button onClick={() => navigate('/')}>Go to overview</Button>
+				<Button loading={leaving} onClick={() => void finish()}>
+					{leaving ? 'Checking your domains…' : 'Go to overview'}
+				</Button>
 			</div>
 		</div>
 	);

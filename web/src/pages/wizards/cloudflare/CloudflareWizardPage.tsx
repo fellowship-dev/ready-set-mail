@@ -105,7 +105,7 @@ export function CloudflareWizardPage() {
 	return (
 		<div className="space-y-6">
 			<header className="space-y-3">
-				<h1 className="text-2xl font-bold tracking-tight">Connect Cloudflare</h1>
+				<h1 className="text-2xl font-bold tracking-tight">Set up with Cloudflare</h1>
 				<WizardProgress label="Cloudflare setup progress" current={index} steps={steps.map((k, i) => ({ label: LABELS[k], state: i < index ? 'complete' : 'pending' }))} />
 			</header>
 			<ReadOnlyNotice />

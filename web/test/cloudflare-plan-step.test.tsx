@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DnsPlan, PlanWrite } from '../src/lib/dns-plan';
 import { DoneStep } from '../src/pages/wizards/cloudflare/DoneStep';
 import { PlanStep } from '../src/pages/wizards/cloudflare/PlanStep';
-import { renderApp } from './render';
+import { fail, renderApp } from './render';
 
 const w = (over: Partial<PlanWrite>): PlanWrite => ({
 	id: 'dmarc:1', domain: 'example.com', zone: 'example.com', type: 'TXT', name: '_dmarc.example.com',
@@ -172,8 +172,51 @@ describe('DoneStep', () => {
 		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toHaveAttribute('href', '/domains/1/setup');
 		expect(screen.getAllByText('Public DNS can take a few minutes to show the changes.')).toHaveLength(1);
 		onePrimary('Go to overview');
+		sessionStorage.setItem('rsm_cf_wizard:ws_default', JSON.stringify({ step: 'done', domainIds: [1, 2, 3], written: { domains: 3, records: 5 } }));
 		await user.click(screen.getByRole('button', { name: 'Go to overview' }));
+		expect(await screen.findByText('Overview')).toBeInTheDocument();
 		expect(screen.getByTestId('where')).toHaveTextContent('/');
-		expect(screen.getByText('Overview')).toBeInTheDocument();
+		expect(sessionStorage.getItem('rsm_cf_wizard:ws_default')).toBeNull();
+	});
+});
+
+describe('DoneStep waits for the first check', () => {
+	function setup(firstCheck: () => unknown) {
+		const Where = () => <p data-testid="where">{useLocation().pathname}</p>;
+		return renderApp(
+			<>
+				<Routes>
+					<Route path="/done" element={<DoneStep domainIds={[1]} written={{ domains: 1, records: 2 }} notWritten={[]} />} />
+					<Route path="/" element={<p>Overview</p>} />
+				</Routes>
+				<Where />
+			</>,
+			{ route: '/done', routes: { 'POST /api/onboarding/first-check': firstCheck } },
+		);
+	}
+
+	it('shows "Checking your domains…" until the check finishes, then clears progress and navigates', async () => {
+		const user = userEvent.setup();
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		sessionStorage.setItem('rsm_cf_wizard:ws_default', '{"step":"done","domainIds":[1],"written":{"domains":1,"records":2}}');
+		setup(async () => {
+			await gate;
+			return { results: [] };
+		});
+		await user.click(await screen.findByRole('button', { name: 'Go to overview' }));
+		expect(await screen.findByRole('button', { name: /Checking your domains/ })).toBeInTheDocument();
+		expect(screen.getByTestId('where')).toHaveTextContent('/done');
+		expect(sessionStorage.getItem('rsm_cf_wizard:ws_default')).not.toBeNull();
+		release();
+		expect(await screen.findByText('Overview')).toBeInTheDocument();
+		expect(sessionStorage.getItem('rsm_cf_wizard:ws_default')).toBeNull();
+	});
+
+	it('still navigates when the check fails', async () => {
+		const user = userEvent.setup();
+		setup(() => fail(500, 'boom'));
+		await user.click(await screen.findByRole('button', { name: 'Go to overview' }));
+		expect(await screen.findByText('Overview')).toBeInTheDocument();
 	});
 });

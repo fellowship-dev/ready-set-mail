@@ -39,6 +39,7 @@ describe('Cloudflare wizard: connect', () => {
 		await userEvent.type(field, 'x'.repeat(40));
 		await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
 		expect(await screen.findByRole('heading', { name: 'Choose zones' })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { level: 1, name: 'Set up with Cloudflare' })).toBeInTheDocument();
 		expect(zonesCalled).toBe(true);
 		expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ token: 'x'.repeat(40) });
 	});
