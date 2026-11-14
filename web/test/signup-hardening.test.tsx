@@ -1,11 +1,12 @@
-// Before public sign-up opens: resends pass the bot check, the welcome page asks for the name, names render clean.
+// The human check is rendered explicitly, per form, and stays out of the way; old emailed links; names render clean.
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanName } from '../src/lib/names';
 import type { AuthStatus } from '../src/lib/types';
-import { CheckEmail } from '../src/pages/auth/CheckEmail';
+import { CodeStep } from '../src/pages/auth/CodeStep';
+import { ForgotPage } from '../src/pages/auth/ForgotPage';
 import { __resetTurnstileLoaderForTests } from '../src/pages/auth/Turnstile';
 import { WelcomePage } from '../src/pages/auth/WelcomePage';
 import { MembersPage } from '../src/pages/members/MembersPage';
@@ -39,28 +40,31 @@ afterEach(() => {
 });
 
 describe('the human check is rendered explicitly, per form', () => {
-	it('"Check your email": the widget is rendered on this screen, Resend waits for it, sends its token, then resets', async () => {
+	const forgot = () => renderApp(<ForgotPage />, { role: null, status: HOSTED, routes: { 'POST /api/auth/forgot': { code_required: true, purpose: 'reset', email: 'a@example.com', expires_in: 600 } } });
+
+	it('a form with the check: rendered on this screen (interaction-only, so it shows only when Cloudflare needs it), the button waits for it, sends its token, then resets', async () => {
 		const t = fakeTurnstile();
-		const { calls } = renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED, routes: { 'POST /api/auth/resend-verification': { ok: true } } });
-		const button = await screen.findByRole('button', { name: 'Resend verification email' });
+		const { calls } = forgot();
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText('Email'), 'a@example.com');
+		const button = screen.getByRole('button', { name: 'Send code' });
 		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(1));
 		expect(t.api.render.mock.calls[0]![0]).toBe(screen.getByTestId('human-check'));
-		expect(t.api.render.mock.calls[0]![1]).toMatchObject({ sitekey: HOSTED.turnstile_site_key });
+		expect(t.api.render.mock.calls[0]![1]).toMatchObject({ sitekey: HOSTED.turnstile_site_key, appearance: 'interaction-only', size: 'flexible' });
 		expect(button).toBeDisabled();
 		expect(screen.getByText('Waiting for the human check…')).toBeInTheDocument();
 		await t.solve('tok-1');
 		expect(button).toBeEnabled();
-		await userEvent.setup().click(button);
-		expect(await screen.findByText('If this address is waiting to be confirmed, a new link is on its way. It can take a minute to arrive.')).toBeInTheDocument();
-		expect(calls.find((c) => c.path === '/api/auth/resend-verification')?.body).toEqual({ email: 'a@example.com', cf_turnstile_token: 'tok-1' });
+		await user.click(button);
+		expect(await screen.findByLabelText('6-digit code')).toBeInTheDocument();
+		expect(calls.find((c) => c.path === '/api/auth/forgot')?.body).toEqual({ email: 'a@example.com', cf_turnstile_token: 'tok-1' });
 		expect(t.api.reset).toHaveBeenCalledWith('w1'); // a token is single use
-		expect(button).toBeDisabled();
 	});
 
 	it('an expired token disables the button again', async () => {
 		const t = fakeTurnstile();
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED });
-		const button = await screen.findByRole('button', { name: 'Resend verification email' });
+		forgot();
+		const button = await screen.findByRole('button', { name: 'Send code' });
 		await waitFor(() => expect(t.api.render).toHaveBeenCalled());
 		await t.solve('tok-1');
 		expect(button).toBeEnabled();
@@ -71,8 +75,8 @@ describe('the human check is rendered explicitly, per form', () => {
 
 	it('a check that does not pass says so and offers another try', async () => {
 		const t = fakeTurnstile();
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED });
-		const button = await screen.findByRole('button', { name: 'Resend verification email' });
+		forgot();
+		const button = await screen.findByRole('button', { name: 'Send code' });
 		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(1));
 		await act(() => t.widgets[0]!.opts['error-callback']());
 		expect(button).toBeDisabled();
@@ -84,17 +88,17 @@ describe('the human check is rendered explicitly, per form', () => {
 
 	it('the widget is removed when its form goes away, and a form reached by in-app navigation gets its own', async () => {
 		const t = fakeTurnstile();
-		const { unmount } = renderApp(<CheckEmail email="a@example.com" onBack={() => {}} />, { role: null, status: HOSTED });
+		const { unmount } = forgot();
 		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(1));
 		unmount();
 		expect(t.api.remove).toHaveBeenCalledWith('w1');
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED });
+		forgot();
 		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(2));
 	});
 
 	it('loads the script once, explicitly; if it cannot load, says so and retries', async () => {
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED });
-		await screen.findByRole('button', { name: 'Resend verification email' });
+		forgot();
+		await screen.findByRole('button', { name: 'Send code' });
 		const script = await waitFor(() => {
 			const s = document.querySelector<HTMLScriptElement>('script[data-cf-turnstile]');
 			expect(s).not.toBeNull();
@@ -109,48 +113,76 @@ describe('the human check is rendered explicitly, per form', () => {
 	});
 
 	it('no site key: no widget and nothing to wait for', async () => {
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: { ...HOSTED, turnstile_site_key: null } });
-		expect(await screen.findByRole('button', { name: 'Resend verification email' })).toBeEnabled();
+		renderApp(<ForgotPage />, { role: null, status: { ...HOSTED, turnstile_site_key: null } });
+		expect(await screen.findByRole('button', { name: 'Send code' })).toBeEnabled();
 		expect(screen.queryByTestId('human-check')).toBeNull();
-	});
-
-	it('the expired-link page\'s "Send me a new link" renders its own widget', async () => {
-		const t = fakeTurnstile();
-		renderApp(
-			<Routes>
-				<Route path="/welcome/:token" element={<WelcomePage />} />
-			</Routes>,
-			{ role: null, status: HOSTED, route: `/welcome/${TOKEN}`, routes: { 'POST /api/auth/welcome': { __status: 410, body: { code: 'link_expired', error: 'expired' } } } },
-		);
-		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('Password'), 'chosen-once-1');
-		await user.type(screen.getByLabelText('Confirm password'), 'chosen-once-1');
-		await user.click(screen.getByRole('button', { name: 'Save password and continue' }));
-		expect(await screen.findByRole('button', { name: 'Send me a new link' })).toBeDisabled();
-		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(1));
-		await t.solve('tok-9');
-		expect(screen.getByRole('button', { name: 'Send me a new link' })).toBeEnabled();
 	});
 });
 
-describe('the welcome page asks for the name', () => {
-	it('an optional "Your name" goes with the password', async () => {
-		let saved = false;
+describe('the code screen', () => {
+	function codeStep(onSubmit = vi.fn(async () => {}), onResend = vi.fn(async () => {})) {
+		renderApp(<CodeStep email="a@example.com" purpose="signup" onSubmit={onSubmit} onResend={onResend} onChangeEmail={() => {}} />, { role: null, status: HOSTED });
+		return { onSubmit, onResend };
+	}
+
+	it('says what it is for above one code input; no human check until "Send a new code" is used', async () => {
+		const t = fakeTurnstile();
+		codeStep();
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to a@example.com' })).toBeInTheDocument();
+		expect(screen.getByText(/This confirms your email address\. Once the code is in, your account is ready and you are signed in\. The code expires in 10 minutes\./)).toBeInTheDocument();
+		const input = screen.getByLabelText('6-digit code');
+		expect(input).toHaveAttribute('inputmode', 'numeric');
+		expect(input).toHaveAttribute('autocomplete', 'one-time-code');
+		expect(screen.queryByTestId('human-check')).toBeNull();
+		expect(t.api.render).not.toHaveBeenCalled();
+		expect(screen.getByRole('button', { name: 'Use a different email' })).toBeInTheDocument();
+	});
+
+	it('pasting "123 456" submits on the sixth digit', async () => {
+		const { onSubmit } = codeStep();
+		const user = userEvent.setup();
+		await user.click(await screen.findByLabelText('6-digit code'));
+		await user.paste('123 456');
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('123456'));
+	});
+
+	it('"Send a new code" shows the check under the action, then asks for the code as soon as it is solved', async () => {
+		const t = fakeTurnstile();
+		const { onResend } = codeStep();
+		const user = userEvent.setup();
+		const send = await screen.findByRole('button', { name: 'Send a new code' });
+		await user.click(send);
+		await waitFor(() => expect(t.api.render).toHaveBeenCalledTimes(1));
+		const widget = screen.getByTestId('human-check');
+		expect(send.compareDocumentPosition(widget) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		await t.solve('tok-7');
+		await waitFor(() => expect(onResend).toHaveBeenCalledWith('tok-7'));
+		expect(await screen.findByText('A new code is on its way to a@example.com. The previous code no longer works.')).toBeInTheDocument();
+	});
+
+	it('a wrong code shows the server\'s sentence and clears the input', async () => {
+		const { ApiError } = await import('../src/lib/api');
+		codeStep(vi.fn(async () => { throw new ApiError(400, 'That code is not right. 4 tries left.', { code: 'code_wrong' }); }));
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText('6-digit code'), '000000');
+		expect(await screen.findByText('That code is not right. 4 tries left.')).toBeInTheDocument();
+		expect(screen.getByLabelText('6-digit code')).toHaveValue('');
+	});
+});
+
+describe('links sent before codes', () => {
+	it('an old confirmation link says to sign in or create the account again, and sends nothing', async () => {
 		const { calls } = renderApp(
 			<Routes>
 				<Route path="/welcome/:token" element={<WelcomePage />} />
-				<Route path="/" element={<p>home</p>} />
 			</Routes>,
-			{ role: null, status: HOSTED, route: `/welcome/${TOKEN}`, routes: { 'POST /api/auth/welcome': () => ((saved = true), { ok: true }), 'GET /api/me': () => (saved ? me('owner') : fail(401)) } },
+			{ role: null, status: HOSTED, route: `/welcome/${TOKEN}` },
 		);
-		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('Your name (optional)'), 'Cleo Fox');
-		expect(screen.getByText('Shown to people you invite to your workspace.')).toBeInTheDocument();
-		await user.type(screen.getByLabelText('Password'), 'chosen-once-1');
-		await user.type(screen.getByLabelText('Confirm password'), 'chosen-once-1');
-		await user.click(screen.getByRole('button', { name: 'Save password and continue' }));
-		await screen.findByText('home');
-		expect(calls.find((c) => c.path === '/api/auth/welcome')?.body).toEqual({ token: TOKEN, password: 'chosen-once-1', name: 'Cleo Fox' });
+		expect(await screen.findByRole('heading', { name: 'This link is no longer used' })).toBeInTheDocument();
+		expect(screen.getByText('Ready Set Mail now confirms email addresses with a 6-digit code instead of a link.')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/');
+		expect(screen.getByRole('link', { name: 'Create your account' })).toHaveAttribute('href', '/signup');
+		expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
 	});
 });
 

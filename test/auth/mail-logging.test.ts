@@ -1,18 +1,18 @@
 import { inspect } from 'node:util';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { sendPasswordResetEmail, sendVerificationEmail } from '../../src/auth/mail';
+import { sendCodeEmail, sendSignupNotice } from '../../src/auth/mail';
 import type { AuthEnv } from '../../src/auth/config';
 
 // Synthetic credentials: none of these may ever reach a log line.
 const RECIPIENT = 'leak-recipient@leak.example';
-const TOKEN = 'SYNTHETIC-TOKEN-abc123';
-const URL_ = `https://ia.example.com/#/reset/${TOKEN}`;
-const user = { email: RECIPIENT, name: 'Leak Check' };
+const TOKEN = '913572'; // a code
+const URL_ = 'https://ia.example.com';
 
+/** Each sender, called the way its route calls it; what it puts in the mail that must never be logged is TOKEN (a code). */
 const senders = [
-  ['reset', sendPasswordResetEmail],
-  ['verification', sendVerificationEmail],
+  ['code', (env: AuthEnv) => sendCodeEmail(env, RECIPIENT, TOKEN, 'reset', URL_, null)],
+  ['signup notice', (env: AuthEnv) => sendSignupNotice(env, RECIPIENT, URL_)],
 ] as const;
 
 function spies() {
@@ -21,7 +21,7 @@ function spies() {
 // inspect, not JSON: an Error argument serialises to {} in JSON and would hide its message.
 const logged = (all: ReturnType<typeof spies>) => all.flatMap(s => s.mock.calls).map(args => args.map(a => inspect(a, { depth: 5 })).join(' ')).join('\n');
 const expectClean = (out: string) => {
-  for (const secret of [RECIPIENT, TOKEN, URL_, 'leak.example']) expect(out).not.toContain(secret);
+  for (const secret of [RECIPIENT, TOKEN, 'leak.example']) expect(out).not.toContain(secret);
 };
 function envFor(opts: { sender: boolean; send?: unknown }): AuthEnv {
   const db = createMigratedD1();
@@ -34,7 +34,7 @@ afterEach(() => vi.restoreAllMocks());
 describe.each(senders)('%s email logging', (op, sendMail) => {
   it('without SEND_EMAIL: sends nothing, logs a static reason only', async () => {
     const all = spies();
-    await sendMail(envFor({ sender: true }), user, URL_);
+    await sendMail(envFor({ sender: true }));
     const out = logged(all);
     expect(out).toContain(`[auth] ${op} email not sent: SEND_EMAIL binding not configured`);
     expectClean(out);
@@ -43,7 +43,7 @@ describe.each(senders)('%s email logging', (op, sendMail) => {
   it('without a sender address: does not call the transport, logs a static reason only', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const all = spies();
-    await sendMail(envFor({ sender: false, send: { send } }), user, URL_);
+    await sendMail(envFor({ sender: false, send: { send } }));
     const out = logged(all);
     expect(send).not.toHaveBeenCalled();
     expect(out).toContain(`[auth] ${op} email not sent: no sender address`);
@@ -53,16 +53,16 @@ describe.each(senders)('%s email logging', (op, sendMail) => {
   it('a provider error that embeds the URL, token and recipient is swallowed and not logged', async () => {
     const send = vi.fn().mockRejectedValue(new Error(`rejected ${RECIPIENT} body=${URL_} token=${TOKEN}`));
     const all = spies();
-    await expect(sendMail(envFor({ sender: true, send: { send } }), user, URL_)).resolves.toBeUndefined();
+    await expect(sendMail(envFor({ sender: true, send: { send } }))).resolves.toBeUndefined();
     const out = logged(all);
     expect(out).toContain(`[auth] ${op} email send failed`);
     expectClean(out);
   });
 
-  it('delivers the link to the recipient when transport and sender exist', async () => {
+  it('delivers to the recipient when transport and sender exist', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const all = spies();
-    await sendMail(envFor({ sender: true, send: { send } }), user, URL_);
+    await sendMail(envFor({ sender: true, send: { send } }));
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].to).toEqual([RECIPIENT]);
     expect(send.mock.calls[0][0].text).toContain(URL_);

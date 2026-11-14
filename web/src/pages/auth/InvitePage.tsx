@@ -6,8 +6,11 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { useHosted, useSession } from '../../lib/session';
 import { cleanName } from '../../lib/names';
 import { hashFor, workspaceStore } from '../../lib/workspace';
-import { CheckEmail } from './CheckEmail';
+import { CodeForm, CodeStep, needsCode, type CodeRequired } from './CodeStep';
 import { AuthLayout, Field } from './AuthLayout';
+import { PasswordInput } from './PasswordInput';
+import { TermsAgreement } from './LegalLinks';
+import { useHumanCheck } from './Turnstile';
 
 interface InviteInfo {
 	email: string;
@@ -30,28 +33,22 @@ export function InvitePage() {
 	const [confirm, setConfirm] = useState('');
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
-	const [verifyFor, setVerifyFor] = useState<string | null>(null);
-	// Hosted: the invitee confirms their email first and chooses the password on the page that link opens, so none is asked here.
+	const [pending, setPending] = useState<CodeRequired | null>(null);
+	// Hosted: the invitee chooses a password here and confirms the address with the emailed code, which also accepts the invite.
 	const hosted = useHosted();
+
+	const request = () => api<CodeRequired | { token?: string | null }>(`/api/invites/${token}`, { method: 'POST', body: hosted ? { password } : { name: name.trim(), password } });
 
 	async function submit(e: FormEvent) {
 		e.preventDefault();
 		setError('');
-		if (!hosted) {
-			if (password.length < 8) return setError('Password must be at least 8 characters.');
-			if (password !== confirm) return setError('Passwords do not match.');
-		}
+		if (password.length < 8) return setError('Password must be at least 8 characters.');
+		if (!hosted && password !== confirm) return setError('Passwords do not match.');
 		setBusy(true);
 		try {
-			const res = await api<{ verification_required?: boolean }>(`/api/invites/${token}`, { method: 'POST', body: hosted ? {} : { name: name.trim(), password } });
-			if (res.verification_required) {
-				setVerifyFor(invite.data?.email ?? '');
-				return;
-			}
-			await signedIn();
-			// The new login's first workspace is the one they were invited to.
-			workspaceStore.forget();
-			navigate('/', { replace: true });
+			const res = await request();
+			if (needsCode(res)) return setPending(res);
+			await joined();
 		} catch (err) {
 			setError(errorMessage(err));
 		} finally {
@@ -59,7 +56,30 @@ export function InvitePage() {
 		}
 	}
 
-	if (verifyFor) return <CheckEmail email={verifyFor} note="Open the link we sent to confirm your email and choose your password. Then open this invite link again, signed in, to join the workspace." />;
+	async function joined(workspaceId?: string) {
+		await signedIn();
+		// The new login's first workspace is the one they were invited to.
+		if (workspaceId) workspaceStore.remember(workspaceId);
+		else workspaceStore.forget();
+		navigate('/', { replace: true });
+	}
+
+	if (pending) {
+		return (
+			<CodeStep
+				email={pending.email}
+				purpose="invite"
+				onSubmit={async (code) => {
+					const res = await api<{ workspace_id?: string }>('/api/auth/code', { method: 'POST', body: { code } });
+					await joined(res.workspace_id);
+				}}
+				onResend={async () => {
+					const res = await request();
+					if (needsCode(res)) setPending(res);
+				}}
+			/>
+		);
+	}
 
 	if (invite.isPending) {
 		return (
@@ -109,7 +129,9 @@ export function InvitePage() {
 			</p>
 			<form onSubmit={submit} className="space-y-4">
 				{hosted ? (
-					<p className="text-sm text-ink-2">We'll email {info.email} a link to confirm it. It opens a page where you choose your password and your name.</p>
+					<Field id="password" label="Choose a password" hint={`At least 8 characters. We'll email ${info.email} a 6-digit code to confirm it.`}>
+						<PasswordInput id="password" required minLength={8} autoFocus autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} aria-describedby="password-hint" />
+					</Field>
 				) : (
 					<>
 						<Field id="name" label="Your name">
@@ -124,6 +146,7 @@ export function InvitePage() {
 					</>
 				)}
 				{error ? <FieldError>{error}</FieldError> : null}
+				<TermsAgreement />
 				<Button type="submit" className="w-full" loading={busy}>
 					Accept invite
 				</Button>
@@ -182,20 +205,44 @@ function ExistingUser({ info, token, description, signOut }: { info: InviteInfo;
 	);
 }
 
-/** Sign in as the invited address without leaving the invite: afterwards the page offers the one-click accept. */
+/** Sign in as the invited address without leaving the invite (password, then the emailed code): afterwards the page offers the one-click accept. */
 function InlineSignIn({ email, token }: { email: string; token: string }) {
-	const { signedIn } = useSession();
+	const { status, signedIn } = useSession();
 	const qc = useQueryClient();
 	const [password, setPassword] = useState('');
 	const [error, setError] = useState('');
+	const [pending, setPending] = useState<CodeRequired | null>(null);
+	const check = useHumanCheck(status?.turnstile_site_key);
+	const send = (cf: string | null) => api<CodeRequired | object>('/api/auth/login', { method: 'POST', body: { email, password, ...(cf ? { cf_turnstile_token: cf } : {}) } });
+	const done = async () => {
+		await signedIn();
+		await qc.invalidateQueries({ queryKey: ['invite', token] });
+	};
 	const login = useMutation({
-		mutationFn: () => api('/api/auth/login', { method: 'POST', body: { email, password } }),
-		onSuccess: async () => {
-			await signedIn();
-			await qc.invalidateQueries({ queryKey: ['invite', token] });
+		mutationFn: () => send(check.token),
+		onSuccess: async (res) => {
+			if (needsCode(res)) setPending(res);
+			else await done();
 		},
 		onError: (e) => setError(errorMessage(e)),
+		onSettled: () => check.reset(),
 	});
+	if (pending) {
+		return (
+			<CodeForm
+				email={pending.email}
+				purpose="signin"
+				onSubmit={async (code) => {
+					await api('/api/auth/code', { method: 'POST', body: { code } });
+					await done();
+				}}
+				onResend={async (cf) => {
+					const res = await send(cf);
+					if (needsCode(res)) setPending(res);
+				}}
+			/>
+		);
+	}
 	return (
 		<form
 			onSubmit={(e) => {
@@ -206,10 +253,11 @@ function InlineSignIn({ email, token }: { email: string; token: string }) {
 			className="space-y-4"
 		>
 			<Field id="invite-password" label="Password">
-				<Input id="invite-password" type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+				<PasswordInput id="invite-password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
 			</Field>
+			{check.widget}
 			{error ? <FieldError>{error}</FieldError> : null}
-			<Button type="submit" className="w-full" loading={login.isPending}>
+			<Button type="submit" className="w-full" loading={login.isPending} disabled={!check.ready}>
 				Sign in to accept
 			</Button>
 		</form>

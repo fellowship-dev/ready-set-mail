@@ -13,6 +13,15 @@ import { WorkspaceSection } from './WorkspaceSection';
 import { AgentConnectionsSection } from './AgentConnectionsSection';
 import { MetricConnectionsSection } from './MetricConnectionsSection';
 import { SetupCheck } from '../../components/SetupCheck';
+import { LegalLinks, useLegal } from '../auth/LegalLinks';
+
+/** How people sign in here, in one plain sentence (GET /api/auth/status signin_codes_reason). */
+export function signinModeText(reason: string | undefined): string | null {
+	if (reason === 'hosted' || reason === 'mail') return 'Password, then a 6-digit code emailed at every sign-in.';
+	if (reason === 'no_mail') return "Password only. This instance can't send email, so sign-in codes are off. Set up outbound email (the SEND_EMAIL binding and a sender address) to turn them on.";
+	if (reason === 'turned_off') return 'Password only. Sign-in codes are turned off on this instance (SIGNIN_CODES=off).';
+	return null;
+}
 
 interface VersionInfo {
 	current: string;
@@ -34,6 +43,8 @@ export function SettingsPage() {
 	const { me, role, status, signOut } = useSession();
 	const { theme } = useTheme();
 	const qc = useQueryClient();
+	const signinMode = signinModeText((status as { signin_codes_reason?: string } | null | undefined)?.signin_codes_reason);
+	const legal = useLegal();
 	const version = useQuery({ queryKey: ['version'], queryFn: () => api<VersionInfo>('/api/version'), staleTime: 3_600_000, retry: false });
 
 	const customDomain = useMutation({
@@ -56,6 +67,7 @@ export function SettingsPage() {
 							<Row label="Name">{me?.user ? cleanName(me.user.name) || me.user.email : 'Instance API key'}</Row>
 							<Row label="Email">{me?.user?.email ?? 'Not tied to a user'}</Row>
 							<Row label="Role">{role ? <Badge variant="brand">{role}</Badge> : null}</Row>
+							{signinMode ? <Row label="Sign-in">{signinMode}</Row> : null}
 						</dl>
 					</CardContent>
 				</Card>
@@ -137,6 +149,13 @@ export function SettingsPage() {
 			</Section>
 
 			<DangerZone />
+
+			{status?.mode === 'saas' ? (
+				<footer className="space-y-2 border-t border-line pt-6 text-center text-xs text-ink-2">
+					{legal?.operator_name ? <p>Ready Set Mail is operated by {legal.operator_name}</p> : null}
+					<LegalLinks />
+				</footer>
+			) : null}
 		</div>
 	);
 }

@@ -180,43 +180,98 @@ the pointer instructions name `h.<zone>` from config, so they must read the doma
 
 ## Trust model: who can do what
 
-**Email verification.** A hosted account has no session until its email is verified, and delegated credentials of unverified human users are refused. Sign-up
-asks for the email only (and the bot check); the account gets a random password nobody is told. The emailed link is
-`<origin>/#/welcome/<token>`: the token sits in the URL fragment, which no server receives, so it is in no request line, log or
-Referer. Opening the link changes nothing, so a mail scanner or link-preview bot that fetches it cannot use up the person's click.
-The welcome page's `POST /api/auth/welcome` (token + password; same-origin; 10 attempts an hour per token, 30 per IP) does
-everything in one transaction: it verifies the address, replaces any earlier password (one a registrant chose is dead), ends every
-session and signs the person in. The token then refuses ("already used"); until a password has been chosen with it, it works from
-any device and after any number of opens, for its whole lifetime: 24 hours (`VERIFICATION_LINK_SECONDS`, the number the mail and
-the pages state). An expired or used link gets a page that offers a new link (or sign-in and a reset). Links in the old shape
-(`GET /api/auth/verify-email?token=…`) get a page that moves the token into the fragment (no `Location`, `Referrer-Policy:
-no-referrer`) and change nothing. Verification mail is capped per address in two separate allowances, so a flood of one cannot spend the other: a
-bot-checked sign-up (new, repeated for an address still unconfirmed, which sends a fresh link, or a hosted invitee) gets 2 an hour
-and 4 a day; a resend or a sign-in of an unconfirmed account gets 3 an hour and 10 a day. A resend passes the same bot check as
-sign-up (and is closed when sign-up is). Over a cap nothing is sent and every answer is unchanged, so neither cap reveals which
-addresses exist. Names typed before the address was proven (at sign-up, or by whoever holds an invite link) are not kept:
-sign-up asks for no name, and when the welcome page verifies the account it sets the display name to the one given there (else
-the email address) and the sign-up workspace's name from it (else from the email's domain). Names are stored and shown without
-control or invisible format characters, at most 80 characters.
+**Sign-in codes.** Sign-up, sign-in, password reset and hosted invite acceptance end with a six-digit code emailed to the
+address (`src/auth/codes.ts`). Sign-up asks for the email and one password (and the bot check); sign-in asks for the email and
+password and, only when the password is right, emails a code. Every sign-in needs a fresh code: there is no "remember this
+device". A reset asks for the email (and the bot check when the keys are set), then the code and a new password on one screen;
+saving signs in without a second code and ends every other session.
 
-**Sign-in throttle.** Besides the per-IP limits, failed sign-ins are counted per address (a hash of it): after 10 in 15 minutes,
+* **The code.** Six digits from `crypto.getRandomValues` (rejection sampling, no bias). Stored only as HMAC-SHA256 under the auth
+  secret, bound to its attempt; compared in constant time; single use; valid 10 minutes (`CODE_SECONDS`, the number the mail
+  and the pages state); 5 wrong tries kill it (the try is counted before the comparison, atomically). Asking for a new code
+  starts a new attempt and drops the old one, so the previous code stops working.
+* **The pending attempt.** A row in `verifications` (`identifier = signin-code:<sha256(handle)>`) holding the purpose, the
+  account, the code's hash, the try count and, for sign-up and invites, the hash of the password typed in that attempt. The
+  handle travels only in an HttpOnly, `SameSite=Strict` cookie (`__Host-rsm_pending`, `Secure`, `Path=/`; `rsm_pending` over
+  plain http in development) that expires with the code. It is not a session and opens nothing; a new handle is minted for
+  every form submission (an incoming one is dropped, never adopted), so it cannot be fixed by an attacker. A code typed in
+  another browser has no handle with it and does nothing. `POST /api/auth/code` takes the code (same-origin JSON, like every
+  auth POST); `POST /api/auth/reset` takes the reset code and the new password.
+* **Pre-registration.** A sign-up for an address with no account creates it unverified with a random password nobody is told
+  and no name. The password typed at sign-up becomes the account's only when the code of that same attempt is typed, in one
+  statement that applies only while the account is unverified. At that moment every other pending attempt is dropped (a
+  registrant's password is discarded), every session ends, and the display name and sign-up workspace name are reset from the
+  email address. A sign-up for an address that is already verified changes nothing; the owner gets "Someone tried to create a
+  Ready Set Mail account with your email" (within the sign-up allowance). The answer to a sign-up is the same for new, pending and
+  verified addresses (`{ code_required, purpose, email, expires_in }` and a pending cookie). An unverified account can never sign
+  in: its only password is the random one.
+* **Limits.** Per code: 5 tries. Across codes: 10 wrong codes an hour per address and purpose (sign-up and invites share one
+  count, sign-in and reset each have their own) and 30 per IP. Code mail per address, in separate allowances: sign-up and
+  invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour and 30 a day, reset 3 an hour and
+  10 a day. Over the sign-up or reset allowance nothing is sent, the answer is unchanged, and the attempt can never succeed (its
+code was never sent), so only mailed codes can be guessed at. Over the sign-in allowance, which
+  only someone with the password can reach, the answer says so: "We have sent this address several sign-in codes recently. Use
+  the newest one you received, or try again in N minutes." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
+  (D1), plus `AUTH_LIMITER`.
+* **Guessing.** With 5 tries per code and at most 4 sign-up, 30 sign-in or 10 reset codes a day per address, an attacker gets
+  at most 20, 150 or 50 guesses a day against one address (and sign-in codes need the password first). Each guess is a
+  1-in-1,000,000 chance: about 0.005% per code, and a 1% chance needs about 10,050 guesses, which is 201 days of the reset
+  allowance or 503 days of the sign-up allowance for a single address.
+* **Phishing relay.** A page that imitates Ready Set Mail can ask for the password and the code and replay both at once; a code
+  does not prevent that. What limits it: the code lives 10 minutes and works once, only with the attempt the relay started; the
+  email says what the code is for, the address to enter it on, and, when Cloudflare knows it, the approximate place it was asked
+  for from.
+* **Lockout.** Wrong passwords are counted per address (below); wrong codes are counted per purpose, so a stranger who starts
+  reset or sign-up attempts for an address can at most delay resets or sign-up codes for that address for an hour, never its
+  sign-in.
+
+**Links from before codes.** Confirmation links sent before codes (`<origin>/#/welcome/<token>`, or the older
+`GET /api/auth/verify-email?token=…`, which only moves the token into that fragment) open a page that says to sign in, or to
+create the account again with the same email to get a code; the token is not used. `POST /api/auth/welcome` and
+`POST /api/auth/resend-verification` answer `410` `link_retired`. An old reset link (`#/reset/<token>`) says to ask for a code.
+
+**Names.** Names typed before the address was proven are not kept: sign-up asks for no name, and verification sets the display
+name to the email address (the person can change it in Settings) and the sign-up workspace's name from the email's domain.
+Names are stored and shown without control or invisible format characters, at most 80 characters.
+
+**Sign-in throttle.** Besides the per-IP limits, wrong passwords are counted per address (a hash of it): after 10 in 15 minutes,
 attempts for that address answer `429` "Too many sign-in attempts for this address. Try again in N minutes, or reset your
 password to sign in now." with `Retry-After`, until the 15-minute window ends, whether or not the bot check is configured.
-Addresses with no account are counted the same way, so the answer reveals nothing. A password reset, or choosing the password
-from the emailed link, clears it at once; a successful sign-in clears it too. An invite link alone does not grant membership: the invitee gives
-a name, uses the same welcome link, and accepts while signed in as the invited address. First OAuth link ends the user's other sessions.
+Addresses with no account are counted the same way, so the answer reveals nothing. A password reset clears it at once; a right
+password clears it too. A device that completed a sign-in to the account before (the `rsm_device` cookie, HttpOnly, 180 days)
+skips this per-address lock, so a stranger guessing passwords cannot keep the owner out; it still needs the password and the
+code, and it stops helping after a password change or reset, or "sign out everywhere". An invite link alone does not grant
+membership: a hosted invitee chooses a password and confirms the invited address with the code, which accepts the invite.
+First OAuth link ends the user's other sessions.
 
 **Bot check (required for sign-up).** Hosted sign-up fails closed (503) unless both `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` (the public key served to the sign-up page) are set.
 Closed means no NEW accounts, by any route: the password sign-up and a new invitee answer 503, and the user-creation hook refuses any
-account (an OAuth callback included). Existing users are never locked out by missing keys: they sign in (by password, without the
-check, since the page cannot render it; or by OAuth), use "Forgot password" and reset links, and finish a pending welcome link. The
-status says exactly that: `signup_open: false`, `signin_available: true`, `signup_unavailable_reason: bot_protection_not_configured`.
-Why sign-in without the check is acceptable: it creates nothing and sends mail only for an unverified account, which the per-address cap
-bounds; sign-in is rate limited per IP (`AUTH_LIMITER`, and Better Auth's 10 a minute). When the keys are configured, sign-in keeps the check. OAuth logins link to an
-existing account only when both the local account's email and the provider's are verified, and an OAuth sign-up matches a
-pending invite only on a provider-verified email. Verification mail uses the platform sender (`from_email` setting of the
-default workspace) over `SEND_EMAIL`; without it nothing is sent and the Worker log records only a static reason (never the link or address). Self-host is unchanged: the owner
-is marked verified at setup.
+account (an OAuth callback included). Existing users are never locked out by missing keys: they sign in (password and code, without
+the check, since the page cannot render it; or by OAuth) and reset their password by code. The status says exactly that:
+`signup_open: false`, `signin_available: true`, `signup_unavailable_reason: bot_protection_not_configured`. When the keys are
+configured, sign-up, sign-in, reset requests and "Send a new code" pass the check; the pages render it with Turnstile's
+`interaction-only` appearance, under the fields and above the button, and the code screen shows it only after "Send a new code".
+OAuth logins link to an existing account only when both the local account's email and the provider's are verified, and an OAuth
+sign-up matches a pending invite only on a provider-verified email. OAuth sign-in does not ask for an emailed code (the provider
+proves the person). Code mail uses the platform sender (`from_email` setting of the default workspace) over `SEND_EMAIL`; without
+it nothing is sent and the Worker log records only a static reason (never the code or address).
+
+**Self-host.** Sign-in codes are on when the instance can send mail (`SEND_EMAIL` and a sender address) and off otherwise:
+then sign-in is the password alone, so an owner is never locked out by a code that cannot be delivered. `SIGNIN_CODES=off`
+turns them off on a self-hosted instance that can send mail; hosted ignores it. Cloudflare Email Routing delivers only to
+verified destination addresses, so on a self-hosted instance codes reach the owner but may not reach a teammate: turn codes off
+if teammates do not receive them. Owner setup (installer proof) and self-host invites work as before. Settings → Account →
+Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason`
+(`hosted`, `mail`, `no_mail`, `turned_off`).
+
+**Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
+button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to
+`https://readysetmail.com` in hosted mode). The acceptance is stored on the account when the code proves the address
+(`users.terms_accepted_at`, `users.terms_version` = `TERMS_VERSION`, else the terms URL; migration 0013). Auth screens and
+Settings show Terms, Privacy and Talk to Max in hosted mode. Every email sent from `src/auth/mail.ts` ends with one line naming
+the operator (`OPERATOR_NAME`, hosted default "Fellowship.dev, Inc.", with `POSTAL_ADDRESS` when set) and the privacy policy. A
+self-hosted instance shows the agreement only when both `TERMS_URL` and `PRIVACY_URL` are set, and names an operator only when
+`OPERATOR_NAME` is set; otherwise none of this appears.
 
 **Domain ownership.** A domain a workspace adds is a *claim* (`domain_claims`) until proven; it is not in `domains`, so
 it has no reports, stats, check results, hosted records or DNS writes, and it never blocks another workspace. It is

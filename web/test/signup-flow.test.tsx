@@ -226,7 +226,7 @@ describe('AuthPage on an instance without bot protection', () => {
 	it('with a booking link, offers one Talk to Max line under the notice', async () => {
 		renderApp(<AuthPage />, { role: null, status: { ...CLOSED, help_url: 'https://cal.example.com/max' } });
 		expect(await screen.findByText(MESSAGE)).toBeInTheDocument();
-		expect(screen.getAllByRole('link', { name: /Talk to Max/ })).toHaveLength(1);
+		expect(screen.getAllByRole('link', { name: /Talk to Max/ }).filter((l) => !l.closest('footer'))).toHaveLength(1); // plus the quiet footer's
 	});
 
 	it('self-host and a working hosted instance keep their forms', async () => {

@@ -20,7 +20,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Aggregate reports that are stored but never counted (`reporter_tier` `unknown` or `unauthenticated`) | **30 days** | `RETENTION_UNCOUNTED_REPORTS_DAYS` (the earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` is still honoured when it is unset) | Stored but never counted. Not applied when `REPORT_COUNTING=all`, where they are the numbers. A reporter an owner later promotes becomes `counted` and keeps the normal window. |
 | Authenticated senders not in the known-reporter registry (`reporter_candidate_days`: DKIM organisation, From domain, report email, counts per day) | **90 days** | | Instance-wide, no report content, no customer or address. |
 | Sessions | until they expire (sessions last 30 days) | | Includes the IP address and user agent stored with the session. |
-| Email-verification and password-reset tokens | until they expire | | |
+| Sign-in code attempts (code hash, password hash typed at sign-up) | 10 minutes; deleted when used or replaced, expired rows swept | | |
 | Invites | **30 days after they expire** (used or not) | `RETENTION_INVITES_DAYS` | |
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |

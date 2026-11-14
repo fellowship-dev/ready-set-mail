@@ -1,11 +1,12 @@
-// Before public sign-up opens: the mail allowance cannot be spent to deny a person their own link; sign-in failures are
+// Before public sign-up opens: the mail allowance cannot be spent to deny a person their own code; sign-in failures are
 // throttled per address; names typed before an address was proven do not survive it; one pct= refresh per domain.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, completeWelcome, ctx, makeEnv, signupVerified, welcomeTokenIn } from '../auth/helpers';
+import { call, ctx, enterCode, flushBackground, lastCodeFor, makeEnv, pendingCookieOf, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { dohFetch, type Zone } from '../../packages/dns-checks/test/helpers';
-import { MAIL_CAPS, SIGNIN_FAILURE_LIMIT, SIGNIN_FAILURE_WINDOW_SECONDS } from '../../src/auth/welcome';
+import { SIGNIN_FAILURE_LIMIT, SIGNIN_FAILURE_WINDOW_SECONDS } from '../../src/auth/welcome';
+import { CODE_MAIL_CAPS } from '../../src/auth/codes';
 import { cleanName } from '../../src/auth/names';
 
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
@@ -19,50 +20,36 @@ function hosted(extra: Record<string, unknown> = {}) {
   const env = makeEnv(db, { ...HOSTED_ENV, SEND_EMAIL: { send }, ...extra });
   const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
   const sentTo = (email: string) => send.mock.calls.filter(c => ((c as any)[0].to as string[]).includes(email)).length;
-  const lastToken = () => welcomeTokenIn((send.mock.calls.at(-1) as any)[0].text);
-  return { db, env, send, rows, sentTo, lastToken };
+  return { db, env, send, rows, sentTo };
 }
 let n = 0;
 const ip = () => ({ ip: `198.51.100.${++n % 250}` });
 
-describe('1. resend needs the bot check, and a resend flood cannot use up the link a sign-up sends', () => {
-  it('resend without a solved bot check is refused; with one it answers ok; when sign-up is closed it is closed too', async () => {
+describe('1. a flood of resets cannot use up the code a sign-up sends, and repeated sign-ups cannot flood a mailbox', () => {
+  it('an attacker registers the victim and floods reset requests; the victim\'s own sign-up still sends their code, and answers identically throughout', async () => {
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com' }, ...ip() });
-    expect((await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'a@example.com', cf_turnstile_token: '' }, ...ip() })).status).toBe(403);
-    expect((await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'a@example.com', cf_turnstile_token: 'bad' }, ...ip() })).status).toBe(403);
-    expect((await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'a@example.com', cf_turnstile_token: 'ok' }, ...ip() })).status).toBe(200);
-    const closed = { ...w.env, TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined } as typeof w.env;
-    expect((await call(closed, 'POST', '/api/auth/resend-verification', { body: { email: 'a@example.com' }, ...ip() })).status).toBe(503);
-  });
-
-  it('an attacker registers the victim, floods resend; the victim\'s own sign-up still sends their link, and answers identically throughout', async () => {
-    const w = hosted();
-    const first = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'victim@example.com' }, ...ip() }); // the attacker, past one bot check
+    const first = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'victim@example.com', password: 'attacker-pass-1' }, ...ip() }); // the attacker, past one bot check
+    await flushBackground();
     expect(w.sentTo('victim@example.com')).toBe(1);
-    for (let i = 0; i < 12; i++) {
-      const r = await call(w.env, 'POST', '/api/auth/resend-verification', { body: { email: 'victim@example.com', cf_turnstile_token: 'ok' }, ...ip() });
-      expect(await json(r)).toEqual({ ok: true });
-    }
-    expect(w.sentTo('victim@example.com')).toBe(1 + MAIL_CAPS.other.hour); // the resend allowance, then nothing
-    // the victim signs up themselves: a fresh link arrives from the sign-up allowance
-    const waits = (ctx.waitUntil as any).mock.calls.length;
-    const own = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'victim@example.com' }, ...ip() });
-    await Promise.all((ctx.waitUntil as any).mock.calls.slice(waits).map((c: any[]) => c[0])); // the link is sent in the background
+    for (let i = 0; i < 12; i++) await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'victim@example.com' }, ...ip() });
+    await flushBackground();
+    expect(w.sentTo('victim@example.com')).toBe(1 + CODE_MAIL_CAPS.reset.hour); // the reset allowance, then nothing
+    const own = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'victim@example.com', password: 'victims-own-pass-1' }, ...ip() });
     expect(own.status).toBe(first.status);
-    expect(await json(own)).toEqual(await json(first));
-    expect(w.sentTo('victim@example.com')).toBe(2 + MAIL_CAPS.other.hour);
-    expect((await completeWelcome(w.env, w.lastToken(), 'victims-own-pass-1')).status).toBe(200);
+    expect(await json(own.clone())).toEqual(await json(first));
+    await flushBackground();
+    expect(w.sentTo('victim@example.com')).toBe(2 + CODE_MAIL_CAPS.reset.hour);
+    expect((await enterCode(w.env, pendingCookieOf(own), await lastCodeFor(w.env, 'victim@example.com'))).status).toBe(200);
   }, 30000);
 
   it('repeated sign-ups cannot flood: 2 an hour and 4 a day from the sign-up allowance, every answer the same', async () => {
-    expect(MAIL_CAPS).toEqual({ signup: { hour: 2, day: 4 }, other: { hour: 3, day: 10 } });
+    expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 2, day: 4 });
     const w = hosted();
     const t0 = Date.now();
     const bodies = new Set<string>();
     for (let hour = 0; hour < 4; hour++) {
       vi.spyOn(Date, 'now').mockReturnValue(t0 + hour * 3601_000);
-      for (let i = 0; i < 3; i++) bodies.add(JSON.stringify(await json(await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com' }, ...ip() }))));
+      for (let i = 0; i < 3; i++) bodies.add(JSON.stringify(await json(await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123' }, ...ip() }))));
     }
     await Promise.all((ctx.waitUntil as any).mock.calls.map((c: any[]) => c[0])); // background sends finished
     expect(bodies.size).toBe(1);
@@ -107,9 +94,9 @@ describe('2. sign-in failures are throttled per address', () => {
     await signupVerified(w.env, 'real@example.com', 'right-password-1');
     for (let i = 0; i < SIGNIN_FAILURE_LIMIT; i++) await call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'wrong-password-x' }, ...ip() });
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'right-password-1' }, ...ip() })).status).toBe(429);
-    await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'real@example.com' }, ...ip() });
-    const link = ((w.send.mock.calls.at(-1) as any)[0].text as string).match(/#\/reset\/([A-Za-z0-9_-]+)/)![1];
-    expect((await call(w.env, 'POST', '/api/auth/reset', { body: { token: link, password: 'new-password-123' }, ...ip() })).status).toBe(200);
+    const asked = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'real@example.com' }, ...ip() });
+    const code = await lastCodeFor(w.env, 'real@example.com');
+    expect((await call(w.env, 'POST', '/api/auth/reset', { body: { code, password: 'new-password-123' }, headers: { cookie: pendingCookieOf(asked) }, ...ip() })).status).toBe(200);
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'new-password-123' }, ...ip() })).status).toBe(200);
   });
 
@@ -127,33 +114,32 @@ describe('3. names typed before the address was proven do not survive it', () =>
 
   it('sign-up ignores a submitted name; the workspace starts from the email\'s domain', async () => {
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', name: planted }, ...ip() });
+    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-pass-123', name: planted }, ...ip() });
     expect(w.rows("SELECT name FROM users WHERE email = 'cfo@acme.com'")).toEqual([{ name: 'cfo@acme.com' }]);
     expect(w.rows("SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ name: 'acme.com workspace' }]);
   });
 
-  it('at verification the display name and the sign-up workspace are reset (planted text gone), or set from the welcome page\'s name', async () => {
-    for (const [given, name, workspace] of [['', 'cfo@acme.com', 'acme.com workspace'], ['Cleo Fox', 'Cleo Fox', "Cleo Fox's workspace"]] as const) {
-      const w = hosted();
-      await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com' }, ...ip() });
-      // a name planted before verification (an older account, or any other route)
-      w.db.sqlite.prepare("UPDATE users SET name = ? WHERE email = 'cfo@acme.com'").run(planted);
-      w.db.sqlite.prepare("UPDATE workspaces SET name = ? WHERE id IN (SELECT m.workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com')").run(planted);
-      expect((await call(w.env, 'POST', '/api/auth/welcome', { body: { token: w.lastToken(), password: 'cfo-own-pass-1', ...(given ? { name: given } : {}) }, ...ip() })).status).toBe(200);
-      expect(w.rows("SELECT name FROM users WHERE email = 'cfo@acme.com'")).toEqual([{ name }]);
-      expect(w.rows("SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ name: workspace }]);
-    }
+  it('at verification the display name and the sign-up workspace are reset (planted text gone)', async () => {
+    const w = hosted();
+    const res = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-own-pass-1' }, ...ip() });
+    // a name planted before verification (an older account, or any other route)
+    w.db.sqlite.prepare("UPDATE users SET name = ? WHERE email = 'cfo@acme.com'").run(planted);
+    w.db.sqlite.prepare("UPDATE workspaces SET name = ? WHERE id IN (SELECT m.workspace_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com')").run(planted);
+    expect((await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'cfo@acme.com'))).status).toBe(200);
+    expect(w.rows("SELECT name FROM users WHERE email = 'cfo@acme.com'")).toEqual([{ name: 'cfo@acme.com' }]);
+    expect(w.rows("SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ name: 'acme.com workspace' }]);
   });
 
-  it('a hosted invitee gives no name before verifying; the welcome page\'s name is used, and the inviting workspace keeps its name', async () => {
+  it('a hosted invitee gives no name before verifying; their name is their address, and the inviting workspace keeps its name', async () => {
     const w = hosted();
     const owner = await signupVerified(w.env, 'owner@example.com');
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: owner, body: { email: 'friend@example.com' } }));
     const before = w.rows('SELECT name FROM workspaces WHERE id = (SELECT workspace_id FROM invites)');
-    expect((await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: planted }, ...ip() })).status).toBe(201);
+    const res = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: planted, password: 'friend-pass-123' }, ...ip() });
+    expect(res.status).toBe(200);
     expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([{ name: 'friend@example.com' }]);
-    await call(w.env, 'POST', '/api/auth/welcome', { body: { token: w.lastToken(), password: 'friend-pass-123', name: 'Sam' }, ...ip() });
-    expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([{ name: 'Sam' }]);
+    await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'friend@example.com'));
+    expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([{ name: 'friend@example.com' }]);
     expect(w.rows('SELECT name FROM workspaces WHERE id = (SELECT workspace_id FROM invites)')).toEqual(before);
   });
 
@@ -161,10 +147,7 @@ describe('3. names typed before the address was proven do not survive it', () =>
     expect(cleanName('A‮evil\u0000 ​name\n\tx')).toBe('A evil name x');
     expect([...cleanName('x'.repeat(200))]).toHaveLength(80);
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com' }, ...ip() });
-    await call(w.env, 'POST', '/api/auth/welcome', { body: { token: w.lastToken(), password: 'a-own-pass-123', name: 'Ann‮\u0007' }, ...ip() });
-    expect(w.rows("SELECT name FROM users WHERE email = 'a@example.com'")).toEqual([{ name: 'Ann' }]);
-    const session = (await json(await call(w.env, 'POST', '/api/auth/login', { body: { email: 'a@example.com', password: 'a-own-pass-123' }, ...ip() }))).token;
+    const session = await signupVerified(w.env, 'a@example.com', 'a-own-pass-123');
     const made = await json(await call(w.env, 'POST', '/api/workspaces', { key: session, body: { name: 'Client​‮ Co\r\n' } }));
     expect(made.name).toBe('Client Co');
   });
@@ -196,14 +179,18 @@ describe('review follow-ups', () => {
   it('a device that signed in to this account before skips the per-address lock; strangers, other accounts and forged cookies do not', async () => {
     const w = hosted();
     await signupVerified(w.env, 'real@example.com', 'right-password-1');
-    const first = await call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'right-password-1' }, ...ip() });
+    const signin = async (email: string, password: string) => {
+      const r = await call(w.env, 'POST', '/api/auth/login', { body: { email, password }, ...ip() });
+      return enterCode(w.env, pendingCookieOf(r), await lastCodeFor(w.env, email));
+    };
+    const first = await signin('real@example.com', 'right-password-1');
     const device = ((first.headers as any).getSetCookie() as string[]).find(c => c.startsWith('rsm_device='))!;
     expect(device).toMatch(/HttpOnly/);
     expect(device).toMatch(/SameSite=Lax/);
     expect(device).toMatch(/Max-Age=15552000/);
     const cookie = device.split(';')[0]!;
     await signupVerified(w.env, 'other@example.com', 'other-password-1');
-    const otherDevice = ((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'other@example.com', password: 'other-password-1' }, ...ip() })).headers as any).getSetCookie().find((c: string) => c.startsWith('rsm_device=')).split(';')[0];
+    const otherDevice = ((await signin('other@example.com', 'other-password-1')).headers as any).getSetCookie().find((c: string) => c.startsWith('rsm_device=')).split(';')[0];
     for (let i = 0; i < SIGNIN_FAILURE_LIMIT; i++) await call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'wrong-password-x' }, ...ip() });
     const login = (headers: Record<string, string> = {}) => call(w.env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password: 'right-password-1' }, headers, ...ip() });
     expect((await login()).status).toBe(429);
@@ -229,7 +216,7 @@ describe('review follow-ups', () => {
 
   it('a free-mail address starts with "My workspace", a company address with "<domain> workspace"', async () => {
     const w = hosted();
-    for (const email of ['someone@gmail.com', 'cfo@acme.com']) await call(w.env, 'POST', '/api/auth/signup', { body: { email }, ...ip() });
+    for (const email of ['someone@gmail.com', 'cfo@acme.com']) await call(w.env, 'POST', '/api/auth/signup', { body: { email, password: 'pass-word-123' }, ...ip() });
     const name = (email: string) => w.rows('SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = ?', email)[0].name;
     expect(name('someone@gmail.com')).toBe('My workspace');
     expect(name('cfo@acme.com')).toBe('acme.com workspace');

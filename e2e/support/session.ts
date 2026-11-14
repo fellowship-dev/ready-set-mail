@@ -1,6 +1,25 @@
 // Operator values stay in a private local JSON file, never in CLI arguments or browser storage.
 import { expect, test, type Page } from '@playwright/test';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+
+/**
+ * Sign-in codes (src/auth/codes.ts) are on whenever the instance can send mail. Against a local `wrangler dev`, mail goes to the
+ * send_email simulation, which logs each message's subject ("<code> is your Ready Set Mail code"); point E2E_MAIL_LOG at that
+ * log (e.g. `npm run dev > /tmp/wrangler.log`) and the code is read from it. Without it, run wrangler dev with SIGNIN_CODES=off.
+ */
+function codeSubjects(): string[] {
+ const path = process.env.E2E_MAIL_LOG;
+ if (!path || !existsSync(path)) return [];
+ return [...readFileSync(path, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map(m => m[1]!);
+}
+async function newestCode(before: number): Promise<string> {
+ for (let i = 0; i < 80; i++) {
+  const all = codeSubjects();
+  if (all.length > before) return all.at(-1)!;
+  await new Promise(r => setTimeout(r, 250));
+ }
+ throw new Error('Sign-in asked for the emailed code: set E2E_MAIL_LOG to the wrangler dev log, or run wrangler dev with SIGNIN_CODES=off');
+}
 
 interface Operator { email: string; password: string; proof: string }
 export function operatorCredentials(): Operator {
@@ -24,12 +43,18 @@ export async function signIn(page: Page) {
  const status = await page.request.get('/api/auth/status');
  expect(status.status()).toBe(200);
  const { configured } = await status.json() as { configured: boolean };
+ const before = codeSubjects().length;
  const response = await page.request.post(configured ? '/api/auth/login' : '/api/auth/setup', {
   headers: { Origin: origin, ...(!configured ? { 'X-Ready-Set-Mail-Bootstrap': operator.proof } : {}) },
   data: { email: operator.email, password: operator.password, ...(!configured ? { name: 'E2E Owner' } : {}) },
  });
  // Assert status only: response bodies can contain private account diagnostics.
  expect(response.status()).toBe(configured ? 200 : 201);
+ if (configured && (await response.json() as { code_required?: boolean }).code_required) {
+  // The pending-attempt cookie is in page.request's (and the page's) cookie jar; the code completes the sign-in.
+  const done = await page.request.post('/api/auth/code', { headers: { Origin: origin }, data: { code: await newestCode(before) } });
+  expect(done.status()).toBe(200);
+ }
  await page.goto('/');
  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
 }

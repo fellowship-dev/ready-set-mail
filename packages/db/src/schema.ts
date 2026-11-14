@@ -79,6 +79,9 @@ export const users = sqliteTable(
 		email_verified: integer('email_verified').notNull().default(0),
 		image: text('image'),
 		updated_at: integer('updated_at').notNull().default(sql`0`),
+		/** Hosted: when the account accepted the terms shown at sign-up, and which (0013_terms_acceptance). Set when the code proves the address. */
+		terms_accepted_at: integer('terms_accepted_at'),
+		terms_version: text('terms_version'),
 	},
 	(t) => [index('idx_users_email').on(t.email), index('idx_users_session').on(t.session_token)],
 );

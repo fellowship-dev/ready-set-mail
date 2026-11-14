@@ -152,7 +152,7 @@ describe('MODE=saas: a workspace per signup', () => {
     expect((await call(env, 'POST', '/api/auth/setup', { body: { email: 'a@example.com', password: 'password-123' } })).status).toBe(409);
     for (const e of ['a@example.com', 'b@example.com']) {
       const r = await call(env, 'POST', '/api/auth/signup', { body: { name: e, email: e, password: 'password-123' } });
-      expect(r.status).toBe(201);
+      expect(r.status).toBe(200);
     }
     const ms = rows(db, "SELECT m.workspace_id, m.role, u.email FROM memberships m JOIN users u ON u.id = m.user_id ORDER BY u.email");
     expect(ms.map(m => m.role)).toEqual(['owner', 'owner']);

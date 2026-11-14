@@ -2,7 +2,7 @@
 // It must stop doing that after a password change or reset, or "sign out everywhere".
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, makeEnv, signupVerified } from '../auth/helpers';
+import { call, enterCode, lastCodeFor, makeEnv, pendingCookieOf, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { SIGNIN_FAILURE_LIMIT } from '../../src/auth/welcome';
 
@@ -19,9 +19,11 @@ async function world() {
   const send = vi.fn(async () => {});
   const env = makeEnv(db, { ...HOSTED_ENV, SEND_EMAIL: { send } });
   await signupVerified(env, 'real@example.com', 'password-one-1');
-  /** Sign in; returns the device cookie (name=value) and the session token. */
+  /** Sign in (password, then the emailed code); returns the device cookie (name=value) and the session token. */
   const signIn = async (password: string) => {
-    const res = await call(env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password }, ...ip() });
+    const asked = await call(env, 'POST', '/api/auth/login', { body: { email: 'real@example.com', password }, ...ip() });
+    expect(asked.status).toBe(200);
+    const res = await enterCode(env, pendingCookieOf(asked), await lastCodeFor(env, 'real@example.com'));
     expect(res.status).toBe(200);
     const device = ((res.headers as any).getSetCookie() as string[]).find(c => c.startsWith('rsm_device='))!.split(';')[0]!;
     return { device, token: (await json(res)).token as string };
@@ -51,9 +53,9 @@ describe('the device cookie follows the account\'s password and sessions', () =>
   it('a password reset ends it', async () => {
     const w = await world();
     const { device } = await w.signIn('password-one-1');
-    await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'real@example.com' }, ...ip() });
-    const token = ((w.send.mock.calls.at(-1) as any)[0].text as string).match(/#\/reset\/([A-Za-z0-9_-]+)/)![1];
-    expect((await call(w.env, 'POST', '/api/auth/reset', { body: { token, password: 'password-two-2' }, ...ip() })).status).toBe(200);
+    const asked = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'real@example.com' }, ...ip() });
+    const code = await lastCodeFor(w.env, 'real@example.com');
+    expect((await call(w.env, 'POST', '/api/auth/reset', { body: { code, password: 'password-two-2' }, headers: { cookie: pendingCookieOf(asked) }, ...ip() })).status).toBe(200);
     await w.lock();
     expect((await w.withCookie('password-two-2', device)).status).toBe(429);
   });

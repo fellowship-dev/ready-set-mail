@@ -7,16 +7,15 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer } from 'better-auth/plugins';
+import { createAuthEndpoint } from 'better-auth/api';
+import { setSessionCookie } from 'better-auth/cookies';
 import { betterAuthSchema, getDb, globalQueries } from '@ready-set-mail/db';
 import { hashPassword, verifyPassword } from '../api/password';
 import { baseUrl, isSaas, oauthProviders, trustedOrigins, type AuthEnv } from './config';
-import { sendPasswordResetEmail, sendVerificationEmail } from './mail';
 import { d1RateLimitStorage } from './rate-limit';
 import { authSecret } from './secret';
-import { VERIFICATION_LINK_SECONDS, verificationMailAllowed, welcomeLink, type MailPool } from './welcome';
 import { cleanName } from './names';
 import { rotateDeviceEpoch } from './device';
-import { signJWT } from 'better-auth/crypto';
 import { assertMaySignUp, provisionUser, type SignupIntent } from './signup-policy';
 
 export const AUTH_BASE_PATH = '/api/auth';
@@ -35,14 +34,6 @@ export async function createAuth(
   const providers = oauthProviders(env);
   const saas = isSaas(env);
 
-  async function sendLink(user: { email: string; name: string }, token: string, pool: MailPool): Promise<void> {
-    if (!(await verificationMailAllowed(env, user.email, pool))) {
-      console.warn('[auth] verification email not sent: per-address limit reached');
-      return;
-    }
-    await sendVerificationEmail(env, user, welcomeLink(origin, token));
-  }
-
   return betterAuth({
     appName: 'Ready Set Mail',
     baseURL: origin,
@@ -50,44 +41,28 @@ export async function createAuth(
     secret: await authSecret(env),
     trustedOrigins: trustedOrigins(env, new URL(request.url).origin),
     database: drizzleAdapter(getDb(db), { provider: 'sqlite', schema: betterAuthSchema }),
-    plugins: [bearer()],
+    plugins: [bearer(), codeSessions()],
 
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
-      // Hosted: no session until the mailbox is proven (sign-up and sign-in both send the verification email).
-      // Self-host: the owner is verified at setup, teammates arrive by invite, and outbound mail may not reach them.
+      // Hosted: no session until the mailbox is proven. Better Auth's own sign-in refuses an unverified account; ours
+      // (src/auth/routes.ts) never opens a session before the emailed code is right.
       requireEmailVerification: saas,
       autoSignIn: true,
       revokeSessionsOnPasswordReset: true,
-      resetPasswordTokenExpiresIn: 3600,
       password: {
         hash: hashPassword,
         verify: ({ hash, password }) => verifyPassword(password, hash),
       },
-      sendResetPassword: async ({ user, token }) => {
-        await sendPasswordResetEmail(env, user, `${origin}/#/reset/${token}`);
-      },
-      // Hosted: signing up again with an address whose account is still unconfirmed sends a fresh link (from the sign-up
-      // allowance), so a person whose address someone else registered first still gets their own link from the sign-up form.
-      // A confirmed account gets nothing; the answer is the same either way.
-      onExistingUserSignUp: async ({ user }) => {
-        if (!saas || user.emailVerified) return;
-        await sendLink(user, await signJWT({ email: user.email.toLowerCase() }, await authSecret(env), VERIFICATION_LINK_SECONDS), 'signup');
-      },
     },
 
+    // Addresses are proven with a six-digit code (src/auth/codes.ts), never by a link: Better Auth sends no verification mail.
     emailVerification: {
-      sendOnSignUp: saas,
-      sendOnSignIn: saas,
-      // Opening the link never verifies or signs in anyone: the emailed link is the welcome page (token in the fragment), and
-      // its POST verifies the address and sets the password in one step (src/auth/welcome.ts).
+      sendOnSignUp: false,
+      sendOnSignIn: false,
       autoSignInAfterVerification: false,
       afterEmailVerification: async (user) => { opts.onEmailVerified?.({ id: user.id, email: user.email }); },
-      expiresIn: VERIFICATION_LINK_SECONDS,
-      // Every route that sends this mail comes through here, so the per-address caps count them all. A sign-up (or a hosted
-      // invitee) spends the sign-up allowance; a resend or a sign-in of an unconfirmed account spends the other.
-      sendVerificationEmail: async ({ user, token }) => sendLink(user, token, intent.kind === 'signup' || intent.kind === 'invitee' ? 'signup' : 'other'),
     },
 
     socialProviders: providers,
@@ -158,6 +133,30 @@ export async function createAuth(
       backgroundTasks: opts.ctx ? { handler: (p: Promise<unknown>) => opts.ctx!.waitUntil(p) } : undefined,
     },
   });
+}
+
+/**
+ * Opens a session for an account whose sign-in step was completed elsewhere (src/auth/routes.ts, after the emailed code was
+ * right). Server-only: it is never on the HTTP router (no path, and SERVER_ONLY), so only code in this Worker can call it,
+ * through `auth.api.startCodeSession`. Sets the same session cookie (and, through the bearer plugin, set-auth-token) as a
+ * password sign-in.
+ */
+function codeSessions() {
+  return {
+    id: 'rsm-code-sessions',
+    endpoints: {
+      startCodeSession: createAuthEndpoint.serverOnly({ method: 'POST' }, async (ctx) => {
+        const userId = (ctx.body as { userId?: unknown } | undefined)?.userId;
+        if (typeof userId !== 'string' || !userId) throw ctx.error('BAD_REQUEST', { message: 'userId required' });
+        const user = await ctx.context.internalAdapter.findUserById(userId);
+        if (!user) throw ctx.error('NOT_FOUND', { message: 'no such user' });
+        const session = await ctx.context.internalAdapter.createSession(user.id, false);
+        if (!session) throw ctx.error('INTERNAL_SERVER_ERROR', { message: 'could not create session' });
+        await setSessionCookie(ctx, { session, user });
+        return ctx.json({ user: { id: user.id, email: user.email } });
+      }),
+    },
+  } as const;
 }
 
 export type Auth = Awaited<ReturnType<typeof createAuth>>;

@@ -9,7 +9,7 @@ import { createQueryClient } from '../src/lib/query';
 import { dmarcAdvice } from '../src/lib/reports';
 import type { AuthStatus, OnboardingStatus, WizardState } from '../src/lib/types';
 import { AuthPage } from '../src/pages/auth/AuthPage';
-import { CheckEmail } from '../src/pages/auth/CheckEmail';
+import { CodeStep } from '../src/pages/auth/CodeStep';
 import { AnalyticsPage } from '../src/pages/analytics/AnalyticsPage';
 import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { AnomaliesPage } from '../src/pages/reports/AnomaliesPage';
@@ -20,7 +20,8 @@ const BOOKING = 'https://cal.example.com/max/30min';
 const HOSTED: Partial<AuthStatus> = { mode: 'saas', signup_open: true, configured: true, base_domain: null, help_url: BOOKING };
 const HOSTED_NO_LINK: Partial<AuthStatus> = { ...HOSTED, help_url: null };
 
-const talkLinks = () => screen.queryAllByRole('link', { name: /Talk to Max/ });
+/** Contextual "Talk to Max" links (the quiet footer under the auth card and in Settings has its own). */
+const talkLinks = () => screen.queryAllByRole('link', { name: /Talk to Max/ }).filter((l) => !l.closest('footer'));
 
 function expectSafeTalkLink(link: HTMLElement) {
 	expect(link).toHaveAttribute('href', BOOKING);
@@ -86,9 +87,11 @@ describe('hosted sign-in, sign-up and check-your-email', () => {
 		await screen.findByRole('button', { name: 'Sign in' });
 		expect(talkLinks()).toHaveLength(0);
 		await userEvent.setup().click(screen.getByRole('button', { name: 'Create an account' }));
-		expect(await screen.findByText(/checked from live DNS\. DMARC reports are not connected yet\./)).toBeInTheDocument();
-		expect(screen.getByText("We'll email you a link. It opens a page where you choose your password and are signed in.")).toBeInTheDocument();
-		expectSafeTalkLink(screen.getByRole('link', { name: /Talk to Max/ }));
+		expect(await screen.findByText('See where your domains stand and what to fix, checked from live DNS.')).toBeInTheDocument();
+		expect(screen.queryByText(/DMARC reports are not connected yet/)).toBeNull();
+		expect(screen.getByText("We'll email you a 6-digit code to confirm it.")).toBeInTheDocument();
+		expectSafeTalkLink(talkLinks()[0]!);
+		expect(talkLinks()).toHaveLength(1);
 	});
 
 	it('never asks a hosted registrant for an installer proof, even if the status said "not configured"', async () => {
@@ -103,13 +106,14 @@ describe('hosted sign-in, sign-up and check-your-email', () => {
 		expect(talkLinks()).toHaveLength(0);
 	});
 
-	it('check-your-email offers Talk to Max, and nothing without a link', async () => {
-		const { unmount } = renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED });
-		expectSafeTalkLink(await screen.findByRole('link', { name: /Talk to Max/ }));
+	it('the code screen offers Talk to Max (in the footer), and nothing without a link', async () => {
+		const step = <CodeStep email="a@example.com" purpose="signup" onSubmit={async () => {}} onResend={async () => {}} />;
+		const { unmount } = renderApp(step, { role: null, status: HOSTED });
+		expectSafeTalkLink(await screen.findByRole('link', { name: /Talk to Max/ })); // the footer's
 		unmount();
-		renderApp(<CheckEmail email="a@example.com" />, { role: null, status: HOSTED_NO_LINK });
-		await screen.findByRole('button', { name: 'Resend verification email' });
-		expect(talkLinks()).toHaveLength(0);
+		renderApp(step, { role: null, status: HOSTED_NO_LINK });
+		await screen.findByRole('button', { name: 'Send a new code' });
+		expect(screen.queryAllByRole('link', { name: /Talk to Max/ })).toHaveLength(0);
 	});
 });
 
