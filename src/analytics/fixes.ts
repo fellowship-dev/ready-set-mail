@@ -2,7 +2,7 @@
 // the domain's mail it touches, and the concrete change (SPF include, DKIM setup with the provider's guide).
 // Provider facts (SPF include, DKIM selectors, guide URLs) come from the same registry the DNS checks use.
 
-import { extractIncludes, extractOtherMechanisms, existingQualifier, buildSpfRecord, lookupLevel } from '@ready-set-mail/dns-checks/spf-record';
+import { extractIncludes, extractOtherMechanisms, existingQualifier, buildSpfRecord, spfLookupJudgement, SPF_LOOKUP_LIMIT } from '@ready-set-mail/dns-checks/spf-record';
 import { identifySender } from '@ready-set-mail/dns-checks/sender-providers';
 import { pct, underOrg, type Sender } from './senders';
 
@@ -87,9 +87,9 @@ export function senderLabel(s: Pick<Sender, 'source_ip' | 'reverse_dns' | 'org' 
   return host || s.org || s.source_ip;
 }
 
-/** The SPF record with `include` added, keeping its other mechanisms and qualifier; null if we should not guess (redirect=). */
+/** The SPF record with `include` added, keeping its other mechanisms, its `all` and any `redirect=` (the one builder); null without a record. */
 export function spfWithInclude(record: string | null, include: string): string | null {
-  if (!record || /(^|\s)redirect=/i.test(record)) return null;
+  if (!record) return null;
   return buildSpfRecord([...extractIncludes(record), include], existingQualifier(record), extractOtherMechanisms(record));
 }
 
@@ -123,13 +123,13 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
       const spfCanAlign = spfDomain !== null;
       if (include && spfCanAlign && !hasInclude(domain.spf_record, include)) {
         const lookups = domain.spf_lookup_count == null ? null : domain.spf_lookup_count + 1; // at least one lookup for the include itself
-        const level = lookups === null ? null : lookupLevel(lookups);
+        const level = lookups === null ? null : spfLookupJudgement(lookups).level;
         if (level === 'over') {
-          steps.push(`Do not add include:${include} yet: your SPF already uses ${domain.spf_lookup_count} of the 10 DNS lookups allowed, and this include would take it to ${lookups} or more, which makes SPF fail for everything. Flatten your SPF first (Ready Set Mail's SPF flattening, or hosted SPF), then add it.`);
+          steps.push(`Do not add include:${include} yet: your SPF already uses ${domain.spf_lookup_count} of the ${SPF_LOOKUP_LIMIT} DNS lookups allowed, and this include would take it to ${lookups} or more, which makes SPF fail for everything. Flatten your SPF first (Ready Set Mail's SPF flattening, or hosted SPF), then add it.`);
         } else {
           steps.push(`Add include:${include} to the SPF record of ${domain.domain}${domain.spf_record ? '' : ' (there is none yet: publish one)'}.`);
-          if (level === 'near') steps.push(`Careful: that brings SPF to about ${lookups} of the 10 lookups allowed (the include can cost more than one). Flatten SPF if it goes over.`);
-          else if (level === null) steps.push('We do not know how many DNS lookups your SPF uses: check it stays under 10 after adding this.');
+          if (level === 'near' || level === 'at') steps.push(`Careful: that brings SPF to about ${lookups} of the ${SPF_LOOKUP_LIMIT} lookups allowed (the include can cost more than one). Flatten SPF if it goes over.`);
+          else if (level === null) steps.push(`We do not know how many DNS lookups your SPF uses: check it stays at ${SPF_LOOKUP_LIMIT} or fewer after adding this.`);
           const next = spfWithInclude(domain.spf_record, include);
           if (next) records.push({ type: 'TXT', name: domain.domain, value: next });
         }

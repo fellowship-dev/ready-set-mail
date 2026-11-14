@@ -4,14 +4,28 @@ import { useId } from 'react';
 import { Link } from 'react-router';
 import type { DomainAction } from '../../lib/actions';
 
-/** The top of a domain page: one to three actions, each as Do this / Why, with who acts and where. */
-export function DoThisNext({ actions, pending, canWrite, onRetry }: { actions: DomainAction[]; pending: boolean; canWrite: boolean; onRetry: () => void }) {
+/**
+ * The top of a domain page: one to three actions, each as Do this / Why, with who acts and where. `stale`: the stored
+ * check could not be reloaded after this page's live read, so the steps come from the last one and may be out of date.
+ */
+export function DoThisNext({ actions, pending, canWrite, onRetry, stale = false, onReloadSummary }: { actions: DomainAction[]; pending: boolean; canWrite: boolean; onRetry: () => void; stale?: boolean; onReloadSummary?: () => void }) {
 	const headingId = useId();
 	return (
 		<section aria-labelledby={headingId} className="space-y-3">
 			<h2 id={headingId} className="text-lg font-semibold tracking-tight">
 				Do this next
 			</h2>
+			{stale && !pending ? (
+				<div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-line bg-surface-1 px-4 py-3 text-sm text-ink-2 sm:px-5">
+					<span className="min-w-0 flex-1">These steps come from the last stored check and may be out of date: the latest could not be loaded.</span>
+					{onReloadSummary ? (
+						<Button variant="secondary" size="sm" onClick={onReloadSummary}>
+							<RefreshCw aria-hidden />
+							Try again
+						</Button>
+					) : null}
+				</div>
+			) : null}
 			{pending ? (
 				<div aria-busy="true" role="status" className="space-y-2 rounded-lg border border-line bg-surface-1 p-5">
 					<Skeleton className="h-5 w-2/3" />

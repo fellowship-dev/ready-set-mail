@@ -8,6 +8,7 @@ import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
 import type { MtaStsStatus, SpfFlatStatus } from '../../lib/types';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 import { ConfirmDialog } from './ConfirmDialog';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 interface ToolProps {
 	domainId: number;
@@ -86,9 +87,10 @@ const availableBadge = (
 );
 
 function lookupBadge(count: number): { variant: BadgeProps['variant']; word: string; Icon: typeof CheckCircle2 } {
-	if (count >= 10) return { variant: 'danger', word: 'over the limit', Icon: AlertTriangle };
-	if (count >= 8) return { variant: 'warning', word: 'high', Icon: AlertTriangle };
-	return { variant: 'success', word: 'ok', Icon: CheckCircle2 };
+	const j = spfLookupJudgement(count);
+	if (j.level === 'over') return { variant: 'danger', word: j.label.toLowerCase(), Icon: AlertTriangle };
+	if (j.level !== 'ok') return { variant: 'warning', word: j.label.toLowerCase(), Icon: AlertTriangle };
+	return { variant: 'success', word: j.label.toLowerCase(), Icon: CheckCircle2 };
 }
 
 function spfCard(id: number, s: SpfFlatStatus) {
@@ -101,7 +103,7 @@ function spfCard(id: number, s: SpfFlatStatus) {
 		badge = (
 			<Badge variant={variant}>
 				<Icon aria-hidden />
-				{count}/10 lookups ({word})
+				{count}/{SPF_LOOKUP_LIMIT} lookups ({word})
 			</Badge>
 		);
 	}

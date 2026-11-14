@@ -1,4 +1,5 @@
 import type { Finding, Level } from '@ready-set-mail/ui';
+import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { formatPercent, timeAgo } from './format';
 import type { DomainCheckSummary } from './types';
 
@@ -43,34 +44,11 @@ type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue
 	dmarc_pct?: number | null;
 };
 
-/** RFC 7208 section 4.6.4: more than this many DNS-querying terms is a permanent error. */
-export const SPF_LOOKUP_LIMIT = 10;
-/** From here the website's check says one more include may push SPF over the limit. */
-const SPF_LOOKUP_NOTE = 8;
-
-/** The SPF finding for a published record, from its lookup count: over the limit is broken, 8 to 10 is worth a note. */
+/** The SPF finding for a published record, from the one lookup judgement (spfLookupJudgement): only over the limit is broken. */
 function spfFinding(count: number | null | undefined): Finding & { broken: boolean } {
-	if (count == null || count < SPF_LOOKUP_NOTE) return { status: 'pass', label: 'SPF record published', broken: false };
-	if (count > SPF_LOOKUP_LIMIT)
-		return {
-			status: 'fail',
-			label: `SPF over the lookup limit: ${count} of ${SPF_LOOKUP_LIMIT} DNS lookups`,
-			detail: 'Receivers stop at 10 lookups and treat the record as a permanent error, so SPF fails for all your mail. Remove includes you no longer use, or flatten the record.',
-			broken: true,
-		};
-	if (count === SPF_LOOKUP_LIMIT)
-		return {
-			status: 'warn',
-			label: `SPF at the lookup limit: ${count} of ${SPF_LOOKUP_LIMIT} DNS lookups`,
-			detail: 'At the limit, not over it, so SPF still works. One more include would make it fail for all your mail.',
-			broken: false,
-		};
-	return {
-		status: 'warn',
-		label: `SPF close to the lookup limit: ${count} of ${SPF_LOOKUP_LIMIT} DNS lookups`,
-		detail: 'One more include may push it over the limit of 10, which makes SPF fail for all your mail.',
-		broken: false,
-	};
+	const j = count == null ? null : spfLookupJudgement(count);
+	if (!j || j.level === 'ok') return { status: 'pass', label: 'SPF record published', broken: false };
+	return { status: j.status, label: `SPF ${j.label.toLowerCase()}: ${spfLookupCount(count!)}`, detail: j.detail, broken: j.level === 'over' };
 }
 
 export function assessDomain(
@@ -109,7 +87,8 @@ export function assessDomain(
 		findings.push({
 			status: 'warn',
 			label: `DMARC partly enforced (p=${policy}, pct=${s.dmarc_pct})${from}`,
-			detail: `The policy applies to ${s.dmarc_pct}% of the mail that fails DMARC; the rest is still delivered. Raise pct= to 100 to enforce it on all mail.`,
+			// Receivers handle the rest one step more leniently: under p=reject it is quarantined, under p=quarantine delivered.
+			detail: `The policy applies to ${s.dmarc_pct}% of the mail that fails DMARC; receivers handle the rest one step more leniently, so it is ${policy === 'reject' ? 'quarantined, usually to spam' : 'still delivered'}. Raise pct= to 100 to enforce it on all mail.`,
 		});
 	else if (enforcing) findings.push({ status: 'pass', label: `DMARC enforced (p=${policy})${from}` });
 	else findings.push({ status: 'warn', label: `DMARC is monitoring only (p=none)${from}`, detail: reports

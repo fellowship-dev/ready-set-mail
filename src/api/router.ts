@@ -84,6 +84,7 @@ import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
+import { reportConnectFor, workspaceMayConnect } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
@@ -401,7 +402,16 @@ async function getDomainCheckSummaries(tenant: TenantContext, url: URL): Promise
   // One row more than asked tells whether another page exists.
   const rows = await tenant.scope.reports.checkSummaries(since, { afterId, limit: limit + 1 });
   const page = rows.slice(0, limit);
-  return json({ summaries: page, next_after: rows.length > limit ? page[page.length - 1]!.domain_id : null, window_days: 30 });
+  const may = await workspaceMayConnect(tenant);
+  const summaries = await Promise.all(page.map(async (s) => {
+    const domain = await tenant.scope.domains.getById(s.domain_id);
+    // Per domain, as the connect panel decides it: whether reports can be connected, and why not.
+    const report_connect = domain ? await reportConnectFor(tenant, domain, may) : null;
+    // Where nothing was counted, what the overview must say instead of "no reports" (dropped, limited, not counted).
+    const visibility = s.total_messages === 0 ? await reportVisibility(tenant, s.domain_id, since) : {};
+    return { ...s, ...visibility, report_connect };
+  }));
+  return json({ summaries, next_after: rows.length > limit ? page[page.length - 1]!.domain_id : null, window_days: 30 });
 }
 
 async function getDomainReportByDate(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {

@@ -131,15 +131,40 @@ describe('buildFixes', () => {
 
   it('refuses to add an include that would push SPF past 10 lookups, and says to flatten', () => {
     const rows = [row({ messages: 880 }), ownEnvelope({ messages: 120 })];
-    const over = buildFixes({ ...dom, spf_lookup_count: 9 }, send(rows))[0]!;
+    const over = buildFixes({ ...dom, spf_lookup_count: 10 }, send(rows))[0]!;
     expect(over.records).toEqual([]);
-    expect(over.steps[0]).toMatch(/Do not add include:servers\.mcsv\.net yet.*9 of the 10.*Flatten/);
+    expect(over.steps[0]).toMatch(/Do not add include:servers\.mcsv\.net yet.*10 of the 10.*Flatten/);
     const near = buildFixes({ ...dom, spf_lookup_count: 7 }, send(rows))[0]!;
     expect(near.steps.join(' ')).toMatch(/about 8 of the 10/);
     expect(near.records).toHaveLength(1);
     const unknown = buildFixes({ ...dom, spf_lookup_count: null }, send(rows))[0]!;
     expect(unknown.steps.join(' ')).toMatch(/do not know how many DNS lookups/);
     expect(unknown.records).toHaveLength(1);
+  });
+
+  it('adds an include to a redirect= record without an all (which would void the redirect), near the lookup limit', () => {
+    const rows = [row({ messages: 880 }), ownEnvelope({ messages: 120 })];
+    const fix = buildFixes({ ...dom, spf_record: 'v=spf1 redirect=_spf.acme.test', spf_lookup_count: 8 }, send(rows))[0]!;
+    expect(fix.records).toHaveLength(1);
+    expect(fix.records[0]!.value).toBe('v=spf1 include:servers.mcsv.net redirect=_spf.acme.test');
+    expect(fix.records[0]!.value).not.toMatch(/all/);
+    expect(fix.steps.join(' ')).toMatch(/about 9 of the 10/);
+  });
+
+  it('judges the include by RFC 7208: reaching 10 lookups is allowed, 11 is not (counts 8, 9, 10, 11)', () => {
+    const rows = [row({ messages: 880 }), ownEnvelope({ messages: 120 })];
+    const at = (n: number) => buildFixes({ ...dom, spf_lookup_count: n }, send(rows))[0]!;
+    // 8 -> 9 and 9 -> 10 stay within the limit: the include is offered, with the careful note.
+    for (const n of [8, 9]) {
+      expect(at(n).records).toHaveLength(1);
+      expect(at(n).steps.join(' ')).toMatch(new RegExp(`Careful: that brings SPF to about ${n + 1} of the 10`));
+      expect(at(n).steps.join(' ')).not.toMatch(/makes SPF fail/);
+    }
+    // 10 -> 11 and 11 -> 12 go over: no record, and the advice says why.
+    for (const n of [10, 11]) {
+      expect(at(n).records).toEqual([]);
+      expect(at(n).steps[0]).toMatch(new RegExp(`already uses ${n} of the 10 DNS lookups allowed.*${n + 1} or more, which makes SPF fail`));
+    }
   });
 
   it('says "fails DKIM alignment" for a provider that passes through SPF alone, with no invented record', () => {
@@ -153,7 +178,7 @@ describe('buildFixes', () => {
     const [fix] = buildFixes(withInclude, send([row({ messages: 880 }), ownEnvelope({ messages: 120 })]));
     expect(fix!.steps[0]).toContain('already includes servers.mcsv.net');
     expect(fix!.records).toEqual([]);
-    expect(spfWithInclude('v=spf1 redirect=_spf.x.com', 'a.com')).toBeNull();
+    expect(spfWithInclude('v=spf1 redirect=_spf.x.com', 'a.com')).toBe('v=spf1 include:a.com redirect=_spf.x.com');
     expect(spfWithInclude(null, 'a.com')).toBeNull();
   });
 

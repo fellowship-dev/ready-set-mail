@@ -4,6 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
 import { previewAssessment, type ClaimPreviewData } from '../../lib/claim-preview';
+import { SPF_LOOKUP_LIMIT, spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 const RATE_LIMITED = 'Checked too often. Try again in a minute.';
 
@@ -73,7 +74,7 @@ function Result({ data, retry }: { data: ClaimPreviewData; retry: () => void }) 
 			<CheckResultList>
 				{/* With a level, the SPF finding above already says it (from the same lookup count); without one, say it here. */}
 				{spf.over_limit && !a ? (
-					<CheckResult status="warn" title="SPF" statusLabel="Over 10 lookups" summary={`Receivers may reject mail when SPF needs more than 10 DNS lookups. This record needs ${spf.lookup_count}.`} />
+					<CheckResult status={spfLookupJudgement(spf.lookup_count ?? SPF_LOOKUP_LIMIT + 1).status} title="SPF" statusLabel={spfLookupJudgement(spf.lookup_count ?? SPF_LOOKUP_LIMIT + 1).label} summary={`${spf.lookup_count !== null ? `${spfLookupCount(spf.lookup_count)}. ` : ''}${spfLookupJudgement(spf.lookup_count ?? SPF_LOOKUP_LIMIT + 1).detail}`} />
 				) : null}
 				<DkimRow dkim={data.dkim} domain={domain} retry={retry} />
 			</CheckResultList>

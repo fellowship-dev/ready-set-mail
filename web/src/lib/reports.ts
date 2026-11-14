@@ -1,4 +1,5 @@
 import type { CheckStatus } from '@ready-set-mail/ui';
+import { SPF_LOOKUP_LIMIT, spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import type { AnomalySource, CheckResult, ReportSource } from './types';
 
 /** Pure helpers for the report, source, email-check and audit screens. */
@@ -181,22 +182,23 @@ export function protocolStatus(result: string | null): CheckStatus {
 
 export function spfStatus(result: string | null, lookups: number | null): CheckStatus {
 	const s = protocolStatus(result);
-	if (s === 'pass' && lookups !== null && lookups >= 8) return 'warn';
+	if (s === 'pass' && lookups !== null) return spfLookupJudgement(lookups).status;
 	return s;
 }
 
 export function spfAdvice(result: string | null, lookupCount: number | null): string {
 	if (!result || result === 'none') return 'No SPF record found. Add a TXT record to your DNS: v=spf1 include:your-mail-provider.com ~all';
 	if (result === 'permerror') {
-		return `SPF permerror — your record requires ${lookupCount ?? '?'} DNS lookups, exceeding the 10-lookup limit. Receivers treat this as a fail. Flatten your SPF record or use a dynamic SPF service.`;
+		return `SPF permerror — your record requires ${lookupCount ?? '?'} DNS lookups, exceeding the ${SPF_LOOKUP_LIMIT}-lookup limit. Receivers treat this as a fail. Flatten your SPF record or use a dynamic SPF service.`;
 	}
-	if (lookupCount !== null && lookupCount >= 10) {
-		return `SPF passed this time, but your record needs ${lookupCount} DNS lookups — at or over the limit. Some receivers will return permerror and silently drop your mail. Flatten your includes or use a dynamic SPF service.`;
+	const j = lookupCount === null ? null : spfLookupJudgement(lookupCount);
+	if (j?.level === 'over') {
+		return `SPF passed for this message, but your record needs ${lookupCount} DNS lookups, more than the limit of ${SPF_LOOKUP_LIMIT}. Receivers that enforce the limit treat the record as a permanent error, and then SPF fails for your mail. Remove includes you no longer use, or flatten the record.`;
 	}
-	if (lookupCount !== null && lookupCount >= 8) {
-		return `SPF passed. Your record uses ${lookupCount}/10 lookups — close to the limit. Adding another mail provider could break SPF delivery.`;
+	if (j && j.level !== 'ok') {
+		return `SPF passed. Your record uses ${spfLookupCount(lookupCount!)}: ${j.label.toLowerCase()}. ${j.detail}`;
 	}
-	if (result === 'pass') return `SPF passed — the sending server is authorized by your DNS record.${lookupCount !== null ? ` Uses ${lookupCount}/10 DNS lookups.` : ''}`;
+	if (result === 'pass') return `SPF passed — the sending server is authorized by your DNS record.${lookupCount !== null ? ` Uses ${spfLookupCount(lookupCount)}.` : ''}`;
 	if (result === 'softfail') return "SPF soft-failed (~all). Consider tightening to -all once you've verified all senders.";
 	if (result === 'fail') return "SPF hard-failed. The sending server is not listed in your SPF record. Check you've included all mail providers.";
 	return `SPF returned "${result}". Review your SPF record for syntax errors or missing includes.`;

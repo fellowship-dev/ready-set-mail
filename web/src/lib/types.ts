@@ -249,6 +249,11 @@ export interface OnboardingStatus {
 }
 
 export interface DomainCheckSummary extends ReportVisibilityFields {
+  /**
+   * Hosted report intake, per domain (GET /api/domains/summaries): whether reports can be connected, and the server's
+   * reason and its kind when not. Null on a self-hosted instance; absent from /check-summary.
+   */
+  report_connect?: { can_connect: boolean; refusal: string | null; refusal_kind: 'unavailable' | 'hosted_records' | 'ownership' | 'operator_only' | null } | null;
   domain_id: number;
   domain: string;
   dmarc_policy: string | null;

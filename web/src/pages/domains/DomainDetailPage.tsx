@@ -18,11 +18,17 @@ import { ReportsNotConnected, useReportsNotConnected } from '../../components/Re
 import { Disclosure, ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section } from '../../components/states';
 import { actionsPending, domainActions } from '../../lib/actions';
 import { errorMessage } from '../../lib/api';
-import { useHostedInfo } from '../../lib/hosted';
-import { domainVerdict, totalsFromSummary, unavailableVerdict, type ReportTotals } from '../../lib/verdict';
-import { enforcementLevel, invalidDmarcSp, parseDmarcSp } from '../../lib/dmarc-record';
-import { getGuidance, spTag, sumStats, wizardProgress, type GuidanceTone } from '../../lib/dmarc';
-import { domainKeys, useCheckSummary, useDnsCheck, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
+import { useHostedLevelInput } from '../../lib/hosted';
+import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, type ReportTotals } from '../../lib/verdict';
+import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
+import { recordAlignment } from '../../lib/dmarc-coverage';
+import { spTag, sumStats, wizardProgress } from '../../lib/dmarc';
+import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
+import { listedParentFinder } from '../../lib/listed-parent';
+import { useReportsRefusal } from '../../lib/report-address';
+import type { ReportsRefusal } from '../../lib/dmarc-step';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
+import type { StatusKind } from '@ready-set-mail/ui';
 import { formatNumber } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
 import { hasReportAddress } from '../../lib/dmarc-record';
@@ -32,13 +38,34 @@ import { suffixParentOf } from '../../lib/dmarc-step';
 import { inForceSentence, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
 
 const WINDOWS = [7, 30, 60] as const;
-const ALERT_VARIANT: Record<GuidanceTone, 'info' | 'success' | 'warning' | 'danger'> = { neutral: 'info', info: 'info', success: 'success', warning: 'warning', danger: 'danger' };
+/** The shared rule's step as an alert, in the status words' tones. */
+const STEP_ALERT: Record<StatusKind, 'info' | 'success' | 'warning' | 'danger'> = { attention: 'danger', improve: 'warning', approval: 'info', unknown: 'info', gathering: 'info', prepared: 'info', verified: 'success', note: 'info' };
 
-const policyLabel = (p: Domain['dmarc_policy']) => p ?? 'none';
+type Policy = 'none' | 'quarantine' | 'reject';
+const asPolicy = (p: string | null | undefined): Policy | null => (p === 'none' || p === 'quarantine' || p === 'reject' ? p : null);
 
-function PolicyBadge({ policy }: { policy: Domain['dmarc_policy'] }) {
+function PolicyBadge({ policy }: { policy: Policy }) {
 	const variant = policy === 'reject' ? 'success' : policy === 'quarantine' ? 'warning' : 'danger';
-	return <Badge variant={variant}>p={policyLabel(policy)}</Badge>;
+	return <Badge variant={variant}>p={policy}</Badge>;
+}
+
+/**
+ * A listed subdomain's DMARC, from its stored check (the overview reads the same): a policy only when one was read, else
+ * what is known instead. Never p=none without evidence.
+ */
+function ChildPolicyBadge({ summary }: { summary: DomainCheckSummary | null | undefined }) {
+	if (summary === undefined) return <Badge variant="outline">Checking DMARC…</Badge>;
+	const policy = asPolicy(summary?.dmarc_policy);
+	if (policy) return <PolicyBadge policy={policy} />;
+	if (summary?.dmarc_issue === 'multiple') return <Badge variant="outline">Multiple DMARC records</Badge>;
+	if (summary?.dmarc_issue === 'invalid') return <Badge variant="outline">DMARC record is invalid</Badge>;
+	if (!summary?.dns_checked_at) return <Badge variant="outline">DMARC not checked yet</Badge>;
+	return <Badge variant="outline">No DMARC record found</Badge>;
+}
+
+/** "No reports in the last 7 days." only when none arrived; reports dropped, limited or not counted are said as such. */
+function emptyWindowLine(v: ReportVisibilityFields | null | undefined, days: number): string {
+	return emptyReportsState(0, v) === 'none' ? `No reports in the last ${days} days.` : (emptyReportsMessage(0, v) ?? `No counted reports in the last ${days} days.`);
 }
 
 /**
@@ -60,16 +87,22 @@ function LivePolicyBadge({ domain }: { domain: Domain }) {
 		return <Badge variant="outline">No record of its own: inherits {tag}={inherited.policy}{pct < 100 ? ` at pct=${pct}` : ''} from {inherited.inherited_from}</Badge>;
 	}
 	if (!dns.data.found || !dns.data.current_record) return <Badge variant="outline">No DMARC record found{lastKnown}</Badge>;
-	const live = dns.data.current_record.match(/(^|;\s*)p=([a-z]+)/i)?.[2]?.toLowerCase();
-	return live ? <PolicyBadge policy={live as Domain['dmarc_policy']} /> : <Badge variant="outline">DMARC record has no p= tag</Badge>;
+	// The shared tag parser: any letter case, spaces around `=`.
+	const live = asPolicy(parseDmarcPolicy(dns.data.current_record));
+	return live ? <PolicyBadge policy={live} /> : <Badge variant="outline">DMARC record has no valid p= policy</Badge>;
 }
 
 function Context({ domain, all, summary, suffixParent = null }: { domain: Domain; all: Domain[]; /** The stored summary after this page's live read. */ summary?: DomainCheckSummary; suffixParent?: string | null }) {
 	const dns = useDnsCheck(domain.id);
-	const parent = domain.parent_id ? all.find((d) => d.id === domain.parent_id) : undefined;
-	const children = all.filter((d) => d.parent_id === domain.id);
+	const parentOf = listedParentFinder(all);
+	const parent = parentOf(domain) ?? undefined;
+	const children = all.filter((d) => parentOf(d)?.id === domain.id);
+	// The children's stored checks, as the overview reads them: a badge says only what was read.
+	const childSummaries = useDomainSummaries(children.length > 0);
 	if (!parent && children.length === 0) return null;
 	const record = dns.data?.current_record ?? null;
+	// This domain's live policy, read by the shared parser (null: no record, or no valid p=).
+	const livePolicy = asPolicy(parseDmarcPolicy(record));
 	const sp = spTag(record);
 	const badSp = invalidDmarcSp(record);
 	const ownRecord = !!dns.data && !dns.data.error && dns.data.found;
@@ -83,7 +116,7 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 				<Alert variant="info" title={ownRecord ? 'Has its own DMARC record' : lookupFailed || suffixParent || !inherited ? 'Parent domain' : 'Inherits DMARC from its parent'}>
 					{ownRecord ? (
 						<>
-							p={policyLabel(domain.dmarc_policy)} overrides the parent <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>.
+							{livePolicy ? `p=${livePolicy}` : 'Its record, which has no valid p= policy,'} overrides the parent <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>.
 						</>
 					) : lookupFailed ? (
 						<>
@@ -119,15 +152,20 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 						</Alert>
 					) : badSp ? (
 						<Alert variant="warning" title="sp= is not a valid policy">
-							The record has sp={badSp}, which is not none, quarantine or reject, so it is ignored: subdomains without their own record inherit p={policyLabel(domain.dmarc_policy)}.
+							{/* RFC 7489 section 6.6.3: an invalid sp= makes receivers treat the whole record as p=none (or apply no DMARC without a valid rua=). */}
+							The record has sp={badSp}, which is not none, quarantine or reject, so receivers do not apply the record as written: with a valid rua= they treat it as p=none, for {domain.domain} and its subdomains; without one they ignore it. Fix sp= or remove it.
 						</Alert>
 					) : sp ? (
 						<Alert variant="warning" title={`sp=${sp}: not enforced`}>
 							Subdomains without their own DMARC record are NOT enforced. Consider adding sp=reject.
 						</Alert>
+					) : record && livePolicy === 'reject' ? (
+						<Alert variant="success" title="No sp= tag">
+							Subdomains without their own record inherit p=reject.
+						</Alert>
 					) : record ? (
 						<Alert variant="warning" title="No sp= tag">
-							Subdomains without their own record inherit p={policyLabel(domain.dmarc_policy)}, which may be too permissive.
+							{livePolicy ? `Subdomains without their own record inherit p=${livePolicy}, which may be too permissive.` : 'Subdomains without their own record inherit its p=, which is not a valid policy, so receivers ignore it.'}
 						</Alert>
 					) : null}
 					<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
@@ -135,7 +173,7 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 							<li key={c.id}>
 								<Link to={`/domains/${c.id}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-surface-2">
 									<span className="min-w-0 font-mono text-sm [overflow-wrap:anywhere]">{c.domain}</span>
-									<PolicyBadge policy={c.dmarc_policy} />
+									<ChildPolicyBadge summary={childSummaries.isPending ? undefined : childSummaries.isError ? null : (childSummaries.data.get(c.id) ?? null)} />
 								</Link>
 							</li>
 						))}
@@ -152,9 +190,20 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** True when a stored summary fetched at `fetchedAt` (ms) can describe a live read made at `readAt` (ms; 0: none yet). */
 export const summaryFetchedAfterRead = (fetchedAt: number, readAt: number): boolean => readAt === 0 || fetchedAt >= readAt;
 
-function WhereItStands({ domain, nxdomain = false, readAt = 0, idByName, suffixParent = null }: { domain: Domain; /** The live read says the name does not exist: no setup to continue. */ nxdomain?: boolean; /** When this page's live read answered (ms): an older summary is being refetched. */ readAt?: number; idByName?: ReadonlyMap<string, number>; suffixParent?: string | null }) {
+/**
+ * The stored summary against this page's live read: `fresh` once fetched after it, `waiting` while that refetch is on its
+ * way, `stale` when it failed, so the last stored summary is all there is (shown, marked as possibly out of date).
+ */
+export function summaryFreshness(fetchedAt: number, readAt: number, q: { isFetching: boolean; isError: boolean }): 'fresh' | 'waiting' | 'stale' {
+	if (summaryFetchedAfterRead(fetchedAt, readAt)) return 'fresh';
+	if (q.isFetching) return 'waiting';
+	return q.isError ? 'stale' : 'waiting';
+}
+
+function WhereItStands({ domain, nxdomain = false, readAt = 0, idByName, suffixParent = null, reportsRefusal }: { domain: Domain; /** The live read says the name does not exist: no setup to continue. */ nxdomain?: boolean; /** When this page's live read answered (ms): an older summary is being refetched. */ readAt?: number; idByName?: ReadonlyMap<string, number>; suffixParent?: string | null; /** Undefined while unknown (the verdict waits); null: reports can be connected. */ reportsRefusal?: ReportsRefusal | null }) {
 	const summary = useCheckSummary(domain.id);
-	const hosted = useHostedInfo(domain.id);
+	// Hosted status still loading: no verdict yet, as on the overview (a hosted domain is never judged as self-managed).
+	const { pending: hostedPending, info: hosted } = useHostedLevelInput(domain.id);
 	const wizard = useWizardState(domain.id);
 	const { canWrite } = useSession();
 	const hostedMode = useHosted();
@@ -162,7 +211,7 @@ function WhereItStands({ domain, nxdomain = false, readAt = 0, idByName, suffixP
 	// The same summary and 30-day totals the overview reads, so both pages say the same thing.
 	// A summary fetched before the live read may predate what it stored: wait for the refetch rather than show it.
 	const fresh = summaryFetchedAfterRead(summary.dataUpdatedAt, readAt) || !summary.isFetching;
-	const v = summary.isError ? unavailableVerdict(errorMessage(summary.error), domain.domain) : summary.data && fresh ? domainVerdict(domain, summary.data, totalsFromSummary(summary.data), hosted, undefined, { hostedMode, idByName, suffixParent }) : null;
+	const v = summary.isError ? unavailableVerdict(errorMessage(summary.error), domain.domain) : summary.data && fresh && !hostedPending && reportsRefusal !== undefined ? domainVerdict(domain, summary.data, totalsFromSummary(summary.data), hosted, undefined, { hostedMode, idByName, suffixParent, reportsRefusal }) : null;
 	const progress = canWrite && wizard.data ? wizardProgress(wizard.data, { hosted: hostedMode }) : null;
 	return (
 		<section aria-labelledby={headingId} className="space-y-3">
@@ -237,11 +286,20 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		return { total: s.total, passed: s.passed, failed: s.failed, passRate: s.passRate, days: n };
 	};
 	const week7 = totals(week, 7);
-	const hostedInfo = useHostedInfo(domain.id);
-	const parent = domain.parent_id ? all.find((d) => d.id === domain.parent_id) : undefined;
+	const { pending: hostedPending, info: hostedInfo } = useHostedLevelInput(domain.id);
+	// The same nearest listed ancestor the overview uses.
+	const parentOf = listedParentFinder(all);
+	const parent = parentOf(domain) ?? undefined;
 	const parentSummary = useCheckSummary(parent?.id ?? 0, !!parent);
-	// The stored summary counts only once it was fetched after this page's live read (compare fetch times).
-	const summaryFresh = summaryFetchedAfterRead(summary.dataUpdatedAt, onboarding.isSuccess ? onboarding.dataUpdatedAt : 0);
+	// The stored summary counts only once it was fetched after this page's live read (compare fetch times). If that refetch
+	// failed, the last stored summary is used, marked as possibly out of date, with a retry: never "Reading…" forever.
+	const freshness = summaryFreshness(summary.dataUpdatedAt, onboarding.isSuccess ? onboarding.dataUpdatedAt : 0, summary);
+	const summaryStale = freshness === 'stale' && !!summary.data;
+	// While the hosted status loads, nothing is judged from the summary (a hosted domain is not self-managed).
+	// Whether reports can be connected here (hosted plans may not offer it): asked only for a domain without them.
+	// Why reports cannot be connected for this domain, from the same per-domain answer the overview reads.
+	const { pending: refusalPending, refusal: reportsRefusal } = useReportsRefusal(domain.id);
+	const summaryFresh = freshness !== 'waiting' && !hostedPending && !refusalPending;
 	// A listed parent whose own record does not cover this name: a public suffix (gov.uk above www.gov.uk).
 	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
 	const actionInput = {
@@ -255,13 +313,18 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		summaryFresh,
 		hosted: hostedInfo,
 		suffixParent,
+		reportsRefusal,
 	};
 	const actions = domainActions(actionInput);
 
 	const sums = stats.data ? sumStats(stats.data.stats) : null;
-	const guidance = sums ? getGuidance(domain, sums.passRate, sums.total > 0, dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null) : null;
+	// The DMARC step for the Reports section: the shared rule's, the same "Do this next" leads with, never a verdict of its own.
+	const governing = onboarding.data?.dmarc.effective?.inherited_from ? (onboarding.data.dmarc.effective.record ?? null) : null;
+	const dmarcStep = summary.data && summaryFresh && !(dns.isError || dns.data?.error) ? dmarcStepsFor(domain, summary.data, totalsFromSummary(summary.data), hostedInfo, suffixParent, governing ? recordAlignment(governing) : null, reportsRefusal)[0] : undefined;
+	// Nothing counted in the window, and nothing arrived: only then may the DNS state say reports are on their way.
+	const noneArrived = !!sums && sums.total === 0 && emptyReportsState(0, stats.data) === 'none';
 
-	const children = all.filter((d) => d.parent_id === domain.id);
+	const children = all.filter((d) => parentOf(d)?.id === domain.id);
 	const selectors = onboarding.data?.dkim.selectors.length;
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject');
 	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
@@ -299,10 +362,12 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
+				stale={summaryStale}
+				onReloadSummary={() => void summary.refetch()}
 				canWrite={canWrite}
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
 			/>
-			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} />
+			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 
 			{/* A name that does not resolve has nothing to host. */}
 			{nxdomain ? null : <HostedPanel key={domain.id} domainId={domain.id} />}
@@ -332,7 +397,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 									? 'Report totals could not be loaded.'
 									: week7 && week7.total > 0
 										? `${week7.passRate}% of ${formatNumber(week7.total)} reported messages passed DMARC in the last 7 days.`
-										: 'No reports in the last 7 days.'
+										: emptyWindowLine(week.data, 7)
 						}
 					>
 						<div className="space-y-6">
@@ -344,7 +409,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 											? null
 											: sums && sums.total > 0
 												? `Last ${days} days: ${sums.passRate}% passed. ${formatNumber(sums.passed)} of ${formatNumber(sums.total)} messages passed, ${formatNumber(sums.failed)} failed.`
-												: `No reports in the last ${days} days.`}
+												: emptyWindowLine(stats.data, days)}
 								</p>
 								<Tabs value={String(days)} onValueChange={(v) => setDays(Number(v))}>
 									<TabsList aria-label="Time window">
@@ -357,30 +422,34 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 								</Tabs>
 							</div>
 							{stats.isError ? <LoadError error={stats.error} onRetry={() => void stats.refetch()} title="Could not load results" /> : null}
-							{guidance ? (
-								<Alert variant={ALERT_VARIANT[guidance.tone]} title={guidance.title}>
-									<p>{guidance.body}</p>
-									{guidance.upgradeTo && canWrite ? (
+							{dmarcStep ? (
+								// The shared rule's "done" is about DMARC only: "Do this next" above judges the whole domain.
+								<Alert variant={STEP_ALERT[dmarcStep.status]} title={dmarcStep.key === 'done' ? 'DMARC needs no change' : dmarcStep.do}>
+									<p>{dmarcStep.why}</p>
+									{dmarcStep.where === 'dmarc-wizard' && canWrite ? (
 										<Button asChild size="sm" variant="secondary" className="mt-3">
-											<Link to={`/domains/${domain.id}/dmarc-wizard`}>Upgrade to {guidance.upgradeTo}</Link>
+											<Link to={`/domains/${domain.id}/dmarc-wizard`}>Review the change</Link>
 										</Button>
-									) : null}
-									{sums?.total === 0 && dns.data ? (
-										<p className="mt-2">
-											{dns.data.error
-												? 'We could not check your DNS record just now. See DNS records above.'
-												: dns.data.found && dns.data.has_rua
-													? 'DNS record detected. Reports will start arriving soon.'
-													: dns.data.found
-														? hasReportAddress(domain.rua_address)
-															? 'A DMARC record is published, but it does not send reports to your reports address yet. See DNS records above.'
-															: 'A DMARC record is published. No reports address is configured for this domain, so no reports can arrive here yet.'
-														: 'DNS record not found yet. Make sure you have added it, then wait a few minutes for propagation.'}
-										</p>
 									) : null}
 								</Alert>
 							) : null}
-							{stats.isPending ? <ListSkeleton rows={1} label="Loading daily results" /> : stats.isError ? null : <DailyChart domainId={domain.id} stats={stats.data.stats} days={days} />}
+							{/* Nothing arrived in the window: what DNS shows about whether reports can arrive. */}
+							{noneArrived && dns.data ? (
+								<p className="text-sm text-ink-1">
+									{dns.data.error
+										? 'We could not check your DNS record just now. See DNS records above.'
+										: dns.data.found && dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`, summary.data?.dmarc_inherited_from ? null : summary.data?.dmarc_issue)
+											? 'The DMARC record is not applied as published, so reports may not arrive. See DNS records above.'
+										: dns.data.found && dns.data.has_rua
+											? 'DNS record detected. Reports will start arriving soon.'
+											: dns.data.found
+												? hasReportAddress(domain.rua_address)
+													? 'A DMARC record is published, but it does not send reports to your reports address yet. See DNS records above.'
+													: 'A DMARC record is published. No reports address is configured for this domain, so no reports can arrive here yet.'
+												: 'DNS record not found yet. Make sure you have added it, then wait a few minutes for propagation.'}
+								</p>
+							) : null}
+							{stats.isPending ? <ListSkeleton rows={1} label="Loading daily results" /> : stats.isError ? null : <DailyChart domainId={domain.id} stats={stats.data.stats} days={days} visibility={stats.data} />}
 							{hostedMode ? null : (
 							<div className="space-y-2">
 								<p className="text-sm font-semibold text-ink-1">Reporting address</p>

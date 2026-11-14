@@ -82,12 +82,45 @@ export function reportIntakeDomain(env: TenantContext['env']): string | null {
   return hostedConfig(env).intakeDomain ?? null;
 }
 
+/** Why reports cannot be connected, by kind: the dashboard's next step differs for each. */
+export type ReportConnectRefusal = 'unavailable' | 'hosted_records' | 'ownership' | 'operator_only';
+
+/** Why this domain's reports cannot be connected, with its kind, or null. Hosted records are handled by the callers. */
+async function refusalOf(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<{ kind: ReportConnectRefusal; reason: string } | null> {
+  if (domain.verified_via === 'legacy') return { kind: 'ownership', reason: `Ownership of ${domain.domain} is not proven in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
+  if (!(await isDomainProven(tenant, domain))) return { kind: 'ownership', reason: `${domain.domain} was added through a parent domain that is no longer in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
+  if (!(workspaceMay ?? (await workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId)))) return { kind: 'operator_only', reason: 'On this server, only the operator\'s workspaces can connect reports.' };
+  return null;
+}
+
 /** Why this domain's reports cannot be connected, or null. Hosted records are handled by the callers. */
 async function refusalFor(tenant: TenantContext, domain: DomainRow): Promise<string | null> {
-  if (domain.verified_via === 'legacy') return `Ownership of ${domain.domain} is not proven in this workspace. Remove it and add it again to prove that you control it, then connect reports.`;
-  if (!(await isDomainProven(tenant, domain))) return `${domain.domain} was added through a parent domain that is no longer in this workspace. Remove it and add it again to prove that you control it, then connect reports.`;
-  if (!(await workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId))) return 'On this server, only the operator\'s workspaces can connect reports.';
-  return null;
+  return (await refusalOf(tenant, domain))?.reason ?? null;
+}
+
+export interface ReportConnect {
+  can_connect: boolean;
+  /** The connect panel's own words for why not (null when reports can be connected). */
+  refusal: string | null;
+  refusal_kind: ReportConnectRefusal | null;
+}
+
+/**
+ * Whether this domain's reports can be connected here, per domain, in the connect panel's words: the overview and the
+ * domain page decide each row from this. Null on an instance without hosted report intake (self-host: the deployment's
+ * reports address is the one to publish). `workspaceMay`: HOSTED_CONNECT_REPORTS's answer for the workspace, when known.
+ */
+export async function reportConnectFor(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<ReportConnect | null> {
+  if (!hostedEnabled(tenant.env)) return null;
+  if (!reportIntakeDomain(tenant.env)) return { can_connect: false, refusal: 'This server does not receive DMARC reports.', refusal_kind: 'unavailable' };
+  if (await tenant.scope.hosted.get(domain.id)) return { can_connect: false, refusal: 'Reports for this domain come through its hosted records.', refusal_kind: 'hosted_records' };
+  const r = await refusalOf(tenant, domain, workspaceMay);
+  return r ? { can_connect: false, refusal: r.reason, refusal_kind: r.kind } : { can_connect: true, refusal: null, refusal_kind: null };
+}
+
+/** HOSTED_CONNECT_REPORTS's answer for the workspace (one query for a page of domains). */
+export async function workspaceMayConnect(tenant: TenantContext): Promise<boolean> {
+  return workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId);
 }
 
 /**

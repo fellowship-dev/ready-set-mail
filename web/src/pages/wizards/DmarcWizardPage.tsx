@@ -1,4 +1,4 @@
-import { Alert, Button, CheckResult, CheckResultList, FieldHint } from '@ready-set-mail/ui';
+import { Alert, Button, Checkbox, CheckResult, CheckResultList, FieldHint } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -13,7 +13,10 @@ import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { api, errorMessage } from '../../lib/api';
 import { buildRecommendedRecord, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, weakerSubdomainPolicy } from '../../lib/dmarc-record';
 import { keys, useDomain } from '../../lib/queries';
-import { useOnboardingStatus } from '../../lib/domain-queries';
+import { useCheckSummary, useOnboardingStatus } from '../../lib/domain-queries';
+import { useHostedLevelInput } from '../../lib/hosted';
+import { nextPolicyGate } from '../../lib/verdict';
+import { useReportsRefusal } from '../../lib/report-address';
 import { dmarcCoverage, inheritedSentence } from '../../lib/dmarc-coverage';
 import { useReportsNotConnected } from '../../components/ReportsNotConnected';
 import { HELP_PRIORITY, TalkToMax } from '../../components/TalkToMax';
@@ -45,14 +48,6 @@ const STEP_COPY = [
 	},
 ] as const;
 
-/**
- * Hosted, before report intake: no pass rate exists, so the steps say what DNS alone can and cannot confirm. Records
- * being published is checkable; every sender passing is not.
- */
-const HOSTED_STEP_BODY = [
-	'Quarantine tells receiving servers to put mail that fails DMARC in the spam folder. DNS shows that this domain publishes an SPF record and a DMARC record; it cannot show whether every service sending as this domain passes, because reports are not connected. Check each one (your mail provider, newsletter, invoicing and support tools) before you switch.',
-	'Reject tells receiving servers to refuse mail that fails DMARC. DNS alone cannot show whether every service sending as this domain passes, because reports are not connected. Switch only once you have checked each sender yourself.',
-] as const;
 
 interface DnsCheck {
 	found: boolean;
@@ -73,7 +68,14 @@ export function DmarcWizardPage() {
 	const hosted = useReportsNotConnected(domain);
 	// SPF and what the name inherits: a policy is only tightened from a DMARC record of its own (and, hosted, with SPF published).
 	const onboarding = useOnboardingStatus(domainId);
+	// The evidence the shared rule weighs before the next policy is offered: the stored check and its report totals.
+	const summary = useCheckSummary(domainId);
+	const hostedLevel = useHostedLevelInput(domainId);
+	// Why reports cannot be connected for this domain, per domain (the overview reads the same answer).
+	const { pending: refusalPending, refusal: reportsRefusal } = useReportsRefusal(domainId);
 	const [appliedRecord, setAppliedRecord] = useState<string | null>(null);
+	// Without reports here, the person confirms they checked every sender: for the rung shown (its step), not for later ones.
+	const [checkedAt, setCheckedAt] = useState<number | null>(null);
 
 	const apply = useMutation({
 		mutationFn: ({ target }: { target: Policy; from: number }) => api<{ ok: boolean; policy: string; record: string }>(`/api/domains/${domainId}/dmarc`, { method: 'PATCH', body: { policy: target } }),
@@ -154,8 +156,12 @@ export function DmarcWizardPage() {
 		const current = Math.max(step ?? floor, floor);
 		const enforced = current >= 2;
 		const copy = STEP_COPY[Math.min(current, 1)] ?? STEP_COPY[0];
-		const stepBody = hosted ? HOSTED_STEP_BODY[Math.min(current, 1)] : copy.body;
 		const cfManaged = dns.data.cf_managed;
+		// The shared rule decides whether the next policy may be offered from the one shown now (p=none or p=quarantine).
+		const gate = enforced || !summary.data || hostedLevel.pending || refusalPending ? undefined : nextPolicyGate(domain, summary.data, hostedLevel.info, current === 0 ? 'none' : 'quarantine', reportsRefusal);
+		// Reports cannot come here: the rung is offered once the person confirms they checked every sender themselves.
+		const needsCheck = !!gate && !gate.ready && gate.step.key === 'check-senders';
+		const checked = needsCheck && checkedAt === current;
 		const currentRecord = appliedRecord ?? dns.data.current_record;
 		const newRecord = buildRecommendedRecord(currentRecord, copy.target, domain.rua_address);
 		// p=reject with pct below 100 applies to that share of mail only: that is not full enforcement.
@@ -190,7 +196,58 @@ export function DmarcWizardPage() {
 						{ label: 'Reject', state: enforced && partialPct === null ? 'complete' : 'pending' },
 					]}
 				/>
-				{enforced ? (
+				{!enforced && (summary.isPending || hostedLevel.pending || refusalPending || (summary.data && !gate)) ? (
+					<PageSkeleton label="Reading the report evidence" />
+				) : !enforced && summary.isError ? (
+					<LoadError error={summary.error} onRetry={() => void summary.refetch()} title="Could not load what is stored about this domain" />
+				) : !enforced && gate && !gate.ready && needsCheck && !checked ? (
+					<StepCard title={copy.title}>
+						<p className="text-sm text-ink-2">{gate.step.why}</p>
+						<TalkToMax priority={HELP_PRIORITY.tightening} lead="Not sure every sender passes?" about="before you tighten the policy" />
+						{currentRecord ? <TxtRecord title="Current record" name="_dmarc" value={currentRecord} /> : null}
+						<label className="flex min-h-6 items-start gap-2 text-sm text-ink-1">
+							<Checkbox className="mt-0.5" checked={false} onCheckedChange={(c) => c === true && setCheckedAt(current)} />
+							<span>I have checked every service that sends as {domain.domain}</span>
+						</label>
+						<StepFooter
+							start={
+								current > floor ? (
+									<Button variant="ghost" onClick={() => setStep(current - 1)}>
+										Back
+									</Button>
+								) : undefined
+							}
+							end={
+								<Button asChild variant="secondary">
+									<Link to={back}>Back to domain</Link>
+								</Button>
+							}
+						/>
+					</StepCard>
+				) : !enforced && gate && !gate.ready && !needsCheck ? (
+					<StepCard title={`Not ready for p=${copy.target} yet`}>
+						<p className="text-sm text-ink-2">
+							<span className="font-medium text-ink-1">Waits on: </span>
+							{gate.step.do}
+						</p>
+						<p className="text-sm text-ink-2">{gate.step.why}</p>
+						{currentRecord ? <TxtRecord title="Current record" name="_dmarc" value={currentRecord} /> : null}
+						<StepFooter
+							start={
+								current > floor ? (
+									<Button variant="ghost" onClick={() => setStep(current - 1)}>
+										Back
+									</Button>
+								) : undefined
+							}
+							end={
+								<Button asChild>
+									<Link to={back}>Back to domain</Link>
+								</Button>
+							}
+						/>
+					</StepCard>
+				) : enforced ? (
 					<StepCard title={partialPct !== null ? `Partially enforced: ${partialPct}%` : spWeaker ? 'Enforced on this domain; subdomains are not' : 'Fully enforced'}>
 						{partialPct !== null ? (
 							<>
@@ -226,7 +283,7 @@ export function DmarcWizardPage() {
 					</StepCard>
 				) : (
 					<StepCard title={copy.title}>
-						<p className="text-sm text-ink-2">{stepBody}</p>
+						<p className="text-sm text-ink-2">{checked ? `You confirmed that you checked every service that sends as ${domain.domain}. ${copy.body}` : copy.body}</p>
 						{hosted ? <TalkToMax priority={HELP_PRIORITY.tightening} lead="Not sure every sender passes?" about="before you tighten the policy" /> : null}
 						{currentRecord ? <TxtRecord title="Current record" name="_dmarc" value={currentRecord} /> : null}
 						<TxtRecord title="New record" name="_dmarc" value={newRecord} />

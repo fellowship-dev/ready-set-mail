@@ -43,14 +43,19 @@ export function parseDmarcRecord(raw: string): DmarcRecord {
   const p = asPolicy(tags['p']);
   if (tags['p'] === undefined) issues.push('Missing required p= tag');
   else if (!p) issues.push(`Invalid p= value "${tags['p']}"`);
-  const policy: DmarcPolicy = p ?? 'none';
+  let policy: DmarcPolicy = p ?? 'none';
 
   let sp = policy;
+  let spInvalid = false;
   if (tags['sp'] !== undefined) {
     const parsed = asPolicy(tags['sp']);
     if (parsed) sp = parsed;
-    else issues.push(`Invalid sp= value "${tags['sp']}"`);
+    else { issues.push(`Invalid sp= value "${tags['sp']}"`); spInvalid = true; }
   }
+  // RFC 7489 section 6.6.3 (step 6): a record whose sp= is not valid is not applied as written. With at least one
+  // syntactically valid rua= URI receivers act as if the record were p=none; without one they apply no DMARC at all.
+  const hasValidRua = (tags['rua'] ?? '').split(',').some(u => /^mailto:[^\s@]+@[^\s@]+/i.test(u.trim()));
+  if (spInvalid) { policy = 'none'; sp = 'none'; }
 
   let pct = 100;
   if (tags['pct'] !== undefined) {
@@ -69,7 +74,7 @@ export function parseDmarcRecord(raw: string): DmarcRecord {
     ruf: list(tags['ruf']),
     adkim: tags['adkim']?.toLowerCase() === 's' ? 's' : 'r',
     aspf: tags['aspf']?.toLowerCase() === 's' ? 's' : 'r',
-    valid: !issues.some(i => i.startsWith('Missing required p=') || i.startsWith('Invalid p=')),
+    valid: !issues.some(i => i.startsWith('Missing required p=') || i.startsWith('Invalid p=')) && !(spInvalid && !hasValidRua),
     issues,
   };
 }

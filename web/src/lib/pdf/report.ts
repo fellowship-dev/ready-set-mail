@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import type { DomainCheckSummary, DailyStat } from '../types';
-import { getAllRecommendations, type Recommendation } from './recommendations';
+import { getAllRecommendations, type PdfDomainContext, type Recommendation } from './recommendations';
 
 // ── Colours & layout constants ────────────────────────────────
 
@@ -28,10 +28,21 @@ function statusLabel(pass: number, total: number): { label: string; color: [numb
 	return { label: 'Fail', color: FAIL_COLOR };
 }
 
-export function dmarcPolicyLabel(policy: string | null): { label: string; color: [number, number, number] } {
-	if (policy === 'reject')     return { label: 'reject', color: PASS_COLOR };
-	if (policy === 'quarantine') return { label: 'quarantine', color: WARN_COLOR };
-	if (policy === 'none')       return { label: 'none (monitor only)', color: FAIL_COLOR };
+/**
+ * The policy column from the stored check: pct= below 100 and inheritance are named, and a missing policy says why
+ * (no record, an invalid record, several records, or not checked yet), in the overview's words.
+ */
+export function dmarcPolicyLabel(s: Pick<DomainCheckSummary, 'dmarc_policy' | 'dmarc_issue' | 'dns_checked_at'> & { dmarc_pct?: number | null; dmarc_inherited_from?: string | null }): { label: string; color: [number, number, number] } {
+	const policy = s.dmarc_policy;
+	const from = s.dmarc_inherited_from ? ' (inherited)' : '';
+	const partial = (policy === 'reject' || policy === 'quarantine') && typeof s.dmarc_pct === 'number' && s.dmarc_pct < 100;
+	if (partial) return { label: `${policy} at pct=${s.dmarc_pct}${from}`, color: WARN_COLOR };
+	if (policy === 'reject')     return { label: `reject${from}`, color: PASS_COLOR };
+	if (policy === 'quarantine') return { label: `quarantine${from}`, color: WARN_COLOR };
+	if (policy === 'none')       return { label: `none (monitor only)${from}`, color: FAIL_COLOR };
+	if (s.dmarc_issue === 'multiple') return { label: 'Multiple records', color: FAIL_COLOR };
+	if (s.dmarc_issue === 'invalid') return { label: 'Invalid record', color: FAIL_COLOR };
+	if (s.dns_checked_at) return { label: 'No record found', color: FAIL_COLOR };
 	return { label: 'Not checked yet', color: MUTED_COLOR };
 }
 
@@ -72,6 +83,8 @@ export function weeklyBuckets(stats: DailyStat[]): WeekBucket[] {
 
 export interface PdfReportData {
 	summaries: DomainCheckSummary[];
+	/** What the overview knows about each domain (`contexts[i]` for `summaries[i]`): its DMARC lines are the overview's verdict. */
+	contexts: PdfDomainContext[];
 	// 90 days of daily stats per domain, for the weekly trend
 	trends?: Record<number, DailyStat[]>;
 }
@@ -145,7 +158,7 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 	for (const d of summaries) {
 		y = addPageIfNeeded(doc, y, 10);
 
-		const policy = dmarcPolicyLabel(d.dmarc_policy);
+		const policy = dmarcPolicyLabel(d);
 		const dmarcStatus = statusLabel(d.pass_messages, d.total_messages);
 		const spfStatus   = statusLabel(d.spf_pass,       d.spf_total);
 		const dkimStatus  = statusLabel(d.dkim_pass,       d.dkim_total);
@@ -190,7 +203,7 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 	}
 
 	// ── Recommendations section ────────────────────────────────
-	const recs = getAllRecommendations(summaries);
+	const recs = getAllRecommendations(summaries, data.contexts);
 	if (recs.length > 0) {
 		y = addPageIfNeeded(doc, y, 20);
 		y += 8;

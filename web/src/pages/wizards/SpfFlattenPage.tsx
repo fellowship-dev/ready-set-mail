@@ -13,6 +13,7 @@ import { api, errorMessage } from '../../lib/api';
 import type { OnboardingStatus, SpfFlatConfig, SpfFlatStatus } from '../../lib/types';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { dnsErrorDetail, dnsErrorsFor } from './setup/steps';
+import { spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 const STEPS = ['Analyze', 'Compare', 'Enable', 'Done'] as const;
 
@@ -104,7 +105,7 @@ export function SpfFlattenPage() {
 										<LookupBadge count={lookupCount} suffix="used" />
 									</div>
 								) : null}
-								{lookupCount !== null && lookupCount <= 7 ? (
+								{lookupCount !== null && spfLookupJudgement(lookupCount).level === 'ok' ? (
 									<Alert variant="info">Your SPF record is within safe limits. Flattening is optional but still available.</Alert>
 								) : null}
 							</>

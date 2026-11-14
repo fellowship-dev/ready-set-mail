@@ -17,18 +17,24 @@ const summary = (over: Partial<DomainCheckSummary> = {}): DomainCheckSummary => 
 });
 
 describe('item 7: an unchecked policy is not "monitor only"', () => {
-	it('null policy: an info note that it has not been checked, never "none"', () => {
-		const recs = getRecommendations(summary({ dmarc_policy: null }));
-		const dmarc = recs.filter((r) => /DMARC policy/.test(r.message));
-		expect(dmarc).toEqual([{ domain: 'example.com', severity: 'info', message: 'DMARC policy has not been checked yet.' }]);
+	const ctx = { domain: { id: 1, domain: 'example.com', rua_address: 'r@reports.test' }, hosted: null };
+	it('null policy never read: unknown, never "none"', () => {
+		const recs = getRecommendations(summary({ dmarc_policy: null }), ctx);
 		expect(recs.some((r) => r.severity === 'critical')).toBe(false);
 		expect(recs.some((r) => /"none"|monitor only/.test(r.message))).toBe(false);
+		expect(recs.some((r) => /has not been read from DNS yet/.test(r.message))).toBe(true);
 	});
-	it('a real p=none is still the critical monitor-only recommendation', () => {
-		expect(getRecommendations(summary({ dmarc_policy: 'none' })).some((r) => r.severity === 'critical' && /monitor only/.test(r.message))).toBe(true);
+	it('a real p=none is named as p=none', () => {
+		const now = Math.floor(Date.now() / 1000);
+		const recs = getRecommendations(summary({ dmarc_policy: 'none', dns_checked_at: now, dns_check_status: 'ok', dmarc_p: 'none', dmarc_pct: 100, dmarc_sp: null, dmarc_rua: 1 } as never), ctx);
+		expect(recs.some((r) => /p=none/.test(r.message))).toBe(true);
 	});
-	it('the PDF policy column says "Not checked yet" for null, not "Not configured"', () => {
-		expect(dmarcPolicyLabel(null).label).toBe('Not checked yet');
+	it('the PDF policy column says "Not checked yet" only when it was not checked', () => {
+		expect(dmarcPolicyLabel({ dmarc_policy: null, dmarc_issue: null, dns_checked_at: null }).label).toBe('Not checked yet');
+		expect(dmarcPolicyLabel({ dmarc_policy: null, dmarc_issue: null, dns_checked_at: 1 }).label).toBe('No record found');
+		expect(dmarcPolicyLabel({ dmarc_policy: null, dmarc_issue: 'invalid', dns_checked_at: 1 }).label).toBe('Invalid record');
+		expect(dmarcPolicyLabel({ dmarc_policy: 'reject', dmarc_issue: null, dns_checked_at: 1, dmarc_pct: 25 }).label).toBe('reject at pct=25');
+		expect(dmarcPolicyLabel({ dmarc_policy: 'reject', dmarc_issue: null, dns_checked_at: 1, dmarc_inherited_from: 'example.com' }).label).toBe('reject (inherited)');
 	});
 });
 

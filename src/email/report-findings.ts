@@ -13,6 +13,7 @@ import {
   type SpfIssue,
 } from '@ready-set-mail/dns-checks';
 import { factsOf, fill, findingsOf, type Fix } from '@ready-set-mail/report';
+import { spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { RECORDS_SEPARATOR, type DnsCheckResult } from './dns-check';
 
 /** The catalog findings a free check can observe: DNS-record problems of SPF and DMARC. */
@@ -30,7 +31,7 @@ function spfOf(domain: string, dns: DnsCheckResult): SpfAnalysis {
   }
   if (!rec) return { ...base, status: 'none', record: null, lookupLimitExceeded: false };
   const includes = (rec.terms ?? []).filter(t => (t.name === 'include' || t.name === 'redirect') && t.value).map(t => t.value!);
-  const lookupLimitExceeded = base.lookupCount > 10;
+  const lookupLimitExceeded = spfLookupJudgement(base.lookupCount).level === 'over';
   if (!dns.problems?.spf) return { ...base, status: 'ok', record: rec, includes, lookupLimitExceeded };
   const raws = rec.raw.split(RECORDS_SEPARATOR);
   const issues: SpfIssue[] = raws.length > 1

@@ -108,6 +108,32 @@ export function hostedInForce(name: string, policy: Policy, reportsConnected: bo
   return { kind: 'own', name, at: name, policy, tag: 'p', p: policy, sp: null, pct: 100, reportsHere: reportsConnected };
 }
 
+export type Alignment = 'r' | 's';
+
+/** The enforcement a new record carries: policy, the share of failing mail it applies to, and the alignment modes in force. */
+export interface Enforcement {
+  policy: Policy;
+  /** Share of failing mail the policy applies to; 100 unless the record in force says less. */
+  pct: number;
+  /** The alignment modes in force, carried as published (strict alignment is part of the enforcement in force). */
+  adkim?: Alignment;
+  aspf?: Alignment;
+}
+
+/**
+ * The one builder of a new DMARC record at exactly `e`, with the reports address when there is one (`pct=` only when
+ * under 100). The dashboard's DNS records section and every step below offer records built here, so the same name never
+ * gets two different records on one page.
+ */
+export function dmarcRecordFor(e: Enforcement, rua: string | null | undefined): string {
+  const parts = ['v=DMARC1', `p=${e.policy}`];
+  if (e.pct < 100) parts.push(`pct=${e.pct}`);
+  if (e.adkim) parts.push(`adkim=${e.adkim}`);
+  if (e.aspf) parts.push(`aspf=${e.aspf}`);
+  if (isReportAddress(rua)) parts.push(`rua=mailto:${rua.trim()}`);
+  return parts.join('; ');
+}
+
 export interface DmarcEvidence {
   /** The domain has a reports address (hosted: report intake connected). Without one no pass share is used, however old reports read. */
   reportsAddress: boolean;
@@ -120,6 +146,28 @@ export interface DmarcEvidence {
    * name is its own organizational domain). Said plainly when no record covers the name.
    */
   suffixParent?: string | null;
+  /**
+   * The alignment modes (`adkim=`/`aspf=`) of the record that governs an inherited name, when it was read. A record of the
+   * name's own replaces it, so it carries them; absent: not read (the relaxed default is assumed).
+   */
+  alignment?: { adkim?: Alignment; aspf?: Alignment } | null;
+  /**
+   * Why nothing was counted when the window's total is 0 although reports did reach the address (dropped, limited, or from
+   * senders that are not counted), in the dashboard's words. Absent or null: none arrived.
+   */
+  emptyReportsNote?: string | null;
+  /**
+   * Why reports cannot be connected for this name here, per domain, as the server decides it (src/hosted/report-address.ts):
+   * `operator_only` and `unavailable` mean reports cannot come here at all, so the person checks the senders themselves
+   * and moves one rung at a time; `ownership` and `hosted_records` have a step of their own. Absent or null: they can be.
+   */
+  reportsRefusal?: ReportsRefusal | null;
+}
+
+export interface ReportsRefusal {
+  kind: 'unavailable' | 'hosted_records' | 'ownership' | 'operator_only';
+  /** The connect panel's own words. */
+  reason: string;
 }
 
 /**
@@ -173,11 +221,6 @@ const exact = (r: DmarcEvidence['reports']): number | null => (r && r.total > 0 
 const shownRate = (r: { total: number; passed: number; days: number }) =>
   `${Math.round((r.passed / r.total) * 100)}% of ${r.total.toLocaleString('en-US')} reported messages passed DMARC in the last ${r.days} days`;
 
-/** An own record at `policy` for `name`, with the reports address when there is one. */
-function ownRecord(policy: Policy, rua: string | null | undefined): string {
-  const a = rua?.trim();
-  return `v=DMARC1; p=${policy}${a ? `; rua=mailto:${a}` : ''}`;
-}
 
 /**
  * The DMARC steps for one name, most urgent first: [0] is THE next step (the overview row shows it; the domain page lists
@@ -193,7 +236,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     return [{
       key: 'dmarc-missing', status: 'attention', do: 'Publish a DMARC record at p=none', who: 'dns', where: 'dmarc-setup', at: name,
       why: `No DMARC record covers ${name}, so receivers get no instruction for mail that fails, and nobody sends reports about who mails as ${name}.${suffix} p=none changes no delivery; it starts the reports.`,
-      record: ownRecord('none', ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}`,
+      record: dmarcRecordFor({ policy: 'none', pct: 100 }, ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}`,
     }];
   }
   if (f.kind === 'broken') {
@@ -214,7 +257,9 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   const rate = ev.reportsAddress ? exact(ev.reports) : null;
   const shown = ev.reportsAddress && ev.reports && ev.reports.total > 0 ? shownRate(ev.reports) : '';
   const alsoAffects = `${f.at} itself and every other subdomain of it without its own record`;
-  const ownAlt = (policy: Policy) => ({ record: ownRecord(policy, ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}` });
+  // A record of the name's own replaces the inherited one, so it keeps the governing record's alignment modes.
+  const align = inh && ev.alignment ? { ...(ev.alignment.adkim ? { adkim: ev.alignment.adkim } : {}), ...(ev.alignment.aspf ? { aspf: ev.alignment.aspf } : {}) } : {};
+  const ownAlt = (policy: Policy) => ({ record: dmarcRecordFor({ policy, pct: 100, ...align }, ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}` });
   const alternative = (policy: Policy) => ` Or publish a DMARC record at _dmarc.${name} with p=${policy}: it affects only ${name}.`;
 
   // The change that moves this name one rung up: to `target`, or (target === current policy) pct to 100. `extra` follows the
@@ -250,19 +295,46 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   const ruaStep = (why: string, status: StepStatus): DmarcStep => ({
     key: 'dmarc-rua', status, do: inh ? `Add the reports address to the DMARC record at ${R}` : 'Add the reports address to your DMARC record', who: 'dns', where: inh ? 'parent' : 'dmarc-setup', at: f.at,
     why: `${why}${inh ? ` Adding it there also sends ${f.at}'s reports here. Or publish a DMARC record at _dmarc.${name} at the same ${sameRecord} with the reports address: it affects only ${name}.` : ''}`,
-    ...(inh ? { record: `v=DMARC1; ${sameRecord}${ev.ruaAddress?.trim() ? `; rua=mailto:${ev.ruaAddress.trim()}` : ''}`, recordAt: `_dmarc.${name}` } : {}),
+    ...(inh ? { record: dmarcRecordFor({ policy: f.policy, pct: f.policy === 'none' ? 100 : f.pct, ...align }, ev.ruaAddress), recordAt: `_dmarc.${name}` } : {}),
   });
   const connectStep = (why: string, status: StepStatus): DmarcStep => ({ key: 'connect-reports', status, do: 'Connect reports so senders can be confirmed', why, who: 'you', where: 'connect-reports' });
+  // "moving to p=quarantine" -> "move to p=quarantine": the same rung, said as the thing to do.
+  const imperative = (next: string) => next.replace(/^moving/, 'move').replace(/^raising/, 'raise').replace(/^adding/, 'add');
+  // Reports cannot be connected for this name: what that means for the next rung, by why (the server's own reason).
+  const refusedStep = (r: ReportsRefusal, next: string, where: StepWhere): DmarcStep => {
+    if (r.kind === 'ownership' || r.kind === 'hosted_records') {
+      return {
+        key: 'reports-refused', status: 'improve', who: 'you', where: r.kind === 'hosted_records' ? 'connect-reports' : 'none',
+        do: r.kind === 'ownership' ? `Prove that you control ${name}, then connect reports` : 'Connect reports through the hosted records',
+        why: `${r.reason} Until reports arrive, nobody can confirm that every service sending as ${name} passes, so ${next} would be a guess.`,
+      };
+    }
+    // Reports cannot come here at all: the person checks each sender, then moves one rung (the wizard asks them to confirm).
+    return {
+      key: 'check-senders', status: 'improve', who: 'you', where, at: f.at,
+      do: `Check each service that sends as ${name}, then ${imperative(next)}`,
+      why: `Reports are not available for this domain, so nobody here can confirm that every service sending as ${name} passes. Check each one (your mail provider, newsletter, invoicing and support tools), then ${imperative(next)}.`,
+    };
+  };
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
   const sendersStep = (status: StepStatus, why: string): DmarcStep => ({ key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' });
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
-  const gate = (next: string, threshold: number): DmarcStep | 'ready' | 'loading' => {
-    if (!ev.reportsAddress) return connectStep(`Without reports, nobody can confirm that every service sending as ${name} passes, so ${next} would be a guess.`, 'improve');
+  const gate = (next: string, threshold: number, where: StepWhere = inh ? 'parent' : 'dmarc-wizard'): DmarcStep | 'ready' | 'loading' => {
+    if (!ev.reportsAddress) {
+      return ev.reportsRefusal
+        ? refusedStep(ev.reportsRefusal, next, where)
+        : connectStep(`Without reports, nobody can confirm that every service sending as ${name} passes, so ${next} would be a guess.`, 'improve');
+    }
     if (f.reportsHere === false) return ruaStep(`The record that governs ${name} does not send reports here, so nobody can confirm its senders before ${next}.`, 'improve');
     if (reports === undefined) return 'loading';
     if (reports === null) return reloadStep(`They could not be loaded, so whether every sender passes is unknown before ${next}.`);
-    if (reports.total === 0) return { key: 'gathering', status: 'gathering', do: `Wait for DMARC reports before ${next}`, why: `No reports arrived in the last ${reports.days} days. Receivers send them about once a day; until they arrive, nobody can confirm that every sender passes.`, who: 'nobody', where: 'none' };
+    if (reports.total === 0) {
+      const why = ev.emptyReportsNote
+        ? `${ev.emptyReportsNote} Until counted reports arrive, nobody can confirm that every sender passes.`
+        : `No reports arrived in the last ${reports.days} days. Receivers send them about once a day; until they arrive, nobody can confirm that every sender passes.`;
+      return { key: 'gathering', status: 'gathering', do: `Wait for DMARC reports before ${next}`, why, who: 'nobody', where: 'none' };
+    }
     if (rate !== null && rate < threshold) return sendersStep('improve', `${shown}. ${cap(next)} should wait until they pass.`);
     return 'ready';
   };
@@ -282,7 +354,15 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     } else if (g !== 'loading') steps.push(g);
   } else if (!target && !harmful) {
     // p=reject at pct=100: protection is in place. Reports are evidence of it: missing ones are a note, a failing share is not.
-    if (!ev.reportsAddress) steps.push(connectStep(`Protection is in place either way; reports would show which services send as ${name} and whether they pass.`, 'note'));
+    if (!ev.reportsAddress) {
+      const r = ev.reportsRefusal;
+      steps.push(r
+        ? {
+            key: 'reports-refused', status: 'note', do: 'Nothing to do', who: 'nobody', where: 'none',
+            why: `Protection is in place either way. ${r.kind === 'operator_only' || r.kind === 'unavailable' ? `Reports are not available for this domain, so nobody here sees which services send as ${name} and whether they pass.` : r.reason}`,
+          }
+        : connectStep(`Protection is in place either way; reports would show which services send as ${name} and whether they pass.`, 'note'));
+    }
     else if (f.reportsHere === false) steps.push(ruaStep(`Protection is in place either way; without it, nobody sees which services send as ${name} and whether they pass.`, 'note'));
     else if (reports === null) steps.push(reloadStep('They could not be loaded, so whether every sender passes is unknown.'));
     else if (rate !== null && rate < READY) steps.push(sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
@@ -292,7 +372,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   // time (sp=none -> quarantine -> reject, never past p=), on the same report evidence.
   if (!inh && f.policy !== 'none' && f.sp && RANK[f.sp] < RANK[f.policy] && !harmful) {
     const spTarget: Policy = f.sp === 'none' ? 'quarantine' : 'reject';
-    const g = gate(`moving sp to ${spTarget}`, spTarget === 'reject' ? READY_FOR_REJECT : READY);
+    const g = gate(`moving sp to ${spTarget}`, spTarget === 'reject' ? READY_FOR_REJECT : READY, 'self');
     const pctNote = f.pct < 100 ? ` The record's pct=${f.pct} applies to sp= too, so only ${f.pct}% of that mail would be affected until pct is 100.` : '';
     if (g === 'ready') {
       steps.push({
@@ -307,7 +387,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   if (!blocking && f.policy === 'reject' && f.pct >= 100) {
     if (reports === undefined && ev.reportsAddress) return [];
     const scope = shown ? `public DNS and ${reports!.total.toLocaleString('en-US')} reported messages` : 'public DNS';
-    return [{ key: 'done', status: 'verified', do: 'Nothing to do', why: `${inForceSentence(f)} Nothing in ${scope} needs a change.`, who: 'nobody', where: 'none' }, ...sorted];
+    return [{ key: 'done', status: 'verified', do: 'Nothing to do', why: `${inForceSentence(f)} Nothing about DMARC in ${scope} needs a change.`, who: 'nobody', where: 'none' }, ...sorted];
   }
   return sorted;
 }

@@ -2,9 +2,12 @@ import { EmptyState } from '@ready-set-mail/ui';
 import { Link } from 'react-router';
 import { formatNumber } from '../../lib/format';
 import type { DailyStat } from '../../lib/types';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
 
 /** One row per day: passed and failed segments scaled to the busiest day (SVG, so no inline styles). Counts are text. */
-export function DailyChart({ domainId, stats, days }: { domainId: number; stats: DailyStat[]; days: number }) {
+export function DailyChart({ domainId, stats, days, visibility }: { domainId: number; stats: DailyStat[]; days: number; /** The window's report visibility: an empty chart may still have had reports (emptyReportsState). */ visibility?: ReportVisibilityFields | null }) {
+	const notCounted = stats.length === 0 && emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
+	if (notCounted) return <EmptyState title="No counted reports in this window" description={notCounted} />;
 	if (stats.length === 0) {
 		return <EmptyState title="No reports in this window" description="Receivers send reports about once a day after your DMARC record names the reports address. Daily bars appear when the first one arrives." />;
 	}

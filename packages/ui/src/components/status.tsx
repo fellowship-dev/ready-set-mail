@@ -41,8 +41,9 @@ export const STATUS: Record<StatusKind, StatusDef> = {
 /** Most urgent first. A list sorted by this puts what needs a person at the top. */
 export const STATUS_RANK: readonly StatusKind[] = ["attention", "approval", "improve", "unknown", "gathering", "prepared", "verified", "note"];
 
-/** The state that decides a whole result: the first that needs someone. Empty or notes only reads as verified. */
+/** The state that decides a whole result: the first that needs someone. Notes only reads as verified; an empty list is unknown (nothing was checked). */
 export function worstStatus(kinds: readonly StatusKind[]): StatusKind {
+	if (kinds.length === 0) return "unknown";
 	const found = STATUS_RANK.find((k) => kinds.includes(k));
 	return !found || found === "note" ? "verified" : found;
 }

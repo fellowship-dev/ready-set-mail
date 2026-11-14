@@ -1,5 +1,6 @@
-import { dmarcSteps, hostedInForce, policyInForce, publicSuffixParent, type DmarcEvidence, type DmarcStep, type PolicyInForce, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcSteps, hostedInForce, policyInForce, publicSuffixParent, type DmarcEvidence, type DmarcStep, type PolicyInForce, type ReportsRefusal, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { hasReportAddress } from './dmarc-record';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from './uncounted';
 import type { Domain, DomainCheckSummary } from './types';
 
 /**
@@ -23,9 +24,36 @@ export function forceFor(name: string, s: Pick<DomainCheckSummary, 'dmarc_policy
 	return policyInForce(name, s, opts.read);
 }
 
-/** Report evidence for one domain: without a reports address no pass share is used (old totals are not a current claim). */
-export function evidenceFor(domain: Pick<Domain, 'rua_address'>, reports: { total: number; passed: number; days: number } | null | undefined, suffixParent?: string | null): DmarcEvidence {
-	return { reportsAddress: hasReportAddress(domain.rua_address), ruaAddress: domain.rua_address, reports: reports ? { total: reports.total, passed: reports.passed, days: reports.days } : reports, suffixParent: suffixParent ?? null };
+/**
+ * Report evidence for one domain: without a reports address no pass share is used (old totals are not a current claim).
+ * `extra.visibility`: the server's report-visibility fields, so an empty window that still had reports (dropped, limited,
+ * not counted) is said as such (emptyReportsState), never as "none arrived". `extra.alignment`: the governing record's
+ * adkim=/aspf=, read live, so an offered record of the name's own keeps them.
+ */
+export function evidenceFor(
+	domain: Pick<Domain, 'rua_address'>,
+	reports: { total: number; passed: number; days: number } | null | undefined,
+	suffixParent?: string | null,
+	extra: { visibility?: ReportVisibilityFields | null; alignment?: DmarcEvidence['alignment']; reportsRefusal?: ReportsRefusal | null } = {},
+): DmarcEvidence {
+	const emptyReportsNote = reports && reports.total === 0 && emptyReportsState(0, extra.visibility) !== 'none' ? emptyReportsMessage(0, extra.visibility) : null;
+	return {
+		reportsAddress: hasReportAddress(domain.rua_address),
+		ruaAddress: domain.rua_address,
+		reports: reports ? { total: reports.total, passed: reports.passed, days: reports.days } : reports,
+		suffixParent: suffixParent ?? null,
+		alignment: extra.alignment ?? null,
+		reportsRefusal: extra.reportsRefusal ?? null,
+		emptyReportsNote,
+	};
+}
+
+export type { ReportsRefusal };
+
+/** Why reports cannot be connected for a domain, from the server's per-domain answer in its summary (null: they can, or not known). */
+export function reportsRefusalOf(s: Pick<DomainCheckSummary, 'report_connect'> | null | undefined): ReportsRefusal | null {
+	const c = s?.report_connect;
+	return c && !c.can_connect && c.refusal_kind ? { kind: c.refusal_kind, reason: c.refusal ?? '' } : null;
 }
 
 /** Where a step happens, as a dashboard link. A change at a listed parent opens the parent's page. */

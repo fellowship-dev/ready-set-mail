@@ -1,5 +1,6 @@
 import { Badge, RecordBlock, cn, type DnsRecord } from '@ready-set-mail/ui';
 import type { ReactNode } from 'react';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 /** A TXT value with a caption and an optional badge ("12 / 10 lookups"). */
 export function TxtRecord({ title, value, name = '@', badge, className }: { title: ReactNode; value: string; name?: string; badge?: ReactNode; className?: string }) {
@@ -21,12 +22,13 @@ export function RecordPair({ children }: { children: ReactNode }) {
 }
 
 export function LookupBadge({ count, estimate = false, suffix = 'lookups' }: { count: number; estimate?: boolean; suffix?: string }) {
-	const variant = count > 9 ? 'danger' : count >= 8 ? 'warning' : 'success';
-	const word = count > 10 ? 'over the limit' : count > 9 ? 'at the limit' : count >= 8 ? 'close to the limit' : 'within the limit';
+	const j = spfLookupJudgement(count);
+	const variant = j.level === 'over' ? 'danger' : j.level === 'ok' ? 'success' : 'warning';
+	const word = j.label.toLowerCase();
 	return (
 		<Badge variant={variant}>
 			{estimate ? '~' : ''}
-			{count} / 10 {suffix}
+			{count} / {SPF_LOOKUP_LIMIT} {suffix}
 			<span className="sr-only">, {word}</span>
 		</Badge>
 	);
