@@ -7,5 +7,7 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8787',
+    // scripts/e2e-devbox.sh serves the local Worker over HTTPS with a self-signed certificate. Opt-in, e2e only.
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS_ERRORS === '1',
   },
 });
