@@ -36,12 +36,14 @@ function liveStep(record: string | null): number {
 const STEP_COPY = [
 	{
 		title: 'Step 1: switch to quarantine',
+		lead: 'Quarantine tells receiving servers to deliver suspicious mail to the spam folder instead of the inbox.',
 		body: 'Quarantine tells receiving servers to deliver suspicious mail to the spam folder instead of the inbox. Your legitimate mail is unaffected. Switch once your pass rate has been above 95% for a few days.',
 		target: 'quarantine',
 		variant: 'warning',
 	},
 	{
 		title: 'Step 2: switch to reject',
+		lead: 'Reject is full enforcement: spoofed mail claiming to be from your domain is rejected outright and never reaches recipients.',
 		body: "Reject is full enforcement: spoofed mail claiming to be from your domain is rejected outright and never reaches recipients. Only switch when you've confirmed all your legitimate sending sources are passing.",
 		target: 'reject',
 		variant: 'info',
@@ -283,7 +285,8 @@ export function DmarcWizardPage() {
 					</StepCard>
 				) : (
 					<StepCard title={copy.title}>
-						<p className="text-sm text-ink-2">{checked ? `You confirmed that you checked every service that sends as ${domain.domain}. ${copy.body}` : copy.body}</p>
+						{/* Without reports there is no pass rate to wait on: the step says what the person confirmed instead. */}
+						<p className="text-sm text-ink-2">{checked ? `You confirmed that you checked every service that sends as ${domain.domain}. ${copy.lead}` : copy.body}</p>
 						{hosted ? <TalkToMax priority={HELP_PRIORITY.tightening} lead="Not sure every sender passes?" about="before you tighten the policy" /> : null}
 						{currentRecord ? <TxtRecord title="Current record" name="_dmarc" value={currentRecord} /> : null}
 						<TxtRecord title="New record" name="_dmarc" value={newRecord} />

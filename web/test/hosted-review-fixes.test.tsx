@@ -260,6 +260,9 @@ describe('hosted DMARC graduation wizard', () => {
 		await userEvent.click(screen.getByRole('checkbox', { name: 'I have checked every service that sends as developer.mozilla.test' }));
 		expect(await screen.findByText(/You confirmed that you checked every service that sends as developer\.mozilla\.test/)).toBeInTheDocument();
 		expect(screen.getByText('New record')).toBeInTheDocument();
+		// No reports, so no pass rate to wait on.
+		expect(screen.getByText(/You confirmed that you checked every service that sends as developer\.mozilla\.test\. Quarantine tells receiving servers to deliver suspicious mail to the spam folder instead of the inbox\.$/)).toBeInTheDocument();
+		expect(screen.queryByText(/pass rate/i)).not.toBeInTheDocument();
 		expect(screen.getAllByText(/p=quarantine/).length).toBeGreaterThan(0);
 		// Still a person to ask, after confirming too.
 		expect(screen.getByText(/Not sure every sender passes\?/)).toBeInTheDocument();
