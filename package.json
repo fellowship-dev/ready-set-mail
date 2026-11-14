@@ -3,8 +3,7 @@
   "version": "1.2.0",
   "private": true,
   "scripts": {
-    "deploy": "npm run build:dashboard && npm run migrate && node scripts/deploy.mjs",
-    "setup-link": "node scripts/setup-link.mjs",
+    "deploy": "npm run build:dashboard && npm run migrate && wrangler deploy",
     "migrate": "node packages/db/scripts/migrate.mjs --remote",
     "dev": "npm run migrate:local && wrangler dev",
     "dev:dashboard": "npm --prefix web run dev",

@@ -13,9 +13,7 @@ npx wrangler kv namespace create OAUTH_KV
 
 Set `BETTER_AUTH_URL` in Worker vars to the exact public origin, for example `https://mail.example.com`. It must have no path, query, fragment or embedded credentials. An explicitly configured HTTPS port is part of that origin. `PUBLIC_BASE_URL` is accepted as an origin fallback for MCP, but setting `BETTER_AUTH_URL` keeps browser auth, callbacks and agent issuer aligned. A request sent to a different origin is refused. Preserve the configured Worker-first routes for `/mcp`, `/oauth/*` and OAuth discovery; an SPA fallback must not serve those endpoints.
 
-**Setup link (default).** `npm run deploy` ends by printing `Next: open this link to create the owner account (works once, for 24 hours): <url>/#/claim/<token>` while no owner exists; `npm run setup-link` (`-- --local` for `wrangler dev`) mints a new one and replaces any earlier link. Only the link's SHA-256 and expiry are stored (D1 `settings` key `setup_link`); the token exists only in your terminal. The dashboard reads the token from the URL fragment and removes it from the address bar. Setup links need no `BOOTSTRAP_SECRET`, are refused once an owner exists, and are deleted when the owner is created. In GitHub Actions no link is printed (logs may be public): run `npm run setup-link` locally. `npm run deploy -- --no-setup-link` skips it. `OWNER_EMAIL` still restricts who may claim the instance. Deploy also creates `TOKEN_ENCRYPTION_KEY` when missing (never printed; back it up).
-
-**Alternative: `BOOTSTRAP_SECRET`.** Before deployment and first-owner setup, generate an installer-held random proof in a **new private file outside the checkout**. For example:
+Before deployment and first-owner setup, generate an installer-held random proof in a **new private file outside the checkout**. For example:
 
 ```sh
 mkdir -p "$HOME/.config/ready-set-mail"

@@ -94,11 +94,12 @@ The button starts the Worker/D1 deployment and prompts for the runtime API token
 ```bash
 npm install
 wrangler secret put CLOUDFLARE_API_TOKEN  # the token you created above
-# Create/bind your D1 and OAUTH_KV and set BETTER_AUTH_URL in wrangler.jsonc (see docs/agent-operations.md).
+# Create/bind your D1 and OAUTH_KV, set BETTER_AUTH_URL, and upload BOOTSTRAP_SECRET
+# using the private-file procedure in docs/agent-operations.md before first setup.
 npm run deploy
 ```
 
-`npm run deploy` builds the dashboard, migrates the database, deploys the Worker, creates `TOKEN_ENCRYPTION_KEY` if it is missing (a random key stored as a Worker secret and never printed, so the dashboard can connect Cloudflare; if it is ever replaced, stored Cloudflare connections must be reconnected) and prints a one-time **setup link**. The installation needs `OAUTH_KV` and a canonical HTTPS `BETTER_AUTH_URL`; domain intake and Cloudflare DNS/routing are set up from the dashboard afterwards. No Fellowship account, Google connection or outbound mail service is needed for a first live-DNS health report.
+The installation needs `OAUTH_KV`, a canonical HTTPS `BETTER_AUTH_URL` and private `BOOTSTRAP_SECRET`; domain intake and optional Cloudflare DNS/routing configuration are separate setup steps. No Fellowship account, Google connection or outbound mail service is needed for a first live-DNS health report.
 
 **Option C — GitHub Actions (manual):** the `Deploy` workflow (`.github/workflows/deploy.yml`) runs only when you start it from the Actions tab (**Run workflow**); pushes to `main` never deploy. It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets listed at the top of the workflow.
 
@@ -108,11 +109,7 @@ npm run deploy
 
 ### Step 2 — Create your account
 
-1. Run `npm run deploy` and copy the setup link from the box at the end of the output: `Next: open this link to create the owner account`. It works once and for 24 hours. Lost it, or deployed from GitHub Actions or the Deploy button (which never print one)? Run `npm run setup-link` on your machine for a new one.
-2. Open the link, enter your name, email and a password, and click **Create the owner account**. The link is used up and cannot reopen setup; public visitors and social sign-in cannot claim first ownership.
-3. On the first screen, click **Connect Cloudflare** to let Ready Set Mail write your DNS records, or add records yourself.
-
-Alternative: set a private `BOOTSTRAP_SECRET` and enter it in the **Installer proof** field instead of using a link (see [installer setup and recovery](docs/agent-operations.md#installer-setup)). Keep links, proofs and passwords out of chat and logs. `OWNER_EMAIL`, when set, still limits who can claim the instance.
+Open the canonical HTTPS Worker URL. Enter your email, new password and the installer-held proof in the masked **Installer proof** field. Successful setup consumes the proof and creates the owner; public visitors and social sign-in cannot claim first ownership. Keep proof/password values out of chat, URLs and logs. See [installer setup and recovery](docs/agent-operations.md).
 
 ---
 
