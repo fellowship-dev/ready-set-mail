@@ -2,6 +2,7 @@
 // through `deps`, so tests run the same code against a fake Cloudflare API and a fake Wrangler.
 import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHmac } from 'node:crypto';
 import { parseArgs, UsageError, USAGE } from './args.mjs';
 import { createCloudflare } from './cloudflare.mjs';
 import {
@@ -12,15 +13,29 @@ import {
   defaultConfigDir, instanceDir, ensurePrivateDir, emptyState, readState, writeState, statePath,
   foreignCollisions, uninstallSelection,
 } from './state.mjs';
-import { loadOrCreateSecrets, withSecretsFile } from './secrets.mjs';
+import { loadOrCreateSecrets, withSecretsFile, PROOF_FILE } from './secrets.mjs';
 import { createUi } from './ui.mjs';
 
+/** How long a setup link works. */
+export const SETUP_LINK_TTL_SECONDS = 15 * 60;
+
 /**
- * The setup link: the dashboard's first-owner screen with the proof in the URL fragment (never sent
- * to the server, never in access logs). The fragment format belongs to the dashboard; change it here only.
+ * The short-lived setup token: `<expiry>.<signature>`, where expiry is Unix seconds and signature is
+ * base64url (no padding) of HMAC-SHA256(key = BOOTSTRAP_SECRET, message = "setup-link:" + expiry).
+ * The raw secret never leaves the machine; the server recomputes the signature from its own copy.
  */
-export function setupLink(url, proof) {
-  return `${url}/#/setup?proof=${encodeURIComponent(proof)}`;
+export function setupToken(secret, nowMs, ttlSeconds = SETUP_LINK_TTL_SECONDS) {
+  const expiry = Math.floor(nowMs / 1000) + ttlSeconds;
+  const sig = createHmac('sha256', secret).update(`setup-link:${expiry}`).digest('base64url');
+  return `${expiry}.${sig}`;
+}
+
+/**
+ * The setup link: the dashboard's first-owner screen with the token in the URL fragment (never sent to
+ * the server in the request line, never in access logs). The format belongs to the dashboard; change it here only.
+ */
+export function setupLink(url, secret, nowMs, ttlSeconds = SETUP_LINK_TTL_SECONDS) {
+  return `${url}/#/setup?t=${setupToken(secret, nowMs, ttlSeconds)}`;
 }
 
 /** "^22.22.2 || ^24.15.0 || >=26.0.0" against "v22.23.5". Supports the ^ and >= forms the repo uses. */
@@ -43,7 +58,8 @@ export function newestMigration(repoRoot) {
 
 class Failure extends Error {}
 const fail = (msg) => { throw new Failure(msg); };
-const now = (deps) => (deps.now ? deps.now() : new Date()).toISOString();
+const nowDate = (deps) => (deps.now ? deps.now() : new Date());
+const now = (deps) => nowDate(deps).toISOString();
 
 /** Entry point. Returns the exit code; never calls process.exit itself. */
 export async function main(argv, deps) {
@@ -58,7 +74,7 @@ export async function main(argv, deps) {
   const interactive = !!deps.isTTY;
   const ui = createUi({ stdout: deps.stdout, stderr: deps.stderr, stdin: deps.stdin, interactive, json: opts.json });
   try {
-    const result = opts.uninstall ? await uninstall(opts, deps, ui) : await install(opts, deps, ui);
+    const result = opts.uninstall ? await uninstall(opts, deps, ui) : opts.newLink ? await newLink(opts, deps, ui) : await install(opts, deps, ui);
     if (opts.json) ui.json({ ok: true, ...result });
     return 0;
   } catch (e) {
@@ -296,30 +312,20 @@ async function install(opts, deps, ui) {
 
   // ── done ──
   const waiting = verified.waitingForOwner;
+  const link = waiting ? setupLink(url, secrets.proof, nowDate(deps).getTime()) : null;
   ui.line('');
-  ui.line('Ready Set Mail is running.');
+  printReady(ui, url, link, opts.name);
   ui.line('');
-  ui.line(`  Address    ${url}`);
-  if (waiting) {
-    ui.line('  Become the owner: open this link. Whoever opens it first becomes the owner, so do not share it.');
-    ui.secretLine(`  ${setupLink(url, secrets.proof)}`);
-    ui.line(`  (If the page asks for an installer proof instead, paste the contents of ${secrets.proofPath}.)`);
-  } else {
-    ui.line('  This instance already has an owner: sign in at the address above.');
-  }
-  ui.line('');
-  ui.line(`  Backups    ${dir}`);
-  ui.line(`             token-encryption-key: keep it safe. If it is lost, connected Cloudflare accounts must be connected again.`);
-  ui.line(`             bootstrap-proof: only needed until you have become the owner.`);
-  ui.line('  DNS changes: optional. To let Ready Set Mail add DNS records for you, use "Connect Cloudflare" in the dashboard');
-  ui.line('             (permissions it needs: docs/self-hosting.md#permissions).');
-  ui.line('  Upgrade    git pull && npm install && npm run deploy');
-  ui.line(`  Remove     npm run setup -- --uninstall --name ${opts.name}`);
+  ui.line(`  Backups      ${dir} (the encryption key there reads stored Cloudflare connections)`);
+  ui.line('  DNS changes  optional: "Connect Cloudflare" in the dashboard (docs/self-hosting.md#permissions)');
+  ui.line('  Upgrade      git pull && npm install && npm run deploy');
+  ui.line(`  Remove       npm run setup -- --uninstall --name ${opts.name}`);
   if (opts.url) ui.line(`  Custom domain: add ${new URL(url).host} to the Worker "${names.worker}" (Workers & Pages > Settings > Domains & Routes); until then it answers at ${workersDev ?? 'its workers.dev address'}.`);
 
   return {
     name: opts.name, account_id: account.id, url,
-    setup_link: waiting ? setupLink(url, secrets.proof) : null,
+    setup_link: link,
+    setup_link_expires_at: link ? new Date((Math.floor(nowDate(deps).getTime() / 1000) + SETUP_LINK_TTL_SECONDS) * 1000).toISOString() : null,
     proof_file: secrets.proofPath, key_file: secrets.keyPath, state_file: statePath(dir),
     resources: { worker: names.worker, d1: state.created.d1, kv: state.created.kv },
   };
@@ -357,6 +363,44 @@ async function verify(deps, ui, cf, accountId, d1Id, base) {
     ui.warn(`could not read the owner status (${e.message}); the setup link below still works until an owner exists`);
   }
   return { waitingForOwner };
+}
+
+/** The ending: where it runs and the one thing to do next. */
+function printReady(ui, url, link, name) {
+  if (link) {
+    ui.line(`Ready Set Mail is running at ${url}. Open this link to create your owner account:`);
+    ui.line('');
+    ui.line(`  ${link}`);
+    ui.line('');
+    ui.line(`The link works once and expires in ${SETUP_LINK_TTL_SECONDS / 60} minutes. Need a new one? npm run setup -- --new-link --name ${name}`);
+  } else {
+    ui.line(`Ready Set Mail is running at ${url}. Sign in there with your owner account.`);
+  }
+}
+
+// ── new link ───────────────────────────────────────────────────────────────────────────────────
+
+/** A fresh setup link from the backed-up secret: no Cloudflare call, no redeploy. */
+async function newLink(opts, deps, ui) {
+  const configDir = opts.configDir ?? defaultConfigDir(deps.env, deps.home);
+  const dir = instanceDir(configDir, opts.name);
+  const state = readState(dir);
+  if (!state || state.uninstalled_at || !state.steps.deploy || !state.url) {
+    fail(`No finished install of "${opts.name}" is recorded in ${dir}. Run npm run setup${opts.name === 'ready-set-mail' ? '' : ` -- --name ${opts.name}`} first.`);
+  }
+  const proofPath = join(dir, PROOF_FILE);
+  if (!existsSync(proofPath)) fail(`${proofPath} is missing, so no link can be made. See docs/self-hosting.md#manual-install for the other way to create the owner account.`);
+  const secret = readFileSync(proofPath, 'utf8').trim();
+  ui.addSecret(secret);
+  let waiting = true;
+  try {
+    const r = await deps.fetch(new URL('/api/auth/status', state.url));
+    waiting = (await r.json()).configured === false;
+  } catch { /* unreachable right now: the link is still made */ }
+  const link = waiting ? setupLink(state.url, secret, nowDate(deps).getTime()) : null;
+  printReady(ui, state.url, link, opts.name);
+  return { name: opts.name, url: state.url, setup_link: link,
+    setup_link_expires_at: link ? new Date((Math.floor(nowDate(deps).getTime() / 1000) + SETUP_LINK_TTL_SECONDS) * 1000).toISOString() : null };
 }
 
 // ── uninstall ──────────────────────────────────────────────────────────────────────────────────

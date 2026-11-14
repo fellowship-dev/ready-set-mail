@@ -1,6 +1,6 @@
 // Plain line output and the few questions. No colour, no spinners: every line is safe in a log.
-// Every line passes through redaction; only `secretLine` may print a registered secret, and the
-// installer uses it once, for the setup link.
+// Every line passes through redaction: a registered secret (token, first-owner secret, encryption key)
+// is never printed. The setup link carries a signature derived from the secret, not the secret.
 import { createInterface } from 'node:readline';
 
 export function createUi({ stdout, stderr, stdin, interactive, json }) {
@@ -45,8 +45,6 @@ export function createUi({ stdout, stderr, stdin, interactive, json }) {
     ok: (text) => write(`      ok: ${text}`),
     info: (text) => write(`      ${text}`),
     warn: (text) => write(`      warning: ${text}`),
-    /** The one place a secret may be printed. */
-    secretLine: (text) => human.write(String(text) + '\n'),
     json: (obj) => stdout.write(JSON.stringify(obj) + '\n'),
     ask,
     async confirm(question) {
