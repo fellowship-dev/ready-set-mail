@@ -63,11 +63,9 @@ async function newPage(browser, width, height) {
 const btn = (page, name, o = {}) => page.getByRole('button', { name, ...o });
 
 async function createOwner(page, d, inst) {
-  const link = spawnSync('node', ['e2e/support/mint-setup-link.mjs', '--persist-to', inst.persistDir, '--url', inst.url], { cwd: REPO, encoding: 'utf8', env: { ...process.env, BETTER_AUTH_URL: inst.url } });
-  const m = /https?:\/\/\S+#\/claim\/\S+/.exec(link.stdout);
-  if (!m) throw new Error(`no setup link: ${(link.stderr || link.stdout).slice(-300)}`);
-  await page.goto(m[0]);
-  return m[0];
+  const link = inst.setupLink();
+  await page.goto(link);
+  return link;
 }
 
 // ---------------------------------------------------------------- self-host

@@ -9,10 +9,20 @@ import { AuthLayout, Field } from '../auth/AuthLayout';
 import { CheckEmail } from '../auth/CheckEmail';
 import { useHumanCheck } from '../auth/Turnstile';
 
+const SETUP_TOKEN = /^(\d{1,12})\.[A-Za-z0-9_-]{43}$/;
+const CLOCK_GRACE_SECONDS = 60;
+export const EXPIRED_LINK = 'This setup link has expired. Run `npm run setup -- --new-link` to get a new one.';
+
+/** A held setup token is usable when it is well formed and its expiry is not past (client clock, with a minute of grace). */
+export function setupTokenUsable(token: string, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
+	const m = SETUP_TOKEN.exec(token);
+	return !!m && Number(m[1]) + CLOCK_GRACE_SECONDS > nowSeconds;
+}
+
 /**
- * First run on a self-hosted instance (no owner yet): create the owner account. The setup link printed at deploy
- * (`#/claim/<token>`) is the proof; without one the person is told where to find it, and an installer proof
- * (BOOTSTRAP_SECRET) stays available for instances set up that way.
+ * First run on a self-hosted instance (no owner yet): create the owner account. The setup link the installer prints
+ * (`#/setup?t=<expiry>.<sig>`) is held in memory by the Gate and carries the proof; without one the person is told where
+ * to find it, and an installer proof (BOOTSTRAP_SECRET) stays available for instances set up that way.
  */
 export function OwnerSetupPage() {
 	const { status, signedIn } = useSession();
@@ -29,6 +39,8 @@ export function OwnerSetupPage() {
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
 	const [verifyFor, setVerifyFor] = useState<string | null>(null);
+	/** The server refused the held link: it is shown as expired, whatever the reason. */
+	const [refused, setRefused] = useState(false);
 	const check = useHumanCheck(status?.turnstile_site_key);
 
 	if (!status) return null;
@@ -61,7 +73,7 @@ export function OwnerSetupPage() {
 			navigate(res.has_domain === false ? '/setup' : '/', { replace: true });
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 403 && (err.body as { code?: string } | undefined)?.code === 'email_not_verified') setVerifyFor(email);
-			else if (linkToken && err instanceof ApiError && err.status === 403) setError('This setup link has expired or was already used. Run `npm run setup` again where you installed it to get a new one.');
+			else if (linkToken && err instanceof ApiError && err.status === 403) setRefused(true);
 			else if (err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
 			else setError(errorMessage(err));
 		} finally {
@@ -70,6 +82,13 @@ export function OwnerSetupPage() {
 		}
 	}
 
+	if (linkToken && (refused || !setupTokenUsable(linkToken))) {
+		return (
+			<AuthLayout title="Setup link">
+				<p className="text-sm text-ink-1">{EXPIRED_LINK}</p>
+			</AuthLayout>
+		);
+	}
 	if (verifyFor) return <CheckEmail email={verifyFor} onBack={() => { setVerifyFor(null); setError(''); }} />;
 
 	return (
@@ -108,7 +127,6 @@ export function OwnerSetupPage() {
 						<span className="text-ink-2">Feature usage counts only: no personal data, email addresses or domain names. You can change this later.</span>
 					</Label>
 				</div>
-				{linkToken ? <p className="text-sm text-ink-2">This link works once.</p> : null}
 				{check.widget}
 				{error ? <FieldError>{error}</FieldError> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={!check.ready}>

@@ -10,7 +10,6 @@ import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
 import { AuthPage } from './pages/auth/AuthPage';
-import { ClaimPage } from './pages/setup/ClaimPage';
 import { OwnerSetupPage } from './pages/setup/OwnerSetupPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
@@ -23,15 +22,15 @@ export function Gate({ children, initialMode }: { children: ReactNode; initialMo
 	const { state, retry, me, status } = useSession();
 	const claim = useClaimLink();
 	const [params, setParams] = useSearchParams();
-	const proof = params.get('proof');
+	const proof = params.get('t');
 	const firstOwner = state === 'anon' && !!status && !status.configured && status.mode !== 'saas';
-	// A setup link printed as `#/setup?proof=<proof>`: held in memory for the owner form and taken out of the address bar and
+	// A setup link printed as `#/setup?t=<expiry>.<sig>`: held in memory for the owner form and taken out of the address bar and
 	// history at once. Anywhere else (signed in, already configured, hosted) the parameter is ignored and stripped.
 	useEffect(() => {
 		if (proof === null || state === 'loading' || state === 'unreachable') return;
 		if (firstOwner && proof) claim.hold(proof);
 		const next = new URLSearchParams(params);
-		next.delete('proof');
+		next.delete('t');
 		setParams(next, { replace: true });
 	}, [proof, state, firstOwner, claim, params, setParams]);
 	if (state === 'loading') return <div className="mx-auto max-w-2xl p-8"><PageSkeleton label="Starting up" /></div>;
@@ -118,8 +117,6 @@ function AppRoutes() {
 	return (
 		<Suspense fallback={<div className="mx-auto max-w-3xl p-8"><PageSkeleton /></div>}>
 		<Routes>
-			{/* The setup link printed at deploy: outside Gate so it works while signed out; the token never stays in the URL. */}
-			<Route path="/claim/:token" element={<ClaimPage />} />
 			<Route path="/invite/:token" element={<InvitePage />} />
 			<Route path="/reset/:token" element={<ResetPage />} />
 			{/* Where a hosted verification link lands: a new account chooses its password here, once. */}

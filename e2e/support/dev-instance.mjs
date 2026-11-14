@@ -18,7 +18,7 @@
 // is seeded (settings.from_email) and inst.verificationLinks() reads the link out of the dev logs, falling back to D1.
 // `dohNs` seeds the fake's NS answers (name and everything under it), e.g. Cloudflare ['ns1.ns.cloudflare.com'].
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, createWriteStream, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -52,7 +52,10 @@ export async function startInstance({ mode = 'selfhost', port, tokenKey = true, 
   }
 
   const url = `http://127.0.0.1:${port}`;
+  // Self-host: a private BOOTSTRAP_SECRET per run (never printed); setup links are signed with it exactly as the installer does.
+  const bootstrapSecret = vars.BOOTSTRAP_SECRET ?? randomBytes(32).toString('hex');
   const v = {
+    ...(mode === 'hosted' ? {} : { BOOTSTRAP_SECRET: bootstrapSecret }),
     CLOUDFLARE_API_BASE_URL: fake.url, DOH_BASE_URL: fake.url, BETTER_AUTH_URL: url,
     ...(tokenKey ? { TOKEN_ENCRYPTION_KEY: `k1:${randomBytes(32).toString('base64')}` } : {}),
     ...(mode === 'hosted' ? { MODE: 'saas', SAAS_ENABLED: '1', TURNSTILE_SITE_KEY: '1x00000000000000000000AA', TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' } : {}),
@@ -93,7 +96,12 @@ export async function startInstance({ mode = 'selfhost', port, tokenKey = true, 
     if (links.length) return links;
     return [...log.matchAll(/https?:\/\/127\.0\.0\.1:\d+\/[^\s"'<>]*(?:welcome|verify)[^\s"'<>]*/g)].map((m) => m[0]);
   };
-  return { url, fake, stop, persistDir, logFile, d1, verificationLinks, mode, cwd };
+  /** `<url>/#/setup?t=<expiry>.<sig>`: sig = HMAC-SHA256(BOOTSTRAP_SECRET, "setup-link:" + expiry), base64url, expiry = now + 900. */
+  const setupLink = (ttl = 900) => {
+    const expiry = String(Math.floor(Date.now() / 1000) + ttl);
+    return `${url}/#/setup?t=${expiry}.${createHmac('sha256', bootstrapSecret).update(`setup-link:${expiry}`).digest('base64url')}`;
+  };
+  return { url, fake, stop, setupLink, persistDir, logFile, d1, verificationLinks, mode, cwd };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

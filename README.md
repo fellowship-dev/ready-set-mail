@@ -111,7 +111,7 @@ The installation needs `OAUTH_KV`, a canonical HTTPS `BETTER_AUTH_URL` and priva
 
 Open the canonical HTTPS Worker URL. Enter your email, new password and the installer-held proof in the masked **Installer proof** field. Successful setup consumes the proof and creates the owner; public visitors and social sign-in cannot claim first ownership. Keep proof/password values out of chat, URLs and logs. See [installer setup and recovery](docs/agent-operations.md).
 
-If the installer printed a setup link (`<url>/#/setup?proof=…`), open it instead: it creates the owner without pasting the installer proof (the link works once).
+If the installer printed a setup link (`<url>/#/setup?t=…`), open it instead of pasting the installer proof.
 
 ---
 

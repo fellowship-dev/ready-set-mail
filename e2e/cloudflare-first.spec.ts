@@ -5,14 +5,13 @@
 // with CLOUDFLARE_API_BASE_URL / DOH_BASE_URL pointing at the fake (the Worker honours only http://127.0.0.1:<port>), so
 // api.cloudflare.com is never contacted. Ports 8811-8813 are used so these do not collide with `npm run dev` on 8787.
 // It needs `npm run build:dashboard` done first. The setup link is minted with
-// `node e2e/support/mint-setup-link.mjs --persist-to <that instance's persist dir> --url <instance url>`.
+// `inst.setupLink()`: `<url>/#/setup?t=<expiry>.<sig>` signed with the instance's BOOTSTRAP_SECRET, exactly as the installer does.
 // Run alone: npx playwright test e2e/cloudflare-first.spec.ts
 import { expect, test, type Page } from '@playwright/test';
-import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-interface Instance { url: string; fake: { url: string }; stop(): Promise<void>; persistDir: string }
+interface Instance { setupLink(ttl?: number): string; url: string; fake: { url: string }; stop(): Promise<void>; persistDir: string }
 type FakeRecord = { type: string; name: string; content: string; priority?: number };
 interface FakeState { zones: { id: string; name: string }[]; records: Record<string, FakeRecord[]>; routing: Record<string, { enabled: boolean; catchAll: unknown }> }
 
@@ -28,11 +27,7 @@ async function state(inst: Instance): Promise<FakeState> {
 const flat = (s: FakeState) => Object.values(s.records).flat().map((r) => `${r.type} ${r.name} ${r.priority ?? ''} ${r.content}`.trim()).sort();
 
 function mintLink(inst: Instance): string {
- const r = spawnSync('node', ['e2e/support/mint-setup-link.mjs', '--persist-to', inst.persistDir, '--url', inst.url], { encoding: 'utf8' });
- expect(r.status, 'setup-link exits 0').toBe(0);
- const m = /https?:\/\/\S+#\/claim\/\S+/.exec(r.stdout);
- expect(m, 'setup link printed').not.toBeNull();
- return m![0];
+ return inst.setupLink();
 }
 
 async function createOwner(page: Page, inst: Instance) {

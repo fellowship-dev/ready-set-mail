@@ -1,79 +1,70 @@
+import { createHmac } from 'node:crypto';
 import { it, expect } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { verifyBootstrapProof, consumeBootstrapProof } from '../../src/auth/bootstrap';
-import { hashApiKey } from '../../src/auth/api-keys';
-import { makeEnv, call, setupOwner, type TestDb } from './helpers';
+import { makeEnv, call, type TestDb } from './helpers';
 
 const SECRET = 'test-only-installer-proof-32-characters-minimum';
-const TOKEN = 'setup-link-token-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+const OTHER = 'another-instances-secret-32-characters-minimum!';
 const now = () => Math.floor(Date.now() / 1000);
 
-async function withLink(expires: number, extra: Record<string, unknown> = {}) {
- const db: TestDb = createMigratedD1();
- const env = makeEnv(db, extra);
- const hash = await hashApiKey(TOKEN);
- db.sqlite.prepare("INSERT INTO settings (workspace_id, key, value) VALUES ('ws_default', 'setup_link', ?)").run(`${hash}.${expires}`);
- return { db, env };
-}
-const row = (db: TestDb, key: string) => db.sqlite.prepare("SELECT value FROM settings WHERE key=?").get(key);
+/** Exactly what the installer (`npm run setup`) produces: HMAC-SHA256(secret, "setup-link:" + expiry), base64url, no padding. */
+const mint = (secret = SECRET, expiry = now() + 900) => `${expiry}.${createHmac('sha256', secret).update(`setup-link:${expiry}`).digest('base64url')}`;
+const row = (db: TestDb, key: string) => db.sqlite.prepare('SELECT value FROM settings WHERE key=?').get(key);
 
-it('accepts a valid setup link without BOOTSTRAP_SECRET', async () => {
- const { env } = await withLink(now() + 3600, { BOOTSTRAP_SECRET: undefined });
- expect(await verifyBootstrapProof(env, TOKEN)).toBe(true);
+it('a token minted exactly as the installer does is accepted', async () => {
+ const token = mint();
+ expect(token.split('.')[1]).toHaveLength(43);
+ expect(await verifyBootstrapProof(makeEnv(), token)).toBe(true);
 });
-it('refuses an expired setup link', async () => {
- const { env } = await withLink(now() - 1, { BOOTSTRAP_SECRET: undefined });
- expect(await verifyBootstrapProof(env, TOKEN)).toBe(false);
+it('refuses a token dated further ahead than 15 minutes (plus a minute of clock difference)', async () => {
+ expect(await verifyBootstrapProof(makeEnv(), mint(SECRET, now() + 960 + 5))).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), mint(SECRET, now() + 950))).toBe(true);
 });
-it('refuses a wrong token, empty proof and non-strings', async () => {
- const { env } = await withLink(now() + 3600, { BOOTSTRAP_SECRET: undefined });
- expect(await verifyBootstrapProof(env, TOKEN + 'x')).toBe(false);
- expect(await verifyBootstrapProof(env, '')).toBe(false);
- expect(await verifyBootstrapProof(env, undefined)).toBe(false);
+it('refuses an expired token', async () => {
+ expect(await verifyBootstrapProof(makeEnv(), mint(SECRET, now() - 1))).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), mint(SECRET, now()))).toBe(false);
 });
-it('refuses the link after consumption and deletes it', async () => {
- const { db, env } = await withLink(now() + 3600);
- await consumeBootstrapProof(env);
- expect(row(db, 'setup_link')).toBeUndefined();
- expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
- expect(await verifyBootstrapProof(env, TOKEN)).toBe(false);
- expect(await verifyBootstrapProof(env, SECRET)).toBe(false);
+it('refuses a wrong signature, a token signed by another instance, a malformed token, and a token without a secret', async () => {
+ const good = mint();
+ const [expiry, sig] = good.split('.');
+ expect(await verifyBootstrapProof(makeEnv(), `${expiry}.${sig.slice(0, -1)}${sig.endsWith('A') ? 'B' : 'A'}`)).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), mint(OTHER))).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), `${expiry}.short`)).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), `x${expiry}.${sig}`)).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), '')).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), undefined)).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(undefined, { BOOTSTRAP_SECRET: undefined }), good)).toBe(false);
 });
-it('refuses the link once an owner exists', async () => {
- const { db, env } = await withLink(now() + 3600);
- db.sqlite.prepare("DELETE FROM settings WHERE key='setup_link'").run();
- await setupOwner(env);
- await withLinkInto(db);
- expect(await verifyBootstrapProof(env, TOKEN)).toBe(false);
-});
-async function withLinkInto(db: TestDb) {
- db.sqlite.prepare("INSERT OR REPLACE INTO settings (workspace_id, key, value) VALUES ('ws_default', 'setup_link', ?)").run(`${await hashApiKey(TOKEN)}.${now() + 3600}`);
-}
-it('BOOTSTRAP_SECRET still works, with or without a link stored', async () => {
- const { env } = await withLink(now() - 10);
- expect(await verifyBootstrapProof(env, SECRET)).toBe(true);
+it('the raw BOOTSTRAP_SECRET still works as the installer proof', async () => {
  expect(await verifyBootstrapProof(makeEnv(), SECRET)).toBe(true);
  expect(await verifyBootstrapProof(makeEnv(), 'wrong')).toBe(false);
  expect(await verifyBootstrapProof(makeEnv(undefined, { BOOTSTRAP_SECRET: 'short' }), 'short')).toBe(false);
 });
-it('legacy and current headers both still create the owner; a setup link works over the API', async () => {
+it('nothing is accepted after consumption or once an owner exists', async () => {
+ const db: TestDb = createMigratedD1();
+ const env = makeEnv(db);
+ const token = mint();
+ expect(await verifyBootstrapProof(env, token)).toBe(true);
+ await consumeBootstrapProof(env);
+ expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
+ expect(await verifyBootstrapProof(env, token)).toBe(false);
+ expect(await verifyBootstrapProof(env, SECRET)).toBe(false);
+});
+it('a token creates the owner over the API (header only, never a URL); the old header names still work; reuse is refused', async () => {
  for (const header of ['x-ready-set-mail-bootstrap', 'x-inbox-angel-bootstrap']) { // @legacy-name: pre-rename header
   const env = makeEnv();
   const res = await call(env, 'POST', '/api/auth/setup', { headers: header === 'x-ready-set-mail-bootstrap' ? {} : { 'x-ready-set-mail-bootstrap': '', [header]: SECRET }, body: { email: 'a@example.com', password: 'unique-test-password' } });
   expect(res.status).toBe(201);
  }
- const { db, env } = await withLink(now() + 3600, { BOOTSTRAP_SECRET: undefined });
- const res = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': TOKEN }, body: { email: 'b@example.com', password: 'unique-test-password' } });
- expect(res.status).toBe(201);
- expect(row(db, 'setup_link')).toBeUndefined();
- expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
-});
-it('a proof equal to BOOTSTRAP_SECRET sent from the setup-link path creates the owner once; a second use is refused', async () => {
- const { db, env } = await withLink(now() + 3600); // BOOTSTRAP_SECRET set, a stored link too
- const first = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': SECRET }, body: { email: 'a@example.com', password: 'unique-test-password' } });
+ const db: TestDb = createMigratedD1();
+ const env = makeEnv(db);
+ const token = mint();
+ const first = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': token }, body: { email: 'b@example.com', password: 'unique-test-password' } });
  expect(first.status).toBe(201);
  expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
- const second = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': SECRET }, body: { email: 'b@example.com', password: 'unique-test-password' } });
- expect(second.status).toBe(409); // already configured
- expect(await verifyBootstrapProof(env, SECRET)).toBe(false);
+ const again = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': token }, body: { email: 'c@example.com', password: 'unique-test-password' } });
+ expect(again.status).toBe(409); // already configured
+ const viaUrl = await call(makeEnv(), 'POST', `/api/auth/setup?proof=${token}`, { body: { email: 'd@example.com', password: 'unique-test-password' } });
+ expect(viaUrl.status).toBeGreaterThanOrEqual(400); // a token in the URL proves nothing
 });
