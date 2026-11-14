@@ -6,9 +6,11 @@ import { FocusLayout } from './components/FocusLayout';
 import { Shell } from './components/Shell';
 import { WorkspaceRouter } from './components/WorkspaceRouter';
 import { PageSkeleton } from './components/states';
+import { ClaimLinkProvider } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
 import { AuthPage } from './pages/auth/AuthPage';
+import { ClaimPage } from './pages/auth/ClaimPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
 import { NoWorkspacePage } from './pages/auth/NoWorkspacePage';
@@ -100,6 +102,8 @@ function AppRoutes() {
 	return (
 		<Suspense fallback={<div className="mx-auto max-w-3xl p-8"><PageSkeleton /></div>}>
 		<Routes>
+			{/* The setup link printed at deploy: outside Gate so it works while signed out; the token never stays in the URL. */}
+			<Route path="/claim/:token" element={<ClaimPage />} />
 			<Route path="/invite/:token" element={<InvitePage />} />
 			<Route path="/reset/:token" element={<ResetPage />} />
 			{/* Where a hosted verification link lands: a new account chooses its password here, once. */}
@@ -157,9 +161,11 @@ export function App({ queryClient, Router = WorkspaceRouter }: { queryClient: Qu
 	return (
 		<QueryClientProvider client={queryClient}>
 			<SessionProvider>
-				<Router>
-					<AppRoutes />
-				</Router>
+				<ClaimLinkProvider>
+					<Router>
+						<AppRoutes />
+					</Router>
+				</ClaimLinkProvider>
 				<Toaster />
 			</SessionProvider>
 		</QueryClientProvider>
