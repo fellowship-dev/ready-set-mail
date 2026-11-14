@@ -138,7 +138,7 @@ describe('CfClient typed errors', () => {
 
   it('delete of a missing record is not an error', async () => {
     const fake = new FakeCloudflare({});
-    await expect(clientFor(fake).deleteDnsRecord('z', 'missing')).resolves.toBe(false);
+    await expect(clientFor(fake).deleteDnsRecord('z', 'missing', { type: 'TXT', name: '_dmarc.acme.com' })).resolves.toBe(false);
   });
 
   it('refuses to be built without a token', () => {
