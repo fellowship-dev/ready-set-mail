@@ -25,12 +25,24 @@ describe('removeAuthRecord', () => {
     expect(logAudit).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses to delete another record stored under that id: nothing is deleted, nothing is audited', async () => {
+  it('refuses to delete a record the customer changed: nothing is deleted, it is returned as kept and audited as dns.kept, never dns.delete', async () => {
     vi.mocked(logAudit).mockClear();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { fake, tenant, domain } = setup({ type: 'TXT', name: NAME, content: 'v=spf1 -all' });
-    await removeAuthRecord(tenant, domain);
+    const kept = await removeAuthRecord(tenant, domain);
     expect(fake.records.get(ZONE)).toHaveLength(1);
-    expect(logAudit).not.toHaveBeenCalled();
+    expect(kept).toEqual([{ type: 'TXT', name: NAME, reason: 'its content no longer matches what Ready Set Mail wrote' }]);
+    const actions = vi.mocked(logAudit).mock.calls.map(c => c[1].action);
+    expect(actions).toEqual(['dns.kept']);
+    expect(vi.mocked(logAudit).mock.calls[0][1]).toMatchObject({ resource_name: NAME, after_value: { kept: true } });
+  });
+
+  it('a record that is already gone (404 on the read) is audited as dns.already_gone, not dns.delete, and is not reported as kept', async () => {
+    vi.mocked(logAudit).mockClear();
+    const { fake, tenant, domain } = setup({ type: 'TXT', name: NAME, content: 'v=DMARC1;' });
+    fake.records.set(ZONE, []);
+    const kept = await removeAuthRecord(tenant, domain);
+    expect(kept).toEqual([]);
+    expect(vi.mocked(logAudit).mock.calls.map(c => c[1].action)).toEqual(['dns.already_gone']);
   });
 });

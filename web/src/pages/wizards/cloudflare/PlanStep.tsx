@@ -113,14 +113,14 @@ function ValueCell({ w }: { w: PlanWrite }) {
 	);
 }
 
-function Status({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+function Status({ w, ok, verified, note, error }: { w: PlanWrite; ok: boolean; verified: boolean; note?: string; error?: string }) {
 	return (
 		<>
 			<Change w={w} />
 			{ok ? (
-				<p className="mt-1 flex items-center gap-1 text-success">
-					<Check aria-hidden className="size-4 shrink-0" />
-					{verified ? 'Written and checked in Cloudflare' : 'Written'}
+				<p className={`mt-1 flex items-start gap-1 ${verified ? 'text-success' : 'text-ink-2'}`}>
+					<Check aria-hidden className={`size-4 shrink-0 ${verified ? '' : 'mt-0.5'} text-success`} />
+					<span className="[overflow-wrap:anywhere]">{verified ? 'Written and checked in Cloudflare' : `Written, not checked: ${note ?? 'Cloudflare did not confirm it.'}`}</span>
 				</p>
 			) : error ? (
 				<p role="alert" className="mt-1 text-danger [overflow-wrap:anywhere]">
@@ -149,7 +149,7 @@ function DottedName({ name }: { name: string }) {
 const typeOf = (w: PlanWrite) => (w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type);
 
 /** From md: name, type, value and change on one line under the domain heading; the name column has room, the change column is narrow. */
-function WideRow({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+function WideRow({ w, ok, verified, note, error }: { w: PlanWrite; ok: boolean; verified: boolean; note?: string; error?: string }) {
 	return (
 		<li className="grid grid-cols-[minmax(0,5fr)_3rem_minmax(0,4fr)_8rem] items-start gap-x-4 py-3 text-sm">
 			<div className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{w.type === 'EMAIL_ROUTING' ? null : <DottedName name={w.name} />}</div>
@@ -158,21 +158,21 @@ function WideRow({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verifi
 				<ValueCell w={w} />
 			</div>
 			<div className="min-w-0 text-sm">
-				<Status w={w} ok={ok} verified={verified} error={error} />
+				<Status w={w} ok={ok} verified={verified} note={note} error={error} />
 			</div>
 		</li>
 	);
 }
 
 /** Below md: one compact block per record under the domain heading: name, "TXT · New record", value with Copy. */
-function StackedRow({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+function StackedRow({ w, ok, verified, note, error }: { w: PlanWrite; ok: boolean; verified: boolean; note?: string; error?: string }) {
 	return (
 		<li className="min-w-0 space-y-1 py-3 text-sm">
 			{w.type === 'EMAIL_ROUTING' ? null : <p className="font-mono text-xs [overflow-wrap:anywhere]"><DottedName name={w.name} /></p>}
 			<div className="flex flex-wrap items-baseline gap-x-2 text-ink-2">
 				<span>{typeOf(w)}</span>
 				<span aria-hidden>·</span>
-				<Status w={w} ok={ok} verified={verified} error={error} />
+				<Status w={w} ok={ok} verified={verified} note={note} error={error} />
 			</div>
 			<ValueCell w={w} />
 		</li>
@@ -190,6 +190,8 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	const [verified, setVerified] = useState<Set<string>>(new Set());
 	const wide = useWide();
 	const verifiedRef = useRef<Set<string>>(new Set());
+	const [notes, setNotes] = useState<Record<string, string>>({});
+	const notesRef = useRef<Record<string, string>>({});
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState(false);
 	const [changed, setChanged] = useState(false);
@@ -248,13 +250,19 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 			for (const x of r.results) {
 				if (x.ok) {
 					doneRef.current.add(x.id);
-					if (x.verified) verifiedRef.current.add(x.id);
-					else verifiedRef.current.delete(x.id);
+					if (x.verified) {
+						verifiedRef.current.add(x.id);
+						delete notesRef.current[x.id];
+					} else {
+						verifiedRef.current.delete(x.id);
+						notesRef.current[x.id] = x.verify_note ?? 'Cloudflare did not confirm it.';
+					}
 				}
 				else errs[x.id] = x.error ?? 'This record could not be written.';
 			}
 			setDone(new Set(doneRef.current));
 			setVerified(new Set(verifiedRef.current));
+			setNotes({ ...notesRef.current });
 			setErrors(errs);
 			if (Object.keys(errs).length) setFailedSome(true);
 			else {
@@ -330,7 +338,7 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 						<section key={g.domain} aria-label={g.domain} className="space-y-1">
 							<h3 className="text-base font-semibold max-md:[overflow-wrap:anywhere] md:whitespace-nowrap">{g.domain}</h3>
 							<ul className="divide-y divide-line border-y border-line">
-								{g.writes.map((w) => (wide ? <WideRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} /> : <StackedRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />))}
+								{g.writes.map((w) => (wide ? <WideRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} note={notes[w.id]} error={errors[w.id]} /> : <StackedRow key={w.id} w={w} ok={done.has(w.id)} verified={verified.has(w.id)} note={notes[w.id]} error={errors[w.id]} />))}
 							</ul>
 						</section>
 					))}

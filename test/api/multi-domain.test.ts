@@ -67,6 +67,14 @@ describe('GET /api/zones', () => {
     expect(res.status).toBe(400);
   });
 
+  it('more than 5000 zones: 502 cf_list_incomplete with a plain sentence, not an internal server error', async () => {
+    const env = makeEnv();
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: [], result_info: { page: 1, per_page: 50, count: 0, total_count: 5001, total_pages: 101 } }), { status: 200 }));
+    const res = await handleApi(req('GET', '/api/zones'), env, ctx);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'Cloudflare returned more zones than Ready Set Mail can read at once (5000). Limit the token to the zones you want to manage.', code: 'cf_list_incomplete' });
+  });
+
   it('returns 502 when CF API reports failure', async () => {
     const env = makeEnv();
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: false, errors: [{ message: 'Unauthorized' }] }), { status: 200 }));

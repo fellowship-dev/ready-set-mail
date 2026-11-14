@@ -1,3 +1,4 @@
+import { removalNotice, type KeptRecord, type RemovedState } from '../../lib/removal-notice';
 import { Alert, Badge, Button, Card, CardContent, EmptyState, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast } from '@ready-set-mail/ui';
 import { useHosted } from '../../lib/session';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -175,13 +176,14 @@ function DangerZone({ domain }: { domain: Domain }) {
 	const navigate = useNavigate();
 	const [open, setOpen] = useState(false);
 	const remove = useMutation({
-		mutationFn: () => api(`/api/domains/${domain.id}`, { method: 'DELETE' }),
-		onSuccess: async () => {
+		mutationFn: () => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}`, { method: 'DELETE' }),
+		onSuccess: async (res) => {
+			const kept = res?.kept ?? [];
 			toast({ title: 'Domain removed', description: domain.domain, variant: 'success' });
 			setOpen(false);
 			qc.removeQueries({ queryKey: domainKeys.all(domain.id) });
 			await qc.invalidateQueries({ queryKey: ['domains'] });
-			navigate('/');
+			navigate('/', { state: { removed: { domain: domain.domain, kept } } satisfies RemovedState });
 		},
 	});
 	// 502: hosted DNS cleanup failed and the server kept the domain. Say so, and let the user try again.

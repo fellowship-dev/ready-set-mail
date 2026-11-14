@@ -39,6 +39,8 @@ export interface ApplyWriteResult {
 	ok: boolean;
 	/** Read back from Cloudflare after the write and found as written. */
 	verified?: boolean;
+	/** Why a write that succeeded could not be checked (set whenever `verified` is not true). */
+	verify_note?: string;
 	error?: string;
 	code?: string;
 }

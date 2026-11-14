@@ -53,18 +53,32 @@ describe('the rules of a zone are read from every page', () => {
     expect(mail(plan).writes.filter((w: any) => w.type === 'EMAIL_ROUTING').map((w: any) => w.action)).toEqual(['none', 'none']);
   });
 
-  it('page 2 unreadable: no rules are planned and the reason is given', async () => {
+  it('page 2 unreadable (Cloudflare error): no rules and no MX are planned, and the note says Cloudflare returned an error', async () => {
     const { tenant } = setup(filler(80), f => { f.ruleFailPage = 2; });
     const { plan } = await buildPlan(tenant, [1]);
-    expect(mail(plan).writes.filter((w: any) => w.type === 'EMAIL_ROUTING')).toEqual([]);
-    expect(plan.not_written.find((n: any) => n.what === 'Address rules')?.reason).toMatch(/could not read the Email Routing rules/);
+    expect(mail(plan)).toBeUndefined();
+    const reason = plan.not_written.find((n: any) => n.what === 'Address rules')!.reason;
+    expect(reason).toMatch(/^Cloudflare returned an error when reading the Email Routing rules of a-corp.com \(HTTP 500/);
+    expect(reason).toContain('no MX records for reports.a-corp.com either');
   });
 
-  it('more pages than the cap: no rules are planned and the reason is given', async () => {
+  it('a token without the Email Routing permission (403): the note says so', async () => {
+    const { tenant } = setup([], f => {
+      const inner = f.fetch.getMockImplementation()!;
+      f.fetch.mockImplementation(async (i, init) => String(i).includes('/email/routing/rules')
+        ? new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: 'Authentication error' }] }), { status: 403 })
+        : inner(i, init));
+    });
+    const { plan } = await buildPlan(tenant, [1]);
+    expect(mail(plan)).toBeUndefined();
+    expect(plan.not_written.find((n: any) => n.what === 'Address rules')!.reason).toMatch(/^The Cloudflare token cannot read Email Routing for a-corp.com: it lacks the Email Routing permission \(HTTP 403\)\. So Ready Set Mail plans no address rules and no MX records/);
+  });
+
+  it('more entries than the cap: no rules and no MX are planned, and the note says there are too many rules', async () => {
     const { fake, tenant } = setup(filler(1001));
     const { plan } = await buildPlan(tenant, [1]);
-    expect(mail(plan).writes.filter((w: any) => w.type === 'EMAIL_ROUTING')).toEqual([]);
-    expect(plan.not_written.some((n: any) => n.what === 'Address rules')).toBe(true);
+    expect(mail(plan)).toBeUndefined();
+    expect(plan.not_written.find((n: any) => n.what === 'Address rules')!.reason).toMatch(/^a-corp.com has more Email Routing rules than Ready Set Mail can read at once \(1000\)\./);
     expect(ruleCalls(fake)).toHaveLength(1); // the total on page 1 is already over the cap: no page is walked
   });
 
@@ -108,6 +122,13 @@ describe('verifyWrite reads every page', () => {
     const { tenant } = setup(filler(55));
     const results = await apply(tenant);
     expect(results.find(r => r.id === 'rule:rua')).toMatchObject({ ok: true, verified: true });
+  });
+
+  it('exactly 1000 rules at plan time and 2 written: the read-back is still complete and verified', async () => {
+    const { tenant } = setup(filler(1000));
+    const results = await apply(tenant);
+    expect(results.find(r => r.id === 'rule:rua')).toMatchObject({ ok: true, verified: true });
+    expect(results.find(r => r.id === 'rule:tls-rpt')).toMatchObject({ ok: true, verified: true });
   });
 
   it('a read-back that cannot be completed is not verified, with a reason', async () => {

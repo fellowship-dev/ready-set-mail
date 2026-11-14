@@ -1,8 +1,9 @@
-import { Button, EmptyState, PageHeader, statusRank, toast } from '@ready-set-mail/ui';
+import { Alert, Button, EmptyState, PageHeader, statusRank, toast } from '@ready-set-mail/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
+import { removalNotice, type RemovedState } from '../../lib/removal-notice';
 import { ClaimCard } from '../../components/domain/ClaimCard';
 import { DomainRow } from '../../components/domain/DomainRow';
 import { GetStarted } from '../../components/GetStarted';
@@ -103,6 +104,7 @@ function AddDomainButton() {
 export function OverviewPage() {
 	const qc = useQueryClient();
 	const { canWrite } = useSession();
+	const removed = (useLocation().state as RemovedState | null)?.removed;
 	const list = useDomains();
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
@@ -206,6 +208,11 @@ export function OverviewPage() {
 				}
 			/>
 			<ReadOnlyNotice />
+			{removed && removed.kept.length > 0 ? (
+				<Alert variant="warning" title="Domain removed, some DNS records kept">
+					{removalNotice(removed.domain, removed.kept)}
+				</Alert>
+			) : null}
 
 			{list.isPending ? (
 				<ListSkeleton rows={3} label="Loading domains" />
