@@ -180,4 +180,5 @@ Later upgrades are the same as for an installer-made instance: `git pull && npm 
 | `This account has no workers.dev subdomain yet` | Open Workers & Pages in the Cloudflare dashboard once and choose a subdomain, or pass `--url`. |
 | `/health did not answer correctly (HTTP 503 …)` | Migrations are missing: run `npm run migrate`, or the installer again with `--resume`. |
 | `wrangler.local.jsonc … belongs to the instance "<other>"` | One checkout deploys one instance. Clone the repository again for a second instance. |
+| `npm run deploy` warns `"unsafe" fields are experimental` | Expected: the request rate limits are declared as Wrangler `unsafe` bindings. Nothing to do. |
 | `wrangler.jsonc still has the REPLACE_WITH_… placeholder ids` | `npm run deploy` found no `wrangler.local.jsonc`: run `npm run setup`, or follow [Manual install](#manual-install). |
