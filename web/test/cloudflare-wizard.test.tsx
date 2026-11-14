@@ -158,9 +158,9 @@ describe('Cloudflare wizard: domains', () => {
 		expect(screen.getByText('Already added')).toBeInTheDocument();
 		expect(screen.getByRole('checkbox', { name: /a\.example\.com/ })).toBeDisabled();
 		await userEvent.click(screen.getByRole('button', { name: 'Add 1 domain' }));
-		const next = await screen.findByRole('button', { name: 'Next' });
+		// One click: it adds, links and moves on by itself.
+		expect(await screen.findByText(/Already in place/)).toBeInTheDocument();
 		expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(expect.arrayContaining(['POST /api/domains', 'PUT /api/domains/2/connection']));
-		await userEvent.click(next);
 		await waitFor(() => expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'dmarc', domainIds: expect.arrayContaining([1, 2]), written: { domains: 1, records: 0 } }));
 		expect(await screen.findByText(/Already in place/)).toBeInTheDocument();
 	});
@@ -170,9 +170,23 @@ describe('Cloudflare wizard: domains', () => {
 		const { calls } = setup({ 'POST /api/domains': () => (++n === 1 ? fail(400, 'Cloudflare says no') : { domain: { id: 2, domain: 'b.example.com' } }) });
 		await userEvent.click(await screen.findByRole('button', { name: 'Add 1 domain' }));
 		expect(await screen.findByText(/b\.example\.com: Cloudflare says no/)).toBeInTheDocument();
+		// the only success so far is a.example.com (already added), so "Continue without them" is offered next to the single primary
+		expect(await screen.findByRole('button', { name: 'Continue without them' })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-		expect(await screen.findByRole('button', { name: 'Next' })).toBeInTheDocument();
+		// every chosen domain now succeeded: it moves on by itself
+		expect(await screen.findByText(/Already in place/)).toBeInTheDocument();
 		expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/domains')).toHaveLength(2);
+	});
+
+	it('a failure keeps the person on the step: Continue without them moves on with what worked', async () => {
+		setup({ 'POST /api/domains': fail(400, 'Cloudflare says no') });
+		await userEvent.click(await screen.findByRole('button', { name: 'Add 1 domain' }));
+		await screen.findByText(/b\.example\.com: Cloudflare says no/);
+		expect(screen.getByRole('heading', { name: 'Choose domains' })).toBeInTheDocument();
+		await screen.findByRole('button', { name: 'Continue without them' });
+		expect(screen.getAllByRole('button').filter((b) => b.className.includes('bg-brand'))).toHaveLength(1);
+		await userEvent.click(screen.getByRole('button', { name: 'Continue without them' }));
+		await waitFor(() => expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'dmarc', domainIds: [1] }));
 	});
 
 	it('hosted: a full plan keeps what was added', async () => {
@@ -190,7 +204,7 @@ describe('Cloudflare wizard: domains', () => {
 		);
 		expect(await screen.findByText('Reports go to')).toBeInTheDocument();
 		await userEvent.click(await screen.findByRole('button', { name: 'Add 2 domains' }));
-		await screen.findByRole('button', { name: 'Next' });
+		await screen.findByText(/Already in place/);
 		const posts = calls.filter((c) => c.method === 'POST' && /base-domain|\/api\/domains$/.test(c.path)).map((c) => c.path);
 		expect(posts).toEqual(['/api/settings/base-domain', '/api/domains']);
 	});

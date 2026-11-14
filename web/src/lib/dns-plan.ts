@@ -24,8 +24,10 @@ export interface NotWritten {
 	domain?: string;
 	what: string;
 	reason: string;
-	/** A hash route such as `#/domains/7/setup`. */
+	/** An app route such as `/domains/7/setup` (a leading `#` is tolerated). */
 	link?: string;
+	/** The plan step this note belongs to; null = shown only on the final screen. */
+	step?: 'dmarc' | 'reports_mailbox' | null;
 }
 export interface DnsPlan {
 	plan_id: string;
@@ -35,6 +37,8 @@ export interface DnsPlan {
 export interface ApplyWriteResult {
 	id: string;
 	ok: boolean;
+	/** Read back from Cloudflare after the write and found as written. */
+	verified?: boolean;
 	error?: string;
 	code?: string;
 }
@@ -75,3 +79,6 @@ export const markWizardState = (domainId: number, patch: WizardPatch): Promise<v
 
 /** Writes that still need doing (everything but 'none'). */
 export const pendingWrites = (writes: PlanWrite[]) => writes.filter((w) => w.action !== 'none');
+
+/** An in-app route from a server link: no leading `#`, so the router's basename applies. */
+export const appRoute = (link: string) => link.replace(/^#/, '');

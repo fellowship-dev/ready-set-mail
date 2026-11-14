@@ -103,7 +103,7 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 						<PermissionRow scope="Zone" group="Zone" access="Read" />
 						<PermissionRow scope="Zone" group="DNS" access="Edit" />
 						<PermissionRow scope="Zone" group="Email Routing Rules" access="Edit" />
-						{hosted ? null : <PermissionRow scope="Account" group="Email Routing Addresses" access="Edit" note="the reports mailbox" />}
+						{hosted ? null : <PermissionRow scope="Account" group="Email Routing Addresses" access="Edit" note="alert emails to you" />}
 						<PermissionRow scope="Account" group="Account Settings" access="Read" />
 					</TableBody>
 				</Table>

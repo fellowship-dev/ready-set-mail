@@ -70,11 +70,12 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 		void qc.invalidateQueries({ queryKey: ['auth-status'] });
 	};
 
-	/** Adds (when needed) and links one domain. Returns false when it failed or the plan is full. */
-	async function work(n: string, asBase: boolean): Promise<boolean> {
+	/** Adds (when needed) and links one domain. `ok` is false when it failed or the plan is full. */
+	async function work(n: string, asBase: boolean): Promise<{ ok: boolean; id?: number; created?: boolean }> {
 		patch(n, { busy: true, error: undefined });
 		try {
 			let id = idOf(n);
+			let created = false;
 			if (id === undefined) {
 				if (asBase) {
 					const r = await api<{ domain_id?: number; pending?: boolean }>('/api/settings/base-domain', { method: 'POST', body: { domain: n } });
@@ -85,8 +86,9 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 				}
 				if (id === undefined) {
 					patch(n, { busy: false, error: 'Ownership of this domain is not proven yet. Add it from its own setup page.' });
-					return false;
+					return { ok: false };
 				}
+				created = true;
 				patch(n, { id });
 				refresh();
 			}
@@ -94,19 +96,21 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 				await linkDomain(id, connection.id);
 			}
 			patch(n, { busy: false, linked: true });
-			return true;
+			return { ok: true, id, created };
 		} catch (e) {
 			const l = planLimitOf(e);
 			if (l) {
 				setLimit(l);
 				patch(n, { busy: false, blocked: true });
 			} else patch(n, { busy: false, error: errorMessage(e) });
-			return false;
+			return { ok: false };
 		}
 	}
 
-	async function run(only?: string): Promise<Set<string>> {
+	async function run(only?: string): Promise<{ failed: Set<string>; ids: number[]; created: number }> {
 		const failedNames = new Set<string>();
+		const ids: number[] = [];
+		let created = 0;
 		setRunning(true);
 		setLimit(null);
 		let stop = false;
@@ -115,30 +119,44 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 		const ordered = reportsHome && todo.includes(reportsHome) ? [reportsHome, ...todo.filter((n) => n !== reportsHome)] : todo;
 		for (const n of ordered) {
 			if (stop) break;
-			if (rows[n]?.linked && added(n)) continue;
-			const ok = await work(n, n === reportsHome);
-			if (!ok) failedNames.add(n);
-			if (!ok && n === reportsHome) stop = true;
+			if (rows[n]?.linked && added(n)) {
+				ids.push(idOf(n)!);
+				continue;
+			}
+			const r = await work(n, n === reportsHome);
+			if (r.ok && r.id !== undefined) {
+				ids.push(r.id);
+				if (r.created) created += 1;
+			} else failedNames.add(n);
+			if (!r.ok && n === reportsHome) stop = true;
 		}
 		refresh();
 		setRunning(false);
-		return failedNames;
+		return { failed: failedNames, ids, created };
 	}
 
 	const done = (n: string) => added(n) && (connection.implicit || !!rows[n]?.linked);
 	const live = chosen.filter((n) => !rows[n]?.blocked);
 	const pendingNew = live.filter(newOnes);
-	const allDone = live.length > 0 && live.every(done);
-	const finished = allDone && pendingNew.length === 0;
 	const addedCount = () => Object.values(rows).filter((r) => r.id !== undefined).length;
 	const idsOf = (names: string[]) => names.map(idOf).filter((i): i is number => i !== undefined);
-	const next = () => onNext(idsOf(live), addedCount());
+	const doneNames = live.filter(done);
 	const failed = Object.values(rows).some((r) => r.error);
 
+	/** One click: add and link everything chosen, then move on by itself when every one succeeded. */
+	const runAndAdvance = () =>
+		void run().then((r) => {
+			if (r.failed.size === 0) onNext(r.ids, addedCount() + r.created);
+		});
+	const retryOne = (n: string) =>
+		void run(n).then((r) => {
+			if (r.failed.size === 0 && pendingNew.every((x) => x === n)) onNext([...new Set([...idsOf(doneNames), ...r.ids])], addedCount() + r.created);
+		});
+	const continueWithout = () => onNext(idsOf(doneNames), addedCount());
+
 	let primary: { label: string; onClick: () => void; disabled?: boolean };
-	if (finished) primary = { label: 'Next', onClick: next };
-	else if (pendingNew.length > 0) primary = { label: `Add ${pendingNew.length} ${pendingNew.length === 1 ? 'domain' : 'domains'}`, onClick: () => void run(), disabled: false };
-	else primary = { label: 'Next', onClick: () => void run().then((f) => (f.size === 0 ? onNext(idsOf(live), addedCount()) : undefined)), disabled: live.length === 0 };
+	if (pendingNew.length > 0) primary = { label: `Add ${pendingNew.length} ${pendingNew.length === 1 ? 'domain' : 'domains'}`, onClick: runAndAdvance };
+	else primary = { label: 'Next', onClick: runAndAdvance, disabled: live.length === 0 };
 
 	return (
 		<StepCard title="Choose domains">
@@ -177,7 +195,7 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 								{row?.error ? (
 									<div className="flex flex-wrap items-center gap-2 pl-8 text-sm text-danger" role="alert">
 										<span>{n}: {row.error}</span>
-										<Button size="sm" variant="secondary" disabled={running} onClick={() => void run(n)}>
+										<Button size="sm" variant="secondary" disabled={running} onClick={() => retryOne(n)}>
 											Try again
 										</Button>
 									</div>
@@ -207,6 +225,13 @@ export function DomainsStep({ connection, onNext }: { connection: CfConnection; 
 				{limit ? <PlanLimitNotice limit={limit} /> : null}
 				{failed && !running ? <Alert variant="warning">Some domains could not be added. Try them again, or continue without them.</Alert> : null}
 				<StepFooter
+					start={
+						failed && !running && doneNames.length > 0 ? (
+							<Button variant="secondary" onClick={continueWithout}>
+								Continue without them
+							</Button>
+						) : undefined
+					}
 					end={
 						<WriteButton loading={running} disabled={primary.disabled} onClick={primary.onClick}>
 							{running ? 'Adding…' : primary.label}

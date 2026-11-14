@@ -59,7 +59,7 @@ export function CloudflareWizardPage() {
 	// An existing connection makes step 1 unnecessary; the server token has no zone list to choose from.
 	useEffect(() => {
 		if (progress.step !== 'connect' || !connection || returnError) return;
-		go(connection.implicit ? 'domains' : 'zones', { connectionId: connection.id });
+		go(connection.implicit || connection.zones.length > 0 ? 'domains' : 'zones', { connectionId: connection.id });
 	}, [progress.step, connection, returnError, go]);
 
 	const markAll = (ids: number[], patch: Parameters<typeof markWizardState>[1]) => void Promise.all(ids.map((id) => markWizardState(id, patch)));
@@ -89,7 +89,7 @@ export function CloudflareWizardPage() {
 			<LoadError error={conns.error} onRetry={() => void conns.refetch()} title="Could not check Cloudflare" />
 		);
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
-		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit ? 'domains' : 'zones', { connectionId: c.id }); }} />;
+		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
 	} else if (progress.step === 'zones' && connection) {
 		body = <ZonesStep connection={connection} onNext={() => go('domains')} />;
 	} else if (progress.step === 'domains' && connection) {

@@ -96,7 +96,7 @@ describe('PlanStep', () => {
 		renderApp(<PlanStep stepKey="dmarc" domainIds={[1]} onNext={() => {}} />, {
 			routes: { 'POST /api/onboarding/dns-plan': plan([w({ action: 'update', before: 'v=DMARC1; p=reject', content: 'v=DMARC1; p=reject; rua=mailto:rua@reports.example.com' })]) },
 		});
-		const row = (await screen.findByText('Update')).closest('tr')!;
+		const row = (await screen.findByText('Update')).closest<HTMLElement>('li, tr')!;
 		expect(within(row).getByText(/Before:/)).toBeInTheDocument();
 		expect(row.textContent).toContain('v=DMARC1; p=reject');
 		expect(row.textContent).toContain('After:');
@@ -108,14 +108,48 @@ describe('PlanStep', () => {
 			routes: {
 				'POST /api/onboarding/dns-plan': plan(
 					[w({ id: 'catch_all', type: 'EMAIL_ROUTING', content: 'Every address at reports.example.com → this Worker', action: 'rule' })],
-					{ not_written: [{ what: 'Reports mailbox', reason: 'Nothing to do.', link: '#/domains/1/setup' }] },
+					{ not_written: [{ what: 'Reports mailbox', step: 'reports_mailbox', reason: 'Nothing to do.', link: '/domains/1/setup' }, { what: 'SPF and DKIM', step: null, reason: 'Hidden here.' }, { what: 'DMARC', step: 'dmarc', reason: 'Other step.' }] },
 					'reports_mailbox',
 				),
 			},
 		});
 		expect(await screen.findByText('Every address at reports.example.com → this Worker')).toBeInTheDocument();
 		onePrimary('Write 1 change');
-		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toHaveAttribute('href', '#/domains/1/setup');
+		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toHaveAttribute('href', '/domains/1/setup');
+		expect(screen.queryByText(/Hidden here/)).toBeNull();
+		expect(screen.queryByText(/Other step/)).toBeNull();
+	});
+});
+
+describe('PlanStep write results and layout', () => {
+	it('says "Written and checked in Cloudflare" when verified, else "Written"', async () => {
+		const user = userEvent.setup();
+		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, {
+			routes: {
+				'POST /api/onboarding/dns-plan': plan(two),
+				'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: true }, { id: 'dmarc:2', ok: true, verified: false }] },
+			},
+		});
+		await user.click(await screen.findByRole('button', { name: 'Write 2 records' }));
+		expect(await screen.findByText('Written and checked in Cloudflare')).toBeInTheDocument();
+		expect(screen.getAllByText('Written')).toHaveLength(1);
+	});
+
+	it('stacks each write below md and uses the table from md', async () => {
+		const orig = window.matchMedia;
+		const { unmount } = renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': plan(two) } });
+		await screen.findByText('Write 2 records', { selector: 'button' }).catch(() => {});
+		expect(await screen.findAllByRole('listitem')).toHaveLength(2);
+		expect(screen.queryByRole('table')).toBeNull();
+		unmount();
+		window.matchMedia = ((q: string) => ({ ...orig(q), matches: true })) as typeof window.matchMedia;
+		try {
+			renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': plan(two) } });
+			expect(await screen.findByRole('table')).toBeInTheDocument();
+			expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+		} finally {
+			window.matchMedia = orig;
+		}
 	});
 });
 
@@ -135,7 +169,8 @@ describe('DoneStep', () => {
 		);
 		expect(await screen.findByText('3 domains added, 5 records written')).toBeInTheDocument();
 		await waitFor(() => expect(calls.find(c => c.path === '/api/onboarding/first-check')?.body).toEqual({ domain_ids: [1, 2, 3] }));
-		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toHaveAttribute('href', '/domains/1/setup');
+		expect(screen.getAllByText('Public DNS can take a few minutes to show the changes.')).toHaveLength(1);
 		onePrimary('Go to overview');
 		await user.click(screen.getByRole('button', { name: 'Go to overview' }));
 		expect(screen.getByTestId('where')).toHaveTextContent('/');

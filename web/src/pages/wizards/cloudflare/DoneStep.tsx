@@ -1,7 +1,7 @@
 import { Alert, Button } from '@ready-set-mail/ui';
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router';
-import { firstCheck, type NotWritten } from '../../../lib/dns-plan';
+import { Link, useNavigate } from 'react-router';
+import { appRoute, firstCheck, type NotWritten } from '../../../lib/dns-plan';
 
 export interface DoneStepProps {
 	domainIds: number[];
@@ -35,7 +35,7 @@ export function DoneStep({ domainIds, written, notWritten }: DoneStepProps) {
 								{n.link ? (
 									<>
 										{' '}
-										<a href={n.link}>Set it up by hand</a>
+										<Link className="underline" to={appRoute(n.link)}>Set it up by hand</Link>
 									</>
 								) : null}
 							</li>
@@ -43,6 +43,7 @@ export function DoneStep({ domainIds, written, notWritten }: DoneStepProps) {
 					</ul>
 				</Alert>
 			) : null}
+			<p className="text-sm text-ink-2">Public DNS can take a few minutes to show the changes.</p>
 			<div>
 				<Button onClick={() => navigate('/')}>Go to overview</Button>
 			</div>

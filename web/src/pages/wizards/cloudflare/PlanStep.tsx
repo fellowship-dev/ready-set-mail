@@ -1,8 +1,9 @@
 import { Alert, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ready-set-mail/ui';
 import { Check, Copy } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import { errorMessage } from '../../../lib/api';
-import { applyStep, fetchPlan, pendingWrites, type NotWritten, type PlanStepKey, type PlanWrite } from '../../../lib/dns-plan';
+import { appRoute, applyStep, fetchPlan, pendingWrites, type NotWritten, type PlanStepKey, type PlanWrite } from '../../../lib/dns-plan';
 
 export interface PlanStepProps {
 	stepKey: PlanStepKey;
@@ -12,10 +13,20 @@ export interface PlanStepProps {
 	onWritten?: (writtenIds: string[]) => void;
 }
 
-const RELEVANT: Record<PlanStepKey, (n: NotWritten) => boolean> = {
-	dmarc: (n) => n.what === 'DMARC' || n.what === 'Report authorisation',
-	reports_mailbox: (n) => n.what === 'Reports mailbox',
-};
+/** Whether the viewport is at least `md` (768px): the table from there, stacked blocks below. */
+function useWide() {
+	const q = '(min-width: 768px)';
+	const [wide, setWide] = useState(() => (typeof window !== 'undefined' ? !!window.matchMedia?.(q).matches : false));
+	useEffect(() => {
+		const m = window.matchMedia?.(q);
+		if (!m) return;
+		const on = () => setWide(m.matches);
+		on();
+		m.addEventListener?.('change', on);
+		return () => m.removeEventListener?.('change', on);
+	}, []);
+	return wide;
+}
 
 /** Value with a break opportunity after every `;`, so long DMARC/DKIM values wrap at tag boundaries. */
 function Breakable({ text }: { text: string }) {
@@ -72,6 +83,54 @@ function Change({ w }: { w: PlanWrite }) {
 	}
 }
 
+function Field({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<div className="min-w-0">
+			<p className="text-xs text-ink-3">{label}</p>
+			<div className="min-w-0">{children}</div>
+		</div>
+	);
+}
+
+function ValueCell({ w }: { w: PlanWrite }) {
+	if (w.type === 'EMAIL_ROUTING') return <p className="[overflow-wrap:anywhere]">{w.content}</p>;
+	return (
+		<div className="min-w-0 space-y-1">
+			{w.action === 'update' && w.before ? (
+				<p className="font-mono text-xs text-ink-2 [overflow-wrap:anywhere]">
+					<span className="font-sans">Before: </span>
+					<Breakable text={w.before} />
+				</p>
+			) : null}
+			{w.action === 'update' ? <p className="text-xs text-ink-3">After:</p> : null}
+			<div className="flex flex-wrap items-start gap-2">
+				<p className="min-w-0 flex-1 basis-40 font-mono text-xs [overflow-wrap:anywhere]">
+					<Breakable text={value(w)} />
+				</p>
+				<CopyValue text={w.content} label={`Copy value of ${w.name}`} />
+			</div>
+		</div>
+	);
+}
+
+function Status({ w, ok, verified, error }: { w: PlanWrite; ok: boolean; verified: boolean; error?: string }) {
+	return (
+		<>
+			<Change w={w} />
+			{ok ? (
+				<p className="mt-1 flex items-center gap-1 text-success">
+					<Check aria-hidden className="size-4 shrink-0" />
+					{verified ? 'Written and checked in Cloudflare' : 'Written'}
+				</p>
+			) : error ? (
+				<p role="alert" className="mt-1 text-danger [overflow-wrap:anywhere]">
+					{error}
+				</p>
+			) : null}
+		</>
+	);
+}
+
 export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProps) {
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<string | null>(null);
@@ -80,6 +139,9 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	const [satisfied, setSatisfied] = useState(false);
 	const [notWritten, setNotWritten] = useState<NotWritten[]>([]);
 	const [done, setDone] = useState<Set<string>>(new Set());
+	const [verified, setVerified] = useState<Set<string>>(new Set());
+	const wide = useWide();
+	const verifiedRef = useRef<Set<string>>(new Set());
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState(false);
 	const [changed, setChanged] = useState(false);
@@ -94,7 +156,7 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 			setPlanId(plan.plan_id);
 			setWrites(step?.writes ?? []);
 			setSatisfied(step ? step.satisfied : true);
-			setNotWritten(plan.not_written.filter(RELEVANT[stepKey]));
+			setNotWritten(plan.not_written.filter((n) => n.step === stepKey));
 			return step?.writes ?? [];
 		},
 		[stepKey],
@@ -136,10 +198,15 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 			}
 			const errs: Record<string, string> = {};
 			for (const x of r.results) {
-				if (x.ok) doneRef.current.add(x.id);
+				if (x.ok) {
+					doneRef.current.add(x.id);
+					if (x.verified) verifiedRef.current.add(x.id);
+					else verifiedRef.current.delete(x.id);
+				}
 				else errs[x.id] = x.error ?? 'This record could not be written.';
 			}
 			setDone(new Set(doneRef.current));
+			setVerified(new Set(verifiedRef.current));
 			setErrors(errs);
 			if (Object.keys(errs).length) setFailedSome(true);
 			else {
@@ -198,66 +265,56 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 			{errors._ ? <Alert variant="danger">{errors._}</Alert> : null}
 			{!loading && !loadError && satisfied && !finished && !failedSome ? <p className="font-medium text-ink-1">Already in place</p> : null}
 			{finished ? <Alert variant="success">Done. Every record below is written.</Alert> : null}
-			{noneToShow ? null : writes.length > 0 ? (
-				<Table label="Records for this step">
+			{noneToShow || writes.length === 0 ? null : wide ? (
+				<Table label="Records for this step" className="table-fixed">
 					<TableHeader>
 						<TableRow>
-							<TableHead>Domain</TableHead>
-							<TableHead>Record</TableHead>
-							<TableHead>Type</TableHead>
+							<TableHead className="w-[14%]">Domain</TableHead>
+							<TableHead className="w-[20%]">Record</TableHead>
+							<TableHead className="w-[8%]">Type</TableHead>
 							<TableHead className="w-[40%]">Value</TableHead>
 							<TableHead>Change</TableHead>
 						</TableRow>
 					</TableHeader>
 					<TableBody>
-						{writes.map((w) => {
-							const isRule = w.type === 'EMAIL_ROUTING';
-							const ok = done.has(w.id);
-							return (
-								<TableRow key={w.id}>
-									<TableCell className="align-top [overflow-wrap:anywhere]">{w.domain}</TableCell>
-									<TableCell className="align-top font-mono text-xs [overflow-wrap:anywhere]">{isRule ? '' : w.name}</TableCell>
-									<TableCell className="align-top">{isRule ? 'Rule' : w.type}</TableCell>
-									<TableCell className="align-top">
-										{isRule ? (
-											<p>{w.content}</p>
-										) : (
-											<div className="space-y-1">
-												{w.action === 'update' && w.before ? (
-													<p className="font-mono text-xs text-ink-2 [overflow-wrap:anywhere]">
-														<span className="font-sans">Before: </span>
-														<Breakable text={w.before} />
-													</p>
-												) : null}
-												{w.action === 'update' ? <p className="text-xs text-ink-3">After:</p> : null}
-												<div className="flex items-start gap-2">
-													<p className="min-w-0 flex-1 font-mono text-xs [overflow-wrap:anywhere]">
-														<Breakable text={value(w)} />
-													</p>
-													<CopyValue text={w.content} label={`Copy value of ${w.name}`} />
-												</div>
-											</div>
-										)}
-									</TableCell>
-									<TableCell className="align-top">
-										<Change w={w} />
-										{ok ? (
-											<p className="mt-1 flex items-center gap-1 text-success">
-												<Check aria-hidden className="size-4" />
-												Written
-											</p>
-										) : errors[w.id] ? (
-											<p role="alert" className="mt-1 text-danger">
-												{errors[w.id]}
-											</p>
-										) : null}
-									</TableCell>
-								</TableRow>
-							);
-						})}
+						{writes.map((w) => (
+							<TableRow key={w.id}>
+								<TableCell className="align-top [overflow-wrap:anywhere]">{w.domain}</TableCell>
+								<TableCell className="align-top font-mono text-xs [overflow-wrap:anywhere]">{w.type === 'EMAIL_ROUTING' ? '' : w.name}</TableCell>
+								<TableCell className="align-top">{w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type}</TableCell>
+								<TableCell className="align-top">
+									<ValueCell w={w} />
+								</TableCell>
+								<TableCell className="align-top">
+									<Status w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />
+								</TableCell>
+							</TableRow>
+						))}
 					</TableBody>
 				</Table>
-			) : null}
+			) : (
+				<ul aria-label="Records for this step" className="space-y-3">
+					{writes.map((w) => (
+						<li key={w.id} className="min-w-0 space-y-2 rounded-lg border border-line p-3 text-sm">
+							<Field label="Domain">
+								<span className="font-medium [overflow-wrap:anywhere]">{w.domain}</span>
+							</Field>
+							{w.type === 'EMAIL_ROUTING' ? null : (
+								<Field label="Record">
+									<span className="font-mono text-xs [overflow-wrap:anywhere]">{w.name}</span>
+								</Field>
+							)}
+							<Field label="Type">{w.type === 'EMAIL_ROUTING' ? 'Rule' : w.type}</Field>
+							<Field label="Value">
+								<ValueCell w={w} />
+							</Field>
+							<Field label="Change">
+								<Status w={w} ok={done.has(w.id)} verified={verified.has(w.id)} error={errors[w.id]} />
+							</Field>
+						</li>
+					))}
+				</ul>
+			)}
 			{notWritten.length > 0 ? (
 				<ul className="space-y-1 text-sm text-ink-2">
 					{notWritten.map((n, i) => (
@@ -266,9 +323,9 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 							{n.link ? (
 								<>
 									{' '}
-									<a className="text-brand-ink underline" href={n.link}>
+									<Link className="text-brand-ink underline" to={appRoute(n.link)}>
 										Set it up by hand
-									</a>
+									</Link>
 								</>
 							) : null}
 						</li>
