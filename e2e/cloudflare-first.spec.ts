@@ -75,19 +75,18 @@ test('connect Cloudflare with a token, review and write the records, land on the
   await expect(page.getByRole('heading', { name: 'DMARC' }).or(page.getByText(/DMARC/).first())).toBeVisible({ timeout: 30_000 });
   expect(flat(await state(inst))).toEqual(flat(before));
 
-  // DMARC step: shows the plan, one primary button writes it.
-  const write = page.getByRole('button', { name: /^Write \d+ records?$/ });
+  // DMARC step: shows the plan, one primary button writes it and moves on.
+  const write = page.getByRole('button', { name: /^Write \d+ records? and continue$/ });
   await expect(write).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('v=DMARC1', { exact: false }).first()).toBeVisible();
   await write.click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
 
-  // Reports mailbox step.
+  // Reports mailbox step: the previous write is reported in its header.
+  await expect(page.getByText(/records? written to Cloudflare/).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/Email Routing is off/)).toBeVisible({ timeout: 30_000 });
-  const mailboxWrite = page.getByRole('button', { name: /^Write \d+ (records?|changes?)$/ });
+  const mailboxWrite = page.getByRole('button', { name: /^Write \d+ (records?|changes?) and continue$/ });
   await expect(mailboxWrite).toBeVisible();
   await mailboxWrite.click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
 
   await expect(page.getByRole('button', { name: 'Go to overview' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Go to overview' }).click();
@@ -120,6 +119,8 @@ test('"I\'ll add DNS records myself" reaches the copy-and-paste records', async 
   await createOwner(page, inst);
   const before = flat(await state(inst));
   await expect(page.getByRole('region', { name: 'Connect Cloudflare' })).toBeVisible();
+  await expect(page.getByLabel(/domain/i)).toHaveCount(0);
+  await page.getByRole('button', { name: "I'll add DNS records myself" }).click();
   await expect(page.getByRole('heading', { name: "I'll add DNS records myself" })).toBeVisible();
   await manualToRecords(page);
   expect(flat(await state(inst))).toEqual(before);
