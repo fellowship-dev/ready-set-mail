@@ -12,8 +12,14 @@ export interface DmarcFacts {
 	inherited_from: string | null;
 	/** pct= of the record that applies (100 when absent); null when there is no usable record. Optional for older callers. */
 	pct?: number | null;
-	/** sp= of the record that applies (its p= when absent); null when there is no usable record. */
+	/**
+	 * The governing record's tags (own record, else the organizational domain's), so a page can name the exact tag to change:
+	 * `p` its p= (null: no usable record), `sp` its sp= as written (null: no sp= tag). Absent: the caller did not read them.
+	 */
+	p?: string | null;
 	sp?: string | null;
+	/** The governing record's rua= addresses, lower-cased without mailto:. Compared with the domain's reports address when stored; never stored. */
+	rua?: string[] | null;
 }
 
 export function domainQueries(db: Db, workspaceId: string) {
@@ -152,7 +158,14 @@ export function domainQueries(db: Db, workspaceId: string) {
 				set.dmarc_issue = r.dmarc.issue;
 				set.dmarc_inherited_from = r.dmarc.inherited_from;
 				if (r.dmarc.pct !== undefined) set.dmarc_pct = r.dmarc.pct;
-				if (r.dmarc.sp !== undefined) set.dmarc_sp = r.dmarc.sp;
+				if (r.dmarc.p !== undefined) {
+					set.dmarc_p = r.dmarc.p;
+					set.dmarc_sp = r.dmarc.sp ?? null;
+					// Only whether the governing record sends reports to this domain's own address is kept, compared in SQL
+					// against the row's rua_address (an empty address never matches).
+					const list = `,${(r.dmarc.rua ?? []).map((a) => a.trim().toLowerCase()).join(',')},`;
+					set.dmarc_rua = sql`CASE WHEN TRIM(COALESCE(${domains.rua_address}, '')) <> '' AND INSTR(${list}, ',' || LOWER(TRIM(${domains.rua_address})) || ',') > 0 THEN 1 ELSE 0 END` as any;
+				}
 			}
 			if (complete) {
 				set.dns_checked_at = r.at;

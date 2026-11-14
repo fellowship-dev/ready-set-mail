@@ -3,7 +3,8 @@
 // A field is `undefined` when DNS could not answer (failure), `null` when DNS answered "no record", and the value
 // otherwise. Unknown is never folded into absent.
 
-import { createResolver, isSpfRecord, lookupDmarc, type DmarcLookup, type Resolver, type TxtResult } from '@ready-set-mail/dns-checks';
+import { createResolver, isSpfRecord, lookupDmarc, parseDmarcRecord, ruaEntries, ruaEntryAddress, type DmarcLookup, type Resolver, type TxtResult } from '@ready-set-mail/dns-checks';
+import { parseDmarcTags } from '@ready-set-mail/dns-checks/dmarc-tags';
 import type { DmarcFacts } from '@ready-set-mail/db';
 import { RECORDS_SEPARATOR, lookupSpf } from './dns-check';
 
@@ -22,12 +23,26 @@ export function spfFromTxt(records: readonly string[]): string | null {
 export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
   if (l.status === 'error') return undefined;
   const inherited_from = l.inherited ? l.organizationalDomain : null;
-  if (l.status === 'none') return { policy: null, issue: null, inherited_from: null, pct: null, sp: null };
-  if (l.status === 'multiple') return { policy: null, issue: 'multiple', inherited_from, pct: null, sp: null };
-  if (!l.record?.valid) return { policy: null, issue: 'invalid', inherited_from, pct: null, sp: null };
-  // pct= and sp= of the applicable record, so the overview can tell full enforcement from partial (pct below 100) and an
-  // enforced domain whose subdomains are not (sp weaker than p).
-  return { policy: l.inherited ? l.record.subdomainPolicy : l.record.policy, issue: null, inherited_from, pct: l.record.pct, sp: l.record.subdomainPolicy };
+  const none = { pct: null, p: null, sp: null, rua: null };
+  if (l.status === 'none') return { policy: null, issue: null, inherited_from: null, ...none };
+  if (l.status === 'multiple') return { policy: null, issue: 'multiple', inherited_from, ...none };
+  if (!l.record?.valid) return { policy: null, issue: 'invalid', inherited_from, ...none };
+  return { policy: l.inherited ? l.record.subdomainPolicy : l.record.policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
+}
+
+/**
+ * pct=, p=, sp= (as written: null without the tag) and the rua= addresses of the governing record, so every page can tell
+ * full enforcement from partial, name the exact tag that sets a subdomain's policy, and say whether reports reach us.
+ */
+export function governingTags(raw: string): Required<Pick<DmarcFacts, 'pct' | 'p' | 'sp' | 'rua'>> {
+  const rec = parseDmarcRecord(raw);
+  const sp = parseDmarcTags(raw)['sp']?.trim().toLowerCase();
+  return {
+    pct: rec.pct,
+    p: rec.policy,
+    sp: sp === 'none' || sp === 'quarantine' || sp === 'reject' ? sp : null,
+    rua: ruaEntries(raw).map(ruaEntryAddress).filter(Boolean),
+  };
 }
 
 /**

@@ -104,9 +104,11 @@ export interface DomainCheckSummary {
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
 	spf_lookup_count: number | null;
-	/** pct= and sp= of the applicable DMARC record at the last read (0012). Null: not read since. */
+	/** The governing DMARC record at the last read (0012): pct=, p=, sp= as written (null: no tag), and whether its rua= names this domain's reports address (1/0). dmarc_p null with a policy: not read since 0012. */
 	dmarc_pct: number | null;
+	dmarc_p: string | null;
 	dmarc_sp: string | null;
+	dmarc_rua: number | null;
 }
 
 export interface UncountedSummary {
@@ -165,7 +167,9 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			d.dns_last_good_status,
 			d.spf_lookup_count,
 			d.dmarc_pct,
+			d.dmarc_p,
 			d.dmarc_sp,
+			d.dmarc_rua,
 			COALESCE(ar.total, 0)     AS total_messages,
 			COALESCE(ar.pass, 0)      AS pass_messages,
 			COALESCE(ar.fail, 0)      AS fail_messages,

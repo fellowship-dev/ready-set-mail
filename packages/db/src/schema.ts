@@ -128,8 +128,14 @@ export const domains = sqliteTable(
 		dns_last_good_status: text('dns_last_good_status'),
 		/** Unix seconds the domain's reports were connected to the hosted fixed address (0011). Null: not connected. */
 		reports_connected_at: integer('reports_connected_at'),
-		/** The DMARC record's sp= as read at the last good check (0012): own record's sp (its p when absent), or the covering record's. Null: not read since 0012. dmarc_pct holds pct= from the same read. */
+		/**
+		 * The governing DMARC record (own, else the organizational domain's) at the last read (0012): its p=, its sp= as written
+		 * (null: no sp= tag), and whether its rua= names this domain's reports address (1/0). dmarc_p null: no usable record, or
+		 * not read since 0012. dmarc_pct holds pct= from the same read.
+		 */
 		dmarc_sp: text('dmarc_sp'),
+		dmarc_p: text('dmarc_p'),
+		dmarc_rua: integer('dmarc_rua'),
 	},
 	(t) => [
 		index('idx_domains_domain').on(t.domain),

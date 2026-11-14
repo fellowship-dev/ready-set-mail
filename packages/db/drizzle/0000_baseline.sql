@@ -260,6 +260,8 @@ CREATE TABLE `domains` (
 	`dns_last_good_status` text,
 	`reports_connected_at` integer,
 	`dmarc_sp` text,
+	`dmarc_p` text,
+	`dmarc_rua` integer,
 	FOREIGN KEY (`parent_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`cf_connection_id`) REFERENCES `cloudflare_connections`(`id`) ON UPDATE no action ON DELETE set null
 );

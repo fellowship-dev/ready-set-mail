@@ -7,11 +7,14 @@ const found = (raw: string, inherited: boolean): DmarcLookup => ({
 });
 
 describe('dmarcFactsFromLookup: the effective policy for this domain', () => {
-  it('keeps pct= and sp= of the record that applies, so partial enforcement is visible', () => {
-    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; pct=10', false))).toEqual({ policy: 'reject', issue: null, inherited_from: null, pct: 10, sp: 'reject' });
-    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; sp=none', false))).toEqual({ policy: 'reject', issue: null, inherited_from: null, pct: 100, sp: 'none' });
-    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; sp=quarantine', true))).toEqual({ policy: 'quarantine', issue: null, inherited_from: 'acme.com', pct: 100, sp: 'quarantine' });
-    expect(dmarcFactsFromLookup({ status: 'none', domain: 'a.com', record: null, foundAt: null, inherited: false, organizationalDomain: 'a.com' })).toEqual({ policy: null, issue: null, inherited_from: null, pct: null, sp: null });
+  it('keeps the governing record\'s pct=, p=, sp= as written and rua= addresses, so every page can name the tag to change', () => {
+    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; pct=10', false))).toEqual({ policy: 'reject', issue: null, inherited_from: null, pct: 10, p: 'reject', sp: null, rua: [] });
+    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; sp=none; rua=mailto:A@Reports.Test!10m,mailto:b@x.test', false))).toEqual({ policy: 'reject', issue: null, inherited_from: null, pct: 100, p: 'reject', sp: 'none', rua: ['a@reports.test', 'b@x.test'] });
+    // Sheffield shape: the subdomain's policy is the parent's sp=, and its p= is kept to say what else a change affects.
+    expect(dmarcFactsFromLookup(found('v=DMARC1; p=reject; sp=quarantine', true))).toEqual({ policy: 'quarantine', issue: null, inherited_from: 'acme.com', pct: 100, p: 'reject', sp: 'quarantine', rua: [] });
+    // UCSC shape: pct=0 is kept, sp=none as written.
+    expect(dmarcFactsFromLookup(found('v=DMARC1; p=quarantine; sp=none; pct=0', true))).toMatchObject({ policy: 'none', pct: 0, p: 'quarantine', sp: 'none' });
+    expect(dmarcFactsFromLookup({ status: 'none', domain: 'a.com', record: null, foundAt: null, inherited: false, organizationalDomain: 'a.com' })).toEqual({ policy: null, issue: null, inherited_from: null, pct: null, p: null, sp: null, rua: null });
   });
 
   it.each([

@@ -95,11 +95,11 @@ describe('0011 reports_connected_at', () => {
 });
 
 describe('0012 dmarc_enforcement', () => {
-	it('adds a nullable dmarc_sp column and leaves existing domains unread', () => {
+	it('adds nullable dmarc_p, dmarc_sp and dmarc_rua columns and leaves existing domains unread', () => {
 		const d = createTestD1();
 		applyMigrations(d.sqlite, { through: '0011_reports_connected_at.sql' });
 		d.sqlite.prepare("INSERT INTO domains (domain, rua_address, dmarc_policy) VALUES ('acme.com', 'r@x', 'reject')").run();
 		expect(applyMigrations(d.sqlite, { through: '0012_dmarc_enforcement.sql' })).toEqual(['0012_dmarc_enforcement.sql']);
-		expect(d.sqlite.prepare('SELECT dmarc_policy, dmarc_pct, dmarc_sp FROM domains').all()).toEqual([{ dmarc_policy: 'reject', dmarc_pct: null, dmarc_sp: null }]);
+		expect(d.sqlite.prepare('SELECT dmarc_policy, dmarc_pct, dmarc_sp, dmarc_p, dmarc_rua FROM domains').all()).toEqual([{ dmarc_policy: 'reject', dmarc_pct: null, dmarc_sp: null, dmarc_p: null, dmarc_rua: null }]);
 	});
 });

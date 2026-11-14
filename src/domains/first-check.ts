@@ -6,7 +6,7 @@
 // The write goes through `recordDnsCheck`, so "no record" is stored only when DNS answered so. A read in which SPF or DMARC
 // got no answer stores nothing (the card keeps saying "not checked yet", never "missing"). It never fails the proof.
 import type { Resolver } from '@ready-set-mail/dns-checks';
-import { snapshotDns, type DnsSnapshot } from '../email/dns-snapshot';
+import { governingTags, snapshotDns, type DnsSnapshot } from '../email/dns-snapshot';
 import type { TenantContext } from '../tenancy/context';
 import { cachedPreview, type ClaimPreview } from './claim-preview';
 import type { VerifiedVia } from './ownership';
@@ -22,7 +22,8 @@ export function snapshotFromPreview(p: ClaimPreview): DnsSnapshot {
     out.spf_record = p.spf.status === 'found' ? p.spf.record : null;
     if (p.spf.lookup_count !== null) out.spf_lookup_count = p.spf.lookup_count;
   }
-  if (p.dmarc.status !== 'error') out.dmarc = { policy: p.dmarc.policy, issue: p.dmarc.issue, inherited_from: p.dmarc.inherited_from, pct: p.dmarc.pct };
+  // The record text the preview read is the governing record (single, valid) whenever it carries a policy: its tags too.
+  if (p.dmarc.status !== 'error') out.dmarc = { policy: p.dmarc.policy, issue: p.dmarc.issue, inherited_from: p.dmarc.inherited_from, pct: p.dmarc.pct, ...(p.dmarc.policy && p.dmarc.record ? governingTags(p.dmarc.record) : { p: null, sp: null, rua: null }) };
   return out;
 }
 
@@ -55,9 +56,11 @@ const RECHECK_AFTER_SECONDS = 300;
  * A domain whose last good check stored an enforcing policy but no pct= (every read since pct= is recorded stores a number):
  * its level stands, marked "not re-checked yet", and viewing it starts one refresh, the daily job's snapshot and store.
  */
-export function needsPctRecheck(s: { dmarc_policy: string | null; dmarc_pct: number | null; dns_checked_at: number | null; dns_check_attempted_at: number | null }, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
+export function needsPctRecheck(s: { dmarc_policy: string | null; dmarc_pct: number | null; dmarc_p?: string | null; dns_checked_at: number | null; dns_check_attempted_at: number | null }, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
   const enforcing = s.dmarc_policy === 'quarantine' || s.dmarc_policy === 'reject';
-  return enforcing && s.dmarc_pct === null && s.dns_checked_at !== null && nowSeconds - (s.dns_check_attempted_at ?? 0) >= RECHECK_AFTER_SECONDS;
+  // Also a policy whose governing record's tags (p=, sp=, rua: migration 0012) were not read yet: same one refresh.
+  const tagsUnread = s.dmarc_policy !== null && s.dmarc_p === null;
+  return ((enforcing && s.dmarc_pct === null) || tagsUnread) && s.dns_checked_at !== null && nowSeconds - (s.dns_check_attempted_at ?? 0) >= RECHECK_AFTER_SECONDS;
 }
 
 /** The daily job's refresh for one domain (src/cron.ts): one snapshot, stored with recordDnsCheck's rules (a failure keeps the stored values). */
@@ -77,7 +80,7 @@ export async function recheckStoredDns(tenant: TenantContext, domainId: number, 
  */
 export async function reservePctRecheck(tenant: TenantContext, domainId: number, nowSeconds = Math.floor(Date.now() / 1000)): Promise<boolean> {
   const r = await (tenant.env.DB as D1Database).prepare(
-    "UPDATE domains SET dns_check_attempted_at = ?1 WHERE id = ?2 AND workspace_id = ?3 AND dmarc_pct IS NULL AND dmarc_policy IN ('quarantine', 'reject') AND (dns_check_attempted_at IS NULL OR dns_check_attempted_at <= ?4)",
+    "UPDATE domains SET dns_check_attempted_at = ?1 WHERE id = ?2 AND workspace_id = ?3 AND ((dmarc_pct IS NULL AND dmarc_policy IN ('quarantine', 'reject')) OR (dmarc_policy IS NOT NULL AND dmarc_p IS NULL)) AND (dns_check_attempted_at IS NULL OR dns_check_attempted_at <= ?4)",
   ).bind(nowSeconds, domainId, tenant.workspaceId, nowSeconds - RECHECK_AFTER_SECONDS).run();
   return (r.meta.changes ?? 0) === 1;
 }
