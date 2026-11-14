@@ -116,14 +116,26 @@ describe('Cloudflare wizard: zones', () => {
 		expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ zone_ids: [zone(1).id, zone(3).id] });
 	});
 
-	it('ticks nothing above 10, and Select all ticks everything', async () => {
+	it('pre-ticks every zone however many, Next is ready, and unticking stays possible', async () => {
 		at(Array.from({ length: 11 }, (_, i) => zone(i + 1)));
 		const boxes = await screen.findAllByRole('checkbox');
-		boxes.forEach((b) => expect(b).not.toBeChecked());
-		expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
-		await userEvent.click(screen.getByRole('button', { name: 'Select all' }));
-		screen.getAllByRole('checkbox').forEach((b) => expect(b).toBeChecked());
+		boxes.forEach((b) => expect(b).toBeChecked());
 		expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+		await userEvent.click(boxes[0]!);
+		expect(boxes[0]).not.toBeChecked();
+	});
+
+	it('does not pre-tick a zone another connection already has', async () => {
+		sessionStorage.setItem(KEY, JSON.stringify({ step: 'zones', domainIds: [], written: { domains: 0, records: 0 }, connectionId: 'c1' }));
+		render({
+			'GET /api/cloudflare/connections': offer({ connections: [conn(), conn({ id: 'c2', zones: [{ id: zone(2).id, name: zone(2).name }] })] }),
+			'GET /api/cloudflare/connections/c1/zones': { zones: [zone(1), zone(2)] },
+			'GET /api/domains': { domains: [] },
+			'GET /api/onboarding/dns-state': { states: [] },
+		});
+		const boxes = await screen.findAllByRole('checkbox');
+		expect(boxes[0]).toBeChecked();
+		expect(boxes[1]).not.toBeChecked();
 	});
 });
 
@@ -221,6 +233,21 @@ describe('Cloudflare wizard: resume', () => {
 		expect(await screen.findByText(/Already in place/)).toBeInTheDocument();
 		expect(screen.getByText(/Step 4 of 6/)).toBeInTheDocument();
 		expect(calls.find((c) => c.path === '/api/onboarding/dns-plan')?.body).toEqual({ domain_ids: [1, 2] });
+	});
+
+	it('Write and continue moves on and says what was written in the next step header', async () => {
+		sessionStorage.setItem(KEY, JSON.stringify({ step: 'dmarc', domainIds: [1], written: { domains: 1, records: 0 }, connectionId: 'c1' }));
+		const wr = (id: string, step: string, action = 'create', type = 'TXT') => ({ id, domain: 'a.example.com', zone: 'example.com', type, name: '_x.a.example.com', content: 'v', action, before: null, reason: '' });
+		const dmarc = { plan_id: 'p', steps: [{ key: 'dmarc', satisfied: false, writes: [wr('dmarc:1', 'dmarc'), wr('auth:1', 'dmarc')] }, { key: 'reports_mailbox', satisfied: true, writes: [] }], not_written: [] };
+		render({
+			'GET /api/cloudflare/connections': offer({ connections: [conn()] }),
+			'POST /api/onboarding/dns-plan': dmarc,
+			'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: true }, { id: 'auth:1', ok: true, verified: true }] },
+			'PUT /api/domains/1/wizard-state': { ok: true },
+		});
+		await userEvent.click(await screen.findByRole('button', { name: 'Write 2 records and continue' }));
+		expect(await screen.findByText('2 records written to Cloudflare and checked')).toBeInTheDocument();
+		expect(screen.getByText(/Step 5 of 6/)).toBeInTheDocument();
 	});
 
 	it('persists progress as it moves', async () => {

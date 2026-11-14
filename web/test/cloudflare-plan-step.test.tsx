@@ -28,17 +28,19 @@ const two = [w({ id: 'dmarc:1' }), w({ id: 'dmarc:2', domain: 'example.org', nam
 describe('PlanStep', () => {
 	it('has one primary button in each state, and copy buttons on every value', async () => {
 		const user = userEvent.setup();
-		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, {
-			routes: { 'POST /api/onboarding/dns-plan': plan(two), 'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true }, { id: 'dmarc:2', ok: true }] } },
+		const onNext = vi.fn();
+		const onWritten = vi.fn();
+		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={onNext} onWritten={onWritten} />, {
+			routes: { 'POST /api/onboarding/dns-plan': plan(two), 'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: true }, { id: 'dmarc:2', ok: true, verified: true }] } },
 		});
 		await screen.findAllByRole('button');
-		await screen.findByRole('button', { name: 'Write 2 records' });
-		onePrimary('Write 2 records');
+		await screen.findByRole('button', { name: 'Write 2 records and continue' });
+		onePrimary('Write 2 records and continue');
 		expect(screen.getAllByRole('button', { name: /^Copy value of/ })).toHaveLength(2);
-		await user.click(screen.getByRole('button', { name: 'Write 2 records' }));
-		await screen.findByRole('button', { name: 'Next' });
-		onePrimary('Next');
-		expect(screen.getAllByText('Written')).toHaveLength(2);
+		await user.click(screen.getByRole('button', { name: 'Write 2 records and continue' }));
+		// A full success moves on at once, with what was written.
+		await waitFor(() => expect(onNext).toHaveBeenCalledTimes(1));
+		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 2, rules: 0 });
 	});
 
 	it('is satisfied: "Already in place" and Next', async () => {
@@ -55,7 +57,9 @@ describe('PlanStep', () => {
 	it('shows the failure reason, keeps completed rows and retries only what is needed', async () => {
 		const user = userEvent.setup();
 		let applies = 0;
-		const { calls } = renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, {
+		const onNext = vi.fn();
+		const onWritten = vi.fn();
+		const { calls } = renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={onNext} onWritten={onWritten} />, {
 			routes: {
 				'POST /api/onboarding/dns-plan': () => (applies === 0 ? plan(two) : { ...plan([{ ...two[0]!, action: 'none' }, two[1]!]), plan_id: 'p2' }),
 				'POST /api/onboarding/dns-apply': () => {
@@ -66,16 +70,17 @@ describe('PlanStep', () => {
 				},
 			},
 		});
-		await user.click(await screen.findByRole('button', { name: 'Write 2 records' }));
+		await user.click(await screen.findByRole('button', { name: 'Write 2 records and continue' }));
 		await screen.findByText('This zone is not allowed.');
 		onePrimary('Try again');
+		expect(screen.getByRole('button', { name: 'Continue without them' })).toBeInTheDocument();
 		expect(screen.getByText('Written')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'example.com' })).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Try again' }));
-		await screen.findByRole('button', { name: 'Next' });
+		await waitFor(() => expect(onNext).toHaveBeenCalledTimes(1));
 		const apply = calls.filter(c => c.path === '/api/onboarding/dns-apply');
 		expect(apply[1]!.body.plan_id).toBe('p2');
-		expect(screen.getAllByText('Written')).toHaveLength(2);
+		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 0, rules: 0 });
 	});
 
 	it('shows the new plan when Cloudflare changed, and writes nothing', async () => {
@@ -86,9 +91,9 @@ describe('PlanStep', () => {
 				'POST /api/onboarding/dns-apply': { __status: 409, body: { error: 'x', code: 'plan_changed', plan: { ...plan([w({}), w({ id: 'dmarc:9', name: '_dmarc.b.com', domain: 'b.com' })]), plan_id: 'p9' } } },
 			},
 		});
-		await user.click(await screen.findByRole('button', { name: 'Write 1 record' }));
+		await user.click(await screen.findByRole('button', { name: 'Write 1 record and continue' }));
 		expect(await screen.findByText('Cloudflare changed since you looked; review again.')).toBeInTheDocument();
-		onePrimary('Write 2 records');
+		onePrimary('Write 2 records and continue');
 		expect(screen.queryByText('Written')).toBeNull();
 	});
 
@@ -114,7 +119,7 @@ describe('PlanStep', () => {
 			},
 		});
 		expect(await screen.findByText('Every address at reports.example.com → this Worker')).toBeInTheDocument();
-		onePrimary('Write 1 change');
+		onePrimary('Write 1 change and continue');
 		expect(screen.getByRole('link', { name: 'Set it up by hand' })).toHaveAttribute('href', '/domains/1/setup');
 		expect(screen.queryByText(/Hidden here/)).toBeNull();
 		expect(screen.queryByText(/Other step/)).toBeNull();
@@ -122,15 +127,15 @@ describe('PlanStep', () => {
 });
 
 describe('PlanStep write results and layout', () => {
-	it('says "Written and checked in Cloudflare" when verified, else "Written"', async () => {
+	it('says "Written and checked in Cloudflare" when verified, else "Written" (on a step that stays)', async () => {
 		const user = userEvent.setup();
-		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, {
+		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2, 3]} onNext={() => {}} />, {
 			routes: {
-				'POST /api/onboarding/dns-plan': plan(two),
-				'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: true }, { id: 'dmarc:2', ok: true, verified: false }] },
+				'POST /api/onboarding/dns-plan': plan([...two, w({ id: 'dmarc:3', domain: 'example.net', name: '_dmarc.example.net' })]),
+				'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: true }, { id: 'dmarc:2', ok: true, verified: false }, { id: 'dmarc:3', ok: false, error: 'nope' }] },
 			},
 		});
-		await user.click(await screen.findByRole('button', { name: 'Write 2 records' }));
+		await user.click(await screen.findByRole('button', { name: 'Write 3 records and continue' }));
 		expect(await screen.findByText('Written and checked in Cloudflare')).toBeInTheDocument();
 		expect(screen.getAllByText('Written')).toHaveLength(1);
 	});
@@ -138,7 +143,7 @@ describe('PlanStep write results and layout', () => {
 	it('starts with the intro line, groups the writes by domain, and lays out compact rows (stacked below md, one line from md)', async () => {
 		const orig = window.matchMedia;
 		const { unmount } = renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': plan(two) } });
-		expect(await screen.findByText('Ready Set Mail will write these records to Cloudflare. Nothing changes until you press Write.')).toBeInTheDocument();
+		expect(await screen.findByText('Ready Set Mail will write these records to Cloudflare. Nothing changes until you press the button.')).toBeInTheDocument();
 		expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
 		expect(await screen.findAllByRole('listitem')).toHaveLength(2);
 		expect(screen.queryByRole('table')).toBeNull();
@@ -158,7 +163,7 @@ describe('PlanStep write results and layout', () => {
 			{ id: 'catch_all', domain: 'reports.example.com', zone: 'example.com', type: 'EMAIL_ROUTING', name: 'reports.example.com', content: 'Catch-all rule for example.com: …', action: 'rule', before: null, reason: '' },
 		];
 		renderApp(<PlanStep stepKey="reports_mailbox" domainIds={[1]} onNext={() => {}} />, { routes: { 'POST /api/onboarding/dns-plan': { plan_id: 'p', steps: [{ key: 'reports_mailbox', satisfied: false, writes }], not_written: [] } } });
-		expect(await screen.findByText('Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press Write.')).toBeInTheDocument();
+		expect(await screen.findByText('Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press the button.')).toBeInTheDocument();
 		expect(screen.getByText(/In your Cloudflare zone/)).toHaveTextContent('example.com');
 	});
 });

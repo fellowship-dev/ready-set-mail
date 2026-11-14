@@ -9,8 +9,8 @@ export interface PlanStepProps {
 	stepKey: PlanStepKey;
 	domainIds: number[];
 	onNext: () => void;
-	/** Called once with the ids of the plan writes that succeeded (e.g. `dmarc:7`, `auth:7`, `mx:…`) after a full success. */
-	onWritten?: (writtenIds: string[]) => void;
+	/** Called once, just before `onNext`, with the plan writes that succeeded (e.g. `dmarc:7`, `auth:7`, `mx:…`) and how many were checked in Cloudflare afterwards. */
+	onWritten?: (written: { ids: string[]; verified: number; rules: number }) => void;
 }
 
 /** Whether the viewport is at least `md` (768px): the table from there, stacked blocks below. */
@@ -193,7 +193,6 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const [busy, setBusy] = useState(false);
 	const [changed, setChanged] = useState(false);
-	const [finished, setFinished] = useState(false);
 	const [failedSome, setFailedSome] = useState(false);
 	const doneRef = useRef<Set<string>>(new Set());
 	const ids = domainIds.join(',');
@@ -227,10 +226,11 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 		void load();
 	}, [load]);
 
+	// Report what was written, then move on: the next step says what happened.
 	const finish = () => {
-		setFinished(true);
-		setFailedSome(false);
-		onWritten?.([...doneRef.current]);
+		const ids = [...doneRef.current];
+		if (ids.length > 0) onWritten?.({ ids, verified: ids.filter((i) => verifiedRef.current.has(i)).length, rules: writes.filter((w) => w.action === 'rule' && doneRef.current.has(w.id)).length });
+		onNext();
 	};
 
 	const write = async (currentPlanId: string, currentWrites: PlanWrite[]) => {
@@ -300,9 +300,9 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	if (loading) primary = { label: 'Checking Cloudflare…', onClick: () => {}, disabled: true, loading: true };
 	else if (loadError) primary = { label: 'Try again', onClick: () => void load() };
 	else if (busy) primary = { label: 'Writing…', onClick: () => {}, disabled: true, loading: true };
-	else if (finished || (satisfied && !failedSome) || total === 0) primary = { label: 'Next', onClick: onNext };
+	else if ((satisfied && !failedSome) || total === 0) primary = { label: 'Next', onClick: onNext };
 	else if (failedSome) primary = { label: 'Try again', onClick: () => void retry() };
-	else primary = { label: `Write ${remaining.length} ${hasRule ? (remaining.length === 1 ? 'change' : 'changes') : remaining.length === 1 ? 'record' : 'records'}`, onClick: () => void write(planId, writes) };
+	else primary = { label: `Write ${remaining.length} ${hasRule ? (remaining.length === 1 ? 'change' : 'changes') : remaining.length === 1 ? 'record' : 'records'} and continue`, onClick: () => void write(planId, writes) };
 
 	const noneToShow = !loading && !loadError && writes.length === 0;
 	const groups = writes.reduce<{ domain: string; writes: PlanWrite[] }[]>((acc, w) => {
@@ -313,16 +313,15 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	}, []);
 	const zones = [...new Set(writes.map((w) => w.zone))];
 	const oneZone = zones.length === 1 ? zones[0] : null;
-	const showIntro = !loading && !loadError && writes.length > 0 && !finished && !(satisfied && !failedSome);
-	const intro = stepKey === 'reports_mailbox' ? 'Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press Write.' : 'Ready Set Mail will write these records to Cloudflare. Nothing changes until you press Write.';
+	const showIntro = !loading && !loadError && writes.length > 0 && !(satisfied && !failedSome);
+	const intro = stepKey === 'reports_mailbox' ? 'Ready Set Mail will write these records and the routing rule to Cloudflare. Nothing changes until you press the button.' : 'Ready Set Mail will write these records to Cloudflare. Nothing changes until you press the button.';
 
 	return (
 		<div className="space-y-4">
 			{loadError ? <Alert variant="danger">{loadError}</Alert> : null}
 			{changed ? <Alert variant="warning">Cloudflare changed since you looked; review again.</Alert> : null}
 			{errors._ ? <Alert variant="danger">{errors._}</Alert> : null}
-			{!loading && !loadError && satisfied && !finished && !failedSome ? <p className="font-medium text-ink-1">Already in place</p> : null}
-			{finished ? <Alert variant="success">Done. Every record below is written.</Alert> : null}
+			{!loading && !loadError && satisfied && !failedSome ? <p className="font-medium text-ink-1">Already in place</p> : null}
 			{showIntro ? <p className="max-w-prose text-sm text-ink-2">{intro}</p> : null}
 			{showIntro && oneZone ? <p className="text-sm text-ink-2">In your Cloudflare zone <span className="font-medium text-ink-1">{oneZone}</span>.</p> : null}
 			{noneToShow || writes.length === 0 ? null : (
@@ -354,10 +353,15 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 					))}
 				</ul>
 			) : null}
-			<div>
+			<div className="flex flex-wrap gap-2">
 				<Button onClick={primary.onClick} disabled={primary.disabled} loading={primary.loading}>
 					{primary.label}
 				</Button>
+				{failedSome && !busy && !loading ? (
+					<Button variant="secondary" onClick={() => { finish(); }}>
+						Continue without them
+					</Button>
+				) : null}
 			</div>
 		</div>
 	);

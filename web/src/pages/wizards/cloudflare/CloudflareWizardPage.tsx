@@ -1,4 +1,5 @@
 import { Button } from '@ready-set-mail/ui';
+import { Check } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
@@ -37,6 +38,8 @@ export function CloudflareWizardPage() {
 	const [returnError, setReturnError] = useState<string | null>(null);
 	const returned = useRef(false);
 	// The connection just made, until the connections list has caught up with it.
+	// What the step just left wrote, said once in the header of the step after it.
+	const [notice, setNotice] = useState<{ text: string; shownOn: CfStepKey } | null>(null);
 	const [fresh, setFresh] = useState<CfConnection | null>(null);
 
 	// Back from Cloudflare's consent screen: read the result once, then take it out of the address bar.
@@ -71,7 +74,12 @@ export function CloudflareWizardPage() {
 		markAll(progress.domainIds, { routing: 'complete' });
 		go('done');
 	};
-	const addRecords = (n: number) => setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n } }));
+	const addRecords = (from: CfStepKey, w: { ids: string[]; verified: number; rules: number }) => {
+		const n = w.ids.length;
+		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n } }));
+		const noun = w.rules > 0 ? (n === 1 ? 'change' : 'changes') : n === 1 ? 'record' : 'records';
+		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? ' and checked' : ''}`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
+	};
 
 	const index = Math.max(0, steps.indexOf(progress.step));
 	let body;
@@ -91,13 +99,13 @@ export function CloudflareWizardPage() {
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
 		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
 	} else if (progress.step === 'zones' && connection) {
-		body = <ZonesStep connection={connection} onNext={() => go('domains')} />;
+		body = <ZonesStep connection={connection} taken={(conns.data?.connections ?? []).filter((c) => c.id !== connection.id).flatMap((c) => c.zones.map((z) => z.id))} onNext={() => go('domains')} />;
 	} else if (progress.step === 'domains' && connection) {
 		body = <DomainsStep connection={connection} onNext={(ids, added) => go('dmarc', { domainIds: ids, written: { domains: progress.written.domains + added, records: progress.written.records } })} />;
 	} else if (progress.step === 'dmarc') {
-		body = <PlanStep key="dmarc" stepKey="dmarc" domainIds={progress.domainIds} onNext={afterDmarc} onWritten={(w) => addRecords(w.length)} />;
+		body = <PlanStep key="dmarc" stepKey="dmarc" domainIds={progress.domainIds} onNext={afterDmarc} onWritten={(w) => addRecords('dmarc', w)} />;
 	} else if (progress.step === 'reports_mailbox') {
-		body = <PlanStep key="mailbox" stepKey="reports_mailbox" domainIds={progress.domainIds} onNext={afterMailbox} onWritten={(w) => addRecords(w.length)} />;
+		body = <PlanStep key="mailbox" stepKey="reports_mailbox" domainIds={progress.domainIds} onNext={afterMailbox} onWritten={(w) => addRecords('reports_mailbox', w)} />;
 	} else {
 		body = <Done progress={progress} />;
 	}
@@ -109,6 +117,12 @@ export function CloudflareWizardPage() {
 				<WizardProgress label="Cloudflare setup progress" current={index} steps={steps.map((k, i) => ({ label: LABELS[k], state: i < index ? 'complete' : 'pending' }))} />
 			</header>
 			<ReadOnlyNotice />
+			{notice && notice.shownOn === progress.step ? (
+				<p role="status" className="flex items-center gap-2 text-sm text-success">
+					<Check aria-hidden className="size-4 shrink-0" />
+					{notice.text}
+				</p>
+			) : null}
 			{body}
 		</div>
 	);

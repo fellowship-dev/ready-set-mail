@@ -9,7 +9,7 @@ import { useCfZones, useSetZones, type CfConnection } from '../../../lib/cloudfl
 export const PRETICK_LIMIT = 10;
 
 /** Step 2: which zones Ready Set Mail may touch. Everything outside this list is refused by the server. */
-export function ZonesStep({ connection, onNext }: { connection: CfConnection; onNext: () => void }) {
+export function ZonesStep({ connection, taken = [], onNext }: { connection: CfConnection; /** Zone ids already allowed on another connection: not preselected. */ taken?: string[]; onNext: () => void }) {
 	const zones = useCfZones(connection);
 	const save = useSetZones();
 	const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -18,9 +18,8 @@ export function ZonesStep({ connection, onNext }: { connection: CfConnection; on
 	if (zones.isError) return <LoadError error={zones.error} onRetry={() => void zones.refetch()} title="Could not list your Cloudflare zones" />;
 
 	const list = zones.data;
-	// What was allowed before wins; otherwise every zone when there are few, none when there are many.
-	const before = list.filter((z) => z.allowed).map((z) => z.id);
-	const selected = picked ?? new Set(before.length > 0 ? before : list.length <= PRETICK_LIMIT ? list.map((z) => z.id) : []);
+	// Every zone the token can see, except those another connection already has: unticking stays possible.
+	const selected = picked ?? new Set(list.filter((z) => z.allowed || !taken.includes(z.id)).map((z) => z.id));
 	const toggle = (id: string, on: boolean) => {
 		const next = new Set(selected);
 		if (on) next.add(id);
