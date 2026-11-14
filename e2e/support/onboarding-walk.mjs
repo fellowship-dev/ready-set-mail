@@ -139,6 +139,16 @@ async function selfhostSpecial(browser, port) {
   // Manual path + "can't be connected yet" (no TOKEN_ENCRYPTION_KEY), at 375 and 1440.
   const inst = await startInstance({ mode: 'selfhost', port, tokenKey: false });
   for (const [w, h] of [[375, 812], [1440, 900]]) {
+    {
+      // The expired-link page: a signed link whose expiry is past (no owner exists yet, so the Gate shows it instead of the form).
+      const { ctx: c0, page: p0 } = await newPage(browser, w, h);
+      try {
+        await p0.goto(inst.setupLink(-300));
+        await p0.getByText(/This setup link has expired/).waitFor({ timeout: 20000 });
+        await snap(p0, `selfhost-expired-${w}-01-expired-link`);
+      } catch (e) { failures++; console.log(`FAIL expired-link-${w}: ${String(e.message).split('\n')[0]}`); }
+      await c0.close();
+    }
     const { ctx, page } = await newPage(browser, w, h);
     const d = driver(page); const shot = shooter(page, 'selfhost-nokey', w);
     try {

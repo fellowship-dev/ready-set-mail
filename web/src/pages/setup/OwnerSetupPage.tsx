@@ -103,7 +103,7 @@ export function OwnerSetupPage() {
 						<details open={proofOpen} onToggle={(e) => setProofOpen(e.currentTarget.open)}>
 							<summary className="cursor-pointer text-sm text-brand-ink underline underline-offset-4">I have an installer proof</summary>
 							<div className="pt-4">
-								<Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" minLength={32} autoComplete="off" value={bootstrapProof} onChange={(e) => setBootstrapProof(e.target.value)} /></Field>
+								<Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/<name>/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" minLength={32} autoComplete="off" value={bootstrapProof} onChange={(e) => setBootstrapProof(e.target.value)} /></Field>
 							</div>
 						</details>
 					</>

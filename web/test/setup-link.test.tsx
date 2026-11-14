@@ -1,10 +1,15 @@
-import { screen, waitFor } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { Route, Routes, useLocation } from 'react-router';
+import { HashRouter, Route, Routes, useLocation } from 'react-router';
+import type { ReactNode } from 'react';
+import { vi } from 'vitest';
 import { Gate } from '../src/app';
 import { ClaimLinkProvider } from '../src/lib/claim-link';
-import { fail, me, renderApp } from './render';
+import { createQueryClient } from '../src/lib/query';
+import { SessionProvider, useSession } from '../src/lib/session';
+import { fail, me, mockApi, renderApp, STATUS } from './render';
 
 const SIG = 'A'.repeat(43);
 const token = (expiryOffset = 900) => `${Math.floor(Date.now() / 1000) + expiryOffset}.${SIG}`;
@@ -89,5 +94,61 @@ describe('#/setup?t=<expiry>.<sig>', () => {
 		renderApp(<Harness />, { role: 'owner', route: `/setup?t=${token()}` });
 		expect(await screen.findByText('wizard')).toBeInTheDocument();
 		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup$/));
+	});
+});
+
+function Ready({ children }: { children: ReactNode }) {
+	const { state } = useSession();
+	return state === 'authed' || state === 'anon' ? <>{children}</> : null;
+}
+
+describe('the address bar and history (real HashRouter)', () => {
+	it('the token is removed with history.replaceState as soon as it is read: no new entry, no t= in the URL, and it only travels in the header', async () => {
+		const t = token();
+		window.history.replaceState(null, '', `/#/setup?t=${t}`);
+		const lengthBefore = window.history.length;
+		const push = vi.spyOn(window.history, 'pushState');
+		const replace = vi.spyOn(window.history, 'replaceState');
+		const api = mockApi({ 'GET /api/auth/status': { ...STATUS, configured: false, has_domain: false }, 'GET /api/me': fail(401), 'POST /api/auth/setup': { ok: true, has_domain: false } });
+		render(
+			<QueryClientProvider client={createQueryClient()}>
+				<SessionProvider>
+					<Ready>
+						<HashRouter>
+							<ClaimLinkProvider>
+								<Routes>
+									<Route path="/setup" element={<Gate><span>wizard</span></Gate>} />
+								</Routes>
+							</ClaimLinkProvider>
+						</HashRouter>
+					</Ready>
+				</SessionProvider>
+			</QueryClientProvider>,
+		);
+		expect(await screen.findByRole('heading', { name: 'Create the owner account' })).toBeInTheDocument();
+		await waitFor(() => expect(window.location.hash).toBe('#/setup'));
+		expect(window.location.href).not.toContain('t=');
+		expect(window.location.href).not.toContain(t);
+		expect(window.history.length).toBe(lengthBefore);
+		expect(push).not.toHaveBeenCalled();
+		expect(replace.mock.calls.some((c) => String(c[2]).includes('t=') === false)).toBe(true);
+		const user = userEvent.setup();
+		await user.type(screen.getByLabelText('Email'), 'owner@example.com');
+		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
+		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Create account' }));
+		await waitFor(() => expect(api.calls.some((c) => c.path === '/api/auth/setup')).toBe(true));
+		expect(api.calls.every((c) => !c.path.includes(t))).toBe(true);
+		expect(api.calls.find((c) => c.path === '/api/auth/setup')?.headers['x-ready-set-mail-bootstrap']).toBe(t);
+		push.mockRestore();
+		replace.mockRestore();
+		window.history.replaceState(null, '', '/');
+	});
+
+	it('the paste form names the installer path and a signed link shows no proof field', async () => {
+		renderApp(<Harness />, { role: null, status: unconfigured, route: '/setup' });
+		await screen.findByText('I have an installer proof');
+		await userEvent.setup().click(screen.getByText('I have an installer proof'));
+		expect(await screen.findByText(/~\/\.config\/ready-set-mail\/<name>\/bootstrap-proof/)).toBeInTheDocument();
 	});
 });
