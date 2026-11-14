@@ -45,11 +45,6 @@ export function settingsQueries(db: Db, workspaceId: string) {
 			await db.delete(settings).where(and(eq(settings.workspace_id, workspaceId), sql`${settings.key} LIKE ${prefix + '%'} AND CAST(${settings.value} AS INTEGER) <= ${nowSeconds}`)).run();
 		},
 
-		/** Delete one setting (no-op when unset). */
-		async delete(key: string): Promise<void> {
-			await db.delete(settings).where(and(eq(settings.workspace_id, workspaceId), eq(settings.key, key))).run();
-		},
-
 		set(key: string, value: string) {
 			return upsert(key, value).run();
 		},
