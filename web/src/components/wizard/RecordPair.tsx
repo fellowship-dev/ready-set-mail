@@ -17,7 +17,7 @@ export function TxtRecord({ title, value, name = '@', badge, className }: { titl
 
 /** Two records side by side from `md` up, stacked on phones. */
 export function RecordPair({ children }: { children: ReactNode }) {
-	return <div className="grid gap-4 md:grid-cols-2">{children}</div>;
+	return <div className="grid gap-4 md:grid-cols-[repeat(2,minmax(0,1fr))]">{children}</div>;
 }
 
 export function LookupBadge({ count, estimate = false, suffix = 'lookups' }: { count: number; estimate?: boolean; suffix?: string }) {

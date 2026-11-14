@@ -10,7 +10,7 @@ export function StepCard({ title, badge, children, focusHeading = true }: { titl
 	}, [focusHeading]);
 	return (
 		<Card role="region" aria-labelledby={id}>
-			<CardContent className="space-y-4 sm:p-6">
+			<CardContent className="space-y-4 sm:p-6 [&>p]:max-w-prose">
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
 					{badge}
 					<h2 id={id} ref={ref} tabIndex={-1} className="text-xl font-semibold tracking-tight outline-none">
@@ -21,4 +21,20 @@ export function StepCard({ title, badge, children, focusHeading = true }: { titl
 			</CardContent>
 		</Card>
 	);
+}
+
+/**
+ * Two columns from `lg`: explanation and controls left (about a third), records right (about two thirds).
+ * One column below `lg`, aside first. Put a StepAside and a StepMain inside; the step footer stays outside, full width.
+ */
+export function StepColumns({ children }: { children: ReactNode }) {
+	return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:items-start lg:gap-8">{children}</div>;
+}
+
+export function StepAside({ children }: { children: ReactNode }) {
+	return <div className="min-w-0 space-y-4 [&>p]:max-w-prose">{children}</div>;
+}
+
+export function StepMain({ children }: { children: ReactNode }) {
+	return <div className="min-w-0 space-y-4 [&>p]:max-w-prose">{children}</div>;
 }

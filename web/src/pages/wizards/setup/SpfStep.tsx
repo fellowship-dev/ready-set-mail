@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, Badge, Button, CheckResult, CheckResultList, FieldHint, IconButton, toast } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
@@ -6,7 +7,7 @@ import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
 import { LookupBadge, RecordPair, TxtRecord } from '../../../components/wizard/RecordPair';
 import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
-import { StepCard } from '../../../components/wizard/StepCard';
+import { StepAside, StepCard, StepColumns, StepMain } from '../../../components/wizard/StepCard';
 import { StepFooter, StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
 import { SPF_PROVIDERS, detectProviders } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -124,6 +125,8 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 
 	return (
 		<StepCard title="SPF record" badge={<SeverityBadge severity={severity} />}>
+			<StepColumns>
+			<StepAside>
 			{applied ? (
 				<Alert variant="success" title="SPF record applied">
 					Allow a few minutes for DNS propagation.
@@ -173,7 +176,9 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 					</RadioCard>
 				</div>
 			</fieldset>
+			</StepAside>
 
+			<StepMain>
 			{preview ? (
 				<div className="flex flex-wrap items-center gap-2 text-sm" aria-live="polite">
 					<span className="text-ink-2">DNS lookups in the proposed record:</span>
@@ -216,6 +221,7 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 						<CopyButton text={preview} />
 					</div>
 					{!cf_available ? <FieldHint>Cloudflare is not connected, so copy the record and publish it at your DNS provider.</FieldHint> : null}
+					{!cf_available ? <ConnectCloudflareLink /> : null}
 					{apply.isError && !overwrite ? (
 						<Alert variant="danger" title="Could not apply the record">
 							{errorMessage(apply.error)}
@@ -223,6 +229,9 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 					) : null}
 				</div>
 			) : null}
+
+			</StepMain>
+			</StepColumns>
 
 			<StepFooter
 				start={

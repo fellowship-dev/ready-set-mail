@@ -14,6 +14,19 @@ export interface DnsRecord {
 	ttl?: number | string;
 }
 
+/** Offer a line break after each ";" (and let spaces break as usual); `overflow-wrap:anywhere` on the span is the last resort. The copied text is untouched. */
+function breakAfterSemicolons(value: string): React.ReactNode {
+	const parts = value.split(/(?<=;)/);
+	if (parts.length === 1) return value;
+	return parts.map((part, i) => (
+		// biome-ignore lint/suspicious/noArrayIndexKey: static split of a string
+		<React.Fragment key={i}>
+			{part}
+			{i < parts.length - 1 ? <wbr /> : null}
+		</React.Fragment>
+	));
+}
+
 async function copyText(text: string): Promise<boolean> {
 	try {
 		await navigator.clipboard.writeText(text);
@@ -97,7 +110,7 @@ export const RecordBlock = React.forwardRef<HTMLDivElement, RecordBlockProps>(({
 					<div key={r.key} className="grid grid-cols-[4.5rem_1fr] items-start gap-x-3 px-4 py-2 sm:grid-cols-[5rem_1fr]">
 						<dt className="pt-1.5 text-xs font-semibold uppercase tracking-wide text-ink-2">{r.label}</dt>
 						<dd className="flex min-w-0 items-start justify-between gap-2">
-							<span className="min-w-0 py-1 font-mono text-sm leading-relaxed text-ink-1 [overflow-wrap:anywhere]">{r.value}</span>
+							<span className="min-w-0 py-1 font-mono text-sm leading-relaxed text-ink-1 [overflow-wrap:anywhere]">{breakAfterSemicolons(r.value)}</span>
 							{r.copy ? <CopyButton text={r.value} label={`Copy ${r.label.toLowerCase()}`} /> : <span className="size-8 shrink-0" />}
 						</dd>
 					</div>
