@@ -23,7 +23,7 @@ import { getMode } from '../tenancy/mode';
 import { reportCounting } from '../dmarc/counting';
 import { normalizeDomain } from '@ready-set-mail/dns-checks';
 import { storeReport } from '../dmarc/store-report';
-import { carrierFromHeaders, decideTier, reporterInfo, type Carrier, type ReporterTier, type TierDecision } from '../dmarc/reporter-auth';
+import { carrierFromHeaders, decideTier, guardEnvelope, reporterInfo, type Carrier, type ReporterTier, type TierDecision } from '../dmarc/reporter-auth';
 import type { ReporterInfo } from '../dmarc/store-report';
 import { globalQueries } from '@ready-set-mail/db';
 import { readAuthHeaders, type AuthHeaders } from './sender-proof';
@@ -135,7 +135,9 @@ export async function handleDmarcReport(
 
   // 1b. Who sent it? The carrier (authenticated? which registry entries match?) is classified from the message alone; the tier is decided
   //     once the report's metadata is known. org_name/Submitter/subject never decide anything.
-  const carrier = opts.carrier ?? carrierFromHeaders(authHeaders, tenant.env);
+  // Hosted intake passes its carrier already guarded; self-host applies the same envelope guard (reporter-auth.ts). With AUTHSERV_* unset
+  // (the self-host default) nothing is authenticated, so the guard changes nothing.
+  const carrier = opts.carrier ?? guardEnvelope(carrierFromHeaders(authHeaders, tenant.env), message.from);
   // A self-hosted server that counts every report (the default) has no one to defend against: its own mail provider sends the reports, and with AUTHSERV_*
   // unset every one of them is "unauthenticated". Tier restrictions (records cap, IP lookups, decompression cap) apply where unrecognised mail does not count.
   const unrestricted = getMode(tenant.env) !== 'saas' && reportCounting(tenant.env) === 'all';

@@ -258,4 +258,25 @@ describe('GET /api/audit-log', () => {
     expect(body.page).toBe(1);
     expect(body.limit).toBe(50);
   });
+
+  it('clamps page and limit: a negative limit never becomes "no limit", and junk falls back to the defaults', async () => {
+    const db = createMigratedD1();
+    seedUser(db, 'admin-1', 'admin');
+    for (let i = 1; i <= 60; i++) seedAudit(db, i, 'domain.add', 1000 + i);
+    const env = makeEnv(db);
+    delete (env as any).API_KEY;
+    const get = async (q: string) => (await (await handleApi(req('GET', `/api/audit-log?${q}`, undefined, { 'x-api-key': 'test-key' }), env, ctx)).json()) as any;
+
+    let body = await get('limit=-1');
+    expect(body.entries).toHaveLength(1);
+    expect(body.limit).toBe(1);
+    body = await get('limit=abc&page=xyz');
+    expect(body.entries).toHaveLength(50);
+    expect(body).toMatchObject({ page: 1, limit: 50 });
+    body = await get('limit=10&page=-3');
+    expect(body).toMatchObject({ page: 1, limit: 10 });
+    expect(body.entries).toHaveLength(10);
+    body = await get('since=abc');
+    expect(body.entries).toHaveLength(50);
+  });
 });

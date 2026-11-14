@@ -102,18 +102,6 @@ async function createDnsRecord(
   return created.id;
 }
 
-/** Patch a TXT record that lives in `domain`'s zone. */
-export async function patchCfDnsRecord(
-  tenant: TenantContext,
-  domain: string,
-  recordId: string,
-  content: string,
-  audit?: MtaStsAuditOpts & { beforeContent?: string },
-): Promise<void> {
-  const auditPayload = audit ? { opts: audit, beforeContent: audit.beforeContent } : undefined;
-  await patchDnsRecord(tenant, domain, recordId, content, auditPayload);
-}
-
 async function patchDnsRecord(
   tenant: TenantContext,
   domain: string,
