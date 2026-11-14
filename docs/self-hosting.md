@@ -18,12 +18,14 @@ npm run setup
 The installer asks at most two things: which Cloudflare account to use (only when your login can see more than one), and whether to go ahead with the plan it shows. It ends with your instance's address and one link:
 
 ```
-  Address    https://ready-set-mail.<your-subdomain>.workers.dev
-  Become the owner: open this link. Whoever opens it first becomes the owner, so do not share it.
-  https://ready-set-mail.<your-subdomain>.workers.dev/#/setup?proof=…
+Ready Set Mail is running at https://ready-set-mail.<your-subdomain>.workers.dev. Open this link to create your owner account:
+
+  https://ready-set-mail.<your-subdomain>.workers.dev/#/setup?t=…
+
+The link works once and expires in 15 minutes. Need a new one? npm run setup -- --new-link --name ready-set-mail
 ```
 
-Open the link and create your account. **The first person to open the link becomes the owner**, so do not paste it into chat, tickets or shared documents. The proof in the link works once; after an owner exists it no longer opens anything. The part after `#` is never sent to the server and does not appear in access logs. If the page asks for an installer proof instead, paste the contents of `~/.config/ready-set-mail/<name>/bootstrap-proof`.
+Open the link and create your account. The link is signed with the instance's first-owner secret and works for 15 minutes, until an owner account exists. `npm run setup -- --new-link --name <name>` prints a fresh one at any time, without redeploying.
 
 Then add your domain in the dashboard and follow its steps.
 
@@ -39,6 +41,7 @@ Then add your domain in the dashboard and follow its steps.
 | `--resume` | Continue an install that stopped part-way. |
 | `--json` | Print one JSON line at the end (human-readable lines go to standard error). |
 | `--config-dir <dir>` | Where state and backups are kept (default `~/.config/ready-set-mail`). |
+| `--new-link` | Print a fresh setup link (15 minutes) for an installed instance, without redeploying. |
 | `--uninstall` | Remove the instance (see [Uninstall](#uninstall)). |
 
 **Agents and CI:** pass every input as a flag. Without a terminal the installer never prompts: it stops and names the missing flag (`--yes`, `--account-id`, or `--confirm` for uninstall), and exits non-zero with a plain message on any failure. Credentials come from `CLOUDFLARE_API_TOKEN` (see [Permissions](#permissions)) or an earlier `npx wrangler login`.
@@ -47,7 +50,7 @@ Then add your domain in the dashboard and follow its steps.
 CLOUDFLARE_API_TOKEN=… npm run setup -- --name ready-set-mail --account-id <id> --yes --json
 ```
 
-The last line of standard output is `{"ok":true,"name":…,"url":…,"setup_link":…,"proof_file":…,…}` or `{"ok":false,"error":…}`. The `setup_link` makes whoever opens it first the owner: hand it to the person who should own the instance, and nobody else.
+The last line of standard output is `{"ok":true,"name":…,"url":…,"setup_link":…,"proof_file":…,…}` or `{"ok":false,"error":…}`. `setup_link` is the owner's setup link and `setup_link_expires_at` when it stops working; hand the link to the person who will own the instance.
 
 ## What the installer does
 
@@ -57,13 +60,13 @@ The last line of standard output is `{"ok":true,"name":…,"url":…,"setup_link
 4. **Shows the plan** (account, names, address, what will be created, the scheduled jobs) and asks once.
 5. **Creates** the D1 database and the KV namespace, and writes `wrangler.local.jsonc` in your checkout: the tracked `wrangler.jsonc` with your names, ids, account, `BETTER_AUTH_URL` and `WORKER_NAME` filled in, the workers.dev address on and preview URLs off. That file is git-ignored; the tracked file is never edited, so `git pull` stays clean.
 6. **Generates two secrets** without printing them, and backs them up to `~/.config/ready-set-mail/<name>/` (folder mode 0700, files 0600; existing files are never overwritten):
-   - `bootstrap-proof`: the first-owner proof (`BOOTSTRAP_SECRET`). Only needed until you have become the owner.
-   - `token-encryption-key`: `TOKEN_ENCRYPTION_KEY`, which encrypts the Cloudflare credentials you connect in the dashboard. **Keep it.** If it is lost, every connected Cloudflare account has to be connected again.
+   - `bootstrap-proof`: the first-owner secret (`BOOTSTRAP_SECRET`). Setup links are signed with it; it is only needed until you have created your owner account.
+   - `token-encryption-key`: `TOKEN_ENCRYPTION_KEY`, which encrypts the Cloudflare credentials you connect in the dashboard. Keep the backup: without it, Cloudflare connections have to be made again.
 
    The Worker's session-signing secret is not one of them: the Worker generates its own and keeps it in D1.
 7. **Builds** the dashboard, **applies the database migrations**, and **deploys**. The secrets go up with the first version of the Worker (`wrangler deploy --secrets-file`, from a temporary 0600 file in the private folder that is deleted right after). So the Worker never runs without them, and no empty placeholder Worker is created first, which is what `wrangler secret put` before a first deploy would do.
 8. **Verifies**: `/health` answers, the database's newest migration is the one this code needs, and the instance reports that it is waiting for its first owner.
-9. **Prints** the address, the setup link, where the backups are, and how to upgrade and remove it.
+9. **Prints** the address and the setup link, then where the backups are and how to upgrade and remove it.
 
 Every resource is recorded in `~/.config/ready-set-mail/<name>/state.json` the moment it exists. If a run stops (network, a typo in a token, a failed build), fix the cause and run the same command with `--resume`: it continues without creating anything twice. Tool output goes to `setup.log` in the same folder.
 
@@ -163,7 +166,7 @@ The installer does nothing you cannot do by hand. These steps produce the same r
    ```
 
    Do not run `wrangler secret put` before the first deploy: it creates an empty Worker under that name.
-7. Check `https://<your address>/health` answers `{"ok":true,…}`, then open the address and become the owner with the `BOOTSTRAP_SECRET` value from the file.
+7. Check `https://<your address>/health` answers `{"ok":true,…}`, then open the address and create the owner account, entering the `BOOTSTRAP_SECRET` value from the file as the installer proof.
 
 Later upgrades are the same as for an installer-made instance: `git pull && npm install && npm run deploy`.
 

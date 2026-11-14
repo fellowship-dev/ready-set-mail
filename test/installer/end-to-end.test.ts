@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHmac } from 'node:crypto';
 import { main } from '../../scripts/setup/install.mjs';
 import { createFakeCloudflare, fakeDeps, TOKEN, ACCOUNT, OTHER_ACCOUNT } from './fake-cloudflare.mjs';
 
@@ -21,6 +22,13 @@ function sandbox() {
 
 const PROOF = '01'.repeat(32);                              // randomBytes is faked: first call fills with 0x01
 const KEY = `k1:${Buffer.alloc(32, 2).toString('base64')}`; // second call 0x02
+const NOW = Date.parse('2026-11-14T12:00:00Z');         // fakeDeps' clock
+const EXPIRY = NOW / 1000 + 15 * 60;
+/** Independent of the installer: the token rule as the server will check it. */
+const expectedLink = (url: string, expiry = EXPIRY) =>
+  `${url}/#/setup?t=${expiry}.${createHmac('sha256', PROOF).update(`setup-link:${expiry}`).digest('base64url')}`;
+/** Sentences that frighten instead of help. None may appear in any output. */
+const SCARE = /whoever|do not share|don't share|first (person|one)|becomes the owner|warning|keep it safe/i;
 const NEWEST = readFileSync('packages/db/src/ready.ts', 'utf8').match(/REQUIRED_MIGRATION = '([^']+)'/)![1];
 
 async function run(argv: string[], opts: Parameters<typeof fakeDeps>[0]) {
@@ -67,9 +75,9 @@ describe('npm run setup (fake Cloudflare)', () => {
     // The secret appears once, inside the setup link; the token and the encryption key never.
     expect(r.out).not.toContain(TOKEN);
     expect(r.out).not.toContain(KEY);
-    expect(r.out.split(PROOF)).toHaveLength(2);
-    expect(r.out).toContain(`https://ready-set-mail.example.workers.dev/#/setup?proof=${PROOF}`);
-    expect(r.out).toMatch(/Whoever opens it first becomes the owner/);
+    expect(r.out).not.toContain(PROOF);
+    expect(r.out).not.toMatch(SCARE);
+    expect(r.out).toContain(`Ready Set Mail is running at https://ready-set-mail.example.workers.dev. Open this link to create your owner account:\n\n  ${expectedLink('https://ready-set-mail.example.workers.dev')}\n\nThe link works once and expires in 15 minutes. Need a new one? npm run setup -- --new-link --name ready-set-mail\n`);
     expect(r.out).toContain('git pull && npm install && npm run deploy');
     expect(r.out).toContain('npm run setup -- --uninstall --name ready-set-mail');
     expect(r.out).toMatch(/Connect Cloudflare/);
@@ -102,7 +110,10 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(lines).toHaveLength(1);
     const j = JSON.parse(lines[0]);
     expect(j).toMatchObject({ ok: true, name: 'rsm-ci', account_id: ACCOUNT.id, url: 'https://rsm-ci.example.workers.dev', resources: { worker: 'rsm-ci' } });
-    expect(j.setup_link).toBe(`https://rsm-ci.example.workers.dev/#/setup?proof=${PROOF}`);
+    expect(j.setup_link).toBe(expectedLink('https://rsm-ci.example.workers.dev'));
+    expect(j.setup_link_expires_at).toBe(new Date(EXPIRY * 1000).toISOString());
+    expect(r.out + r.err).not.toContain(PROOF);
+    expect(r.out + r.err).not.toMatch(SCARE);
     expect(r.err).not.toMatch(/\[y\/N\]/);
     expect(r.err).not.toContain(KEY);
   });
@@ -211,6 +222,7 @@ describe('npm run setup (fake Cloudflare)', () => {
     const r = await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
     expect(r.code).toBe(0);
     expect(r.out).not.toContain(PROOF);
+    expect(r.out).not.toContain('#/setup');
     expect(r.out).toMatch(/already has an owner/);
   });
 
@@ -246,6 +258,42 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(twice.out).toMatch(/already removed/);
     // And the name is free for a fresh install again.
     expect((await run(['--yes'], { fake, repoRoot: repo, home: join(home, 'other'), env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+  });
+
+  it('--new-link mints a fresh link from the backup: no Cloudflare call, no redeploy, no secret printed', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    fake.calls.length = 0;
+    const d = fakeDeps({ fake, repoRoot: repo, home });                      // no credential at all
+    d.deps.now = () => new Date(NOW + 60 * 60 * 1000);                     // an hour later
+    expect(await main(['--new-link'], d.deps)).toBe(0);
+    const out = d.out.join('');
+    expect(out).toContain(expectedLink('https://ready-set-mail.example.workers.dev', EXPIRY + 3600));
+    expect(out).not.toContain(PROOF);
+    expect(out).not.toMatch(SCARE);
+    expect(fake.calls).toEqual(['GET https://ready-set-mail.<sub>.workers.dev/api/auth/status']);
+
+    fake.world.owner = true;
+    const after = fakeDeps({ fake, repoRoot: repo, home });
+    expect(await main(['--new-link', '--json'], after.deps)).toBe(0);
+    expect(JSON.parse(after.out.join('').trim())).toMatchObject({ ok: true, setup_link: null });
+    expect(after.err.join('')).toMatch(/Sign in there with your owner account/);
+  });
+
+  it('--new-link without a finished install says what to run', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    const r = await run(['--new-link', '--name', 'nope'], { fake, repoRoot: repo, home });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/No finished install of "nope".*npm run setup -- --name nope first/);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('the install docs describe the link without alarm', () => {
+    for (const f of ['README.md', 'docs/self-hosting.md', 'docs/coding-agents.md', 'docs/agent-operations.md']) {
+      expect(readFileSync(f, 'utf8'), f).not.toMatch(/whoever opens|do not share it|first person to open|first becomes the owner/i);
+    }
   });
 
   it('usage errors exit 2 before touching anything', async () => {

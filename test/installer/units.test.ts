@@ -10,7 +10,8 @@ import {
 } from '../../scripts/setup/config.mjs';
 import { foreignCollisions, uninstallSelection, writeState, readState, emptyState, statePath } from '../../scripts/setup/state.mjs';
 import { generateProof, generateEncryptionKey, isValidEncryptionKey, loadOrCreateSecrets, withSecretsFile } from '../../scripts/setup/secrets.mjs';
-import { satisfiesEngines, setupLink } from '../../scripts/setup/install.mjs';
+import { satisfiesEngines, setupLink, setupToken, SETUP_LINK_TTL_SECONDS } from '../../scripts/setup/install.mjs';
+import { createHmac } from 'node:crypto';
 import { wranglerArgs } from '../../scripts/wrangler.mjs';
 
 const tracked = parseJsonc(readFileSync('wrangler.jsonc', 'utf8'));
@@ -34,6 +35,7 @@ describe('flags', () => {
     [['--account-id', 'abc'], /32-character/],
     [['--bogus'], /Unknown option/],
     [['--confirm', 'x'], /only used with --uninstall/],
+    [['--new-link', '--uninstall'], /--new-link takes only/],
     [['--uninstall', '--url', 'https://a.example'], /--uninstall takes only/],
   ])('refuses %j', (argv, msg) => {
     expect(() => parseArgs(argv)).toThrow(UsageError);
@@ -191,11 +193,22 @@ describe('misc', () => {
     expect(satisfiesEngines(range, 'v23.5.0')).toBe(false);
     expect(satisfiesEngines(range, 'v20.18.0')).toBe(false);
   });
-  it('the setup link carries the proof in the fragment only', () => {
-    const link = setupLink('https://x.acme.workers.dev', 'ab'.repeat(32));
+  it('the setup link carries a 15-minute signed token in the fragment, never the secret', () => {
+    const secret = 'ab'.repeat(32);
+    const now = Date.parse('2026-11-14T12:00:00Z');
+    const link = setupLink('https://x.acme.workers.dev', secret, now);
     const u = new URL(link);
     expect(u.origin + u.pathname).toBe('https://x.acme.workers.dev/');
     expect(u.search).toBe('');
-    expect(u.hash).toBe(`#/setup?proof=${'ab'.repeat(32)}`);
+    expect(link).not.toContain(secret);
+    const m = /^#\/setup\?t=(\d+)\.([A-Za-z0-9_-]{43})$/.exec(u.hash);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(now / 1000 + SETUP_LINK_TTL_SECONDS);
+    expect(SETUP_LINK_TTL_SECONDS).toBe(900);
+    expect(m![2]).toBe(createHmac('sha256', secret).update(`setup-link:${m![1]}`).digest('base64url'));
+    expect(setupToken(secret, now, 60)).toMatch(new RegExp(`^${now / 1000 + 60}\\.`));
+    // Another secret or another expiry gives another signature.
+    expect(setupToken('cd'.repeat(32), now)).not.toBe(setupToken(secret, now));
+    expect(setupToken(secret, now + 1000)).not.toBe(setupToken(secret, now));
   });
 });

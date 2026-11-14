@@ -20,7 +20,7 @@ Read this when a person asks you to "set up DMARC monitoring for my domain", "ch
 ## Exact steps
 
 1. In a clone of this repository: `npm install`, then `npm run setup`. Without a terminal, pass every input as a flag: `npm run setup -- --yes --json` plus `--account-id <id>` when the credential sees several accounts ([options](self-hosting.md#options)). It refuses names already used in the account; choose another with `--name`.
-2. Give the person the setup link the installer printed (the `setup_link` field with `--json`) and tell them that whoever opens it first becomes the owner. **Never ask for the proof or a password in chat**, and never put either anywhere else: not in a log, a commit, an issue or another URL.
+2. Give the person the setup link the installer printed (the `setup_link` field with `--json`) so they can create their owner account. It expires in 15 minutes; `npm run setup -- --new-link --name <name>` prints a new one. Never ask for the first-owner secret or a password in chat, and never put either in a log, a commit, an issue or a URL.
 3. The person adds the domain in the dashboard and follows its steps. DNS changes from the dashboard need **Connect Cloudflare**; without it, the dashboard shows the records to add by hand.
 4. To use the MCP server, follow [first useful report](agent-operations.md#first-useful-report).
 

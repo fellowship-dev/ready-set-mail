@@ -61,7 +61,7 @@ npm run setup
 
 `npm install` brings Wrangler, Cloudflare's command-line tool, with it. `npm run setup` logs you in to Cloudflare if needed, finds your account, shows what it is about to create and asks once, then creates the database and storage, deploys, checks that the instance answers, and ends with its address and **one link to click to become the owner**. It asks a second question only if your login can see several Cloudflare accounts.
 
-**Whoever opens the setup link first becomes the owner.** Open it yourself and do not share it. If the page asks for an installer proof instead, paste the contents of `~/.config/ready-set-mail/ready-set-mail/bootstrap-proof`.
+Open the link to create your owner account. It works once and expires in 15 minutes; `npm run setup -- --new-link` prints a new one.
 
 Then add your domain in the dashboard: it checks SPF, DKIM and DMARC from live DNS right away and shows the records to change. Letting Ready Set Mail write DNS for you is optional: use **Connect Cloudflare** in the dashboard.
 
@@ -106,7 +106,7 @@ A visitor emails their `check+<token>@<reports domain>` address and gets the rep
 
 Auth is [Better Auth](https://www.better-auth.com) on D1 (sessions, logins and reset tokens live in your database).
 
-* **First owner:** email/password setup requires the installation's private, single-use `BOOTSTRAP_SECRET` proof, which `npm run setup` generates and puts in the setup link it prints: whoever holds the link (or the proof) first becomes the owner. Without valid proof setup stays closed; there is no shared default password and no race among public visitors. Social sign-in cannot create the first owner. Further self-host users join by invite.
+* **First owner:** email/password setup requires the installation's private, single-use `BOOTSTRAP_SECRET` proof, which `npm run setup` generates; the setup link it prints carries a short-lived signature derived from it. Without valid proof setup stays closed, and there is no shared default password. Social sign-in cannot create the first owner. Further self-host users join by invite.
 * **Roles** are per workspace. Owners/admins can perform permitted domain operations; members read. Product grants, credential administration and Google Postmaster connections require a browser **owner**, not merely an admin. Delegated principals remain constrained by their current finite grants.
 * **Workspaces:** one login can belong to several workspaces, each with its own domains, reports, members and roles. Switch from the top of the sidebar. Only the self-host instance owner creates further workspaces; only the default workspace uses the server's Cloudflare token. See [workspaces](docs/workspaces.md).
 * **GitHub / Google sign-in** appears when its separate credentials are configured (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`). Callbacks are `https://<your-worker>/api/auth/callback/github` and `…/google`. An invited self-host user must satisfy the existing account/invite policy; social login is not bootstrap proof.
