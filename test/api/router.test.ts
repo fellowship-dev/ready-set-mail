@@ -390,6 +390,18 @@ describe('GET /api/reports', () => {
     const body = await res.json() as any;
     expect(body.reports).toHaveLength(100);
   });
+
+  it('treats a limit that is not a number as the default, and clamps one below 1', async () => {
+    const env = makeEnv();
+    seedDomain(env, { id: 1, domain: 'acme.com' });
+    const ins = env.DB.sqlite.prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end) VALUES (1, 'g', ?, 1, 2)");
+    for (let i = 0; i < 40; i++) ins.run(`r${i}`);
+    for (const [q, n] of [['abc', 30], ['', 30], ['NaN', 30], ['0', 1], ['-5', 1], ['7', 7]] as const) {
+      const res = await handleApi(req('GET', `/api/reports?limit=${q}`), env, ctx);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).reports).toHaveLength(n);
+    }
+  });
 });
 
 // ── GET /api/reports/:id ──────────────────────────────────────

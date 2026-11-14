@@ -136,8 +136,8 @@ import {
   discoverMxHosts,
   generatePolicyId,
   buildPolicyFile,
-  patchCfDnsRecord,
 } from '../email/mta-sts';
+import { dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
 
 /** Free-check sessions one IP may create per window. */
 export const CHECK_SESSIONS_PER_IP = 10;
@@ -182,6 +182,12 @@ function json(data: unknown, status = 200): Response {
 
 function err(message: string, status: number): Response {
   return json({ error: message }, status);
+}
+
+/** An integer query parameter clamped to [min, max]; absent, empty or not a number gives `fallback`. */
+export function intParam(url: URL, name: string, fallback: number, min: number, max: number): number {
+  const n = parseInt(url.searchParams.get(name) ?? '', 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
 }
 
 /** HTTP status for a Cloudflare failure: config problems are the caller's, the rest is reported as given. */
@@ -297,7 +303,7 @@ function withCounted<T extends { reporter_auth: string | null; reporter_tier?: s
 }
 
 async function getReports(tenant: TenantContext, url: URL): Promise<Response> {
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '30', 10), 100);
+  const limit = intParam(url, 'limit', 30, 1, 100);
   const results = await tenant.scope.reports.recent(limit);
   return json({ reports: results.map((r) => withCounted(tenant, r)), report_counting: tenant.scope.counting });
 }
@@ -335,8 +341,7 @@ async function getDomainStatsSummary(tenant: TenantContext, domainId: string, ur
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
 
-  const rawDays = parseInt(url.searchParams.get('days') ?? '30', 10);
-  const days = Math.min(isNaN(rawDays) ? 30 : rawDays, 90);
+  const days = intParam(url, 'days', 30, 1, 90);
   const since = Math.floor(Date.now() / 1000) - days * 86400;
 
   const [results, visibility] = await Promise.all([tenant.scope.reports.dailyStats(id, since), reportVisibility(tenant, id, since)]);
@@ -429,8 +434,7 @@ async function getDomainSources(tenant: TenantContext, domainId: string, url: UR
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
 
-  const rawDays = parseInt(url.searchParams.get('days') ?? '7', 10);
-  const days = Math.min(isNaN(rawDays) ? 7 : rawDays, 90);
+  const days = intParam(url, 'days', 7, 1, 90);
   const since = Math.floor(Date.now() / 1000) - days * 86400;
 
   const results = await tenant.scope.reports.topFailingSources(id, since);
@@ -864,8 +868,7 @@ async function _handleApi(
       if (isNaN(id)) return err('invalid domain id', 400);
       const domain = await tenant.scope.domains.getById(id);
       if (!domain) return err('domain not found', 404);
-      const rawDays = parseInt(url.searchParams.get('days') ?? '30', 10);
-      const days = Math.min(isNaN(rawDays) ? 30 : rawDays, 90);
+      const days = intParam(url, 'days', 30, 1, 90);
       const since = Math.floor(Date.now() / 1000) - days * 86400;
       const results = await tenant.scope.reports.allSources(id, since);
       return json({ days, domain: domain.domain, sources: results });
@@ -877,8 +880,7 @@ async function _handleApi(
       if (isNaN(id)) return err('invalid domain id', 400);
       const domain = await tenant.scope.domains.getById(id);
       if (!domain) return err('domain not found', 404);
-      const rawDays = parseInt(url.searchParams.get('days') ?? '30', 10);
-      const days = Math.min(isNaN(rawDays) ? 30 : rawDays, 90);
+      const days = intParam(url, 'days', 30, 1, 90);
       const since = Math.floor(Date.now() / 1000) - days * 86400;
       const results = await tenant.scope.reports.anomalySources(id, since);
       return json({ days, domain: domain.domain, anomalies: results });
@@ -926,14 +928,14 @@ async function _handleApi(
         return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
       }
     }
-    // PATCH /api/domains/:id/dmarc — update DMARC policy via CF DNS (CF-managed domains only)
+    // PATCH /api/domains/:id/dmarc — change the p= of the live _dmarc.{domain} TXT in the domain's own Cloudflare zone
+    // (every other tag kept). Never the report authorization record (domains.dns_record_id): that one lives under the reports domain.
     const dmarcPatchMatch = path.match(/^\/api\/domains\/([^/]+)\/dmarc$/);
     if (dmarcPatchMatch && method === 'PATCH') {
       const id = parseInt(dmarcPatchMatch[1], 10);
       if (isNaN(id)) return err('invalid domain id', 400);
       const domain = await tenant.scope.domains.getById(id);
       if (!domain) return err('domain not found', 404);
-      if (!domain.dns_record_id) return err('domain is not CF-managed — update DNS manually', 400);
       if (!tenant.hasCloudflare()) return cfFailure(new CfNotConfiguredError());
 
       const body = await parseBody<{ policy?: string }>(request);
@@ -942,18 +944,35 @@ async function _handleApi(
         return err('policy must be none, quarantine, or reject', 400);
       }
 
-      // Build updated TXT record, preserving rua= and any pct= from existing record
-      const rd = tenant.settings.reportsDomain;
-      const ruaPart = rd ? `; rua=mailto:${domain.rua_address}` : '';
-      const newRecord = `v=DMARC1; p=${policy}${ruaPart}`;
-
+      const recordName = `_dmarc.${domain.domain}`;
+      let cf: Awaited<ReturnType<typeof tenant.cfFor>>;
+      let zoneId: string;
+      let live;
       try {
-        // The record lives in the zone of the domain being updated.
-        await patchCfDnsRecord(tenant, domain.domain, domain.dns_record_id, newRecord);
-      } catch (e: any) {
-        return err(e.message ?? 'CF DNS patch failed', 500);
+        cf = await tenant.cfFor(domain.domain);
+        zoneId = (await cf.zoneFor(domain.domain)).id;
+        live = await findDmarcRecord(cf, zoneId, recordName);
+      } catch (e) {
+        return cfFailure(e);
+      }
+      if (live.kind === 'many') {
+        return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
+      }
+      const before = live.kind === 'one' ? live.content : null;
+      const newRecord = withPolicy(before, policy as DmarcPolicy, domain.rua_address);
+      const problem = dmarcRecordProblem(newRecord);
+      if (problem) {
+        return err(`The DMARC record at ${recordName} cannot be updated safely: ${problem}. Fix it at your DNS provider, then try again.`, 409);
       }
 
+      let written;
+      try {
+        written = await writeDmarcRecord(cf, zoneId, domain.domain, live.kind === 'one' ? live.record : null, newRecord);
+      } catch (e) {
+        return cfFailure(e);
+      }
+
+      // Only now that DNS says so: store the policy and audit the change.
       const prevPolicy = domain.dmarc_policy ?? 'none';
       await tenant.scope.domains.updateDmarcPolicy(id, policy);
 
@@ -961,12 +980,12 @@ async function _handleApi(
           actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
         action: 'domain.dmarc_mode_change',
         resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-        before_value: { policy: prevPolicy },
-        after_value: { policy, record: newRecord },
+        before_value: { policy: prevPolicy, record: before },
+        after_value: { policy, record: newRecord, dns_record: written?.id ?? null },
       }, ctx);
       track(tenant, { event: 'domain.dmarc_mode_change', from: prevPolicy, to: policy });
 
-      return json({ ok: true, policy, record: newRecord });
+      return json({ ok: true, policy, record: newRecord, previous_record: before, created: live.kind === 'none' });
     }
 
     // GET /api/domains/:id/onboarding-status — DMARC + SPF + DKIM + routing health check
@@ -1183,30 +1202,38 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
       if (!tenant.hasCloudflare()) return cfFailure(new CfNotConfiguredError());
 
-      const body = await parseBody<{ record?: string }>(request);
+      const body = await parseBody<{ record?: unknown }>(request);
       if (!body.record) return err('record content is required', 400);
+      if (typeof body.record !== 'string') return err('record must be a string', 400);
+      const record = body.record.trim();
+      const problem = dmarcRecordProblem(record);
+      if (problem) return err(`Not a valid DMARC record: ${problem}`, 400);
 
       const recordName = `_dmarc.${domain.domain}`;
 
       // The write goes to the zone this domain lives in, through the connection it is linked to.
       let written;
-      let existingId: string | undefined;
+      let existing;
       try {
         const cf = await tenant.cfFor(domain.domain);
-        const zone = await cf.zoneFor(domain.domain);
-        existingId = (await cf.listDnsRecords(zone.id, { type: 'TXT', name: recordName, per_page: 5 }))[0]?.id;
-        written = existingId
-          ? await cf.patchDnsRecord(zone.id, existingId, { content: body.record })
-          : await cf.createDnsRecord(zone.id, { type: 'TXT', name: recordName, content: body.record, ttl: 3600 });
+        const zoneId = (await cf.zoneFor(domain.domain)).id;
+        const live = await findDmarcRecord(cf, zoneId, recordName);
+        if (live.kind === 'many') {
+          return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
+        }
+        existing = live.kind === 'one' ? live : null;
+        written = await writeDmarcRecord(cf, zoneId, domain.domain, existing?.record ?? null, record);
       } catch (e) {
         return cfFailure(e);
       }
+      const existingId = existing?.record.id;
 
       logAudit(tenant, {
           actor_id: userBySession?.id ?? null, actor_email: userBySession?.email ?? null, actor_type: 'user',
         action: existingId ? 'dns.update' : 'dns.create',
         resource_type: 'dns_record', resource_id: written?.id ?? '', resource_name: recordName,
-        after_value: { type: 'TXT', name: recordName, content: body.record },
+        before_value: existing ? { type: 'TXT', name: recordName, content: existing.content } : null,
+        after_value: { type: 'TXT', name: recordName, content: record },
       }, ctx);
 
       // Provision the cross-domain DMARC authorization record if not already present
@@ -1228,7 +1255,7 @@ async function _handleApi(
         }
       }
 
-      return json({ ok: true, record: body.record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id });
+      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id });
     }
 
     // POST /api/spf-lookup-count — count real DNS lookups for an arbitrary SPF record
@@ -1970,16 +1997,18 @@ async function _handleApi(
     // GET /api/audit-log — admin only
     if (path === '/api/audit-log' && method === 'GET') {
       if (!isAdmin) return err('admin required', 403);
-      const page  = parseInt(url.searchParams.get('page')  ?? '1',  10);
-      const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+      // A limit below 1 would reach SQLite as LIMIT -1 (no limit), a page below 1 as a negative offset.
+      const page  = intParam(url, 'page', 1, 1, 1_000_000);
+      const limit = intParam(url, 'limit', 50, 1, 200);
+      const epoch = (name: string) => { const v = intParam(url, name, NaN, 0, Number.MAX_SAFE_INTEGER); return Number.isNaN(v) ? undefined : v; };
       const results = await tenant.scope.audit.list({
-        page:      isNaN(page)  ? 1  : page,
-        limit:     isNaN(limit) ? 50 : limit,
+        page,
+        limit,
         action:    url.searchParams.get('action')    ?? undefined,
         domain_id: url.searchParams.get('domain_id') ?? undefined,
         actor_id:  url.searchParams.get('actor_id')  ?? undefined,
-        since:     url.searchParams.get('since')  ? parseInt(url.searchParams.get('since')!, 10)  : undefined,
-        until:     url.searchParams.get('until')  ? parseInt(url.searchParams.get('until')!, 10)  : undefined,
+        since:     epoch('since'),
+        until:     epoch('until'),
       });
       return json({ entries: results, page, limit });
     }

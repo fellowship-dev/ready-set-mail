@@ -10,8 +10,19 @@ import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import { domainCap, domainRefusal } from './service';
 import { admitDomain, claimView, settleClaims, type ClaimView } from './ownership';
+import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
+import { recordFirstDnsCheck } from './first-check';
 
 const BATCH_LIMIT = 50;
+
+// The first DNS read of each imported domain (the one the single add stores), so the overview shows its level at once.
+// Cost per domain: the SPF walk (1 + up to 10 terms) and 1-2 DMARC TXT reads, 2-3 DoH queries for a plain domain and about 14
+// at worst. The budget bounds one import (50 domains at most) to 500 DoH queries, well inside a paid Worker's subrequest
+// limit; a check is started only while a worst-case one still fits, and any domain whose read was not started, failed or was
+// cut off is reported as not checked yet (`dns_checked: false`), never as checked.
+export const BULK_DNS_LOOKUP_BUDGET = 500;
+const DNS_LOOKUPS_PER_DOMAIN = 14;
+const FIRST_CHECK_CONCURRENCY = 5;
 
 export const REPORTS_DOMAIN_MISSING = 'Reports domain not configured — complete the setup wizard first';
 
@@ -29,6 +40,8 @@ export interface BulkImportResult {
   manual_dns?: boolean;
   /** status 'pending' (SaaS): the TXT record that proves ownership. Nothing else is done for the domain until it is verified. */
   claim?: ClaimView;
+  /** status 'imported': its first DNS read was stored (true), or it was not checked yet (false). */
+  dns_checked?: boolean;
 }
 
 function atCapRow(tenant: TenantContext, domain: string, max: number): BulkImportResult {
@@ -69,6 +82,7 @@ export async function bulkInsertDomains(
   tenant: TenantContext,
   domains: string[],
   audit: AuditOpts = {},
+  dns: { resolver?: Resolver; lookupBudget?: number } = {},
 ): Promise<BulkImportResult[]> {
   // Hosted: never a reports address, so no reports domain is needed and the domain gets no rua.
   const hosted = tenant.mode === 'saas';
@@ -82,6 +96,7 @@ export async function bulkInsertDomains(
   // One count up front, then a local tally. It is advisory: the capped INSERT below is what enforces the cap, so a stale tally
   // can only send a row to that insert, never past the cap.
   let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
+  const toCheck: { id: number; domain: string; row: BulkImportResult }[] = [];
 
   for (const typed of batch) {
     const named = normalizeDomainName(typed);
@@ -156,8 +171,44 @@ export async function bulkInsertDomains(
       manual = true;
     }
 
-    results.push({ domain, status: 'imported', dns_record_id: dnsRecordId, manual_dns: manual });
+    const row: BulkImportResult = { domain, status: 'imported', dns_record_id: dnsRecordId, manual_dns: manual, dns_checked: false };
+    results.push(row);
+    toCheck.push({ id: domainId, domain, row });
   }
 
+  await firstDnsChecks(tenant, toCheck, dns);
   return results;
+}
+
+/** Store the first DNS read of each imported domain, a few at a time and within the import's lookup budget (see above). */
+async function firstDnsChecks(
+  tenant: TenantContext,
+  items: { id: number; domain: string; row: BulkImportResult }[],
+  opts: { resolver?: Resolver; lookupBudget?: number },
+): Promise<void> {
+  if (!items.length) return;
+  const base = opts.resolver ?? createResolver();
+  const budget = opts.lookupBudget ?? BULK_DNS_LOOKUP_BUDGET;
+  let used = 0;
+  let inFlight = 0;
+  const spend = () => { if (++used > budget) throw new Error('the import\'s DNS lookup budget is spent'); };
+  const resolver: Resolver = {
+    fetch: base.fetch,
+    resolve: (name, type) => { spend(); return base.resolve(name, type); },
+    txt: (name) => { spend(); return base.txt(name); },
+  };
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      if (used + (inFlight + 1) * DNS_LOOKUPS_PER_DOMAIN > budget) continue; // stays dns_checked: false
+      inFlight++;
+      try {
+        item.row.dns_checked = (await recordFirstDnsCheck(tenant, item.id, item.domain, { resolver })) !== null;
+      } finally {
+        inFlight--;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(FIRST_CHECK_CONCURRENCY, items.length) }, worker));
 }

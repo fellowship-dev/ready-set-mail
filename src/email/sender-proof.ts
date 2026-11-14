@@ -90,6 +90,20 @@ export function provesDomain(results: string | null, addressDomain: string): boo
 
 export type SenderProof = { ok: true; via: 'ar' | 'arc' } | { ok: false; reason: string };
 
+/**
+ * A receiver writes one dkim result per DKIM-Signature it verified, and one dmarc result per message. More dkim results (other than
+ * "none") than the message has signatures, or more than one dmarc result, means part of the header was not written by the receiver: a
+ * sender-chosen value copied back unquoted (smtp.helo=x;dkim=pass(c)header.d=google.com). Then nothing in it is believed: returns the
+ * detail for the log, or null when the counts are possible. Used by report intake (reporter-auth.ts) and the free-check enrolment.
+ */
+export function resultsOverclaim(headers: AuthHeaders, parsed: ReturnType<typeof parseAuthResults>): string | null {
+  const dkimResults = parsed?.dkimAll.filter((d) => d.result !== 'none').length ?? 0;
+  if ((headers.dkimSignatures !== undefined && dkimResults > headers.dkimSignatures) || (parsed?.dmarcAll.length ?? 0) > 1) {
+    return `${dkimResults} dkim results for ${headers.dkimSignatures ?? '?'} signatures, ${parsed?.dmarcAll.length ?? 0} dmarc results`;
+  }
+  return null;
+}
+
 /** Which header of the configured kind, if any, is the receiver's: its value (authserv-id first), foreign (names another server / none), or unreadable. */
 export type TrustedSelection = { kind: 'ok'; value: string } | { kind: 'foreign' } | { kind: 'malformed'; failure: AuthResultsFailure; detail: string };
 
@@ -124,6 +138,8 @@ export function proveSender(headers: AuthHeaders, addressDomain: string, authser
   if (mode !== 'ar' && mode !== 'arc') return { ok: false, reason: 'AUTHSERV_HEADER is not set' };
   const trusted = trustedResults(headers, authservId, mode);
   if (trusted) {
+    const overclaim = resultsOverclaim(headers, parseAuthResults(trusted));
+    if (overclaim) return { ok: false, reason: `the receiver's results hold text it did not write (${overclaim})` };
     return provesDomain(trusted, addressDomain)
       ? { ok: true, via: mode }
       : { ok: false, reason: mode === 'ar' ? 'the receiver\'s results do not show an aligned DKIM pass or a DMARC pass' : 'the receiver\'s ARC results do not show an aligned DKIM pass or a DMARC pass' };

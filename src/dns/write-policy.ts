@@ -7,6 +7,7 @@
 //   TXT    <D>._report._dmarc.<reports domain>   (report authorization; content v=DMARC1…)
 //   TXT    v=spf1… at a monitored domain or the reports domain (`allowedApexes`); when the caller gives none, at any
 //          name without a `_`-prefixed label and not under mta-sts.
+//   TXT    with `allowedApexes`, a _dmarc.* name only at _dmarc.<a listed apex>, and only with v=DMARC1 content.
 //   CNAME  mta-sts.D -> exactly one of `cnameTargets` (the MTA-STS policy host the caller computed); no other CNAME
 //   (DKIM and BIMI records are never written; hosted pointers are customer-side and go through assertHostedDnsWrite.)
 //   MX     the Cloudflare Email Routing hosts of the reports domain (self-host only)
@@ -85,6 +86,11 @@ export function assertDnsWriteAllowed(w: DnsWrite): void {
           return refuse(w, `SPF at ${name} is not at a monitored domain or the reports domain`);
         }
         if (name.split('.').some(l => l.startsWith('_')) || name.startsWith('mta-sts.')) refuse(w, `SPF at ${name} is not allowed`);
+        return;
+      }
+      if (w.allowedApexes && name.startsWith('_dmarc.')) {
+        if (!w.allowedApexes.some(a => `_dmarc.${norm(a)}` === name)) refuse(w, `DMARC at ${name} is not at a monitored domain`);
+        if (!/^v=DMARC1(\s*;|\s*$)/.test(content)) refuse(w, `TXT ${name} may only hold a DMARC record`);
         return;
       }
       if (name.startsWith('_dmarc.') || name.startsWith('_mta-sts.') || name.startsWith('_smtp._tls.')) return;

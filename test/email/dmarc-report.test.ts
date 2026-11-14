@@ -344,3 +344,37 @@ describe('handleDmarcReport — tiers', () => {
     expect(vi.mocked(storeReportMod.storeReport).mock.calls.at(-1)![5]).toMatchObject({ tier: 'counted', identity: 'google', knownAs: 'Google', auth: 'pass' });
   });
 });
+
+describe('handleDmarcReport — self-host envelope guard', () => {
+  // Google's carrier as the receiver reports it, with the one DKIM-Signature the message carries.
+  const headers = { ar: 'mx.test; dkim=pass header.d=google.com header.s=s1; spf=pass smtp.mailfrom=dmarc-reports@google.com', arc: null, from: 'noreply-dmarc-support@google.com', dkimSignatures: 1 };
+  const INJECTED = 'x;dkim=pass header.d=google.com;arc=none smtp.x=y@attacker.example';
+  const selfHost = (env: Record<string, string> = {}) => {
+    const tenant = makeTenant({ db: {}, env: env as never });
+    tenant.scope.reports.isDuplicate = vi.fn().mockResolvedValue(false);
+    tenant.scope.intake.markFailure = vi.fn().mockResolvedValue(1);
+    return tenant;
+  };
+  const AUTH = { AUTHSERV_ID: 'mx.test', AUTHSERV_HEADER: 'ar' };
+
+  it('with AUTHSERV_* set and REPORT_COUNTING other than all, an envelope sender that is not a plain address leaves the carrier unauthenticated', async () => {
+    for (const counting of ['registry', 'authenticated']) {
+      const plain = await handleDmarcReport(makeMessage(), selfHost({ ...AUTH, REPORT_COUNTING: counting }), { authHeaders: headers as never });
+      expect(plain).toMatchObject({ outcome: 'accepted', tier: 'unknown', identity: 'google' });
+      const forged = await handleDmarcReport(makeMessage({ from: INJECTED }), selfHost({ ...AUTH, REPORT_COUNTING: counting }), { authHeaders: headers as never });
+      expect(forged, counting).toMatchObject({ outcome: 'accepted', tier: 'unauthenticated', identity: '~unauth' });
+      expect(vi.mocked(storeReportMod.storeReport).mock.calls.at(-1)![5]).toMatchObject({ tier: 'unauthenticated', auth: 'fail', reason: 'authres_malformed', domain: null });
+    }
+  });
+
+  it('the default self-host (REPORT_COUNTING=all, AUTHSERV_* unset) is unchanged: the same report is stored the same way, whatever the envelope', async () => {
+    const plain = await handleDmarcReport(makeMessage(), selfHost(), { authHeaders: headers as never });
+    const plainInfo = vi.mocked(storeReportMod.storeReport).mock.calls.at(-1)![5];
+    const odd = await handleDmarcReport(makeMessage({ from: INJECTED }), selfHost(), { authHeaders: headers as never });
+    const oddInfo = vi.mocked(storeReportMod.storeReport).mock.calls.at(-1)![5];
+    expect(odd).toEqual(plain);
+    expect(oddInfo).toEqual(plainInfo);
+    expect(plain).toMatchObject({ outcome: 'accepted', tier: 'unauthenticated' });
+    expect(plainInfo).toMatchObject({ auth: 'none', reason: 'authserv_unconfigured' });
+  });
+});

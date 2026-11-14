@@ -8,9 +8,17 @@ vi.mock('../../src/audit/log', () => ({
   logAudit: vi.fn(),
 }));
 
+// The first DNS check of imported domains never leaves the test process: the default resolver answers NXDOMAIN for every
+// name (the tests of that check pass their own resolver).
+vi.mock('@ready-set-mail/dns-checks', async (importOriginal) => {
+  const { fakeResolver } = await import('../../packages/dns-checks/test/helpers');
+  return { ...(await importOriginal<typeof import('@ready-set-mail/dns-checks')>()), createResolver: () => fakeResolver({}) };
+});
+
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { makeTenant } from '../helpers/tenant';
 import { parseDomainList, validateDomain, bulkInsertDomains } from '../../src/domains/bulk';
+import { fakeResolver, type Zone } from '../../packages/dns-checks/test/helpers';
 
 // ── parseDomainList ───────────────────────────────────────────
 
@@ -159,5 +167,46 @@ describe('bulkInsertDomains', () => {
     expect(results[0].status).toBe('imported');
     expect(results[0].manual_dns).toBe(true);
     expect(db.domainRows()[0].dns_record_id).toBeNull();
+  });
+});
+
+// ── first DNS check of imported domains ─────────────────────
+
+describe('bulkInsertDomains: the first DNS read of each imported domain', () => {
+  const zone = (names: string[]): Zone => Object.fromEntries(names.flatMap((d) => [[`TXT ${d}`, ['v=spf1 -all']], [`TXT _dmarc.${d}`, ['v=DMARC1; p=reject']]]));
+  const stored = (db: ReturnType<typeof createMigratedD1>) => db.sqlite.prepare('SELECT domain, dns_checked_at, dmarc_policy, spf_record FROM domains ORDER BY domain').all() as { domain: string; dns_checked_at: number | null; dmarc_policy: string | null; spf_record: string | null }[];
+
+  it('stores a level for every imported domain, as the single add does, and says so per row', async () => {
+    const names = ['a-bulk.com', 'b-bulk.com', 'c-bulk.com'];
+    const db = createMigratedD1();
+    const results = await bulkInsertDomains(makeTenant({ db }), names, {}, { resolver: fakeResolver(zone(names)) });
+    expect(results.map((r) => [r.domain, r.status, r.dns_checked])).toEqual(names.map((d) => [d, 'imported', true]));
+    for (const row of stored(db)) {
+      expect(row.dns_checked_at, row.domain).not.toBeNull();
+      expect(row).toMatchObject({ dmarc_policy: 'reject', spf_record: 'v=spf1 -all' });
+    }
+  });
+
+  it('over the lookup budget: checks what fits and marks the rest not checked yet, storing nothing for them', async () => {
+    const names = ['a-bulk.com', 'b-bulk.com', 'c-bulk.com', 'd-bulk.com'];
+    const db = createMigratedD1();
+    const calls: string[] = [];
+    // Room for one worst-case check at a time: the first domain is read, the rest are not started.
+    const results = await bulkInsertDomains(makeTenant({ db }), names, {}, { resolver: fakeResolver(zone(names), calls), lookupBudget: 14 });
+    const checked = results.filter((r) => r.dns_checked);
+    const unchecked = results.filter((r) => r.dns_checked === false);
+    expect(checked.length).toBeGreaterThanOrEqual(1);
+    expect(unchecked.length).toBeGreaterThanOrEqual(1);
+    expect(checked.length + unchecked.length).toBe(4);
+    expect(calls.length).toBeLessThanOrEqual(14);
+    const rows = stored(db);
+    for (const r of results) expect(rows.find((x) => x.domain === r.domain)!.dns_checked_at !== null, r.domain).toBe(r.dns_checked);
+  });
+
+  it('a domain whose DNS read fails is reported as not checked, never as checked', async () => {
+    const db = createMigratedD1();
+    const results = await bulkInsertDomains(makeTenant({ db }), ['broken-bulk.com'], {}, { resolver: fakeResolver({ 'TXT broken-bulk.com': 'SERVFAIL', 'TXT _dmarc.broken-bulk.com': 'SERVFAIL' }) });
+    expect(results).toMatchObject([{ status: 'imported', dns_checked: false }]);
+    expect(stored(db)[0].dns_checked_at).toBeNull();
   });
 });
