@@ -27,7 +27,7 @@
 //   GET    /api/instance/preflight            — configuration check by setting name (instance owner only; src/setup/preflight.ts)
 //   GET    /api/domains                       — list domains
 //   POST   /api/domains                       — add a domain
-//   DELETE /api/domains/:id                   — remove a domain
+//   DELETE /api/domains/:id                   — remove a domain: { ok, kept } (the DNS records it left in place, and why)
 //   GET    /api/domains/:id/stats             — daily pass/fail stats (days, max 90)
 //   GET    /api/domains/:id/reports?date=     — report sources for a specific date
 //   GET    /api/domains/:id/sources           — top failing sources (days, max 90)
