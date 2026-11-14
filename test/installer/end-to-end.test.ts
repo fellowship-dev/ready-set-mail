@@ -339,7 +339,7 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(r.out).toMatch(/This will permanently delete[\s\S]*Worker "ready-set-mail"[\s\S]*D1 database "ready-set-mail"[\s\S]*KV namespace "ready-set-mail-oauth"[\s\S]*wrangler.local.jsonc[\s\S]*the database is exported/);
     const destructive = fake.calls.filter(c => c.startsWith('DELETE') || c.startsWith('$'));
     expect(destructive).toEqual([
-      '$ wrangler d1 export ready-set-mail --remote --output',
+      '$ wrangler d1 export DB --remote --output --config',
       'DELETE /accounts/<acct>/workers/scripts/ready-set-mail',
       expect.stringMatching(/^DELETE \/accounts\/<acct>\/d1\/database\/[0-9a-f-]{36}$/),
       expect.stringMatching(/^DELETE \/accounts\/<acct>\/storage\/kv\/namespaces\/[0-9a-f]{32}$/),
@@ -353,10 +353,62 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect(archive).toEqual(['removed-20261114-120000']);
     expect(readdirSync(join(dir, archive[0])).sort()).toEqual(['bootstrap-proof', 'ready-set-mail-d1-export.sql', 'setup.log', 'state.json', 'token-encryption-key']);
     expect(readFileSync(join(dir, archive[0], 'token-encryption-key'), 'utf8').trim()).toBe(KEY);
+    // The export is of the recorded database, by id, although the tracked wrangler.jsonc names "ready-set-mail" with a placeholder id.
+    expect(readFileSync(join(dir, archive[0], 'ready-set-mail-d1-export.sql'), 'utf8')).toMatch(/^-- export of ready-set-mail \([0-9a-f-]{36}\)/);
+    expect(r.out).toMatch(/ok: exported to .*ready-set-mail-d1-export\.sql \(\d+ bytes\)/);
     expect(r.out).toContain(`are in ${join(dir, archive[0])}`);
     const twice = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
     expect(twice.code).toBe(1);
     expect(twice.out).toMatch(/No install of "ready-set-mail" is recorded/);
+  });
+
+  it('a fork whose tracked wrangler.jsonc names the same database with its own id: the export still takes the recorded database', async () => {
+    const { repo, home } = sandbox();
+    const forkDb = { id: 'f0000000-0000-4000-8000-00000000f0f0', name: 'fork-production' };
+    const fake = createFakeCloudflare({ repoRoot: repo, d1: [forkDb] });
+    const tracked = readFileSync(join(repo, 'wrangler.jsonc'), 'utf8').replace('REPLACE_WITH_INSTALLATION_D1_DATABASE_ID', forkDb.id);
+    writeFileSync(join(repo, 'wrangler.jsonc'), tracked);
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    const ours = fake.world.d1.find(d => d.name === 'ready-set-mail')!.id;
+    expect((await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect(fake.world.lastExport).toBe(ours);
+    expect(fake.world.d1.map(d => d.id)).toEqual([forkDb.id]);
+  });
+
+  it('an empty export stops the uninstall before anything is deleted', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    fake.world.emptyExport = true;
+    const r = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/export .* is empty, so nothing was deleted\. Run the uninstall again, or add --no-export/s);
+    expect(fake.calls.filter(c => c.startsWith('DELETE'))).toEqual([]);
+    expect(fake.world.workers.has('ready-set-mail')).toBe(true);
+  });
+
+  it('a failed export says to run the uninstall again, not --resume', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    fake.world.failNext.d1 = 1;
+    const r = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Exporting the database failed[\s\S]*run the uninstall again; nothing was deleted after this step/);
+    expect(r.out).not.toMatch(/--resume/);
+    expect(fake.calls.filter(c => c.startsWith('DELETE'))).toEqual([]);
+  });
+
+  it('the rate-limit check names Workers whose settings could not be read', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo, workers: [{ name: 'locked', created_on: 'x', d1Id: null, kvId: null }] });
+    const realFetch = fake.fetch;
+    const d = fakeDeps({ fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    d.deps.fetch = async (input: unknown, init?: object) => String(input).includes('/workers/scripts/locked/settings')
+      ? new Response(JSON.stringify({ success: false, errors: [{ code: 10403, message: 'forbidden' }] }), { status: 403 })
+      : realFetch(input as string, init);
+    expect(await main(['--yes', '--dry-run'], d.deps)).toBe(0);
+    expect(d.out.join('')).toMatch(/not compared with "locked": that Worker's settings could not be read/);
   });
 
   it('BLOCKER 2: installing the same name again after uninstall works, in the same home', async () => {

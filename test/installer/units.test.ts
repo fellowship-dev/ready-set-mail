@@ -61,6 +61,11 @@ describe('rate-limit namespace ids', () => {
   it('move past ids in use, and the generated config uses one block for the six bindings', () => {
     expect(freeRatelimitBase(10000, 6, new Set(['10005']))).toBe(10010);
     expect(freeRatelimitBase(10000, 6, new Set(['10006']))).toBe(10000);
+    // Bounded: never past 999999; wraps round to 10000; null when every block is taken.
+    expect(freeRatelimitBase(999990, 6, new Set(['999990']))).toBe(10000);
+    expect(freeRatelimitBase(999990, 6, new Set())).toBe(999990);
+    const all = new Set(Array.from({ length: 999999 - 10000 + 1 }, (_, i) => String(10000 + i)));
+    expect(freeRatelimitBase(500000, 6, all)).toBeNull();
     const cfg = generateLocalConfig(tracked, { name: 'n', accountId: 'a', d1Id: 'd', kvId: 'k', url: 'https://x', ratelimitBase: 20000 });
     expect(ratelimitBindings(cfg).map(b => b.namespace_id)).toEqual(['20000', '20001', '20002', '20003', '20004', '20005']);
     expect(ratelimitBindings(cfg).map(b => b.name)).toEqual(ratelimitBindings(tracked).map(b => b.name));

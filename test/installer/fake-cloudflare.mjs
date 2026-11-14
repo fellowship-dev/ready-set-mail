@@ -4,6 +4,7 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
+import { parseJsonc } from '../../scripts/setup/config.mjs';
 
 export const API = 'https://cf.fake/client/v4';
 export const TOKEN = 'fake-token-0123456789abcdef0123456789abcdef';
@@ -74,10 +75,22 @@ export function createFakeCloudflare({ accounts = [ACCOUNT], subdomain = 'exampl
     throw new Error(`fake Cloudflare: no route for ${method} ${path}`);
   }
 
-  function localConfig() {
-    // world.repoRoot: the checkout the next command runs in (tests with two checkouts switch it).
-    const text = readFileSync(join(world.repoRoot ?? repoRoot, 'wrangler.local.jsonc'), 'utf8');
-    return JSON.parse(text.split('\n').filter(l => !l.startsWith('//')).join('\n'));
+  /**
+   * The config Wrangler reads, the way the real one picks it: the --config/-c file when given (relative to the
+   * checkout), otherwise the tracked wrangler.jsonc. Wrangler never picks up wrangler.local.jsonc by itself.
+   */
+  function wranglerConfig(args) {
+    const root = world.repoRoot ?? repoRoot;
+    const i = args.findIndex(a => a === '--config' || a === '-c');
+    const file = i >= 0 ? args[i + 1] : 'wrangler.jsonc';
+    return parseJsonc(readFileSync(file.startsWith('/') ? file : join(root, file), 'utf8'));
+  }
+
+  /** Like Wrangler: a D1 argument matching a config entry's binding or database_name uses THAT entry's id. */
+  function resolveD1(cfg, arg) {
+    const entry = (cfg.d1_databases ?? []).find(d => d.binding === arg || d.database_name === arg);
+    const id = entry ? entry.database_id : world.d1.find(d => d.name === arg)?.id;
+    return { id, db: world.d1.find(d => d.id === id) };
   }
 
   /** The fake child processes: npm (build) and Wrangler. */
@@ -86,15 +99,19 @@ export function createFakeCloudflare({ accounts = [ACCOUNT], subdomain = 'exampl
     calls.push(`$ ${key}`);
     if (world.failNext[args[0]] > 0) { world.failNext[args[0]]--; return { code: 1, output: `simulated ${args[0]} failure\n` }; }
     if (cmd === 'npm') return { code: 0, output: 'built\n' };
+    const cfg = wranglerConfig(args);
+    if ((cfg.account_id ?? opts.accountId) !== opts.accountId) return { code: 1, output: 'wrong account\n' };
     if (args[0] === 'd1' && args[1] === 'export') {
+      const { id, db } = resolveD1(cfg, args[2]);
+      if (!db) return { code: 1, output: `Executing on remote database ${args[2]} (${id})\nCouldn't find DB with id ${id}\n` };
       const out = args[args.indexOf('--output') + 1];
-      writeFileSync(out, `-- export of ${args[2]}\n`);
-      return { code: 0, output: `exported to ${out}\n` };
+      writeFileSync(out, world.emptyExport ? '' : `-- export of ${db.name} (${db.id})\n`);
+      world.lastExport = db.id;
+      return { code: 0, output: `Executing on remote database ${db.name} (${db.id})\nexported to ${out}\n` };
     }
-    const cfg = localConfig();
-    if (cfg.account_id !== opts.accountId) return { code: 1, output: 'wrong account\n' };
     if (args[0] === 'd1' && args[1] === 'migrations') {
-      const db = world.d1.find(d => d.id === cfg.d1_databases[0].database_id);
+      const { id, db } = resolveD1(cfg, args[3]);
+      if (!db) return { code: 1, output: `Couldn't find DB with id ${id}\n` };
       db.migrations = readdirSync(join(repoRoot, 'migrations')).filter(f => f.endsWith('.sql'));
       return { code: 0, output: 'Migrations applied\n' };
     }
@@ -105,7 +122,9 @@ export function createFakeCloudflare({ accounts = [ACCOUNT], subdomain = 'exampl
       world.secrets[cfg.name] = JSON.parse(readFileSync(file, 'utf8'));
       const prev = world.workers.get(cfg.name);
       world.workers.set(cfg.name, { created_on: prev?.created_on ?? `2026-11-14T12:00:${String(++world.clock).padStart(2, '0')}Z`, d1Id: cfg.d1_databases[0].database_id, kvId: cfg.kv_namespaces[0].id, ratelimitIds: cfg.unsafe.bindings.filter(b => b.type === 'ratelimit').map(b => b.namespace_id) });
-      world.d1.find(d => d.id === cfg.d1_databases[0].database_id).boundTo = cfg.name;
+      const bound = world.d1.find(d => d.id === cfg.d1_databases[0].database_id);
+      if (!bound) return { code: 1, output: `binding DB: database ${cfg.d1_databases[0].database_id} not found\n` };
+      bound.boundTo = cfg.name;
       world.lastDeployConfig = cfg;
       if (world.deployCreatesThenFails) { world.deployCreatesThenFails = false; return { code: 1, output: 'connection reset after upload\n' }; }
       return { code: 0, output: `Uploaded ${cfg.name}\nDeployed ${cfg.name} triggers\n` };
