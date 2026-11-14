@@ -3,7 +3,9 @@
   "version": "1.2.0",
   "private": true,
   "scripts": {
-    "deploy": "npm run build:dashboard && npm run migrate && wrangler deploy",
+    "setup": "node scripts/setup.mjs",
+    "deploy": "npm run build:dashboard && npm run migrate && node scripts/wrangler.mjs deploy",
+    "wrangler": "node scripts/wrangler.mjs",
     "migrate": "node packages/db/scripts/migrate.mjs --remote",
     "dev": "npm run migrate:local && wrangler dev",
     "dev:dashboard": "npm --prefix web run dev",
@@ -15,9 +17,9 @@
     "test:e2e": "playwright test",
     "cf-typegen": "wrangler types",
     "seed:local": "npx tsx scripts/seed-demo.ts > /tmp/ia-seed.sql && wrangler d1 execute ready-set-mail --local  --file=/tmp/ia-seed.sql; rm -f /tmp/ia-seed.sql",
-    "seed:remote": "npx tsx scripts/seed-demo.ts > /tmp/ia-seed.sql && wrangler d1 execute ready-set-mail --remote --file=/tmp/ia-seed.sql; rm -f /tmp/ia-seed.sql",
+    "seed:remote": "npx tsx scripts/seed-demo.ts > /tmp/ia-seed.sql && node scripts/wrangler.mjs d1 execute DB --remote --file=/tmp/ia-seed.sql; rm -f /tmp/ia-seed.sql",
     "unseed:local": "wrangler d1 execute ready-set-mail --local  --file=scripts/unseed-demo.sql",
-    "unseed:remote": "wrangler d1 execute ready-set-mail --remote --file=scripts/unseed-demo.sql",
+    "unseed:remote": "node scripts/wrangler.mjs d1 execute DB --remote --file=scripts/unseed-demo.sql",
     "typecheck": "tsc --noEmit && tsc -p packages/dns-checks && tsc -p packages/report && tsc -p packages/db && tsc -p web",
     "migrate:local": "node packages/db/scripts/migrate.mjs --local",
     "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts"
@@ -45,16 +47,6 @@
     "mimetext": "^3.0.28",
     "tldts": "^7.4.19",
     "zod": "4.6.7"
-  },
-  "cloudflare": {
-    "bindings": {
-      "CLOUDFLARE_API_TOKEN": {
-        "description": "Runtime API token for Email Routing + DNS writes. Not the deploy token — create a separate one. See the README (Before you start) for step-by-step instructions and required permissions."
-      },
-      "CLOUDFLARE_ZONE_ID": {
-        "description": "Your Cloudflare Zone ID. Find it at dash.cloudflare.com → click your domain → right sidebar → Zone ID."
-      }
-    }
   },
   "workspaces": [
     "packages/*",

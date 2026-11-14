@@ -1,18 +1,9 @@
 {
-	// ── Self-hosting checklist ──────────────────────────────────────────────────
-	// 1. Run: wrangler d1 create ready-set-mail → paste database_id below
-	// 2. Create/bind an installation-owned OAUTH_KV namespace and set BETTER_AUTH_URL to its HTTPS origin.
-	// 3. Upload private BOOTSTRAP_SECRET proof before first-owner setup (docs/agent-operations.md).
-	// 4. For DNS/routing operations: wrangler secret put CLOUDFLARE_API_TOKEN
-	//    Create at: dash.cloudflare.com → My Profile → API Tokens
-	//    Required permissions:
-	//      Account: Account Settings:Read, Workers Scripts:Edit, D1:Edit, Email Sending:Edit
-	//      Zone (All zones): Zone:Read, Email Routing Rules:Edit, DNS:Edit, Workers Routes:Edit
-	// 5. npm run deploy
-	// 6. Visit the canonical dashboard → prove installer custody → create owner → enroll domain
-	//    The wizard handles everything else: zone ID resolution, reports subdomain,
-	//    DMARC records, email routing setup.
-	// ───────────────────────────────────────────────────────────────────────────
+	// Shared configuration for every installation. Do not put your own ids or origin here:
+	// `npm run setup` creates the resources and writes them to the git-ignored wrangler.local.jsonc,
+	// which `npm run deploy`, `npm run migrate` and `npm run wrangler` use. The REPLACE_WITH_… ids below
+	// make a deploy from this file alone fail instead of binding someone else's resources.
+	// Install guide, token permissions and the manual path: docs/self-hosting.md.
 
 	"name": "ready-set-mail-worker",
 	"main": "src/index.ts",
@@ -26,19 +17,22 @@
 		"run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*", "/health", "/llms.txt"]
 	},
 	"compatibility_date": "2025-03-01",
+	// Per-version preview URLs are off: an installation serves one origin, its BETTER_AUTH_URL.
+	// workers_dev is deliberately not set here: `npm run setup` sets it in wrangler.local.jsonc (true unless the
+	// account has no workers.dev subdomain), so an instance on its own domain that copies this file keeps its setting.
+	"preview_urls": false,
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 	"observability": {
 		"enabled": true,
 		"logs": { "enabled": true, "invocation_logs": false }
 	},
 
-	// Create an installation-owned namespace; substitute its ID before deployment.
+	// Installation-owned namespace (agent OAuth storage). `npm run setup` creates it; manual path: docs/self-hosting.md.
 	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_INSTALLATION_OAUTH_KV_ID" }],
-	// Before first owner setup: wrangler secret put BOOTSTRAP_SECRET (random >=32 characters).
-	// Set BETTER_AUTH_URL to this installation HTTPS origin. Never reuse another instance namespace.
+	// Never reuse another instance's namespace.
 
-	// D1 database binding. Substitute the id of this installation's own database (wrangler d1 create ready-set-mail)
-	// before deploying; the placeholder makes a deploy or remote migration fail instead of binding someone else's database.
+	// D1 database binding. `npm run setup` creates this installation's own database; the placeholder makes a deploy
+	// or remote migration from this file fail instead of binding someone else's database.
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -48,12 +42,8 @@
 		}
 	],
 
-	// Email Worker — catch-all on reports subdomain (inbound)
-	"email": [
-		{
-			"name": "EMAIL"
-		}
-	],
+	// Inbound email (DMARC reports, free checks) needs no setting here: the Worker exports an email() handler,
+	// and the Email Routing rule the setup wizard creates sends mail to it.
 
 	// Outbound email — requires CF Email Routing enabled on your zone.
 	// Recipients must be verified destination addresses in CF Email Routing.
@@ -83,7 +73,7 @@
 		]
 	},
 
-	// Crons:
+	// Crons (what each does: docs/self-hosting.md#scheduled-jobs):
 	//   0 8 * * *  — daily DNS monitor check
 	//   0 9 * * 1  — weekly DMARC digest email (Mondays 9am UTC)
 	//   0 10 * * * — daily SPF flatten refresh
@@ -118,7 +108,8 @@
 		"WORKER_NAME": "ready-set-mail-worker"
 		// Domain config is entered in the setup wizard and stored in D1.
 		// Installer proof secret: BOOTSTRAP_SECRET; agent issuer: BETTER_AUTH_URL + OAUTH_KV.
-		// DNS/routing secret: CLOUDFLARE_API_TOKEN (see README for token permissions).
+		// Optional DNS/routing secret: CLOUDFLARE_API_TOKEN (permissions: docs/self-hosting.md#permissions); or connect
+		// Cloudflare from the dashboard instead (needs the TOKEN_ENCRYPTION_KEY secret, which `npm run setup` sets).
 		// Optional HOSTED_SERVICE_URL (https): the hosted free tier. When set, /llms.txt, the MCP instructions, the
 		// setup pages and /api/version mention it once; unset, nothing mentions a hosted service (src/hosted-service.ts).
 	}
