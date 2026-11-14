@@ -1,6 +1,6 @@
 // `npm run setup`: install, resume and uninstall. Everything that touches the outside world comes in
 // through `deps`, so tests run the same code against a fake Cloudflare API and a fake Wrangler.
-import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, appendFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
 import { parseArgs, UsageError, USAGE } from './args.mjs';
@@ -193,7 +193,8 @@ async function runLogged(deps, ui, log, label, cmd, args, opts = {}) {
   log.write(r.output ?? '');
   if (r.code !== 0) {
     const tail = ui.redact(r.output ?? '').trimEnd().split('\n').slice(-15).map(l => `        ${l}`).join('\n');
-    fail(`${label} failed (exit ${r.code}). Last lines:\n${tail}\nFull log: ${log.path}\nFix the cause and run the same command with --resume to continue.`);
+    const next = opts.uninstall ? 'Fix the cause and run the uninstall again; nothing was deleted after this step.' : 'Fix the cause and run the same command with --resume to continue.';
+    fail(`${label} failed (exit ${r.code}). Last lines:\n${tail}\nFull log: ${log.path}\n${next}`);
   }
   return r;
 }
@@ -263,13 +264,15 @@ async function install(opts, deps, ui) {
   // This instance's rate-limit namespace ids: kept from the state on resume, else derived from the name
   // and moved past any id another Worker in the account already uses.
   let rlBase = state?.ratelimit_base ?? null;
+  const unreadable = [];
   if (rlBase === null) {
     const used = new Set();
     for (const w of await cf.listWorkers(account.id)) {
       if (w.name === names.worker) continue;
-      try { for (const id of (await cf.workerBindings(account.id, w.name)).ratelimitIds) used.add(id); } catch { /* unreadable: skipped */ }
+      try { for (const id of (await cf.workerBindings(account.id, w.name)).ratelimitIds) used.add(id); } catch { unreadable.push(w.name); }
     }
     rlBase = freeRatelimitBase(ratelimitBase(opts.name), ratelimitBindings(tracked).length, used);
+    if (rlBase === null) fail(`Every block of rate-limit namespace ids from 10000 to 999999 is in use by other Workers in this account, so this instance would share counters with one of them. Nothing was changed.`);
   }
   const rlCount = ratelimitBindings(tracked).length;
 
@@ -291,6 +294,7 @@ async function install(opts, deps, ui) {
     ui.line(`                   backed up in ${dir} (only you can read it)`);
   }
   ui.line(`  Rate limits      their own counters for this instance (namespace ids ${rlBase}-${rlBase + rlCount - 1})`);
+  if (unreadable.length) ui.line(`                   not compared with ${unreadable.map(n => `"${n}"`).join(', ')}: that Worker's settings could not be read`);
   ui.line(`  Local config     ${LOCAL_CONFIG} in this checkout (git-ignored; tracked files stay unchanged)`);
   ui.line(`  Scheduled jobs   ${crons.length} cron triggers ${redeploy ? '(already running; unchanged unless wrangler.jsonc changed them)' : 'start running'}:`);
   for (const c of crons) ui.line(`                     ${c.cron.padEnd(11)} ${c.what}`);
@@ -520,8 +524,20 @@ async function uninstall(opts, deps, ui) {
   ui.step(3, 4, exportIt ? 'Exporting the database' : 'Skipping the database export');
   if (exportIt) {
     const file = join(archive, `${d1.name}-d1-export.sql`);
-    await runLogged(deps, ui, log, 'Exporting the database', 'wrangler', ['d1', 'export', d1.name, '--remote', '--output', file], { accountId: account.id });
-    ui.ok(`exported to ${file}`);
+    // Export by the RECORDED id through a config written for this one call: given a bare name, Wrangler
+    // would resolve it through whatever wrangler.jsonc is in the checkout (the tracked placeholder, or a
+    // fork's own database) and export the wrong thing.
+    const exportConfig = join(archive, 'export.wrangler.json');
+    writeFileSync(exportConfig, JSON.stringify({ name: names.worker, account_id: account.id, d1_databases: [{ binding: 'DB', database_name: d1.name, database_id: d1.id }] }, null, 2) + '\n', { mode: 0o600 });
+    try {
+      await runLogged(deps, ui, log, 'Exporting the database', 'wrangler', ['d1', 'export', 'DB', '--remote', '--output', file, '--config', exportConfig], { accountId: account.id, uninstall: true });
+    } finally {
+      try { unlinkSync(exportConfig); } catch { /* already gone */ }
+    }
+    let size = 0;
+    try { size = statSync(file).size; } catch { /* missing */ }
+    if (size === 0) fail(`The database export ${file} is ${existsSync(file) ? 'empty' : 'missing'}, so nothing was deleted. Run the uninstall again, or add --no-export to delete without an export.`);
+    ui.ok(`exported to ${file} (${size} bytes)`);
   }
 
   ui.step(4, 4, 'Deleting');

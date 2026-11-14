@@ -64,11 +64,18 @@ export function ratelimitBase(name) {
   return 10000 + (h % 99000) * 10;
 }
 
-/** The first base at or after `start` whose block of `count` ids misses every id in `used`. */
+export const RATELIMIT_MIN = 10000;
+export const RATELIMIT_MAX = 999999;
+
+/**
+ * The first block of `count` ids, at or after `start` and then wrapping round from RATELIMIT_MIN, that misses
+ * every id in `used` and stays within RATELIMIT_MAX. null when there is none.
+ */
 export function freeRatelimitBase(start, count, used) {
-  let base = start;
-  while ([...Array(count).keys()].some(i => used.has(String(base + i)))) base += 10;
-  return base;
+  const free = (b) => b + count - 1 <= RATELIMIT_MAX && ![...Array(count).keys()].some(i => used.has(String(b + i)));
+  for (let b = start; b + count - 1 <= RATELIMIT_MAX; b += 10) if (free(b)) return b;
+  for (let b = RATELIMIT_MIN; b < start; b += 10) if (free(b)) return b;
+  return null;
 }
 
 export function generateLocalConfig(tracked, { name, accountId, d1Id, kvId, url, workersDev = true, ratelimitBase: rlBase = null }) {
