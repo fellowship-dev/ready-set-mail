@@ -1,3 +1,4 @@
+import { DnsHostLine } from './DnsHostLine';
 import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { Button, CheckResult, CheckResultList, RecordBlock, Skeleton, toast, type CheckStatus } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -257,6 +258,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 
 	return (
 		<Section title="DNS records" description="Read live from DNS. A lookup that fails is shown as such and never counted as a missing record.">
+			<DnsHostLine domain={domain.domain} />
 			<CheckResultList aria-label="DNS records">
 				{onboarding.data?.nxdomain ? (
 					// DNS says the name does not exist: the same verdict as the overview card, not three "not found" rows.

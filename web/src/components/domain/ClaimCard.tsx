@@ -1,16 +1,29 @@
 import { Alert, Badge, Button } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import type { Domain, DomainClaim } from '../../lib/types';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { PlanLimitNotice, planLimitOf, type PlanLimit } from '../PlanLimitNotice';
-import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
-import { useCfConnections, usableConnection } from '../../lib/cloudflare';
+import { useCfConnections } from '../../lib/cloudflare';
+import { hostOf, isCloudflareHost, safeHelpUrl, useDnsHost, type DnsHostProvider } from '../../lib/dns-host';
 import { useSession } from '../../lib/session';
 import { ClaimPreview } from './ClaimPreview';
-import { CopyField } from './CopyField';
+import { ProofRecord } from './ProofRecord';
+
+/** The short host of the proof record (`_readysetmail`): what a provider that adds the domain itself wants typed. */
+const shortHost = (txtName: string, domain: string) => (txtName.endsWith(`.${domain}`) ? txtName.slice(0, -(domain.length + 1)) : txtName);
+
+/** The Name rows: the provider's own field when we know it, otherwise both forms. */
+function nameRows(provider: DnsHostProvider | null, claim: DomainClaim): Array<{ label: string; value: string }> {
+	const short = { label: 'Host', value: shortHost(claim.txt_name, claim.domain) };
+	const full = { label: 'Name', value: claim.txt_name };
+	const field = provider?.host_field ?? (provider?.appends_domain ? 'relative' : undefined);
+	if (field === 'relative') return [short];
+	if (field === 'fqdn') return [full];
+	return [short, full];
+}
 
 export const LOST_EXPLANATION = 'Another workspace verified this domain first, so it cannot be added to this one.';
 
@@ -37,6 +50,7 @@ function verifyFailure(e: unknown): string {
 export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, preview }: { claim: DomainClaim; onVerified?: (domain: Domain, info: { resumed: boolean }) => void; onRemoved?: () => void; canWrite?: boolean; /** Show what public DNS says about the domain: `true` loads it now, `'lazy'` waits for a click. */ preview?: boolean | 'lazy' }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
+	const { pathname, search } = useLocation();
 	const [error, setError] = useState('');
 	/** Failed Verify presses on this card: after two, a person is offered. */
 	const [failures, setFailures] = useState(0);
@@ -74,7 +88,22 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	// A Cloudflare connection that manages the domain's zone proves ownership by itself (Verify checks it): offer it before the TXT record.
 	const session = useSession();
 	const conns = useCfConnections(session.canWrite && canWrite && !lost);
-	const offerConnect = !lost && !!conns.data && !usableConnection(conns.data) && (conns.data.oauth.available || conns.data.token_paste);
+	const canConnect = !lost && session.canWrite && canWrite && !!conns.data && (conns.data.oauth.available || conns.data.token_paste);
+	// Who hosts DNS: asked after first paint. While it loads, and when it cannot be told (unknown, mixed, error), the generic record shows.
+	const dnsHost = useDnsHost(claim.domain, !lost);
+	const provider = hostOf(dnsHost.data);
+	const onCloudflare = isCloudflareHost(provider);
+	// An active connection whose allowed zone contains the domain: the server accepts that as proof, so Verify needs no record.
+	const covering = onCloudflare && (conns.data?.connections ?? []).some((c) => c.status === 'active' && c.zones.some((z) => claim.domain === z.name || claim.domain.endsWith(`.${z.name}`)));
+	const cloudflareFirst = !lost && onCloudflare && (covering || canConnect);
+	/** "I'll add it myself": the record, for someone who would rather not connect Cloudflare. */
+	const [manual, setManual] = useState(false);
+	const showRecord = !lost && (!cloudflareFirst || manual);
+	const connectPrimary = cloudflareFirst && !covering && !manual;
+	const helpUrl = onCloudflare ? null : safeHelpUrl(provider);
+	const unknownHost = !dnsHost.isPending && !provider;
+	const rows = nameRows(provider, claim);
+	const connect = () => navigate(`/cloudflare/connect?back=${encodeURIComponent(pathname + search)}`);
 
 	return (
 		<div className="space-y-4 rounded-lg border border-line p-4" data-testid={`claim-${claim.id}`}>
@@ -89,17 +118,29 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 				</>
 			) : (
 				<>
-					{preview ? <ClaimPreview claimId={claim.id} domain={claim.domain} lazy={preview === 'lazy'} /> : null}
-					<p className="text-sm text-ink-2">
-						Prove you own <strong>{claim.domain}</strong> by adding this DNS record where you manage it, then press Verify. DNS changes can take a few minutes to propagate.
-					</p>
-					{offerConnect ? <ConnectCloudflareLink>Connect Cloudflare to verify this for you</ConnectCloudflareLink> : null}
-					<div className="grid gap-3 sm:grid-cols-3">
-						<CopyField label="Type" value="TXT" />
-						<CopyField label="Name" value={claim.txt_name} />
-						<CopyField label="Value" value={claim.txt_value} />
-					</div>
-					{claim.last_error && !error ? <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">Last check: {/ not found yet /.test(claim.last_error) ? 'the record was not visible yet.' : claim.last_error}</p> : null}
+					{cloudflareFirst ? (
+						<p className="text-sm text-ink-1">{covering ? `Cloudflare is connected for ${claim.domain}. Verify to prove you control it.` : `${claim.domain} uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you`}</p>
+					) : provider ? (
+						<p className="text-sm text-ink-1">{`${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
+					) : (
+						<>
+							<p className="text-sm text-ink-1">Prove you control {claim.domain} by adding this DNS record</p>
+							{unknownHost ? <p className="text-sm text-ink-2">We couldn't tell who hosts DNS for {claim.domain}.</p> : null}
+						</>
+					)}
+					{showRecord ? (
+						<ProofRecord names={rows} value={claim.txt_value}>
+							{provider && !cloudflareFirst && rows.length > 1 ? <p className="text-xs text-ink-2">If {provider.name} adds the domain for you, use the short one.</p> : null}
+							{helpUrl ? (
+								<p className="text-sm">
+									<a href={helpUrl} target="_blank" rel="noopener noreferrer" className="text-brand-ink underline underline-offset-4">
+										How to add a TXT record at {provider?.name}
+									</a>
+								</p>
+							) : null}
+						</ProofRecord>
+					) : null}
+					{claim.last_error && !error && showRecord ? <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">Last check: {/ not found yet /.test(claim.last_error) ? 'the record was not visible yet.' : claim.last_error}</p> : null}
 				</>
 			)}
 			{limit ? <PlanLimitNotice limit={limit} /> : null}
@@ -110,15 +151,28 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 			) : null}
 			{!lost && failures >= 2 ? <TalkToMax priority={HELP_PRIORITY.claimStuck} lead="Added the record and it still does not verify?" about={`about ${claim.domain}`} /> : null}
 			<div className="flex flex-wrap gap-2">
-				{!lost ? (
+				{connectPrimary ? <Button disabled={!canWrite} onClick={connect}>Connect Cloudflare</Button> : null}
+				{!lost && !connectPrimary ? (
 					<Button loading={verify.isPending} disabled={!canWrite} onClick={() => { setError(''); setLimit(null); verify.mutate(); }}>
 						{waiting ? 'Verify again' : 'Verify'}
+					</Button>
+				) : null}
+				{!lost && cloudflareFirst && !manual ? (
+					<Button variant="secondary" onClick={() => setManual(true)}>
+						I'll add it myself
+					</Button>
+				) : null}
+				{!lost && cloudflareFirst && !covering && manual ? (
+					<Button variant="secondary" onClick={connect}>
+						Connect Cloudflare
 					</Button>
 				) : null}
 				<Button variant="secondary" loading={remove.isPending} disabled={!canWrite} aria-label={`Remove ${claim.domain}`} onClick={() => { setError(''); remove.mutate(); }}>
 					Remove
 				</Button>
 			</div>
+			{!lost && !connectPrimary ? <p className="text-sm text-ink-2">{showRecord ? 'Usually a minute or two.' : 'Usually a few seconds.'}</p> : null}
+			{!lost && preview ? <ClaimPreview claimId={claim.id} domain={claim.domain} lazy={preview === 'lazy'} compact /> : null}
 		</div>
 	);
 }

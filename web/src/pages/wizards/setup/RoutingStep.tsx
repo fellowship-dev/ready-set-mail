@@ -1,3 +1,4 @@
+import { DnsHostLine } from '../../../components/domain/DnsHostLine';
 import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, Button, CheckResult, CheckResultList } from '@ready-set-mail/ui';
 import { useMutation } from '@tanstack/react-query';
@@ -50,6 +51,7 @@ export function RoutingStep({ status, onNext, onSkip, onRetry, retrying }: StepP
 
 	return (
 		<StepCard title="Reports routing" badge={<SeverityBadge severity={severity} />}>
+			<DnsHostLine domain={status.domain} />
 			<CheckResultList>
 				{mxFailed.length > 0 ? (
 					<CheckResult

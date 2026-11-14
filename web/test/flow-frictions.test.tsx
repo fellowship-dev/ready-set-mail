@@ -145,7 +145,7 @@ describe('3. coming back with a pending claim', () => {
 		});
 		expect(await screen.findByRole('heading', { name: 'Verify you own this domain' })).toBeInTheDocument();
 		expect(screen.getByText('You added this domain earlier. It is waiting for the DNS record that proves it is yours.')).toBeInTheDocument();
-		expect(await screen.findByRole('heading', { name: 'Public DNS for acme.io' })).toBeInTheDocument();
+		expect(await screen.findByText(/Public DNS today:/)).toBeInTheDocument();
 		expect(screen.getByText('readysetmail-verify=abc')).toBeInTheDocument();
 		expect(screen.queryByLabelText('Domain')).not.toBeInTheDocument();
 	});

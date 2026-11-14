@@ -3,6 +3,7 @@ import { Alert, Badge, Button, CheckResult, CheckResultList, FieldHint, IconButt
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useState } from 'react';
+import { DnsHostLine } from '../../../components/domain/DnsHostLine';
 import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
 import { LookupBadge, RecordPair, TxtRecord } from '../../../components/wizard/RecordPair';
@@ -179,6 +180,7 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 			</StepAside>
 
 			<StepMain>
+			<DnsHostLine domain={status.domain} />
 			{preview ? (
 				<div className="flex flex-wrap items-center gap-2 text-sm" aria-live="polite">
 					<span className="text-ink-2">DNS lookups in the proposed record:</span>

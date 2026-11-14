@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
 import { TxtRecord } from '../../../components/wizard/RecordPair';
+import { DnsHostLine } from '../../../components/domain/DnsHostLine';
 import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepNav } from '../../../components/wizard/StepNav';
@@ -96,6 +97,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 
 	return (
 		<StepCard title="DMARC policy" badge={<SeverityBadge severity={applied ? 'info' : severity} />}>
+			<DnsHostLine domain={status.domain} />
 			{dmarcFailed.length > 0 ? (
 				<>
 					<CheckResultList>

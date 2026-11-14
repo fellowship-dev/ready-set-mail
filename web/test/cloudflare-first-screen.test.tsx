@@ -122,9 +122,11 @@ describe('first screen: Cloudflare first', () => {
 			routes: {
 				...base,
 				'GET /api/cloudflare/connections': offer(),
+				'GET /api/domains/dns-host?name=acme.org': { provider: { id: 'cloudflare', name: 'Cloudflare' }, nameservers: ['a.ns.cloudflare.com'], status: 'known' },
 				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
 			},
 		});
-		expect(await screen.findByRole('link', { name: 'Connect Cloudflare to verify this for you' })).toBeInTheDocument();
+		expect(await screen.findByText('acme.org uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
 	});
 });
