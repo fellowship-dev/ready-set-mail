@@ -14,7 +14,7 @@
 // Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
 // harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
 //
-// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?} (replace a zone's routing rules; failPage answers that page 500), GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
+// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?, failAfterWrite?, failPosts?: [DNS types]} (replace a zone's routing rules; failPage answers that page 500), GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
 // everything under it answers NS queries with those hosts, zone or not; ns:[] removes it).
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -96,6 +96,8 @@ export function createFakeCloudflare() {
       const r = st.routing.get(z.id);
       r.rules = Array.isArray(body?.rules) ? body.rules : [];
       r.failPage = body?.failPage || undefined;
+      r.failAfterWrite = !!body?.failAfterWrite; // after a rule is written, the rules list stops answering (a read-back that cannot be done)
+      if (Array.isArray(body?.failPosts)) st.failPosts = body.failPosts; // DNS record types whose creation answers 500
       return send(200, { ok: true });
     }
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
@@ -186,6 +188,7 @@ export function createFakeCloudflare() {
         if (!body?.type || !body?.content) return send(400, failure('Invalid DNS record: type and content are required', 9005));
         const name = fqdn(zone, body.name);
         const type = String(body.type).toUpperCase();
+        if ((st.failPosts ?? []).includes(type)) return send(500, failure('Internal error', 1000));
         const dup = records.find(r => r.type === type && r.name === name && r.content === body.content && (r.priority ?? null) === (body.priority ?? null));
         if (dup) return send(400, failure('An identical record already exists.', 81058));
         const now = new Date().toISOString();
@@ -233,6 +236,7 @@ export function createFakeCloudflare() {
     if (rest === '/email/routing/rules' && method === 'POST') {
       const rule = { id: hex(`rule:${zone.id}:${routing.rules.length}:${JSON.stringify(body?.matchers)}`), tag: '', name: body?.name ?? 'rule', enabled: body?.enabled ?? true, actions: body?.actions ?? [], matchers: body?.matchers ?? [] };
       routing.rules.push(rule);
+      if (routing.failAfterWrite) routing.failPage = 1;
       return ok(rule);
     }
 

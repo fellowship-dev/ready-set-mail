@@ -118,8 +118,8 @@ function Status({ w, ok, verified, note, error }: { w: PlanWrite; ok: boolean; v
 		<>
 			<Change w={w} />
 			{ok ? (
-				<p className="mt-1 flex items-center gap-1 text-success">
-					<Check aria-hidden className="size-4 shrink-0" />
+				<p className={`mt-1 flex items-start gap-1 ${verified ? 'text-success' : 'text-ink-2'}`}>
+					<Check aria-hidden className={`size-4 shrink-0 ${verified ? '' : 'mt-0.5'} text-success`} />
 					<span className="[overflow-wrap:anywhere]">{verified ? 'Written and checked in Cloudflare' : `Written, not checked: ${note ?? 'Cloudflare did not confirm it.'}`}</span>
 				</p>
 			) : error ? (

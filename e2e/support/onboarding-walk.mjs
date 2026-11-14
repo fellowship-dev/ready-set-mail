@@ -13,7 +13,7 @@ import { startInstance } from './dev-instance.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const WT = path.join(os.homedir(), 'work/main-wt');
-const SHOTS = path.join(os.homedir(), 'work/shots');
+const SHOTS = process.env.SHOTS_DIR || path.join(os.homedir(), 'work/shots');
 mkdirSync(SHOTS, { recursive: true });
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
 let failures = 0;
@@ -328,6 +328,84 @@ async function manualPath(browser, port) {
   await ctx.close(); await inst.stop();
 }
 
+/** The follow-up states (--only followups): a mailbox step that gives up with its cause, a write that was not checked, a failed
+ * write left on the Done screen, and the notice after removing a domain whose authorisation record was changed. */
+async function followups(browser, width, height, port) {
+  const inst = await startInstance({ mode: 'selfhost', port });
+  const { ctx, page } = await newPage(browser, width, height);
+  const d = driver(page);
+  const shot = shooter(page, 'followups', width);
+  const setRules = (body) => fetch(`${inst.fake.url}/__rules`, { method: 'POST', body: JSON.stringify({ zone: 'brightwave-mail.com', ...body }) });
+  const mailbox = async (text) => { await page.reload(); await page.getByText(text).first().waitFor({ timeout: 30000 }); await wait(500); };
+  try {
+    await createOwner(page, d, inst);
+    await page.locator('#email').waitFor();
+    await page.locator('#email').fill('owner@harbor-lane.org'); await page.locator('#password').fill('correct-horse-battery'); await page.locator('#confirm').fill('correct-horse-battery');
+    await btn(page, 'Create account').click();
+    await btn(page, 'Connect Cloudflare').first().click();
+    await page.getByLabel('Cloudflare API token').fill('fake-token-for-local-walk');
+    await btn(page, 'Connect', { exact: true }).click();
+    await btn(page, 'Next').waitFor({ timeout: 20000 });
+    await page.getByRole('checkbox').first().waitFor();
+    await btn(page, 'Next').click();
+    await btn(page, /^Add \d+ domains?/).waitFor({ timeout: 20000 });
+    await page.getByText(/DMARC (p=|missing|inherited)/).first().waitFor({ timeout: 20000 });
+    if (await btn(page, /^Add \d+ domains?/).isDisabled()) for (const cb of await page.getByRole('checkbox').all()) await cb.click();
+    await btn(page, /^Add \d+ domains?/).click();
+    // DMARC step, written for real; then the mailbox step.
+    const write = page.getByRole('button', { name: /^Write \d+ (record|change)s?( and continue)?$/ });
+    await write.first().waitFor({ timeout: 30000 });
+    await write.first().click();
+    await page.getByText(/written to Cloudflare/).first().waitFor({ timeout: 30000 });
+    await wait(1200);
+    // 1. The rules list cannot be read (Cloudflare error), then (more rules than can be read at once): the cause, in words.
+    await setRules({ rules: [], failPage: 1 });
+    await mailbox(/Cloudflare returned an error when reading the Email Routing rules/);
+    await shot('mailbox-giveup-error');
+    const many = Array.from({ length: 1001 }, (_, i) => ({ id: `r${i}`, enabled: true, matchers: [{ type: 'literal', field: 'to', value: `person${i}@harbor-lane.org` }], actions: [{ type: 'forward', value: ['team@harbor-lane.org'] }] }));
+    await setRules({ rules: many });
+    await mailbox(/more Email Routing rules than Ready Set Mail can read at once/);
+    await shot('mailbox-giveup-cap');
+    // 2. Readable again; the write goes through but cannot be read back, and one MX record is refused.
+    await setRules({ rules: [], failAfterWrite: true, failPosts: ['MX'] });
+    await page.reload();
+    await write.first().waitFor({ timeout: 30000 });
+    await wait(500);
+    await shot('mailbox-plan');
+    await write.first().click();
+    await page.getByText(/^Written, not checked: /).first().waitFor({ timeout: 30000 });
+    await wait(500);
+    await shot('mailbox-written-not-checked');
+    // 3. Leave the failed write behind: the Done screen lists it as still to write.
+    // The Done screen plans again: let the rules list answer, keeping the rules just written and the refused MX records.
+    const now = await (await fetch(`${inst.fake.url}/__state`)).json();
+    const z = now.zones.find((x) => x.name === 'brightwave-mail.com');
+    await setRules({ rules: now.routing[z.id].rules, failPosts: ['MX'] });
+    await btn(page, 'Continue without them').click();
+    await page.getByText('Still to write').first().waitFor({ timeout: 20000 });
+    await shot('done-still-to-write');
+    await setRules({ rules: [], failPosts: [] });
+    await btn(page, 'Go to overview').click();
+    await page.getByRole('heading', { level: 1 }).first().waitFor();
+    // 4. Remove a domain whose authorisation record was changed: it is kept, and the overview says so.
+    const state = await (await fetch(`${inst.fake.url}/__state`)).json();
+    const zone = state.zones.find((z) => z.name === 'brightwave-mail.com');
+    const auth = (state.records[zone.id] ?? state.records[zone.name] ?? []).find((r) => r.name.includes('._report._dmarc.'));
+    if (!auth) throw new Error('no authorisation record in the fake');
+    const owner = auth.name.split('._report._dmarc.')[0];
+    await fetch(`${inst.fake.url}/client/v4/zones/${zone.id}/dns_records/${auth.id}`, { method: 'PATCH', headers: { Authorization: 'Bearer fake-token-for-local-walk', 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'v=DMARC1; rua=mailto:dmarc@customer-changed.example' }) });
+    const doms = await page.evaluate(async () => (await (await fetch('/api/domains')).json()));
+    const id = (Array.isArray(doms) ? doms : doms.domains).find((x) => x.domain === owner)?.id;
+    await page.goto(`${inst.url}/#/domains/${id}/settings`);
+    await btn(page, 'Remove domain').click();
+    await btn(page, 'Yes, remove').click();
+    await page.getByText(/Kept 1 DNS record you changed/).first().waitFor({ timeout: 20000 });
+    await wait(500);
+    await shot('overview-removal-kept');
+  } catch (e) { failures++; console.log(`FAIL followups-${width}: ${String(e.message).split('\n')[0]}`); await page.screenshot({ path: path.join(SHOTS, `followups-${width}-error.png`), fullPage: true }).catch(() => {}); }
+  await ctx.close(); await inst.stop();
+}
+
 // Headless chromium needs its system libraries; if they are not installed, put them on LD_LIBRARY_PATH (see header).
 const browser = await chromium.launch();
 try {
@@ -336,6 +414,7 @@ try {
     await selfhostSpecial(browser, 8814);
     await manualPath(browser, 8815);
   }
+  if (only === 'followups') { await followups(browser, 375, 812, 8851); await followups(browser, 1440, 900, 8852); }
   if (only === 'manual') await manualPath(browser, 8815);
   if (only === 'count') { await hostedWalk(browser, 375, 812, 8841, false, { cwd: WT, tag: 'before-hosted-count' }); await hostedWalk(browser, 375, 812, 8842, false); }
   if (only === 'special') await selfhostSpecial(browser, 8814);
