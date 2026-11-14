@@ -3,7 +3,6 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { bindSignupDomainToEmail, readSignupDomain } from '../../lib/signup-intent';
-import { useClaimLink } from '../../lib/claim-link';
 import { useSession } from '../../lib/session';
 import { TalkToMax } from '../../components/TalkToMax';
 import { CheckEmail } from './CheckEmail';
@@ -30,9 +29,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const [password, setPassword] = useState('');
 	const [confirm, setConfirm] = useState('');
 	const [bootstrapProof, setBootstrapProof] = useState('');
-	const [proofOpen, setProofOpen] = useState(false);
-	const claim = useClaimLink();
-	const linkToken = claim.token;
 	const [telemetry, setTelemetry] = useState(status?.telemetry_default ?? false);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
@@ -66,19 +62,15 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 			if (password.length < 8) return setError('Password must be at least 8 characters.');
 			if (password !== confirm) return setError('Passwords do not match.');
 		}
-		if (mode === 'setup' && !linkToken && bootstrapProof.length < 32) {
-			setProofOpen(true);
-			return setError(bootstrapProof ? 'Installer proof must be at least 32 characters.' : 'Open the setup link printed when you deployed, or enter an installer proof.');
-		}
+		if (mode === 'setup' && bootstrapProof.length < 32) return setError('Installer proof must be at least 32 characters.');
 		setBusy(true);
 		try {
 			const turnstile = check.token ? { cf_turnstile_token: check.token } : {};
 			const endpoint = mode === 'setup' ? '/api/auth/setup' : mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
 			const body = mode === 'setup' ? { name, email, password, telemetry, ...turnstile } : mode === 'signup' ? { email, ...turnstile } : { email, password, ...turnstile };
 			if (mode === 'signup') bindSignupDomainToEmail(email);
-			const res = await api<{ verification_required?: boolean; has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': linkToken ?? bootstrapProof } } : {}) });
+			const res = await api<{ verification_required?: boolean; has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
 			setBootstrapProof('');
-			claim.clear();
 			if (res.verification_required) {
 				setVerifyFor(email);
 				return;
@@ -89,7 +81,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 			else navigate('/', { replace: true });
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 403 && (err.body as { code?: string } | undefined)?.code === 'email_not_verified') setVerifyFor(email);
-			else if (mode === 'setup' && linkToken && err instanceof ApiError && err.status === 403) setError('This setup link has expired or was already used. Run `npm run setup-link` where you deployed to get a new one.');
 			else if (mode === 'setup' && err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
 			else setError(errorMessage(err));
 		} finally {
@@ -113,12 +104,10 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	if (verifyFor) return <CheckEmail email={verifyFor} onBack={() => { setVerifyFor(null); setCreating(false); setError(''); }} />;
 
 	const requestedDomain = mode === 'signup' ? readSignupDomain() : null;
-	const title = mode === 'setup' ? (linkToken ? 'Create the owner account' : 'Create your account') : mode === 'signup' ? 'Create an account' : 'Sign in';
+	const title = mode === 'setup' ? 'Create your account' : mode === 'signup' ? 'Create an account' : 'Sign in';
 	const description =
 		mode === 'setup'
-			? linkToken
-				? undefined
-				: 'This creates the account that owns this instance. It needs the installer proof, a secret only the person who deployed it holds. There is no default password.'
+			? 'This creates the account that owns this instance. It needs the installer proof, a secret only the person who deployed it holds. There is no default password.'
 			: mode === 'signup'
 				? hosted
 					? 'See where your domains stand and what to fix, checked from live DNS. DMARC reports are not connected yet.'
@@ -133,17 +122,7 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 				</p>
 			) : null}
 			<form onSubmit={submit} className="space-y-4" noValidate={false}>
-				{mode === 'setup' && !linkToken ? (
-					<>
-						<p className="text-sm text-ink-2">Open the setup link printed when you deployed (it is also in the deploy log), or run <code className="font-mono">npm run setup-link</code>.</p>
-						<details open={proofOpen} onToggle={(e) => setProofOpen(e.currentTarget.open)}>
-							<summary className="cursor-pointer text-sm text-brand-ink underline underline-offset-4">I have an installer proof</summary>
-							<div className="pt-4">
-								<Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" minLength={32} autoComplete="off" value={bootstrapProof} onChange={e => setBootstrapProof(e.target.value)} /></Field>
-							</div>
-						</details>
-					</>
-				) : null}
+				{mode === 'setup' ? <Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" required minLength={32} autoComplete="off" value={bootstrapProof} onChange={e => setBootstrapProof(e.target.value)} /></Field> : null}
 				{/* Hosted sign-up asks for no name: one typed before the address is proven could be anyone's; the welcome page asks. */}
 				{mode === 'setup' ? (
 					<Field id="name" label="Your name (optional)">
@@ -172,7 +151,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 						</Label>
 					</div>
 				) : null}
-				{mode === 'setup' && linkToken ? <p className="text-sm text-ink-2">This link works once.</p> : null}
 				{check.widget}
 				{error ? <FieldError>{error}</FieldError> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={!check.ready}>
