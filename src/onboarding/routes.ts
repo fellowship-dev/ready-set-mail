@@ -66,11 +66,11 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
         logAudit(tenant, { ...actor, action: 'dns.update', resource_type: 'dns_record', resource_id: recordId, resource_name: w.name, before_value: { type: 'TXT', name: w.name, content: w.before }, after_value: { type: 'TXT', name: w.name, content: w.content } }, ctx);
         return;
       }
-      if (existing.some(same)) recordId = existing.find(same)!.id;
-      else {
-        recordId = (await x.cf.createDnsRecord(x.zoneId, { type: 'TXT', name: w.name, content: w.content, ttl: 3600 })).id;
-        logAudit(tenant, { ...actor, action: 'dns.create', resource_type: 'dns_record', resource_id: recordId, resource_name: w.name, after_value: { type: 'TXT', name: w.name, content: w.content } }, ctx);
-      }
+      // A record that was already there is not ours: only a record this call creates is remembered (dns_record_id), and
+      // only that one is deleted when the domain is removed.
+      if (existing.some(same)) return;
+      recordId = (await x.cf.createDnsRecord(x.zoneId, { type: 'TXT', name: w.name, content: w.content, ttl: 3600 })).id;
+      logAudit(tenant, { ...actor, action: 'dns.create', resource_type: 'dns_record', resource_id: recordId, resource_name: w.name, after_value: { type: 'TXT', name: w.name, content: w.content } }, ctx);
       if (x.kind === 'auth' && x.domainId && recordId) await tenant.scope.domains.setDnsRecord(x.domainId, recordId, { provisioned: true });
       return;
     }
