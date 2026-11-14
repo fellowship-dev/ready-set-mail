@@ -138,6 +138,7 @@ async function selfhostWalk(browser, width, height, port) {
 async function selfhostSpecial(browser, port) {
   // Manual path + "can't be connected yet" (no TOKEN_ENCRYPTION_KEY), at 375 and 1440.
   const inst = await startInstance({ mode: 'selfhost', port, tokenKey: false });
+  // The expired-link page at both widths, before the owner exists (afterwards the Gate shows sign-in instead).
   for (const [w, h] of [[375, 812], [1440, 900]]) {
     {
       // The expired-link page: a signed link whose expiry is past (no owner exists yet, so the Gate shows it instead of the form).
@@ -149,6 +150,8 @@ async function selfhostSpecial(browser, port) {
       } catch (e) { failures++; console.log(`FAIL expired-link-${w}: ${String(e.message).split('\n')[0]}`); }
       await c0.close();
     }
+  }
+  for (const [w, h] of [[375, 812], [1440, 900]]) {
     const { ctx, page } = await newPage(browser, w, h);
     const d = driver(page); const shot = shooter(page, 'selfhost-nokey', w);
     try {
@@ -305,6 +308,7 @@ try {
     await selfhostSpecial(browser, 8814);
   }
   if (only === 'count') { await hostedWalk(browser, 375, 812, 8841, false, { cwd: WT, tag: 'before-hosted-count' }); await hostedWalk(browser, 375, 812, 8842, false); }
+  if (only === 'special') await selfhostSpecial(browser, 8814);
   if (only === 'claims') { await claimStates(browser, 8824); await claimStates(browser, 8825, { prefix: 'hosted-connect', tokenKey: true, only: 'cloudflare' }); }
   if (!only || only === 'hosted') {
     await hostedWalk(browser, 375, 812, 8821, true); await hostedWalk(browser, 375, 812, 8822, false); await hostedWalk(browser, 1440, 900, 8823, true);
