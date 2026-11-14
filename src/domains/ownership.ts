@@ -11,7 +11,7 @@
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
 import { claimLookups, type DomainClaimRow } from '@ready-set-mail/db';
-import { createResolver, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
 import { loadTenant } from '../tenancy/load';
@@ -248,7 +248,7 @@ export type VerifyOutcome =
   | { kind: 'unproven'; reason: string; code?: UnprovenCode };
 
 /** The "Verify" button: re-check every kind of proof for a pending claim. */
-export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, resolver: Resolver = createResolver()): Promise<VerifyOutcome> {
+export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, resolver: Resolver = resolverFor(tenant.env)): Promise<VerifyOutcome> {
   if (await claimLookups(tenant.db).ownedByOther(claim.domain, tenant.workspaceId)) {
     await tenant.scope.claims.markLost(claim.id);
     return { kind: 'taken' };
