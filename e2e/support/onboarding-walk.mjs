@@ -406,6 +406,32 @@ async function followups(browser, width, height, port) {
   await ctx.close(); await inst.stop();
 }
 
+/** The connect-by-token screen (pre-filled Cloudflare link, then paste), self-host and hosted (--only tokenscreen). */
+async function tokenScreen(browser, width, height, port) {
+  for (const mode of ['selfhost', 'hosted']) {
+    const inst = await startInstance({ mode, port: port + (mode === 'hosted' ? 1 : 0) });
+    const { ctx, page } = await newPage(browser, width, height);
+    const d = driver(page);
+    try {
+      if (mode === 'selfhost') {
+        await createOwner(page, d, inst);
+        await page.locator('#email').fill('owner@harbor-lane.org'); await page.locator('#password').fill('correct-horse-battery'); await page.locator('#confirm').fill('correct-horse-battery');
+        await btn(page, 'Create account').click();
+        await btn(page, 'Connect Cloudflare').first().click();
+      } else {
+        await hostedSignUp(page, d, inst, `owner-${width}@harbor-lane.org`);
+        await page.getByRole('heading', { level: 1 }).first().waitFor({ timeout: 20000 });
+        await btn(page, 'Connect Cloudflare').first().click();
+      }
+      await page.getByRole('link', { name: 'Create the token in Cloudflare' }).waitFor({ timeout: 20000 });
+      await snap(page, `token-${mode}-${width}-01-connect`);
+      await page.getByText('Create it by hand instead').click();
+      await snap(page, `token-${mode}-${width}-02-by-hand`);
+    } catch (e) { failures++; console.log(`FAIL token-${mode}-${width}: ${String(e.message).split('\n')[0]}`); await page.screenshot({ path: path.join(SHOTS, `token-${mode}-${width}-error.png`), fullPage: true }).catch(() => {}); }
+    await ctx.close(); await inst.stop();
+  }
+}
+
 // Headless chromium needs its system libraries; if they are not installed, put them on LD_LIBRARY_PATH (see header).
 const browser = await chromium.launch();
 try {
@@ -414,6 +440,7 @@ try {
     await selfhostSpecial(browser, 8814);
     await manualPath(browser, 8815);
   }
+  if (only === 'tokenscreen') { await tokenScreen(browser, 375, 812, 8861); await tokenScreen(browser, 1440, 900, 8863); }
   if (only === 'followups') { await followups(browser, 375, 812, 8851); await followups(browser, 1440, 900, 8852); }
   if (only === 'manual') await manualPath(browser, 8815);
   if (only === 'count') { await hostedWalk(browser, 375, 812, 8841, false, { cwd: WT, tag: 'before-hosted-count' }); await hostedWalk(browser, 375, 812, 8842, false); }

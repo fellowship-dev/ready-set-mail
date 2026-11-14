@@ -1,4 +1,4 @@
-import { Alert, FieldError, FieldHint, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ready-set-mail/ui';
+import { Alert, Button, FieldError, FieldHint, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ready-set-mail/ui';
 import { useId, useState, type FormEvent } from 'react';
 import { CopyField } from '../../../components/domain/CopyField';
 import { StepCard } from '../../../components/wizard/StepCard';
@@ -14,9 +14,9 @@ import {
 	type CfConnection,
 	type CfConnections,
 } from '../../../lib/cloudflare';
+import { tokenLink } from '../../../lib/cloudflare-token-link';
 import { useHosted } from '../../../lib/session';
 
-const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
 
 /** Step 1: OAuth when the instance offers it, otherwise a pasted API token. A failure is shown inline, never as a toast. */
 export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConnections | undefined; returnError?: string | null; onConnected: (c: CfConnection) => void }) {
@@ -84,36 +84,52 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 		<StepCard title="Connect Cloudflare">
 			<form onSubmit={submit} className="space-y-5" noValidate>
 				<div className="max-w-prose space-y-3 text-sm text-ink-2">
-					<p>
-						<a href={TOKEN_URL} target="_blank" rel="noreferrer" className="text-brand-ink underline underline-offset-4">
-							Create a token at Cloudflare
-						</a>{' '}
-						with these permissions:
-					</p>
-				</div>
-				<Table label="Token permissions">
-					<TableHeader>
-						<TableRow>
-							<TableHead>Scope</TableHead>
-							<TableHead>Group</TableHead>
-							<TableHead>Permission</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						<PermissionRow scope="Zone" group="Zone" access="Read" />
-						<PermissionRow scope="Zone" group="DNS" access="Edit" />
-						<PermissionRow scope="Zone" group="Email Routing Rules" access="Edit" />
-						{hosted ? null : <PermissionRow scope="Account" group="Email Routing Addresses" access="Edit" note="alert emails to you" />}
-						<PermissionRow scope="Account" group="Account Settings" access="Read" />
-					</TableBody>
-				</Table>
-				<div className="max-w-prose space-y-3 text-sm text-ink-2">
-					<p>Zone Resources: the zones you want Ready Set Mail to manage.</p>
+					<p className="font-medium text-ink-1">1. Create the token</p>
+					<div>
+						<Button asChild>
+							<a href={tokenLink(hosted)} target="_blank" rel="noopener noreferrer">
+								Create the token in Cloudflare
+							</a>
+						</Button>
+					</div>
+					<p>Cloudflare&apos;s page opens with Zone Read and DNS Edit already chosen. You can narrow it to specific zones there before you create the token.</p>
+					{hosted ? null : (
+						<p>
+							Add these two by hand, Cloudflare&apos;s link cannot pre-fill them: Zone · Email Routing Rules · Edit (for the reports mailbox) and Account · Email Routing
+							Addresses · Edit (for alert emails to you).
+						</p>
+					)}
+					<details className="group">
+						<summary className="cursor-pointer text-ink-2 underline underline-offset-4">Create it by hand instead</summary>
+						<div className="mt-3 space-y-3">
+							<p>
+								In Cloudflare, create a token at <span className="font-mono text-xs">dash.cloudflare.com/profile/api-tokens</span> with these permissions:
+							</p>
+							<Table label="Token permissions">
+								<TableHeader>
+									<TableRow>
+										<TableHead>Scope</TableHead>
+										<TableHead>Group</TableHead>
+										<TableHead>Permission</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									<PermissionRow scope="Zone" group="Zone" access="Read" />
+									<PermissionRow scope="Zone" group="DNS" access="Edit" />
+									<PermissionRow scope="Zone" group="Email Routing Rules" access="Edit" />
+									{hosted ? null : <PermissionRow scope="Account" group="Email Routing Addresses" access="Edit" note="alert emails to you" />}
+									<PermissionRow scope="Account" group="Account Settings" access="Read" />
+								</TableBody>
+							</Table>
+							<p>Zone Resources: the zones you want Ready Set Mail to manage.</p>
+						</div>
+					</details>
 					<p>
 						It writes only the DMARC, report-authorisation and reports-mailbox records you approve on the next screens, and only in the zones you choose. It never touches other
 						records, and never writes SPF or DKIM records without showing you the change first. The token is stored encrypted; remove it here or revoke it at Cloudflare at any
 						time.
 					</p>
+					<p className="font-medium text-ink-1">2. Paste it here</p>
 				</div>
 				<div className="max-w-md space-y-1.5">
 					<Label htmlFor={tokenId}>Cloudflare API token</Label>
