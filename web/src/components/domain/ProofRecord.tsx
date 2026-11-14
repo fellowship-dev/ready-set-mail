@@ -1,6 +1,6 @@
 import { IconButton, toast } from '@ready-set-mail/ui';
 import { Copy } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 async function copy(value: string) {
 	try {
@@ -25,19 +25,28 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * The TXT record that proves a domain: type, name, value on three compact lines. `names` are the Name rows (label + value);
- * several rows mean the provider's host field is not known, so both forms are shown.
+ * The TXT record that proves a domain: type, name, value on three compact lines, with ONE name. `prefer` is what the
+ * detected provider wants typed: `short` (`_readysetmail`, the provider adds the domain) or `full`; `unknown` shows the
+ * full name with a quiet line about the short one. The other form is a toggle away.
  */
-export function ProofRecord({ names, value, children }: { names: Array<{ label: string; value: string }>; value: string; children?: ReactNode }) {
+export function ProofRecord({ shortName, fullName, prefer, value, children }: { shortName: string; fullName: string; prefer: 'short' | 'full' | 'unknown'; value: string; children?: ReactNode }) {
+	const [flipped, setFlipped] = useState(false);
+	const short = (prefer === 'short') !== flipped;
+	const name = short ? shortName : fullName;
+	const same = shortName === fullName;
 	return (
 		<div className="space-y-2">
 			<div className="space-y-0.5 rounded-md border border-line bg-surface-2 px-3 py-1.5" role="group" aria-label="DNS record to add">
 				<Row label="Type" value="TXT" />
-				{names.map((n) => (
-					<Row key={n.label} label={n.label} value={n.value} />
-				))}
+				<Row label="Name" value={name} />
 				<Row label="Value" value={value} />
 			</div>
+			{prefer === 'unknown' && !short && !same ? <p className="text-xs text-ink-2">If your DNS provider adds the domain for you, use only <code className="font-mono">{shortName}</code>.</p> : null}
+			{same ? null : (
+				<button type="button" className="text-xs text-ink-2 underline underline-offset-4 hover:text-ink-1" onClick={() => setFlipped((f) => !f)}>
+					{short ? 'Show full name' : 'Show short name'}
+				</button>
+			)}
 			{children}
 		</div>
 	);

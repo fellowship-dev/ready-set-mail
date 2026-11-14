@@ -45,17 +45,18 @@ describe('claim proof step', () => {
 	it('while loading: the generic record, no sentence about who hosts DNS', async () => {
 		card({ [HOST]: () => new Promise(() => {}) });
 		expect(await screen.findByText('Prove you control acme.io by adding this DNS record')).toBeInTheDocument();
-		expect(screen.getByText('_readysetmail')).toBeInTheDocument();
 		expect(screen.getByText('_readysetmail.acme.io')).toBeInTheDocument();
 		expect(screen.queryByText(/couldn't tell/)).toBeNull();
 		expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
 	});
 
-	it.each([['unknown', { provider: null, nameservers: [], status: 'unknown' }], ['mixed', { provider: null, nameservers: ['a', 'b'], status: 'mixed', providers: [{ id: 'x', name: 'X' }] }], ['error', { provider: { id: 'godaddy', name: 'GoDaddy' }, nameservers: [], status: 'error' }]])('%s: we could not tell, generic record with short and full name', async (_n, data) => {
+	it.each([['unknown', { provider: null, nameservers: [], status: 'unknown' }], ['mixed', { provider: null, nameservers: ['a', 'b'], status: 'mixed', providers: [{ id: 'x', name: 'X' }] }], ['error', { provider: { id: 'godaddy', name: 'GoDaddy' }, nameservers: [], status: 'error' }]])('%s: we could not tell, generic record: the full name once, the short one in a quiet line and behind a toggle', async (_n, data) => {
 		card({ [HOST]: data });
 		expect(await screen.findByText("We couldn't tell who hosts DNS for acme.io.")).toBeInTheDocument();
-		expect(screen.getByText('_readysetmail')).toBeInTheDocument();
 		expect(screen.getByText('_readysetmail.acme.io')).toBeInTheDocument();
+		expect(screen.getByText(/If your DNS provider adds the domain for you, use only/)).toHaveTextContent('_readysetmail');
+		expect(screen.getAllByRole('button', { name: /^Copy name$/ })).toHaveLength(1);
+		expect(screen.queryByText('Host')).toBeNull();
 		expect(screen.queryByText(/GoDaddy/)).toBeNull();
 		expect(screen.getAllByRole('button', { name: /^(Verify|Connect Cloudflare)$/ })).toHaveLength(1);
 	});
@@ -65,23 +66,36 @@ describe('claim proof step', () => {
 		expect(await screen.findByText("We couldn't tell who hosts DNS for acme.io.")).toBeInTheDocument();
 	});
 
-	it('another known provider: names it, no help link without help_url, short name hint without host_field', async () => {
+	it('another known provider: names it, no help link without help_url, full name with the quiet line without host_field', async () => {
 		card({ [HOST]: godaddy });
 		expect(await screen.findByText("acme.io's DNS is hosted at GoDaddy. Add this record there to show you control the domain")).toBeInTheDocument();
 		expect(screen.queryByRole('link')).toBeNull();
-		expect(screen.getByText('If GoDaddy adds the domain for you, use the short one.')).toBeInTheDocument();
-		expect(screen.getByText('_readysetmail')).toBeInTheDocument();
+		expect(screen.getByText(/If your DNS provider adds the domain for you, use only/)).toBeInTheDocument();
+		expect(screen.getByText('_readysetmail.acme.io')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Connect Cloudflare/ })).toBeNull();
 	});
 
-	it('help_url gives the link; host_field shows only that form', async () => {
+	it('help_url gives the link; host_field relative leads with the short name, the toggle shows the full one', async () => {
 		card({ [HOST]: known({ id: 'godaddy', name: 'GoDaddy', help_url: 'https://example.com/help', host_field: 'relative' }) });
 		const link = await screen.findByRole('link', { name: 'How to add a TXT record at GoDaddy' });
 		expect(link).toHaveAttribute('href', 'https://example.com/help');
 		expect(screen.getByText('_readysetmail')).toBeInTheDocument();
 		expect(screen.queryByText('_readysetmail.acme.io')).toBeNull();
-		expect(screen.queryByText(/use the short one/)).toBeNull();
+		expect(screen.queryByText(/If your DNS provider adds/)).toBeNull();
+		await userEvent.click(screen.getByRole('button', { name: 'Show full name' }));
+		expect(screen.getByText('_readysetmail.acme.io')).toBeInTheDocument();
+		expect(screen.queryByText('_readysetmail')).toBeNull();
+		await userEvent.click(screen.getByRole('button', { name: 'Show short name' }));
+		expect(screen.getByText('_readysetmail')).toBeInTheDocument();
+	});
+
+	it('host_field fqdn leads with the full name', async () => {
+		card({ [HOST]: known({ id: 'x', name: 'X', host_field: 'fqdn' }) });
+		expect(await screen.findByText(/DNS is hosted at X/)).toBeInTheDocument();
+		expect(screen.getByText('_readysetmail.acme.io')).toBeInTheDocument();
+		expect(screen.queryByText(/If your DNS provider adds/)).toBeNull();
+		expect(screen.getByRole('button', { name: 'Show short name' })).toBeInTheDocument();
 	});
 
 	it('Cloudflare DNS and a connectable instance: connect is the one primary, the record waits behind "I\'ll add it myself"', async () => {
@@ -100,9 +114,11 @@ describe('claim proof step', () => {
 		expect(screen.getByRole('button', { name: 'Verify' })).toBeInTheDocument();
 	});
 
-	it('Cloudflare DNS but the instance cannot store connections: the plain provider state', async () => {
-		card({ [HOST]: cf, 'GET /api/cloudflare/connections': conns({ oauth: { available: false, scopes: [], via_relay: false }, token_paste: false }) });
-		expect(await screen.findByText("acme.io's DNS is hosted at Cloudflare. Add this record there to show you control the domain")).toBeInTheDocument();
+	it('Cloudflare DNS but the instance cannot store connections: the record first, never "is hosted at"', async () => {
+		card({ [HOST]: cf, 'GET /api/cloudflare/connections': conns({ oauth: { available: false, scopes: [], via_relay: false }, token_paste: false, encryption_configured: false }) });
+		expect(await screen.findByText('acme.io uses Cloudflare for DNS. Add this record there to show you control the domain')).toBeInTheDocument();
+		expect(screen.queryByText(/is hosted at/)).toBeNull();
+		expect(screen.getByRole('group', { name: 'DNS record to add' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Connect Cloudflare/ })).toBeNull();
 	});
 
@@ -124,7 +140,7 @@ describe('claim proof step', () => {
 
 	it('a member never sees the connect offer', async () => {
 		card({ [HOST]: cf }, {}, 'member');
-		expect(await screen.findByText("acme.io's DNS is hosted at Cloudflare. Add this record there to show you control the domain")).toBeInTheDocument();
+		expect(await screen.findByText('acme.io uses Cloudflare for DNS. Add this record there to show you control the domain')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Connect Cloudflare/ })).toBeNull();
 	});
 });

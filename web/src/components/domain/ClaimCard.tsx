@@ -15,14 +15,12 @@ import { ProofRecord } from './ProofRecord';
 /** The short host of the proof record (`_readysetmail`): what a provider that adds the domain itself wants typed. */
 const shortHost = (txtName: string, domain: string) => (txtName.endsWith(`.${domain}`) ? txtName.slice(0, -(domain.length + 1)) : txtName);
 
-/** The Name rows: the provider's own field when we know it, otherwise both forms. */
-function nameRows(provider: DnsHostProvider | null, claim: DomainClaim): Array<{ label: string; value: string }> {
-	const short = { label: 'Host', value: shortHost(claim.txt_name, claim.domain) };
-	const full = { label: 'Name', value: claim.txt_name };
+/** Which form of the name to lead with: what the provider's own record form wants, when that is confirmed. */
+function preferredName(provider: DnsHostProvider | null): 'short' | 'full' | 'unknown' {
 	const field = provider?.host_field ?? (provider?.appends_domain ? 'relative' : undefined);
-	if (field === 'relative') return [short];
-	if (field === 'fqdn') return [full];
-	return [short, full];
+	if (field === 'relative' || field === 'either') return 'short';
+	if (field === 'fqdn') return 'full';
+	return 'unknown';
 }
 
 export const LOST_EXPLANATION = 'Another workspace verified this domain first, so it cannot be added to this one.';
@@ -88,7 +86,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	// A Cloudflare connection that manages the domain's zone proves ownership by itself (Verify checks it): offer it before the TXT record.
 	const session = useSession();
 	const conns = useCfConnections(session.canWrite && canWrite && !lost);
-	const canConnect = !lost && session.canWrite && canWrite && !!conns.data && (conns.data.oauth.available || conns.data.token_paste);
+	const canConnect = !lost && session.canWrite && canWrite && !!conns.data && conns.data.encryption_configured && (conns.data.oauth.available || conns.data.token_paste);
 	// Who hosts DNS: asked after first paint. While it loads, and when it cannot be told (unknown, mixed, error), the generic record shows.
 	const dnsHost = useDnsHost(claim.domain, !lost);
 	const provider = hostOf(dnsHost.data);
@@ -102,7 +100,6 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const connectPrimary = cloudflareFirst && !covering && !manual;
 	const helpUrl = onCloudflare ? null : safeHelpUrl(provider);
 	const unknownHost = !dnsHost.isPending && !provider;
-	const rows = nameRows(provider, claim);
 	const connect = () => navigate(`/cloudflare/connect?back=${encodeURIComponent(pathname + search)}`);
 
 	return (
@@ -120,6 +117,9 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 				<>
 					{cloudflareFirst ? (
 						<p className="text-sm text-ink-1">{covering ? `Cloudflare is connected for ${claim.domain}. Verify to prove you control it.` : `${claim.domain} uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you`}</p>
+					) : onCloudflare ? (
+						// Cloudflare, but no connection can be stored here (or the person chose to add it themselves): the record first.
+						<p className="text-sm text-ink-1">{`${claim.domain} uses Cloudflare for DNS. Add this record there to show you control the domain`}</p>
 					) : provider ? (
 						<p className="text-sm text-ink-1">{`${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
 					) : (
@@ -129,8 +129,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 						</>
 					)}
 					{showRecord ? (
-						<ProofRecord names={rows} value={claim.txt_value}>
-							{provider && !cloudflareFirst && rows.length > 1 ? <p className="text-xs text-ink-2">If {provider.name} adds the domain for you, use the short one.</p> : null}
+						<ProofRecord shortName={shortHost(claim.txt_name, claim.domain)} fullName={claim.txt_name} prefer={preferredName(provider)} value={claim.txt_value}>
 							{helpUrl ? (
 								<p className="text-sm">
 									<a href={helpUrl} target="_blank" rel="noopener noreferrer" className="text-brand-ink underline underline-offset-4">
