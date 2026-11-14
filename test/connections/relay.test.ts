@@ -252,6 +252,19 @@ describe('relay wiring', () => {
     // off: the path is just another (unknown) path on the app
     const off = await worker.fetch(new Request(`${RELAY}${startPath()}`), { ...AUTH, DB: undefined, ASSETS: { fetch: async () => new Response('app', { status: 200 }) } } as any, ctx);
     expect(off.headers.get('location')).toBeNull();
+    expect(off.status).toBe(404);
+  });
+
+  it('without CF_OAUTH_RELAY_SECRET every /relay/* path is a plain 404, before the dashboard or any database work', async () => {
+    const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
+    const assets = vi.fn(async () => new Response('<div id="root"></div>', { status: 200 }));
+    const db = { prepare: vi.fn(() => { throw new Error('no database work expected'); }) };
+    for (const path of ['/relay/start', '/relay/callback?code=x&state=y', '/relay/confirm', '/relay/anything']) {
+      const res = await worker.fetch(new Request(`https://ia.example.com${path}`), { ...AUTH, DB: db, ASSETS: { fetch: assets } } as any, ctx);
+      expect(res.status, path).toBe(404);
+    }
+    expect(assets).not.toHaveBeenCalled();
+    expect(db.prepare).not.toHaveBeenCalled();
   });
 });
 

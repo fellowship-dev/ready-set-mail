@@ -140,6 +140,8 @@ export const coreWorker = Object.freeze({
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // OAuth relay deployment (CF_OAUTH_RELAY_SECRET set): stateless, needs no database. Inert everywhere else.
     if (relayEnabled(env) && isRelayPath(new URL(request.url).pathname)) return handleRelay(request, env);
+    // /relay/* runs the Worker first (wrangler.jsonc) and belongs to the relay deployment only: anywhere else it does not exist.
+    if (new URL(request.url).pathname.startsWith('/relay/')) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     // Machine-readable summary for agents (llmstxt.org). Needs no database, so it also answers before setup.
     if (new URL(request.url).pathname === '/llms.txt' && (request.method === 'GET' || request.method === 'HEAD')) return llmsTxt(env, request.method === 'HEAD');
     if (!env.DB) return setupPage(env);

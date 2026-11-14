@@ -23,7 +23,7 @@ export async function authorizeHttpRequest(request: Request, db: D1Database, pri
    if (operation === 'dns-check') action = 'diagnostics:run';
    else if (operation === 'analytics') action = 'metrics:read';
    else if (operation === 'health-report' || ['stats', 'reports', 'sources', 'explore', 'anomalies', 'export'].includes(operation ?? '')) action = 'reports:read';
-   else if (!operation) action = 'resources:read';
+   // GET /api/domains/:id has no handler: it is not allowed here (delegated credentials list domains through /api/resources).
    else throw new AuthError('route not available to delegated credentials', 403);
   } else {
    // DNS/hosting/rollout execution is separately authorized and is not a reporting capability.
