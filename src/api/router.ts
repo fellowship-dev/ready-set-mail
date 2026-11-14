@@ -1110,8 +1110,8 @@ async function _handleApi(
               const cf = await tenant.cfFor(domain.domain);
               const zone = await cf.zoneFor(domain.domain);
               const [txtRecords, cnameRecords] = await Promise.all([
-                cf.listDnsRecords(zone.id, { type: 'TXT', per_page: 100 }),
-                cf.listDnsRecords(zone.id, { type: 'CNAME', per_page: 100 }),
+                cf.listDnsRecords(zone.id, { type: 'TXT' }),
+                cf.listDnsRecords(zone.id, { type: 'CNAME' }),
               ]);
               // A TXT record under _domainkey counts only if it is DKIM-shaped; a CNAME is a named selector as it stands. A zone wildcard
               // (`*._domainkey`) answers every selector alike, so it names none.
