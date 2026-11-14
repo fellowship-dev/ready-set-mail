@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Section } from '../../components/states';
 import { api, errorMessage } from '../../lib/api';
-import { useSession, useWorkspaceId } from '../../lib/session';
+import { useHosted, useSession, useWorkspaceId } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
 import { timestamp } from './AgentConnectionsSection';
 interface GoogleConnection {
@@ -15,7 +15,7 @@ interface GoogleConnection {
     lastSuccessAt?: number | null;
 }
 export function MetricConnectionsSection() {
-    const { role } = useSession(), workspace = useWorkspaceId(), qc = useQueryClient();
+    const { role } = useSession(), hosted = useHosted(), workspace = useWorkspaceId(), qc = useQueryClient();
     const q = useQuery({ queryKey: ['google-metric-connections', workspace], queryFn: () => api<{
             configured: boolean;
             connections: GoogleConnection[];
@@ -32,9 +32,11 @@ export function MetricConnectionsSection() {
     finally {
         setBusy(false);
     } }
+    if (hosted && q.data && !q.data.configured)
+        return null;
     return <Section title="Google Postmaster metrics" description="Read Google-reported Gmail metrics for each domain. Google consent does not grant an agent access.">
   {role !== 'owner' ? <p className="text-sm text-ink-2">Only a workspace owner can connect or disconnect Google Postmaster.</p> : q.isPending ? <p>Loading metric connections…</p> : q.isError ? <FieldError>{errorMessage(q.error)}</FieldError> : <Card><CardContent className="p-5 space-y-4 min-w-0">
-   {!q.data.configured && <p role="status">Google Postmaster is not configured on this installation. The installer must configure its Google OAuth application and token encryption before connections are available.</p>}
+   {!q.data.configured && !hosted && <p role="status">Google Postmaster is not configured on this installation. The installer must configure its Google OAuth application and token encryption before connections are available.</p>}
    <p className="text-sm text-ink-2">Provider-suppressed or absent data is unavailable, never zero. Spam complaints, DMARC alignment, TLS and inbox placement measure different populations.</p>
    <Field id="google-sync-days" label="Sync previous days (1–90)"><Input id="google-sync-days" type="number" min={1} max={90} value={days} onChange={e => setDays(Number(e.target.value))}/></Field>
    {!q.data.connections.length && <p>Enroll a domain before connecting Google Postmaster.</p>}

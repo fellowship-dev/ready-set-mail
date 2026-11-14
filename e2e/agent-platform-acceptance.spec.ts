@@ -26,7 +26,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
     }
   }, { ...operator, setup });
   await page.getByRole('button', { name: setup ? 'Create account' : 'Sign in', exact: true }).click();
-  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" })).or(page.getByRole('heading', { name: "Let's set up Ready Set Mail" }))).toBeVisible();
   const enrolled = await page.request.post('/api/domains', { headers: { Origin: origin }, data: { domain: 'agent-platform.example.com' } });
   expect(enrolled.ok()).toBe(true);
   const result = await enrolled.json();

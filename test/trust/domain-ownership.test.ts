@@ -5,6 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, makeEnv, signupVerified, setupOwner } from '../auth/helpers';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { HOSTED_ENV } from '../hosted/world';
+import { dohFetch } from '../../packages/dns-checks/test/helpers';
 import { ConnectionService } from '../../src/connections/service';
 
 const json = async (r: Response) => await r.json() as any;
@@ -172,8 +173,12 @@ describe('other proofs', () => {
   let live: Record<string, { name: string; status: string } | Error> = {};
   const liveZones = (zones: Record<string, { name: string; status: string } | Error>) => {
     live = zones;
+    // Public DNS delegates each live zone to the name servers Cloudflare reports for it.
+    const ns: Record<string, string[]> = {};
+    for (const z of Object.values(zones)) if (z && !(z instanceof Error)) ns[`NS ${z.name}`] = ['a.ns.cloudflare.com.', 'b.ns.cloudflare.com.'];
+    vi.stubGlobal('fetch', dohFetch(ns));
     vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({
-      getZone: async (id: string) => { const z = live[id]; if (!z || z instanceof Error) throw z ?? new Error('gone'); return { id, ...z }; },
+      getZone: async (id: string) => { const z = live[id]; if (!z || z instanceof Error) throw z ?? new Error('gone'); return { id, type: 'full', name_servers: ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'], ...z }; },
     }) as any);
   };
   const connect = (w: Awaited<ReturnType<typeof world>>, ws: string, zone: string, status = 'active') => {

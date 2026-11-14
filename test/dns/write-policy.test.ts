@@ -18,7 +18,11 @@ describe('assertDnsWriteAllowed', () => {
     ['report authorization', { type: 'TXT', name: 'acme.org._report._dmarc.acme.com', content: 'v=DMARC1;' }],
     ['PATCH of content only', { method: 'PATCH', patchKeys: ['content'] }],
     ['PATCH keeping a managed name', { method: 'PATCH', patchKeys: ['name', 'type', 'content'], type: 'TXT', name: '_dmarc.acme.com', content: 'v=DMARC1; p=reject' }],
-    ['DELETE', { method: 'DELETE' }],
+    ['DELETE of a DMARC TXT', { method: 'DELETE', type: 'TXT', name: '_dmarc.acme.com' }],
+    ['DELETE of the MTA-STS TXT, TLS-RPT TXT and CNAME', { method: 'DELETE', type: 'TXT', name: '_mta-sts.acme.com' }],
+    ['DELETE of a TLS-RPT TXT', { method: 'DELETE', type: 'TXT', name: '_smtp._tls.acme.com' }],
+    ['DELETE of the mta-sts CNAME', { method: 'DELETE', type: 'CNAME', name: 'mta-sts.acme.com' }],
+    ['DELETE of a report authorization', { method: 'DELETE', type: 'TXT', name: 'acme.org._report._dmarc.acme.com' }],
     ['MX for email routing, self-host, relative name', { mode: 'selfhost', type: 'MX', name: 'reports', content: 'route1.mx.cloudflare.net' }],
   ];
   it.each(allowed)('allows %s', (_t, o) => {
@@ -44,6 +48,13 @@ describe('assertDnsWriteAllowed', () => {
     ['CNAME at the apex', { type: 'CNAME', name: 'acme.com', content: 'evil.test' }],
     ['CNAME at www', { type: 'CNAME', name: 'www.acme.com', content: 'evil.test' }],
     ['TXT at a random name', { type: 'TXT', name: 'random.acme.com', content: 'hello' }],
+    ['DELETE that names no record', { method: 'DELETE' }],
+    ['DELETE of an MX (never deleted)', { method: 'DELETE', mode: 'selfhost', type: 'MX', name: 'reports.acme.com' }],
+    ['DELETE of SPF at the apex', { method: 'DELETE', type: 'TXT', name: 'acme.com' }],
+    ['DELETE of an unmanaged TXT', { method: 'DELETE', type: 'TXT', name: 'www.acme.com' }],
+    ['DELETE of an A record', { method: 'DELETE', type: 'A', name: '_dmarc.acme.com' }],
+    ['DELETE of a CNAME that is not mta-sts', { method: 'DELETE', type: 'CNAME', name: 'www.acme.com' }],
+    ['DELETE of a name outside the zone', { method: 'DELETE', type: 'TXT', name: '_dmarc.evil.com' }],
     ['TXT at the apex, not SPF', { type: 'TXT', name: 'acme.com', content: 'google-site-verification=abc' }],
     ['TXT at the apex, spf lookalike', { type: 'TXT', name: 'acme.com', content: 'v=spf10 -all' }],
     ['name outside the zone', { type: 'TXT', name: '_dmarc.evil.com', content: 'v=DMARC1;' }],
@@ -73,7 +84,7 @@ describe('assertHostedDnsWrite', () => {
     ['AAAA', { type: 'AAAA', name: 'mta-sts.abc.h.readysetmail.com' }],
     ['CNAME', { type: 'CNAME', name: 'abc._dmarc.h.readysetmail.com' }],
     ['PATCH content', { method: 'PATCH', patchKeys: ['content'] }],
-    ['DELETE', { method: 'DELETE' }],
+    ['DELETE of a hosted record', { method: 'DELETE', type: 'TXT', name: 'abc._dmarc.h.readysetmail.com' }],
   ])('allows %s', (_t, o) => expect(() => assertHostedDnsWrite(h(o), cfg)).not.toThrow());
   it.each([
     ['the label apex', { type: 'TXT', name: 'h.readysetmail.com' }],
@@ -85,6 +96,9 @@ describe('assertHostedDnsWrite', () => {
     ['NS', { type: 'NS', name: 'x.h.readysetmail.com' }],
     ['another zone', { type: 'TXT', name: 'x.h.readysetmail.com', zoneName: 'evil.com' }],
     ['an unknown zone', { type: 'TXT', name: 'x.h.readysetmail.com', zoneName: undefined }],
+    ['a DELETE that names no record', { method: 'DELETE' }],
+    ['a DELETE of a name outside the label', { method: 'DELETE', type: 'TXT', name: 'www.readysetmail.com' }],
+    ['a DELETE of an MX', { method: 'DELETE', type: 'MX', name: 'x.h.readysetmail.com' }],
     ['a PATCH that renames out', { method: 'PATCH', patchKeys: ['name', 'type'], type: 'TXT', name: 'www.readysetmail.com' }],
   ])('refuses %s', (_t, o) => expect(() => assertHostedDnsWrite(h(o as Partial<DnsWrite>), cfg)).toThrow(CfRecordNotAllowedError));
   it('refuses everything when no zone is configured', () => {
