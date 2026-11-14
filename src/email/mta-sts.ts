@@ -14,7 +14,7 @@
 
 import { MtaStsMode } from '../db/types';
 import type { TenantContext } from '../tenancy/context';
-import { CfNotFoundError, cfErrorText, type CfDnsRecordInput } from '../tenancy/cf-client';
+import { CfNotFoundError, cfErrorText, type CfDnsRecordInput, type DnsDeleteExpect } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
 import {
   buildPolicyFile,
@@ -156,7 +156,7 @@ async function deleteDnsRecord(
   tenant: TenantContext,
   domain: string,
   recordId: string,
-  expect: { type: string; name: string },
+  expect: DnsDeleteExpect,
   audit?: MtaStsAuditOpts,
 ): Promise<void> {
   const cf = await tenant.cfFor(domain);
@@ -298,8 +298,8 @@ export async function deprovisionMtaSts(
   audit?: MtaStsAuditOpts,
 ): Promise<void> {
   const tasks = [
-    { id: ids.mta_sts_record_id, expect: { type: 'TXT', name: `_mta-sts.${domain}` } },
-    { id: ids.tls_rpt_record_id, expect: { type: 'TXT', name: `_smtp._tls.${domain}` } },
+    { id: ids.mta_sts_record_id, expect: { type: 'TXT', name: `_mta-sts.${domain}`, content: /^\s*"?v=STSv1\b/i } },
+    { id: ids.tls_rpt_record_id, expect: { type: 'TXT', name: `_smtp._tls.${domain}`, content: /^\s*"?v=TLSRPTv1\b/i } },
     { id: ids.cname_record_id, expect: { type: 'CNAME', name: `mta-sts.${domain}` } },
   ]
     .filter(t => t.id)

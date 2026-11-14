@@ -9,9 +9,13 @@ function setup(opts: { routing: boolean; rules?: unknown[] | Error; mx?: { id: s
   const cf = {
     zoneFor: async () => ({ id: 'z1', name: zone }),
     listDnsRecords: async (_z: string, q: { type?: string }) => (q.type === 'MX' ? opts.mx ?? [] : []),
+    listAll: async (path: string) => {
+      calls.push(`GET ${path}`);
+      if (opts.rules instanceof Error) throw opts.rules;
+      return opts.rules ?? [];
+    },
     request: async (method: string, path: string) => {
       calls.push(`${method} ${path}`);
-      if (path.endsWith('/email/routing/rules')) { if (opts.rules instanceof Error) throw opts.rules; return opts.rules ?? []; }
       return { enabled: opts.routing };
     },
   };

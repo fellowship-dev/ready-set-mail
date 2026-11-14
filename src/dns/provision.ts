@@ -120,7 +120,7 @@ export async function deprovisionDomain(
   try {
     const cf = await tenant.cfFor(reportsDomain);
     const zone = await cf.zoneFor(reportsDomain);
-    await cf.deleteDnsRecord(zone.id, recordId, { type: 'TXT', name: `${domain}._report._dmarc.${reportsDomain}` });
+    await cf.deleteDnsRecord(zone.id, recordId, { type: 'TXT', name: `${domain}._report._dmarc.${reportsDomain}`, content: 'v=DMARC1;' });
   } catch (e) {
     // Domain delete must still succeed: warn and move on.
     console.warn(`deprovisionDomain: could not delete record ${recordId}: ${e instanceof Error ? e.message : String(e)}`);

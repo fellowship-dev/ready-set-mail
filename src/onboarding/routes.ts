@@ -11,7 +11,8 @@ import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { recordFirstDnsCheck } from '../domains/first-check';
 import { writableDomains } from './domains';
-import { buildPlan, type DnsPlan, type EmailRule, type PlanWrite } from './plan';
+import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
+import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -64,7 +65,7 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
   switch (x.kind) {
     case 'dmarc':
     case 'auth': {
-      const existing = await x.cf.listDnsRecords(x.zoneId, { type: 'TXT', name: w.name, per_page: 50 });
+      const existing = await x.cf.listDnsRecords(x.zoneId, { type: 'TXT', name: w.name });
       let recordId = x.recordId ?? (x.kind === 'dmarc' ? existing.find(r => /^\s*"?v=DMARC1/i.test(r.content))?.id : existing[0]?.id);
       if (w.action === 'update') {
         if (existing.some(same)) return; // already in place
@@ -82,7 +83,7 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
       return;
     }
     case 'mx': {
-      const existing = await x.cf.listDnsRecords(x.zoneId, { type: 'MX', name: w.name, per_page: 50 });
+      const existing = await x.cf.listDnsRecords(x.zoneId, { type: 'MX', name: w.name });
       if (existing.some(same)) return;
       const rec = await x.cf.createDnsRecord(x.zoneId, { type: 'MX', name: w.name, content: w.content, priority: w.priority, ttl: 1 });
       logAudit(tenant, { ...actor, action: 'dns.create', resource_type: 'dns_record', resource_id: rec.id, resource_name: w.name, after_value: { type: 'MX', name: w.name, content: w.content, priority: w.priority } }, ctx);
@@ -99,24 +100,24 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
   }
 }
 
-/** Reads the write back from Cloudflare. False when it cannot be confirmed (a failed read counts as not confirmed). */
-async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<typeof applyWrite>[2]): Promise<boolean> {
+/** Reads the write back from Cloudflare. Not verified, with the reason, when it cannot be confirmed (a failed or partial read is never "checked"). */
+async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<typeof applyWrite>[2]): Promise<{ verified: boolean; reason?: string }> {
   const norm = (c: string) => c.trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
   try {
     switch (x.kind) {
       case 'dmarc':
       case 'auth':
       case 'mx': {
-        const list = await x.cf.listDnsRecords(x.zoneId, { type: x.kind === 'mx' ? 'MX' : 'TXT', name: w.name, per_page: 50 });
-        return list.some(r => norm(r.content) === norm(w.content));
+        const list = await x.cf.listDnsRecords(x.zoneId, { type: x.kind === 'mx' ? 'MX' : 'TXT', name: w.name });
+        return { verified: list.some(r => norm(r.content) === norm(w.content)) };
       }
       case 'rule': {
-        const rules = (await x.cf.request<EmailRule[]>('GET', `/zones/${x.zoneId}/email/routing/rules`)) ?? [];
-        return rules.some(r => r.enabled !== false && (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === (x.address ?? '').toLowerCase()) && (r.actions ?? []).some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName)));
+        const rules = await listEmailRules(x.cf, x.zoneId);
+        return { verified: rules.some(r => r.enabled !== false && (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === (x.address ?? '').toLowerCase()) && (r.actions ?? []).some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName))) };
       }
     }
-  } catch { return false; }
-  return false;
+  } catch (e) { return { verified: false, reason: `Could not read ${w.name} back from Cloudflare to check it: ${plainCloudflareError(e)}` }; }
+  return { verified: false };
 }
 
 export async function handleOnboardingRoutes(request: Request, tenant: TenantContext, ctx: ExecutionContext | undefined, caller: OnboardingCaller): Promise<Response | null> {
@@ -161,7 +162,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const { plan, exec } = await buildPlan(tenant, input.ids);
     if (plan.plan_id !== input.body.plan_id) return json({ error: 'Cloudflare changed since you looked; review again.', code: 'plan_changed', plan }, 409);
     const writes = plan.steps.find(s => s.key === step)?.writes ?? [];
-    const results: { id: string; ok: boolean; verified?: boolean; error?: string; code?: string }[] = [];
+    const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string }[] = [];
     for (const w of writes) {
       if (w.action === 'none') continue;
       try {
@@ -169,7 +170,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
         // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
         if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
         await applyWrite(tenant, w, x, ctx, caller);
-        results.push({ id: w.id, ok: true, verified: await verifyWrite(tenant, w, x) });
+        const v = await verifyWrite(tenant, w, x);
+        results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}) });
       } catch (e) {
         const code = failureCode(e);
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });

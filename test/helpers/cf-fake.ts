@@ -25,6 +25,10 @@ export class FakeCloudflare {
   readonly cname: Record<string, string> = {};
   /** Worker routes per zone id, served at /zones/:id/workers/routes. */
   readonly routes: Record<string, { pattern: string; script: string }[]> = {};
+  /** Email Routing rules per zone id, served (paged) at /zones/:id/email/routing/rules. */
+  readonly rules: Record<string, unknown[]> = {};
+  /** When set, that page of the rules list answers 500. */
+  ruleFailPage?: number;
   /** When set, a request whose bearer token is not in the set is answered 401 (a revoked / expired token). */
   validTokens?: Set<string>;
   /** Cloudflare accounts the token can see (GET /accounts). */
@@ -71,13 +75,20 @@ export class FakeCloudflare {
     this.calls.push(call);
 
     const reply = (status: number, payload: unknown) => new Response(JSON.stringify(payload), { status });
-    const ok = (result: unknown) => reply(200, { success: true, result });
+    const ok = (result: unknown, result_info?: unknown) => reply(200, { success: true, result, ...(result_info ? { result_info } : {}) });
+    // Cloudflare's list paging: 20 per page unless per_page is given (up to 50; DNS records 5000), with result_info.
+    const paged = (all: unknown[], max = 50) => {
+      const per = Math.max(1, Math.min(max, Number(url.searchParams.get('per_page')) || 20));
+      const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+      const slice = all.slice((page - 1) * per, page * per);
+      return ok(slice, { page, per_page: per, count: slice.length, total_count: all.length, total_pages: Math.max(1, Math.ceil(all.length / per)) });
+    };
     const fail = (status: number, message: string) => reply(status, { success: false, errors: [{ message }] });
 
     const bearer = headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
     if (this.validTokens && !this.validTokens.has(bearer)) return fail(401, 'Invalid access token');
     if (url.pathname === '/client/v4/user/tokens/verify') return ok({ id: 'tok-id', status: 'active' });
-    if (url.pathname === '/client/v4/accounts' && method === 'GET') return ok(this.accounts);
+    if (url.pathname === '/client/v4/accounts' && method === 'GET') return paged(this.accounts);
 
     if (this.failWith) return fail(this.failWith.status, this.failWith.message);
     if (this.failZone && call.zoneId === this.failZone.zoneId) return fail(this.failZone.status, this.failZone.message);
@@ -88,7 +99,7 @@ export class FakeCloudflare {
         const z = this.zones[name];
         return ok(z ? [{ id: z.id, name, account: z.cfAccountId ? { id: z.cfAccountId } : undefined }] : []);
       }
-      return ok(Object.entries(this.zones).map(([n, z]) => ({ id: z.id, name: n, status: 'active', account: z.cfAccountId ? { id: z.cfAccountId } : undefined })));
+      return paged(Object.entries(this.zones).map(([n, z]) => ({ id: z.id, name: n, status: 'active', account: z.cfAccountId ? { id: z.cfAccountId } : undefined })));
     }
 
     if (m) {
@@ -96,18 +107,25 @@ export class FakeCloudflare {
       const rest = m[2] ?? '';
       const list = this.records.get(zoneId) ?? [];
       if (rest === '/workers/routes' && method === 'GET') return ok(this.routes[zoneId] ?? []);
+      if (rest === '/email/routing/rules' && method === 'GET') {
+        if (this.ruleFailPage && Number(url.searchParams.get('page') || 1) === this.ruleFailPage) return fail(500, 'Internal error');
+        return paged(this.rules[zoneId] ?? []);
+      }
       if (rest === '/dns_records' && method === 'GET') {
         const type = url.searchParams.get('type');
         const name = url.searchParams.get('name');
         const matching = list.filter(r => (!type || r.type === type) && (!name || r.name === name));
-        const per = Number(url.searchParams.get('per_page')) || matching.length || 1;
-        const page = Number(url.searchParams.get('page')) || 1;
-        return ok(matching.slice((page - 1) * per, page * per));
+        return paged(matching, 5000);
       }
       if (rest === '/dns_records' && method === 'POST') {
         const r = { id: String(this.#nextId++).padStart(32, "0"), type: body.type, name: body.name, content: body.content };
         this.records.set(zoneId, [...list, r]);
         return ok(r);
+      }
+      if (rest === '/email/routing/rules' && method === 'POST') {
+        const rule = { id: `rule-${this.#nextId++}`, ...body };
+        this.rules[zoneId] = [...(this.rules[zoneId] ?? []), rule];
+        return ok(rule);
       }
       const one = rest.match(/^\/dns_records\/([^/]+)$/);
       if (one && method === 'GET') {

@@ -52,7 +52,7 @@ describe('GET /api/zones', () => {
     const env = makeEnv();
     const mockZones = [{ id: 'z1', name: 'example.com', status: 'active' }];
 
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: mockZones }), { status: 200 }));
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: mockZones, result_info: { page: 1, per_page: 50, count: 1, total_count: 1, total_pages: 1 } }), { status: 200 }));
 
     const res = await handleApi(req('GET', '/api/zones'), env, ctx);
     expect(res.status).toBe(200);

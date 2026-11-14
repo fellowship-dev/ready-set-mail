@@ -108,9 +108,20 @@ describe('MTA-STS record updates and removal stay in the domain\'s zone', () => 
 
   it('deprovision deletes from the right zone and tolerates records that are already gone', async () => {
     const cf = world();
-    const a = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
+    const a = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'v=STSv1; id=1' });
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: a.id, tls_rpt_record_id: 'gone', cname_record_id: null });
     expect(cf.records.get('zone-other')).toEqual([]);
+  });
+});
+
+describe('deprovision removes only the record it created', () => {
+  it('a record stored under the id that is not an MTA-STS policy is left alone', async () => {
+    const cf = world();
+    const rec = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'something else entirely' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: rec.id, tls_rpt_record_id: null, cname_record_id: null });
+    expect(cf.records.get('zone-other')).toHaveLength(1);
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/not the TXT record/);
   });
 });
 
@@ -136,7 +147,7 @@ describe('legacy records in the base zone (installs from before per-domain zones
 
   it('prefers the domain\'s own zone, and does not touch the base zone when the record is there', async () => {
     const cf = world();
-    const own = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
+    const own = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'v=STSv1; id=1' });
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: own.id, tls_rpt_record_id: null, cname_record_id: null });
     expect(cf.records.get('zone-other')).toEqual([]);
     expect(cf.calls.filter(c => c.zoneId === 'zone-acme' && c.method === 'DELETE')).toHaveLength(0);

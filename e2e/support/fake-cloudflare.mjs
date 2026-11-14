@@ -14,7 +14,7 @@
 // Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
 // harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
 //
-// Test helpers (not part of Cloudflare's API): GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
+// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?} (replace a zone's routing rules; failPage answers that page 500), GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
 // everything under it answers NS queries with those hosts, zone or not; ns:[] removes it).
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -46,6 +46,14 @@ function freshState() {
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
   };
+}
+
+// Cloudflare's list paging: 20 per page by default, per_page honoured up to `max` (zones 50, DNS records 5000, rules 50).
+function paged(url, list, max = 50) {
+  const perPage = Math.max(1, Math.min(max, Number(url.searchParams.get('per_page')) || 20));
+  const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+  const slice = list.slice((page - 1) * perPage, page * perPage);
+  return [slice, { page, per_page: perPage, count: slice.length, total_count: list.length, total_pages: Math.max(1, Math.ceil(list.length / perPage)) }];
 }
 
 const envelope = (result, extra = {}) => ({ success: true, errors: [], messages: [], result, ...extra });
@@ -82,6 +90,14 @@ export function createFakeCloudflare() {
       if (Array.isArray(body?.ns) && body.ns.length) st.nsOverrides.set(n, body.ns); else st.nsOverrides.delete(n);
       return send(200, { ok: true });
     }
+    if (url.pathname === '/__rules' && method === 'POST') {
+      const z = st.zones.find(x => x.name === body?.zone);
+      if (!z) return notFound('Zone not found');
+      const r = st.routing.get(z.id);
+      r.rules = Array.isArray(body?.rules) ? body.rules : [];
+      r.failPage = body?.failPage || undefined;
+      return send(200, { ok: true });
+    }
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
 
     // DNS-over-HTTPS (application/dns-json) from the in-memory records.
@@ -112,7 +128,7 @@ export function createFakeCloudflare() {
 
     if (method === 'GET' && path === '/user/tokens/verify') return ok({ id: hex(`token:${bearer}`), status: 'active' });
 
-    if (method === 'GET' && path === '/accounts') return ok([{ id: ACCOUNT.id, name: ACCOUNT.name }]);
+    if (method === 'GET' && path === '/accounts') { const [slice, result_info] = paged(url, [{ id: ACCOUNT.id, name: ACCOUNT.name }]); return ok(slice, { result_info }); }
 
     if (method === 'GET' && path === '/zones') {
       let list = st.zones;
@@ -120,10 +136,8 @@ export function createFakeCloudflare() {
       if (name) list = list.filter(z => z.name === name.toLowerCase());
       const status = url.searchParams.get('status');
       if (status) list = list.filter(z => z.status === status);
-      const perPage = Math.max(1, Math.min(50, Number(url.searchParams.get('per_page')) || 20));
-      const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-      const slice = list.slice((page - 1) * perPage, page * perPage);
-      return ok(slice, { result_info: { page, per_page: perPage, count: slice.length, total_count: list.length, total_pages: Math.max(1, Math.ceil(list.length / perPage)) } });
+      const [slice, result_info] = paged(url, list);
+      return ok(slice, { result_info });
     }
 
     let m = path.match(/^\/zones\/([^/]+)$/);
@@ -165,9 +179,8 @@ export function createFakeCloudflare() {
         const name = url.searchParams.get('name');
         if (type) list = list.filter(r => r.type === type.toUpperCase());
         if (name) list = list.filter(r => r.name === name.toLowerCase());
-        const perPage = Math.max(1, Math.min(5000, Number(url.searchParams.get('per_page')) || 100));
-        const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
-        return ok(list.slice((page - 1) * perPage, page * perPage));
+        const [slice, result_info] = paged(url, list, 5000);
+        return ok(slice, { result_info });
       }
       if (method === 'POST') {
         if (!body?.type || !body?.content) return send(400, failure('Invalid DNS record: type and content are required', 9005));
@@ -212,7 +225,11 @@ export function createFakeCloudflare() {
         return ok(routing.catchAll);
       }
     }
-    if (rest === '/email/routing/rules' && method === 'GET') return ok(routing.rules);
+    if (rest === '/email/routing/rules' && method === 'GET') {
+      if (routing.failPage && Number(url.searchParams.get('page') || 1) === routing.failPage) return send(500, failure('Internal error', 1000));
+      const [slice, result_info] = paged(url, routing.rules);
+      return ok(slice, { result_info });
+    }
     if (rest === '/email/routing/rules' && method === 'POST') {
       const rule = { id: hex(`rule:${zone.id}:${routing.rules.length}:${JSON.stringify(body?.matchers)}`), tag: '', name: body?.name ?? 'rule', enabled: body?.enabled ?? true, actions: body?.actions ?? [], matchers: body?.matchers ?? [] };
       routing.rules.push(rule);

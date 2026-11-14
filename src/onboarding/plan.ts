@@ -9,6 +9,7 @@ import { assertDnsWriteAllowed } from '../dns/write-policy';
 import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError } from './errors';
 import { writableDomains } from './domains';
+import { listEmailRules, type EmailRule } from './rules';
 
 export interface PlanWrite {
   id: string;
@@ -29,8 +30,7 @@ export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotW
 /** What apply needs beyond the public write: the zone and record to touch. */
 export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string }
 
-/** An Email Routing rule as Cloudflare lists it. */
-export interface EmailRule { id?: string; enabled?: boolean; matchers?: { type: string; field?: string; value?: string }[]; actions?: { type: string; value?: string[] }[] }
+export type { EmailRule };
 
 /** The addresses the product receives at the reports domain that a literal rule can match (src/email/handler.ts). */
 export const REPORT_ADDRESSES = ['rua', 'tls-rpt'] as const;
@@ -106,7 +106,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     const dmarcName = `_dmarc.${d.domain}`;
     let own: string[];
     try {
-      own = (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName, per_page: 50 })).map(r => r.content);
+      own = (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName })).map(r => r.content);
     } catch (e) {
       notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
       continue;
@@ -119,7 +119,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     } else {
       const id = `dmarc:${d.id}`;
       const existing = decision.action === 'none' || decision.action === 'update'
-        ? (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName, per_page: 50 })).find(r => /^\s*v\s*=\s*DMARC1/i.test(unquote(r.content)))
+        ? (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName })).find(r => /^\s*v\s*=\s*DMARC1/i.test(unquote(r.content)))
         : undefined;
       dmarcWrites.push({
         id, domain: d.domain, zone: zone.name, type: 'TXT', name: dmarcName, content: decision.record, action: decision.action,
@@ -135,7 +135,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       let present = !!d.dns_record_id;
       if (!present) {
         try {
-          present = (await reportsCf.cf.listDnsRecords(reportsCf.zoneId, { type: 'TXT', name: authName, per_page: 5 })).length > 0;
+          present = (await reportsCf.cf.listDnsRecords(reportsCf.zoneId, { type: 'TXT', name: authName })).length > 0;
         } catch (e) {
           notWritten.push({ domain: d.domain, what: 'Report authorisation', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
           continue;
@@ -162,7 +162,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     } else {
       const { cf, zoneId, zoneName } = reportsCf;
       try {
-        const mx = await cf.listDnsRecords(zoneId, { type: 'MX', name: reportsDomain, per_page: 50 });
+        const mx = await cf.listDnsRecords(zoneId, { type: 'MX', name: reportsDomain });
         const foreign = mx.filter(r => !isCfMx(r.content));
         // Mail records are never deleted or replaced from here: a name that already receives mail elsewhere, or the zone apex
         // (the mail of the whole domain), is left alone and no mailbox is planned for it.
@@ -200,7 +200,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
           if (mxAllowed) {
             let rules: EmailRule[] = [];
             let rulesRead = true;
-            try { rules = (await cf.request<EmailRule[]>('GET', `/zones/${zoneId}/email/routing/rules`)) ?? []; } catch { rulesRead = false; }
+            try { rules = await listEmailRules(cf, zoneId); } catch { rulesRead = false; }
             if (!rulesRead) note('Address rules', 'Ready Set Mail could not read the Email Routing rules of this zone, so it plans none. Add rules for rua@ and tls-rpt@ yourself, or run this step again.');
             else {
               for (const local of REPORT_ADDRESSES) {
