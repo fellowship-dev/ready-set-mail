@@ -116,13 +116,23 @@ describe('Cloudflare wizard: zones', () => {
 		expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ zone_ids: [zone(1).id, zone(3).id] });
 	});
 
-	it('pre-ticks every zone however many, Next is ready, and unticking stays possible', async () => {
+	it('a big account (more than 10 zones) starts with none ticked and Next disabled; Select all is explicit', async () => {
 		at(Array.from({ length: 11 }, (_, i) => zone(i + 1)));
 		const boxes = await screen.findAllByRole('checkbox');
-		boxes.forEach((b) => expect(b).toBeChecked());
+		boxes.forEach((b) => expect(b).not.toBeChecked());
+		expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+		await userEvent.click(screen.getByRole('button', { name: 'Select all' }));
+		screen.getAllByRole('checkbox').forEach((b) => expect(b).toBeChecked());
 		expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
-		await userEvent.click(boxes[0]!);
-		expect(boxes[0]).not.toBeChecked();
+	});
+
+	it('revisiting with an allow-list shows exactly that selection and does not widen it, however few zones there are', async () => {
+		const { calls } = at([zone(1, true), zone(2), zone(3)]);
+		const boxes = await screen.findAllByRole('checkbox');
+		expect(boxes.map((b) => (b as HTMLInputElement).getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
+		await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+		await screen.findByRole('heading', { name: 'Choose domains' });
+		expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ zone_ids: [zone(1).id] });
 	});
 
 	it('does not pre-tick a zone another connection already has', async () => {

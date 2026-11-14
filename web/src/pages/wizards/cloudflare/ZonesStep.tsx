@@ -8,7 +8,7 @@ import { useCfZones, useSetZones, type CfConnection } from '../../../lib/cloudfl
 
 export const PRETICK_LIMIT = 10;
 
-/** Step 2: which zones Ready Set Mail may touch. Everything outside this list is refused by the server. */
+/** Step 2 (a zone the person did not tick is never written to): which zones Ready Set Mail may touch. Everything outside this list is refused by the server. */
 export function ZonesStep({ connection, taken = [], onNext }: { connection: CfConnection; /** Zone ids already allowed on another connection: not preselected. */ taken?: string[]; onNext: () => void }) {
 	const zones = useCfZones(connection);
 	const save = useSetZones();
@@ -18,8 +18,10 @@ export function ZonesStep({ connection, taken = [], onNext }: { connection: CfCo
 	if (zones.isError) return <LoadError error={zones.error} onRetry={() => void zones.refetch()} title="Could not list your Cloudflare zones" />;
 
 	const list = zones.data;
-	// Every zone the token can see, except those another connection already has: unticking stays possible.
-	const selected = picked ?? new Set(list.filter((z) => z.allowed || !taken.includes(z.id)).map((z) => z.id));
+	// An allow-list that already exists is shown exactly as it is: a zone is never added without a tick. On a first visit every zone the
+	// token sees is ticked, except those another connection already has, but only when there are few; a big account starts with none.
+	const before = list.filter((z) => z.allowed).map((z) => z.id);
+	const selected = picked ?? new Set(before.length > 0 ? before : list.length <= PRETICK_LIMIT ? list.filter((z) => !taken.includes(z.id)).map((z) => z.id) : []);
 	const toggle = (id: string, on: boolean) => {
 		const next = new Set(selected);
 		if (on) next.add(id);
