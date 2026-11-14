@@ -2,7 +2,7 @@ import { Alert, Badge, Button, CheckResult, CheckResultList, FieldError, FieldHi
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ClaimCard } from '../../components/domain/ClaimCard';
 import { InheritanceBanner } from '../../components/domain/InheritanceBanner';
 import { PlanLimitNotice, planLimitOf } from '../../components/PlanLimitNotice';
@@ -191,7 +191,9 @@ function SelfHostSetupStep({ result }: { result: AddDomainResult }) {
 export function AddDomainPage() {
 	const qc = useQueryClient();
 	// The domain asked for on the website, if any: a prefill the person confirms with Continue.
-	const [input, setInput] = useState(() => readSignupDomain() ?? '');
+	// Or a domain another page asked to add (`?domain=`: a parent whose DMARC record governs a listed subdomain).
+	const [params] = useSearchParams();
+	const [input, setInput] = useState(() => params.get('domain')?.trim().toLowerCase() || readSignupDomain() || '');
 	const [manual, setManual] = useState(false);
 	const [result, setResult] = useState<AddDomainResult | null>(null);
 	const [pending, setPending] = useState<PendingDomainResult | null>(null);

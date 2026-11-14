@@ -12,6 +12,11 @@ const domain = { id: 1, domain: 'example.com', dmarc_policy: 'none', rua_address
 describe('AddDomainPage', () => {
 	const added = { domain: { ...domain, id: 7, domain: 'new.example.org' }, rua_hint: 'x' };
 
+	it('prefills a domain another page asked to add (?domain=), for the person to confirm', async () => {
+		renderApp(<AddDomainPage />, { route: '/add?domain=Example.org', routes: { 'GET /api/zones': fail(400, 'Cloudflare API token not configured') } });
+		expect(await screen.findByDisplayValue('example.org')).toBeInTheDocument();
+	});
+
 	it('links to bulk import and CT discovery so they are reachable', async () => {
 		renderApp(<AddDomainPage />, { routes: { 'GET /api/zones': fail(400, 'Cloudflare API token not configured') } });
 		expect(await screen.findByRole('link', { name: /Import a list of domains/ })).toHaveAttribute('href', '/bulk-import');

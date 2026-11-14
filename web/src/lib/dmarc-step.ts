@@ -1,4 +1,4 @@
-import { dmarcSteps, hostedInForce, policyInForce, type DmarcEvidence, type DmarcStep, type PolicyInForce, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcSteps, hostedInForce, policyInForce, publicSuffixParent, type DmarcEvidence, type DmarcStep, type PolicyInForce, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { hasReportAddress } from './dmarc-record';
 import type { Domain, DomainCheckSummary } from './types';
 
@@ -32,7 +32,8 @@ export function evidenceFor(domain: Pick<Domain, 'rua_address'>, reports: { tota
 export function stepLink(step: DmarcStep, page: string, parentId?: number): string | undefined {
 	switch (step.where) {
 		case 'parent':
-			return parentId !== undefined ? `/domains/${parentId}` : page;
+			// A parent that is not in this workspace has no page here: no link (the domain page offers to add it).
+			return parentId !== undefined ? `/domains/${parentId}` : undefined;
 		case 'dmarc-wizard':
 			return `${page}/dmarc-wizard`;
 		case 'dmarc-setup':
@@ -49,19 +50,8 @@ export function stepLink(step: DmarcStep, page: string, parentId?: number): stri
 	}
 }
 
-/**
- * A listed parent whose own DMARC record does not cover this name (the parent is a public suffix such as gov.uk, so the
- * name is its own organization): only when the name has no record of its own and inherits none.
- */
-export function suffixParentOf(
-	s: Pick<DomainCheckSummary, 'dmarc_policy' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dns_checked_at'> | null | undefined,
-	parent: { domain: string; summary: Pick<DomainCheckSummary, 'dmarc_policy' | 'dmarc_inherited_from'> | null | undefined } | null | undefined,
-): string | null {
-	if (!s || !parent?.summary || !s.dns_checked_at) return null;
-	const covered = !!s.dmarc_policy || !!s.dmarc_issue || !!s.dmarc_inherited_from;
-	const parentOwn = !!parent.summary.dmarc_policy && !parent.summary.dmarc_inherited_from;
-	return !covered && parentOwn ? parent.domain : null;
-}
+/** The same public-suffix rule the agent tools use (packages/dns-checks/src/dmarc-next-step.ts). */
+export const suffixParentOf = publicSuffixParent;
 
 export { dmarcSteps };
 export type { DmarcStep, PolicyInForce };
