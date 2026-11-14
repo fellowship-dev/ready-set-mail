@@ -1,5 +1,5 @@
 // Operator values stay in a private local JSON file, never in CLI arguments or browser storage.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
 /**
@@ -34,12 +34,27 @@ export function operatorCredentials(): Operator {
 }
 
 /** Cookie-authenticated operator login/setup. The human password never enters a browser field or agent tool argument. */
+/**
+ * The session cookies of the last sign-in in this worker. A sign-in is two auth POSTs now (password, then the emailed code)
+ * and the local AUTH_LIMITER allows 10 a minute per IP, so later tests reuse the session while it still works.
+ */
+let signedInCookies: Awaited<ReturnType<BrowserContext['cookies']>> | null = null;
+
 export async function signIn(page: Page) {
  const trace = test.info().project.use.trace;
  if (trace && (typeof trace === 'string' ? trace !== 'off' : trace.mode !== 'off')) throw new Error('Operator E2E authentication requires Playwright tracing off');
  const operator = operatorCredentials();
  await page.goto('/');
  const origin = new URL(page.url()).origin;
+ if (signedInCookies) {
+  await page.context().addCookies(signedInCookies);
+  if ((await page.request.get('/api/me')).status() === 200) {
+   await page.goto('/');
+   await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
+   return;
+  }
+  signedInCookies = null;
+ }
  const status = await page.request.get('/api/auth/status');
  expect(status.status()).toBe(200);
  const { configured } = await status.json() as { configured: boolean };
@@ -55,6 +70,7 @@ export async function signIn(page: Page) {
   const done = await page.request.post('/api/auth/code', { headers: { Origin: origin }, data: { code: await newestCode(before) } });
   expect(done.status()).toBe(200);
  }
+ signedInCookies = await page.context().cookies();
  await page.goto('/');
  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
 }
