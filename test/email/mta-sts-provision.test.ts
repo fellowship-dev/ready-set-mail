@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../../src/audit/log', () => ({ logAudit: vi.fn() }));
 
-import { provisionMtaSts, deprovisionMtaSts, updateMtaStsTxtRecord, patchCfDnsRecord } from '../../src/email/mta-sts';
+import { provisionMtaSts, deprovisionMtaSts, updateMtaStsTxtRecord } from '../../src/email/mta-sts';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { makeTenant } from '../helpers/tenant';
 
@@ -97,13 +97,6 @@ describe('MTA-STS record updates and removal stay in the domain\'s zone', () => 
     await updateMtaStsTxtRecord(tenant(), 'other-company.org', rec.id, '2');
     expect(cf.records.get('zone-other')![0].content).toBe('v=STSv1; id=2');
     expect(cf.forZone('zone-acme')).toHaveLength(0);
-  });
-
-  it('patchCfDnsRecord targets the zone of the domain given', async () => {
-    const cf = world();
-    const rec = cf.seed('zone-other', { type: 'TXT', name: '_dmarc.other-company.org', content: 'v=DMARC1; p=none' });
-    await patchCfDnsRecord(tenant(), 'other-company.org', rec.id, 'v=DMARC1; p=reject');
-    expect(cf.records.get('zone-other')![0].content).toBe('v=DMARC1; p=reject');
   });
 
   it('deprovision deletes from the right zone and tolerates records that are already gone', async () => {

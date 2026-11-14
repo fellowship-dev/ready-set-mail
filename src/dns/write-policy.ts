@@ -90,7 +90,7 @@ export function assertDnsWriteAllowed(w: DnsWrite): void {
       }
       if (w.allowedApexes && name.startsWith('_dmarc.')) {
         if (!w.allowedApexes.some(a => `_dmarc.${norm(a)}` === name)) refuse(w, `DMARC at ${name} is not at a monitored domain`);
-        if (!/^v=DMARC1(\s*;|\s*$)/.test(content)) refuse(w, `TXT ${name} may only hold a DMARC record`);
+        if (!/^v\s*=\s*DMARC1\s*(;|$)/i.test(content)) refuse(w, `TXT ${name} may only hold a DMARC record`); // as dns-record.ts isDmarcTxt
         return;
       }
       if (name.startsWith('_dmarc.') || name.startsWith('_mta-sts.') || name.startsWith('_smtp._tls.')) return;

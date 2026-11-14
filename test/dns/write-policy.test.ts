@@ -16,6 +16,8 @@ describe('assertDnsWriteAllowed', () => {
     ['mta-sts CNAME to the policy host (case, trailing dot)', { type: 'CNAME', name: 'mta-sts.acme.com', content: 'W.workers.dev.', cnameTargets: ['w.workers.dev'] }],
     ['SPF at a listed apex', { type: 'TXT', name: 'acme.com', content: 'v=spf1 -all', allowedApexes: ['acme.com'] }],
     ['DMARC at a listed apex', { method: 'PATCH', patchKeys: ['type', 'name', 'content'], type: 'TXT', name: '_dmarc.acme.com', content: 'v=DMARC1; p=reject', allowedApexes: ['acme.com'] }],
+    ['DMARC at a listed apex, version tag in other case and spacing', { type: 'TXT', name: '_dmarc.acme.com', content: 'V = DMARC1; p=none', allowedApexes: ['acme.com'] }],
+    ['DMARC at a listed apex, split into several strings', { type: 'TXT', name: '_dmarc.acme.com', content: '"v=DMARC1; p=none; rua=mailto:a@b.test" "x"', allowedApexes: ['acme.com'] }],
     ['report authorization', { type: 'TXT', name: 'acme.org._report._dmarc.acme.com', content: 'v=DMARC1;' }],
     ['PATCH of content only', { method: 'PATCH', patchKeys: ['content'] }],
     ['PATCH keeping a managed name', { method: 'PATCH', patchKeys: ['name', 'type', 'content'], type: 'TXT', name: '_dmarc.acme.com', content: 'v=DMARC1; p=reject' }],

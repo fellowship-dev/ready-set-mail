@@ -30,8 +30,27 @@ const TAG_VALUE: Readonly<Record<string, RegExp>> = {
   ri: /^[0-9]{1,10}$/,
 };
 
-/** The record text without the quotes Cloudflare may wrap TXT content in. */
-export const bareTxt = (content: string): string => content.trim().replace(/^"|"$/g, '');
+/** One TXT character-string holds at most 255 characters; Cloudflare shows a longer record as several quoted strings. */
+const TXT_STRING_MAX = 255;
+const QUOTED_STRINGS = /^"(?:[^"\\]|\\.)*"(?:\s+"(?:[^"\\]|\\.)*")*$/;
+
+/**
+ * The record text of TXT content as Cloudflare returns it: one string with or without its quotes, or several quoted
+ * strings, which RFC 7489 §6.4 (via RFC 7208 §3.3) concatenates without spaces.
+ */
+export function bareTxt(content: string): string {
+  const c = content.trim();
+  if (QUOTED_STRINGS.test(c)) return [...c.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\(.)/g, '$1')).join('');
+  return c.replace(/^"|"$/g, '');
+}
+
+/** TXT content for a record: as is up to 255 characters, else quoted 255-character strings (no quotes or backslashes inside: see dmarcRecordProblem). */
+export function txtContent(record: string): string {
+  if (record.length <= TXT_STRING_MAX) return record;
+  const parts: string[] = [];
+  for (let i = 0; i < record.length; i += TXT_STRING_MAX) parts.push(`"${record.slice(i, i + TXT_STRING_MAX)}"`);
+  return parts.join(' ');
+}
 
 /** Is this TXT content a DMARC record (its first tag is v=DMARC1)? */
 export function isDmarcTxt(content: string): boolean {
@@ -47,7 +66,8 @@ export function isDmarcTxt(content: string): boolean {
 export function dmarcRecordProblem(record: string): string | null {
   if (typeof record !== 'string' || !record.trim()) return 'the record is empty';
   if (record.length > MAX_DMARC_RECORD_LENGTH) return `the record is longer than ${MAX_DMARC_RECORD_LENGTH} characters`;
-  if (/[\u0000-\u001f\u007f"\\]/.test(record)) return 'the record contains a quote, a backslash or a control character';
+  if (/[^\x20-\x7e]/.test(record)) return 'the record contains a character that is not printable ASCII';
+  if (/["\\]/.test(record)) return 'the record contains a quote or a backslash';
   const parts = record.trim().split(';').map((p) => p.trim());
   if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop(); // one trailing ";" is fine
   const seen = new Set<string>();
@@ -110,11 +130,13 @@ export async function findDmarcRecord(cf: CfClient, zoneId: string, name: string
 
 /**
  * Write `content` to `_dmarc.<domain>` in its zone: update the existing DMARC record in place, or create one. The write
- * policy is told the one name it may land on (`allowedApexes`), so nothing else in the zone can be changed.
+ * policy is told the one name it may land on (`allowedApexes`), so nothing else in the zone can be changed. A record
+ * over 255 characters is written as several quoted strings (txtContent), which bareTxt joins back on the next read.
  */
-export function writeDmarcRecord(cf: CfClient, zoneId: string, domain: string, existing: CfDnsRecord | null, content: string): Promise<CfDnsRecord> {
+export function writeDmarcRecord(cf: CfClient, zoneId: string, domain: string, existing: CfDnsRecord | null, record: string): Promise<CfDnsRecord> {
   const name = `_dmarc.${domain}`;
   const guard = { allowedApexes: [domain] };
+  const content = txtContent(record);
   return existing
     ? cf.patchDnsRecord(zoneId, existing.id, { type: 'TXT', name, content }, guard)
     : cf.createDnsRecord(zoneId, { type: 'TXT', name, content, ttl: 3600 }, guard);

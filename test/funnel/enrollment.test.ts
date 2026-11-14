@@ -24,10 +24,11 @@ function hosted(extra: Record<string, unknown> = {}) {
   const env = makeEnv(db, { ...FUNNEL_ENV, ...extra }) as any;
   const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
   /** `auth`: the Authentication-Results headers in the raw message, topmost first (what the receiver added is first). */
-  const check = async (from = 'user@example.com', auth: string | string[] | null = authFor('example.com')) => {
+  /** `from` is the envelope sender; the header From is the same address unless `headerFrom` says otherwise (null: none). */
+  const check = async (from = 'user@example.com', auth: string | string[] | null = authFor('example.com'), headerFrom: string | null = from) => {
     const s = await (await call(env, 'POST', '/api/check-sessions')).json() as { email: string };
     const list = auth === null ? [] : Array.isArray(auth) ? auth : [auth];
-    const m = fakeMessage(s.email, rawWithAuth(...list), { from, headers: { ...(list.length ? { 'authentication-results': list.join(', ') } : {}), 'message-id': '<m1@example.com>' } });
+    const m = fakeMessage(s.email, rawWithAuth(...list), { from, headers: { ...(list.length ? { 'authentication-results': list.join(', ') } : {}), ...(headerFrom ? { from: headerFrom } : {}), 'message-id': '<m1@example.com>' } });
     await handleHostedEmail(m, env);
     return m;
   };
@@ -144,7 +145,7 @@ describe('enrolment on a hosted free check', () => {
     const t = hosted({ AUTHSERV_HEADER: 'arc' });
     const s = await (await call(t.env, 'POST', '/api/check-sessions')).json() as { email: string };
     const raw = 'ARC-Authentication-Results: i=1; mx.cloudflare.net; dkim=pass header.d=example.com; dmarc=pass header.from=example.com\r\nSubject: hi\r\n\r\nhi';
-    const m = fakeMessage(s.email, raw, { from: 'user@example.com', headers: { 'message-id': '<m1@example.com>' } });
+    const m = fakeMessage(s.email, raw, { from: 'user@example.com', headers: { from: 'user@example.com', 'message-id': '<m1@example.com>' } });
     await handleHostedEmail(m, t.env);
     expect(t.rows('SELECT email FROM leads')).toEqual([{ email: 'user@example.com' }]);
     expect(replyText(m)).toContain(DISCLOSURE);
@@ -255,9 +256,9 @@ describe('enrollLead', () => {
 
 describe('enrolment refuses results the receiver did not write (the report-intake defences)', () => {
   /** A free check whose envelope sender, results header and DKIM-Signature count the test chooses. */
-  async function checkWith(t: ReturnType<typeof hosted>, envelope: string, auth: string, dkimSignatures: number) {
+  async function checkWith(t: ReturnType<typeof hosted>, envelope: string, auth: string, dkimSignatures: number, headerFrom = envelope) {
     const s = await (await call(t.env, 'POST', '/api/check-sessions')).json() as { email: string };
-    const m = fakeMessage(s.email, rawWithAuth(auth), { from: envelope, dkimSignatures, headers: { 'authentication-results': auth, 'message-id': '<m1@example.com>' } });
+    const m = fakeMessage(s.email, rawWithAuth(auth), { from: envelope, dkimSignatures, headers: { 'authentication-results': auth, from: headerFrom, 'message-id': '<m1@example.com>' } });
     await handleHostedEmail(m, t.env);
     return m;
   }
@@ -287,6 +288,42 @@ describe('enrolment refuses results the receiver did not write (the report-intak
     const m = await checkWith(t, envelope, results, 1);
     expect(t.rows('SELECT * FROM leads')).toEqual([]);
     expect(replyText(m)).not.toContain(DISCLOSURE);
+  });
+
+  it('DKIM replay: a message signed for attacker@gmail.com, resent with MAIL FROM:<victim@gmail.com>, enrols nobody', async () => {
+    const t = hosted();
+    // What the receiver writes for the replayed copy: the signature still verifies and DMARC passes for gmail.com.
+    const replay = 'mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20230601; spf=softfail smtp.mailfrom=victim@gmail.com; dmarc=pass header.from=gmail.com';
+    const m = await checkWith(t, 'victim@gmail.com', replay, 1, 'attacker@gmail.com');
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    expect(replyText(m)).not.toContain(DISCLOSURE);
+    // A message with no header From at all is not enrolled either.
+    await t.check('victim@gmail.com', authFor('gmail.com'), null);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    // The attacker's own address, sent as itself, is enrolled: the address enrolled is always the header From.
+    await checkWith(t, 'attacker@gmail.com', replay.replace('victim@', 'attacker@'), 1, 'attacker@gmail.com');
+    expect(t.rows('SELECT email FROM leads')).toEqual([{ email: 'attacker@gmail.com' }]);
+  });
+
+  it('the reply fallback sends the one report but cannot enrol: a replayed message with an SPF pass for the victim', async () => {
+    const sent: { to: unknown; headers?: Record<string, string> }[] = [];
+    const t = hosted({ SEND_EMAIL: { send: vi.fn(async (msg: { to: unknown; headers?: Record<string, string> }) => { sent.push(msg); return { messageId: 'm-1' }; }) } });
+    const replay = 'mx.cloudflare.net; dkim=pass header.d=gmail.com header.s=20230601; spf=pass smtp.mailfrom=victim@gmail.com; dmarc=pass header.from=gmail.com';
+    const s = await (await call(t.env, 'POST', '/api/check-sessions')).json() as { email: string };
+    const m = fakeMessage(s.email, rawWithAuth(replay), { from: 'victim@gmail.com', dkimSignatures: 1, headers: { 'authentication-results': replay, from: 'attacker@gmail.com', 'message-id': '<m1@example.com>' } });
+    (m.reply as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('original email is not repliable'));
+    await handleHostedEmail(m, t.env);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    expect(sent).toHaveLength(1); // the report only, with no unsubscribe header (nobody was enrolled)
+    expect(JSON.stringify(sent[0])).not.toMatch(/List-Unsubscribe|unsubscribe\?t=/i);
+    // An envelope sender that is not a plain address gets no fallback send at all.
+    sent.length = 0;
+    const odd = 'o,dd@victim.com'; // its smtp.mailfrom reads as victim.com: SPF passes for it
+    const s2 = await (await call(t.env, 'POST', '/api/check-sessions')).json() as { email: string };
+    const m2 = fakeMessage(s2.email, rawWithAuth(`mx.cloudflare.net; spf=pass smtp.mailfrom=${odd}`), { from: odd, dkimSignatures: 0, headers: { 'authentication-results': `mx.cloudflare.net; spf=pass smtp.mailfrom=${odd}`, 'message-id': '<m2@example.com>' } });
+    (m2.reply as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('original email is not repliable'));
+    await handleHostedEmail(m2, t.env);
+    expect(sent).toHaveLength(0);
   });
 
   it('the legitimate case still enrols: a plain envelope sender, one signature, one aligned dkim pass', async () => {

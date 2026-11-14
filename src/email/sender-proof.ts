@@ -95,6 +95,11 @@ export type SenderProof = { ok: true; via: 'ar' | 'arc' } | { ok: false; reason:
  * "none") than the message has signatures, or more than one dmarc result, means part of the header was not written by the receiver: a
  * sender-chosen value copied back unquoted (smtp.helo=x;dkim=pass(c)header.d=google.com). Then nothing in it is believed: returns the
  * detail for the log, or null when the counts are possible. Used by report intake (reporter-auth.ts) and the free-check enrolment.
+ *
+ * Residual assumption: the sender controls how many DKIM-Signature fields the message carries, so one garbage signature makes room for
+ * one injected dkim=pass. This holds only if the receiver quotes what it copies (HELO, MAIL FROM) or writes a result for every
+ * signature, which cannot be verified here. Enrolment does not rely on it (free-check.ts also requires the header From to be the
+ * envelope sender); report intake still does, until only well-formed signatures are counted.
  */
 export function resultsOverclaim(headers: AuthHeaders, parsed: ReturnType<typeof parseAuthResults>): string | null {
   const dkimResults = parsed?.dkimAll.filter((d) => d.result !== 'none').length ?? 0;

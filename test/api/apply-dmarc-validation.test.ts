@@ -61,6 +61,9 @@ describe('apply-dmarc content validation', () => {
     ['pct over 100', 'v=DMARC1; p=none; pct=101'],
     ['rua that is not mailto', 'v=DMARC1; p=none; rua=https://evil.test'],
     ['empty rua address', 'v=DMARC1; p=none; rua=mailto:'],
+    ['a non-ASCII character in an unknown tag', 'v=DMARC1; p=none; x-note=caf\u00e9'],
+    ['an invisible character', 'v=DMARC1; p=none\u200b'],
+    ['a non-breaking space', 'v=DMARC1;\u00a0p=none'],
     ['a part without =', 'v=DMARC1; p=none; junk'],
     ['too long', `v=DMARC1; p=none; rua=${Array.from({ length: 60 }, (_, i) => `mailto:a${i}@reports.example.test`).join(',')}`],
     ['not a string', { evil: true }],
@@ -77,6 +80,15 @@ describe('apply-dmarc content validation', () => {
     const res = await handleApi(apply(record), makeEnv(), ctx);
     expect(res.status).toBe(200);
     expect(cf.records.get('zone-acme')).toEqual([expect.objectContaining({ name: '_dmarc.acme.com', content: record })]);
+  });
+
+  it('accepts what the validator accepts, in any letter case or spacing of the version tag (the write policy agrees)', async () => {
+    for (const record of ['V=DMARC1; p=none', 'v = DMARC1; p=none']) {
+      cf = stubCloudflare(new FakeCloudflare({ 'acme.com': { id: 'zone-acme', cfAccountId: 'cf-acct' } }));
+      const res = await handleApi(apply(record), makeEnv(), ctx);
+      expect(res.status, record).toBe(200);
+      expect(cf.records.get('zone-acme')).toEqual([expect.objectContaining({ name: '_dmarc.acme.com', content: record })]);
+    }
   });
 
   it('says what is wrong in plain words', async () => {

@@ -162,6 +162,32 @@ describe('PATCH /api/domains/:id/dmarc', () => {
     expect(audits()).toHaveLength(0);
   });
 
+  it('updates a live record whose version tag has other letter case or spacing', async () => {
+    cf.seed('zone-acme', { type: 'TXT', name: '_dmarc.acme.com', content: 'v = DMARC1; p=none' });
+    const r = await call(1, 'quarantine', makeEnv([{ id: 1, domain: 'acme.com', rua: '' }]));
+    expect(r.status).toBe(200);
+    expect(content('zone-acme', '_dmarc.acme.com')).toEqual(['v = DMARC1; p=quarantine']);
+  });
+
+  it('round-trips a record over 255 characters: written as several strings, read back joined, changed again', async () => {
+    const vendors = Array.from({ length: 9 }, (_, i) => `mailto:dmarc-reports-${i}@vendor-${i}.example.com`).join(',');
+    const long = `v=DMARC1; p=none; rua=${vendors}`;
+    expect(long.length).toBeGreaterThan(300);
+    const apply = new Request('https://x.test/api/domains/1/apply-dmarc', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'k' }, body: JSON.stringify({ record: long }) });
+    const env = makeEnv([{ id: 1, domain: 'acme.com', dns_record_id: 'auth-elsewhere', rua: '' }]);
+    expect((await handleApi(apply, env, ctx)).status).toBe(200);
+    const [stored] = content('zone-acme', '_dmarc.acme.com');
+    expect(stored).toMatch(/^"[^"]{255}" "[^"]+"$/);
+    expect(stored.slice(1, -1).split('" "').join('')).toBe(long);
+
+    const r = await call(1, 'reject', env);
+    expect(r.status).toBe(200);
+    expect(r.body.previous_record).toBe(long);
+    expect(r.body.record).toBe(long.replace('p=none', 'p=reject'));
+    const [again] = content('zone-acme', '_dmarc.acme.com');
+    expect(again.slice(1, -1).split('" "').join('')).toBe(long.replace('p=none', 'p=reject'));
+  });
+
   it('400s for a bad policy and 404s for an unknown domain', async () => {
     const env = makeEnv([{ id: 1, domain: 'acme.com' }]);
     expect((await call(1, 'monitor', env)).status).toBe(400);

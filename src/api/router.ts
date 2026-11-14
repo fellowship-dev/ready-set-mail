@@ -138,6 +138,7 @@ import {
   buildPolicyFile,
 } from '../email/mta-sts';
 import { dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
+import { spfApplyProblem } from '../dns/spf-apply-check';
 
 /** Free-check sessions one IP may create per window. */
 export const CHECK_SESSIONS_PER_IP = 10;
@@ -188,6 +189,17 @@ function err(message: string, status: number): Response {
 export function intParam(url: URL, name: string, fallback: number, min: number, max: number): number {
   const n = parseInt(url.searchParams.get(name) ?? '', 10);
   return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
+}
+
+/** Can the product write this domain's DNS: is its own zone reachable through a connection or the instance token? */
+async function zoneReachable(tenant: TenantContext, domain: string): Promise<boolean> {
+  if (!tenant.hasCloudflare()) return false;
+  try {
+    await (await tenant.cfFor(domain)).zoneFor(domain);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** HTTP status for a Cloudflare failure: config problems are the caller's, the rest is reported as given. */
@@ -921,7 +933,8 @@ async function _handleApi(
         const ourRua = domain.rua_address?.trim();
         const has_rua = !!ourRua && records.some(r => r.toLowerCase().includes(ourRua.toLowerCase()));
         const current_record = records[0] ?? null;
-        const cf_managed = !!domain.dns_record_id;
+        // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
+        const cf_managed = await zoneReachable(tenant, domain.domain);
         if (found) track(tenant, { event: 'domain.dns_verified' }); // fire-and-forget
         return json({ found, has_rua, current_record, cf_managed });
       } catch {
@@ -958,6 +971,8 @@ async function _handleApi(
       if (live.kind === 'many') {
         return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
       }
+      // Read-modify-write: a change made at the DNS provider between this read and the write below is overwritten (Cloudflare has
+      // no conditional update). The daily DNS refresh re-reads the live record, so the stored policy is corrected even then.
       const before = live.kind === 'one' ? live.content : null;
       const newRecord = withPolicy(before, policy as DmarcPolicy, domain.rua_address);
       const problem = dmarcRecordProblem(newRecord);
@@ -1286,8 +1301,9 @@ async function _handleApi(
 
       const body = await parseBody<{ record?: string; confirm_overwrite?: boolean }>(request);
       if (!body.record) return err('record content is required', 400);
-      if (!body.record.startsWith('v=spf1')) return err('SPF record must start with v=spf1', 400);
-      if (!body.record.includes('all')) return err('SPF record must end with an all mechanism', 400);
+      if (typeof body.record !== 'string') return err('record must be a string', 400);
+      const spfProblem = spfApplyProblem(body.record);
+      if (spfProblem) return err(spfProblem, 400);
 
       const recordName = domain.domain;
 
