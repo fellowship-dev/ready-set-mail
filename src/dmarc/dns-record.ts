@@ -121,9 +121,14 @@ export type LiveDmarcRecord =
   | { kind: 'one'; record: CfDnsRecord; content: string }
   | { kind: 'many'; count: number };
 
-/** The DMARC record(s) published at `name` in `zoneId`: TXT records there that are not DMARC records are ignored. */
+/**
+ * The DMARC record(s) published at `name` in `zoneId`: TXT records there that are not DMARC records are ignored. Every page
+ * is read (CfIncompleteListError rather than a decision on part of the list), and only records at exactly that name count.
+ */
 export async function findDmarcRecord(cf: CfClient, zoneId: string, name: string): Promise<LiveDmarcRecord> {
-  const found = (await cf.listDnsRecords(zoneId, { type: 'TXT', name, per_page: 100 })).filter((r) => isDmarcTxt(r.content));
+  const exact = name.toLowerCase().replace(/\.$/, '');
+  const found = (await cf.listDnsRecords(zoneId, { type: 'TXT', name }))
+    .filter((r) => r.name.toLowerCase().replace(/\.$/, '') === exact && isDmarcTxt(r.content));
   if (found.length > 1) return { kind: 'many', count: found.length };
   return found.length ? { kind: 'one', record: found[0], content: bareTxt(found[0].content) } : { kind: 'none' };
 }

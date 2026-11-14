@@ -205,6 +205,16 @@ describe('PATCH /api/domains/:id/dmarc', () => {
     for (const policy of ['quarantine', 'reject', 'none', 'quarantine']) expect((await call(1, policy, env)).status, policy).toBe(200);
   });
 
+  it('reads every page of the name: a DMARC record behind 120 other TXT records is updated, not duplicated', async () => {
+    for (let i = 0; i < 120; i++) cf.seed('zone-acme', { type: 'TXT', name: '_dmarc.acme.com', content: `verification-${i}` });
+    const dmarc = cf.seed('zone-acme', { type: 'TXT', name: '_dmarc.acme.com', content: 'v=DMARC1; p=none' });
+    const r = await call(1, 'reject', makeEnv([{ id: 1, domain: 'acme.com', rua: '' }]));
+    expect(r.status).toBe(200);
+    expect(r.body.created).toBe(false);
+    expect(dmarc.content).toBe('v=DMARC1; p=reject');
+    expect(cf.calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
   it('400s for a bad policy and 404s for an unknown domain', async () => {
     const env = makeEnv([{ id: 1, domain: 'acme.com' }]);
     expect((await call(1, 'monitor', env)).status).toBe(400);
