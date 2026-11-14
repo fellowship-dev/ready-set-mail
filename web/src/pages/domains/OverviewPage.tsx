@@ -233,6 +233,21 @@ export function OverviewPage() {
 						/>
 					) : null}
 
+					{domains.length > 0 ? (
+						<section aria-labelledby={listId} className="space-y-3">
+							<h2 id={listId} className="sr-only">
+								Your domains
+							</h2>
+							{reportsOff ? <ReportsNotConnected /> : null}
+							<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
+								{ordered.map(({ d, parent, depth }) => {
+									const row = byId.get(d.id)!;
+									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} />;
+								})}
+							</ul>
+						</section>
+					) : null}
+
 					{claims.length > 0 ? (
 						<section aria-labelledby="waiting-heading" className="space-y-4">
 							<div className="space-y-1">
@@ -247,21 +262,6 @@ export function OverviewPage() {
 							{claims.map((c) => (
 								<ClaimCard key={c.id} claim={c} canWrite={canWrite} preview="lazy" />
 							))}
-						</section>
-					) : null}
-
-					{domains.length > 0 ? (
-						<section aria-labelledby={listId} className="space-y-3">
-							<h2 id={listId} className="sr-only">
-								Your domains
-							</h2>
-							{reportsOff ? <ReportsNotConnected /> : null}
-							<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
-								{ordered.map(({ d, parent, depth }) => {
-									const row = byId.get(d.id)!;
-									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} />;
-								})}
-							</ul>
 						</section>
 					) : null}
 				</>

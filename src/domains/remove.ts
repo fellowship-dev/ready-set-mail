@@ -21,11 +21,13 @@ export async function removeAuthRecord(tenant: TenantContext, domain: DomainRow,
   if (!domain.dns_record_id) return;
   const rdomain = tenant.settings.reportsDomain;
   const recordName = rdomain ? `${domain.domain}._report._dmarc.${rdomain}` : domain.dns_record_id;
+  const removed = await deprovisionDomain(tenant, domain.dns_record_id, domain.domain).catch(e => { console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e); return false; });
+  // A delete that was refused (the id holds some other record) or failed is not audited as a removal.
+  if (removed === false) return;
   logAudit(tenant, {
     actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: actor ? 'user' : 'system',
     action: 'dns.delete',
     resource_type: 'dns_record', resource_id: domain.dns_record_id, resource_name: recordName,
     before_value: { type: 'TXT', name: recordName, content: 'v=DMARC1;', ttl: 3600 },
   }, ctx);
-  await deprovisionDomain(tenant, domain.dns_record_id).catch(e => console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e));
 }

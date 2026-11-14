@@ -1,6 +1,6 @@
-import { Alert, Button, CheckResult, CheckResultList, LevelCard, Skeleton } from '@ready-set-mail/ui';
+import { Alert, Button, CheckResult, CheckResultList, LEVELS, LevelCard, Skeleton } from '@ready-set-mail/ui';
 import { useQuery } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
 import { previewAssessment, type ClaimPreviewData } from '../../lib/claim-preview';
@@ -85,8 +85,10 @@ function Result({ data, retry }: { data: ClaimPreviewData; retry: () => void }) 
  * What public DNS says about a domain that is claimed but not yet verified. Anyone can look these records up, so it is shown before
  * ownership is proven; the server stores nothing. `lazy` waits for a click (a list of claims must not look up every domain at once).
  */
-export function ClaimPreview({ claimId, domain, lazy = false }: { claimId: number | string; domain: string; lazy?: boolean }) {
+export function ClaimPreview({ claimId, domain, lazy = false, compact = false }: { claimId: number | string; domain: string; lazy?: boolean; /** One line with the level and a "See details" disclosure: it never pushes the proof record down. */ compact?: boolean }) {
 	const [requested, setRequested] = useState(!lazy);
+	const [open, setOpen] = useState(false);
+	const detailsId = useId();
 	const q = useQuery({
 		queryKey: ['claim-preview', claimId],
 		queryFn: () => api<ClaimPreviewData>(`/api/domains/claims/${claimId}/preview`),
@@ -125,7 +127,7 @@ export function ClaimPreview({ claimId, domain, lazy = false }: { claimId: numbe
 		);
 	}
 
-	return (
+	const full = (
 		<section aria-labelledby={`claim-preview-${claimId}`} className="space-y-3">
 			<div className="space-y-1">
 				<h4 id={`claim-preview-${claimId}`} className="text-base font-semibold">
@@ -146,5 +148,28 @@ export function ClaimPreview({ claimId, domain, lazy = false }: { claimId: numbe
 				</div>
 			) : null}
 		</section>
+	);
+	if (!compact) return full;
+
+	let line: string;
+	if (q.data) {
+		const a = previewAssessment(q.data);
+		line = q.data.nxdomain ? 'This name does not resolve in public DNS' : a ? `${LEVELS[a.level].name}, level ${a.level} of 2` : 'Not shown, because a DNS lookup failed';
+	} else if (q.isPending) line = 'Checking…';
+	else line = limited ? RATE_LIMITED : 'Could not be checked';
+	return (
+		<div className="space-y-3 border-t border-line pt-3" data-testid="claim-preview-compact">
+			<div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+				<p className="text-sm text-ink-2" aria-live="polite">
+					Public DNS today: <span className="font-medium text-ink-1">{line}</span>
+				</p>
+				<Button variant="link" size="sm" className="h-auto px-0" aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen((o) => !o)}>
+					{open ? 'Hide details' : 'See details'}
+				</Button>
+			</div>
+			<div id={detailsId} hidden={!open}>
+				{open ? full : null}
+			</div>
+		</div>
 	);
 }

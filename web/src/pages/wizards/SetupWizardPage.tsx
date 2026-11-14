@@ -2,7 +2,7 @@ import { Button, CheckResult, CheckResultList, toast } from '@ready-set-mail/ui'
 import { StepCard } from '../../components/wizard/StepCard';
 import { StepFooter } from '../../components/wizard/StepNav';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
 import { LoadError, PageSkeleton, ReadOnlyNotice } from '../../components/states';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
@@ -14,7 +14,7 @@ import { HELP_PRIORITY, TalkToMax } from '../../components/TalkToMax';
 import type { WizardState, WizardStepState } from '../../lib/types';
 import { DkimStep } from './setup/DkimStep';
 import { DmarcStep } from './setup/DmarcStep';
-import { DomainStep } from './setup/DomainStep';
+import { FirstScreen } from './cloudflare/FirstScreen';
 import { setupKeys, useOnboardingStatus, useWizardState } from './setup/hooks';
 import { ReportsStep } from './setup/ReportsStep';
 import { RoutingStep } from './setup/RoutingStep';
@@ -31,15 +31,15 @@ export function SetupWizardPage() {
 	return <DomainSetup domainId={Number.parseInt(id, 10)} urlStep={parseStep(step)} />;
 }
 
-function Frame({ title, subtitle, skipTo, wizard, current, children }: { title: ReactNode; subtitle: string; skipTo: string; wizard: WizardState; current: number; children: ReactNode }) {
+function Frame({ title, subtitle, skipTo, wizard, current, children, progress = true }: { title: ReactNode; subtitle: string; skipTo: string; wizard: WizardState; current: number; children: ReactNode; /** False on the first screen until a path is chosen. */ progress?: boolean }) {
 	const hosted = useHosted();
 	return (
 		<div className="space-y-6">
 			<header className="space-y-3">
 				<div className="flex items-start justify-between gap-3">
 					<div className="min-w-0 space-y-1">
-						<h1 className="text-2xl font-bold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
-						<p className="text-sm text-ink-2">{subtitle}</p>
+						<h1 className="text-xl font-bold tracking-tight sm:text-2xl [overflow-wrap:anywhere]">{title}</h1>
+						{progress ? <p className="text-sm text-ink-2 max-sm:hidden">{subtitle}</p> : null}
 					</div>
 					<Button asChild variant="ghost" size="sm" className="shrink-0">
 						<Link to={skipTo}>Skip setup</Link>
@@ -47,7 +47,7 @@ function Frame({ title, subtitle, skipTo, wizard, current, children }: { title: 
 				</div>
 				{/* Hosted counts four steps (the Reports page only says reports are not connected), so the progress line
 				    and the "n of 4 steps complete" header use the same count; the Reports page shows no step marker. */}
-				{hosted && current >= 4 ? null : (
+				{!progress || (hosted && current >= 4) ? null : (
 					<WizardProgress
 						label="Setup progress"
 						current={current}
@@ -72,6 +72,7 @@ function EntryFlow() {
 	const domains = useDomains();
 	const qc = useQueryClient();
 	const navigate = useNavigate();
+	const [showProgress, setShowProgress] = useState(false);
 
 	if (domains.isPending) return <PageSkeleton label="Checking for domains" />;
 	if (domains.isError) return <LoadError error={domains.error} onRetry={() => void domains.refetch()} title="Could not check your domains" />;
@@ -79,8 +80,9 @@ function EntryFlow() {
 	if (first) return <Navigate to={`/domains/${first.id}/setup/1`} replace />;
 
 	return (
-		<Frame title="Let's set up Ready Set Mail" subtitle={`0 of ${hosted ? 4 : 5} steps complete`} skipTo="/" wizard={DEFAULT_WIZARD} current={0}>
-			<DomainStep
+		<Frame title="Let's set up Ready Set Mail" subtitle={`0 of ${hosted ? 4 : 5} steps complete`} skipTo="/" wizard={DEFAULT_WIZARD} current={0} progress={showProgress}>
+			<FirstScreen
+				onProgress={setShowProgress}
 				onDomainSet={(newId) => {
 					void qc.invalidateQueries({ queryKey: keys.domains });
 					void qc.invalidateQueries({ queryKey: ['auth-status'] });
