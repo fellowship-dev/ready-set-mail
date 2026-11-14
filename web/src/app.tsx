@@ -1,14 +1,16 @@
 import { Button, EmptyState, Toaster } from '@ready-set-mail/ui';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
-import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router';
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router';
 import { FocusLayout } from './components/FocusLayout';
 import { Shell } from './components/Shell';
 import { WorkspaceRouter } from './components/WorkspaceRouter';
 import { PageSkeleton } from './components/states';
+import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
 import { AuthPage } from './pages/auth/AuthPage';
+import { OwnerSetupPage } from './pages/setup/OwnerSetupPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
 import { NoWorkspacePage } from './pages/auth/NoWorkspacePage';
@@ -16,8 +18,21 @@ import { ResetPage } from './pages/auth/ResetPage';
 import { WelcomePage } from './pages/auth/WelcomePage';
 
 /** Waits for the session, then shows the app, the sign-in screen (deep link preserved) or a "server unreachable" state. */
-function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
-	const { state, retry, me } = useSession();
+export function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
+	const { state, retry, me, status } = useSession();
+	const claim = useClaimLink();
+	const [params, setParams] = useSearchParams();
+	const proof = params.get('t');
+	const firstOwner = state === 'anon' && !!status && !status.configured && status.mode !== 'saas';
+	// A setup link printed as `#/setup?t=<expiry>.<sig>`: held in memory for the owner form and taken out of the address bar and
+	// history at once. Anywhere else (signed in, already configured, hosted) the parameter is ignored and stripped.
+	useEffect(() => {
+		if (proof === null || state === 'loading' || state === 'unreachable') return;
+		if (firstOwner && proof) claim.hold(proof);
+		const next = new URLSearchParams(params);
+		next.delete('t');
+		setParams(next, { replace: true });
+	}, [proof, state, firstOwner, claim, params, setParams]);
 	if (state === 'loading') return <div className="mx-auto max-w-2xl p-8"><PageSkeleton label="Starting up" /></div>;
 	if (state === 'unreachable') {
 		return (
@@ -30,7 +45,7 @@ function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 's
 			</div>
 		);
 	}
-	if (state === 'anon') return <AuthPage initialMode={initialMode} />;
+	if (state === 'anon') return status && !status.configured && status.mode !== 'saas' ? <OwnerSetupPage /> : <AuthPage initialMode={initialMode} />;
 	if (me && me.workspace_id == null) return <NoWorkspacePage />;
 	return <>{children}</>;
 }
@@ -92,6 +107,8 @@ const SettingsPage = lazy(() => import('./pages/settings/SettingsPage').then((m)
 const MembersPage = lazy(() => import('./pages/members/MembersPage').then((m) => ({ default: m.MembersPage })));
 const DmarcWizardPage = lazy(() => import('./pages/wizards/DmarcWizardPage').then((m) => ({ default: m.DmarcWizardPage })));
 const MtaStsPage = lazy(() => import('./pages/wizards/MtaStsPage').then((m) => ({ default: m.MtaStsPage })));
+const CloudflareWizardPage = lazy(() => import('./pages/wizards/cloudflare/CloudflareWizardPage').then((m) => ({ default: m.CloudflareWizardPage })));
+const ConnectCloudflarePage = lazy(() => import('./pages/cloudflare/ConnectCloudflarePage').then((m) => ({ default: m.ConnectCloudflarePage })));
 const SetupWizardPage = lazy(() => import('./pages/wizards/SetupWizardPage').then((m) => ({ default: m.SetupWizardPage })));
 const SpfFlattenPage = lazy(() => import('./pages/wizards/SpfFlattenPage').then((m) => ({ default: m.SpfFlattenPage })));
 
@@ -141,6 +158,8 @@ function AppRoutes() {
 			{/* Wizards: full-screen, no sidebar */}
 			<Route element={<Gate><Outlet /></Gate>}>
 				<Route path="setup" element={<Wizard><SetupWizardPage /></Wizard>} />
+				<Route path="setup/cloudflare" element={<Wizard><CloudflareWizardPage /></Wizard>} />
+				<Route path="cloudflare/connect" element={<Wizard><ConnectCloudflarePage /></Wizard>} />
 				<Route path="onboarding" element={<Navigate to="/setup" replace />} />
 				<Route path="domains/:id/setup" element={<WizardFor render={() => <SetupWizardPage />} />} />
 				<Route path="domains/:id/setup/:step" element={<WizardFor render={() => <SetupWizardPage />} />} />
@@ -157,9 +176,11 @@ export function App({ queryClient, Router = WorkspaceRouter }: { queryClient: Qu
 	return (
 		<QueryClientProvider client={queryClient}>
 			<SessionProvider>
-				<Router>
-					<AppRoutes />
-				</Router>
+				<ClaimLinkProvider>
+					<Router>
+						<AppRoutes />
+					</Router>
+				</ClaimLinkProvider>
 				<Toaster />
 			</SessionProvider>
 		</QueryClientProvider>

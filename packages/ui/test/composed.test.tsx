@@ -212,6 +212,15 @@ describe("RecordBlock", () => {
 		expect(screen.getByText("Copied to clipboard")).toHaveAttribute("aria-live", "polite");
 		await expectNoViolations(container);
 	});
+	it("wraps long values at ';' boundaries, never clips, and keeps the copied text whole", () => {
+		const long = `v=DKIM1; k=rsa; p=${"A".repeat(400)}`;
+		const { container } = render(<RecordBlock record={{ type: "TXT", name: "sel._domainkey", value: long }} />);
+		const span = [...container.querySelectorAll("span")].find((s) => s.textContent === long);
+		expect(span).toBeDefined();
+		expect(span).toHaveClass("font-mono", "min-w-0", "[overflow-wrap:anywhere]");
+		expect(span?.querySelectorAll("wbr")).toHaveLength(2);
+		expect(container.firstElementChild).not.toHaveClass("overflow-x-auto");
+	});
 	it("keeps the button name fixed (no double announcement)", async () => {
 		const { user } = setup();
 		render(<RecordBlock record={{ type: "TXT", name: "_dmarc", value }} />);

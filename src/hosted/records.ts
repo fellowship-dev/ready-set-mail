@@ -95,13 +95,14 @@ export class HostedRecordWriter {
   }
 
   async remove(recordId: string, name: string): Promise<boolean> {
+    let found: CfDnsRecord;
     try {
-      await this.#verifyRecord(recordId, name);
+      found = await this.#verifyRecord(recordId, name);
     } catch (e) {
       if (e instanceof HostedNameError && /not found/.test(e.message)) return false; // already gone
       throw e;
     }
-    return this.#cf.deleteDnsRecord(this.zone.id, recordId);
+    return this.#cf.deleteDnsRecord(this.zone.id, recordId, { type: found.type, name, content: found.content });
   }
 
   /** Every record of the zone (read-only), for the daily diff and the quota count. */

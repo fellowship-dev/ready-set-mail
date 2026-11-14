@@ -104,25 +104,28 @@ export async function provisionDomain(
 /**
  * Deletes the cross-domain DMARC authorization record.
  * Call this when a domain is removed. Idempotent — 404 is silently ignored.
+ * Returns false when the record was left in place (refused: it is not the authorisation record; or the call failed).
  */
 export async function deprovisionDomain(
   tenant: TenantContext,
   recordId: string,
+  /** The monitored domain whose authorization record this is: the write policy checks the delete by name. */
+  domain: string,
   audit?: DnsAuditOpts,
-): Promise<void> {
+): Promise<boolean> {
   const reportsDomain = tenant.settings.reportsDomain;
 
   // If CF creds aren't configured, there's nothing to clean up
-  if (!tenant.hasCloudflare() || !reportsDomain) return;
+  if (!tenant.hasCloudflare() || !reportsDomain) return true;
 
   try {
     const cf = await tenant.cfFor(reportsDomain);
     const zone = await cf.zoneFor(reportsDomain);
-    await cf.deleteDnsRecord(zone.id, recordId);
+    await cf.deleteDnsRecord(zone.id, recordId, { type: 'TXT', name: `${domain}._report._dmarc.${reportsDomain}`, content: 'v=DMARC1;' });
   } catch (e) {
     // Domain delete must still succeed: warn and move on.
     console.warn(`deprovisionDomain: could not delete record ${recordId}: ${e instanceof Error ? e.message : String(e)}`);
-    return;
+    return false;
   }
 
   if (audit) {
@@ -136,4 +139,5 @@ export async function deprovisionDomain(
       before_value: { record_id: recordId },
     }, audit.ctx);
   }
+  return true;
 }

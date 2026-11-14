@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { Alert, Badge, Button, CheckResult, CheckResultList } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -174,6 +175,7 @@ export function SpfFlattenPage() {
 										SPF flattening writes to Cloudflare DNS, and no Cloudflare connection is configured.
 									</Alert>
 								) : null}
+								{!flat.available ? <ConnectCloudflareLink /> : null}
 							</>
 						)}
 						{enable.isError ? (

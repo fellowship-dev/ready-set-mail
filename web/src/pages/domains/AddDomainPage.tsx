@@ -1,3 +1,4 @@
+import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { Alert, Badge, Button, CheckResult, CheckResultList, FieldError, FieldHint, Input, Label, PageHeader, RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
@@ -9,7 +10,9 @@ import { PlanLimitNotice, planLimitOf } from '../../components/PlanLimitNotice';
 import { ReadOnlyNotice, WriteButton } from '../../components/states';
 import { DomainRefusalHelp } from '../../components/TalkToMax';
 import { ReportsNotConnected } from '../../components/ReportsNotConnected';
-import { api, errorMessage } from '../../lib/api';
+import { api } from '../../lib/api';
+import { domainErrorMessage } from '../../lib/domain-errors';
+import { useCfOffer } from '../../lib/cloudflare';
 import { useHosted } from '../../lib/session';
 import { normalizeDomain } from '../../lib/dmarc';
 import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
@@ -19,12 +22,6 @@ import { clearSignupDomainIf, readSignupDomain } from '../../lib/signup-intent';
 import type { AddDomainResult, PendingDomainResult } from '../../lib/types';
 
 const POLL_MS = 15_000;
-
-interface Zone {
-	id: string;
-	name: string;
-	status: string;
-}
 
 /**
  * Checks right away, then every 15 s until the record (with our rua) is seen. Without a reports address there is no rua
@@ -198,10 +195,10 @@ export function AddDomainPage() {
 	const [result, setResult] = useState<AddDomainResult | null>(null);
 	const [pending, setPending] = useState<PendingDomainResult | null>(null);
 
-	// A missing Cloudflare token (400) or any failure just means "type it in".
-	const zonesQ = useQuery({ queryKey: domainKeys.zones, queryFn: () => api<{ zones: Zone[] }>('/api/zones').then((r) => r.zones), retry: false });
+	// No usable Cloudflare connection means no zone request: the domain is typed by hand.
+	const cf = useCfOffer();
 	// A prefilled domain that is not one of the listed zones is typed, not picked.
-	const zones = !manual && zonesQ.data && zonesQ.data.length > 0 && (input === '' || zonesQ.data.some((z) => z.name === input)) ? zonesQ.data : null;
+	const zones = !manual && cf.zoneList.length > 0 && (input === '' || cf.zoneList.some((z) => z.name === input)) ? cf.zoneList : null;
 
 	const add = useMutation({
 		mutationFn: (domain: string) => api<AddDomainResult | PendingDomainResult>('/api/domains', { method: 'POST', body: { domain } }),
@@ -249,7 +246,7 @@ export function AddDomainPage() {
 			<form onSubmit={submit} className="space-y-4" noValidate>
 				<div className="space-y-1.5">
 					<Label htmlFor="domain-input">Your domain</Label>
-					{zonesQ.isPending ? (
+					{cf.pending ? (
 						<Skeleton className="h-10 w-full" />
 					) : zones ? (
 						<>
@@ -275,7 +272,8 @@ export function AddDomainPage() {
 					) : (
 						<Input id="domain-input" placeholder="yourcompany.com" value={input} onChange={(e) => setInput(e.target.value)} autoFocus autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={(add.isError && !planLimitOf(add.error)) || undefined} aria-describedby={add.isError && !planLimitOf(add.error) ? 'domain-error' : undefined} />
 					)}
-					{add.isError && !planLimitOf(add.error) ? <FieldError id="domain-error">{errorMessage(add.error)}</FieldError> : null}
+					{!cf.pending && !zones && cf.canConnect ? <ConnectCloudflareLink /> : null}
+					{add.isError && !planLimitOf(add.error) ? <FieldError id="domain-error">{domainErrorMessage(add.error)}</FieldError> : null}
 					{add.isError && !planLimitOf(add.error) ? <DomainRefusalHelp error={add.error} /> : null}
 					{add.isError && planLimitOf(add.error) ? <PlanLimitNotice limit={planLimitOf(add.error)!} /> : null}
 				</div>
@@ -294,7 +292,8 @@ export function AddDomainPage() {
 					<strong>No impact on your email.</strong> We start in observation mode; nothing changes about how your email is delivered.
 				</li>
 				<li>
-					<strong>Guided setup.</strong> We walk you through each step and can apply DNS changes automatically if your domain is on Cloudflare.
+					<strong>Guided setup.</strong>{' '}
+					{cf.canConnect ? 'We walk you through each step and can apply DNS changes automatically if your domain is on Cloudflare.' : 'We walk you through each step and show the exact DNS record to publish.'}
 				</li>
 				<li>
 					<strong>Clear next steps.</strong> Once data starts coming in, the dashboard tells you exactly what to do and when it is safe.

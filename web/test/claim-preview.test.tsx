@@ -198,16 +198,18 @@ describe('ClaimCard and the preview', () => {
 		expect(calls.some((c) => c.path.includes('/preview'))).toBe(false);
 	});
 
-	it('with preview: loads it above the TXT instructions', async () => {
+	it('with preview: a compact level line below the record, today\'s preview behind See details', async () => {
 		renderApp(<ClaimCard claim={claim} preview />, { routes: { [PATH]: view() } });
-		const heading = await loaded();
-		const instructions = screen.getByText(/Prove you own/);
-		expect(heading.compareDocumentPosition(instructions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(await screen.findByText('Authenticated, level 1 of 2')).toBeInTheDocument();
+		expect(screen.queryByText(/Checked from public DNS/)).toBeNull();
+		await userEvent.click(screen.getByRole('button', { name: 'See details' }));
+		expect(await loaded()).toBeInTheDocument();
 	});
 
 	it('with preview="lazy": a button, and no request until pressed', async () => {
 		const { calls } = renderApp(<ClaimCard claim={claim} preview="lazy" />, { routes: { [PATH]: view() } });
 		await userEvent.click(await screen.findByRole('button', { name: 'Check public DNS' }));
+		await userEvent.click(await screen.findByRole('button', { name: 'See details' }));
 		await loaded();
 		expect(calls.filter((c) => c.path.includes('/preview'))).toHaveLength(1);
 	});

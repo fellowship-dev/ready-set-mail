@@ -313,11 +313,19 @@ describe('DELETE /api/domains/:id', () => {
     expect(rows(env, 'SELECT id FROM domains')).toEqual([]);
   });
 
+  it('does not call deprovisionDomain for a domain whose authorisation record the product did not create (no dns_record_id)', async () => {
+    const env = makeEnv();
+    seedDomain(env, { id: 6, domain: 'adopted.com', dns_record_id: null });
+    vi.mocked(dnsMod.deprovisionDomain).mockClear();
+    await handleApi(req('DELETE', '/api/domains/6'), env, ctx);
+    expect(dnsMod.deprovisionDomain).not.toHaveBeenCalled();
+  });
+
   it('calls deprovisionDomain when dns_record_id is set', async () => {
     const env = makeEnv();
     seedDomain(env, { id: 5, domain: 'acme.com', dns_record_id: 'cf-rec-abc' });
     await handleApi(req('DELETE', '/api/domains/5'), env, ctx);
-    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc');
+    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc', 'acme.com');
   });
 
   it('returns 404 when domain not found', async () => {
