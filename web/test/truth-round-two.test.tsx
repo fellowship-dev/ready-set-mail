@@ -104,6 +104,12 @@ describe('item 10: read-only members do not get the Upgrade button', () => {
 				routes: {
 					'GET /api/domains': { domains: [domain] },
 					'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-10-20', total: 100, passed: 99, failed: 1 }] },
+					// The stored read after the live one: p=none sending reports here, 99 of 100 reported messages pass.
+					'GET /api/domains/1/check-summary': {
+						domain_id: 1, domain: 'example.com', dmarc_policy: 'none', spf_record: 'v=spf1 -all', dns_checked_at: Math.floor(Date.now() / 1000) - 60, dns_check_attempted_at: Math.floor(Date.now() / 1000) - 60,
+						dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 99, fail_messages: 1,
+						dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1,
+					},
 					'GET /api/domains/1/sources': { sources: [] },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=none', cf_managed: false },

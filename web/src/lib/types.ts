@@ -275,9 +275,15 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   mta_sts_mode: string | null;
   /** SPF DNS lookups at the last refresh; null: not counted. */
   spf_lookup_count?: number | null;
-  /** pct= and sp= of the DMARC record that applies, from the last read (0012). Null or absent: not read yet. */
+  /**
+   * The governing DMARC record (own, else the organizational domain's) at the last read (0012): pct=, p=, sp= as written
+   * (null: no sp= tag) and whether its rua= names this domain's reports address (1/0). dmarc_p null or absent with a
+   * policy: not read since 0012. See packages/dns-checks/src/dmarc-next-step.ts.
+   */
   dmarc_pct?: number | null;
+  dmarc_p?: string | null;
   dmarc_sp?: string | null;
+  dmarc_rua?: number | null;
 }
 
 export type WizardStepState = 'not_started' | 'complete' | 'skipped';

@@ -56,6 +56,12 @@ export function DoThisNext({ actions, pending, canWrite, onRetry }: { actions: D
 									<span className="font-medium text-ink-1">Why: </span>
 									{a.why}
 								</p>
+								{a.record ? (
+									<p className="max-w-prose text-sm text-ink-2">
+										<span className="font-medium text-ink-1">Record offered{a.recordAt ? <> at <code className="font-mono text-xs">{a.recordAt}</code></> : null}: </span>
+										<code className="break-all font-mono text-xs text-ink-1">{a.record}</code>
+									</p>
+								) : null}
 								<div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-0.5 text-sm">
 									<span className="text-ink-2">
 										Who: <span className="text-ink-1">{a.who}</span>

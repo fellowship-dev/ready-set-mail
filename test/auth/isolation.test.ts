@@ -131,6 +131,7 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/api/domains/2/mta-sts/policy', kind: 'denied' },
   // hosted records (MODE=saas): src/hosted/routes.ts
   { method: 'GET', path: '/api/domains/2/hosted', kind: 'denied' },
+  { method: 'GET', path: '/api/hosted/statuses', kind: 'scoped', note: 'the caller\'s own hosted domains only' },
   { method: 'POST', path: '/api/domains/2/hosted', body: { mta_sts: true }, kind: 'denied' },
   { method: 'DELETE', path: '/api/domains/2/hosted', kind: 'denied' },
   { method: 'POST', path: '/api/domains/2/hosted/rotate-token', body: {}, kind: 'denied' },

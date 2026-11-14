@@ -299,7 +299,7 @@ describe('overview level cards: Talk to Max at stuck states', () => {
 
 	it('a domain that does not resolve offers a person', async () => {
 		overview(summary({ dns_check_status: 'nxdomain' }));
-		const card = await screen.findByRole('listitem', { name: 'acme.com' });
+		const card = await screen.findByRole('listitem', { name: 'acme.com', busy: false });
 		expect(within(card).getByText(/DNS says acme\.com does not exist/)).toBeInTheDocument();
 		expect(within(card).getByText(/Sure this is the right name\?/)).toBeInTheDocument();
 		expectSafeTalkLink(within(card).getByRole('link', { name: /Talk to Max/ }));
@@ -307,7 +307,7 @@ describe('overview level cards: Talk to Max at stuck states', () => {
 
 	it('a check that keeps failing offers a person, and the card does not lean on reports', async () => {
 		overview(summary({ dns_checked_at: hoursAgo(72), dns_check_attempted_at: hoursAgo(1), dns_check_status: 'failed', dns_last_good_status: 'ok' }));
-		const card = await screen.findByRole('listitem', { name: 'acme.com' });
+		const card = await screen.findByRole('listitem', { name: 'acme.com', busy: false });
 		expect(within(card).getByText(/Last check failed 1 hour ago/)).toBeInTheDocument();
 		expect(within(card).getByText(/DNS checks keep failing\?/)).toBeInTheDocument();
 		// One block above the rows says reports are not connected; the row does not repeat it or make a report claim.
@@ -318,13 +318,13 @@ describe('overview level cards: Talk to Max at stuck states', () => {
 
 	it('a summary that cannot load offers a person', async () => {
 		overview(fail(404, 'summary unavailable')); // 4xx: the query client does not retry, so the error row shows at once
-		const card = await screen.findByRole('listitem', { name: 'acme.com' });
+		const card = await screen.findByRole('listitem', { name: 'acme.com', busy: false });
 		expectSafeTalkLink(await within(card).findByRole('link', { name: /Talk to Max/ }));
 	});
 
 	it('no booking link: the same states show no link', async () => {
 		overview(summary({ dns_check_status: 'nxdomain' }), HOSTED_NO_LINK);
-		const card = await screen.findByRole('listitem', { name: 'acme.com' });
+		const card = await screen.findByRole('listitem', { name: 'acme.com', busy: false });
 		expect(within(card).getByText(/does not exist/)).toBeInTheDocument();
 		expect(talkLinks()).toHaveLength(0);
 	});

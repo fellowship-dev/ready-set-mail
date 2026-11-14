@@ -111,7 +111,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 				<>
 					{dmarc.current_record ? (
 						<TxtRecord title="Current record" name="_dmarc" value={dmarc.current_record} />
-					) : hostedNoReports && coverage.kind === 'inherited' ? null : (
+					) : coverage.kind === 'inherited' ? null : (
 						// An inherited policy is explained below ("no DMARC record of its own…"): "No DMARC record found" would contradict it.
 						<p className="text-sm text-ink-2">
 							No DMARC record found for <strong className="text-ink-1">_dmarc.{status.domain}</strong>.
@@ -144,10 +144,11 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							This domain has no Ready Set Mail report address, so there is no record to copy yet. A DMARC record needs one to send reports here.
 						</Alert>
 					) : null}
-					{rua && !applied && coverage.kind === 'inherited' ? (
+					{!hostedNoReports && !applied && coverage.kind === 'inherited' ? (
+						// Every mode says which policy is in force for this name before anything is offered.
 						<p className="text-sm text-ink-2">
 							{inheritedSentence(status.domain, coverage)}
-							{floor ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
+							{rua && floor ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
 						</p>
 					) : null}
 					{rua && !applied && coverage.kind === 'unknown' && !dmarc.found ? (

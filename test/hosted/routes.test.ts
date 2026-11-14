@@ -90,6 +90,17 @@ describe('/api/domains/:id/hosted', () => {
     expect((await call(t.env, 'GET', '/api/domains/1/hosted')).status).toBe(401);
   });
 
+  it('GET /api/hosted/statuses: every hosted domain of the caller in one request, the same view as the per-domain status', async () => {
+    const t = await setup();
+    expect(await (await call(t.env, 'GET', '/api/hosted/statuses', { key: t.A.token })).json()).toEqual({ statuses: {} });
+    await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: {} });
+    await call(t.env, 'POST', '/api/domains/2/hosted', { key: t.B.token, body: {} });
+    const one = await (await call(t.env, 'GET', '/api/domains/1/hosted', { key: t.A.token })).json();
+    const all = await (await call(t.env, 'GET', '/api/hosted/statuses', { key: t.A.token })).json() as any;
+    expect(all).toEqual({ statuses: { 1: one } });
+    expect((await call(t.env, 'GET', '/api/hosted/statuses')).status).toBe(401);
+  });
+
   it('is 404 where hosted mode is off', async () => {
     const db = createMigratedD1();
     const env = makeEnv(db, { ...HOSTED_ENV, SAAS_ENABLED: '' }) as any;

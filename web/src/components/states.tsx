@@ -2,7 +2,7 @@ import { Alert, Button, Skeleton, cn } from '@ready-set-mail/ui';
 import { HELP_PRIORITY, TalkToMax } from './TalkToMax';
 import { ChevronDown, Lock } from 'lucide-react';
 import type { ButtonProps } from '@ready-set-mail/ui';
-import { createContext, forwardRef, useContext, useId, useState, type ReactNode } from 'react';
+import { createContext, forwardRef, useContext, useEffect, useId, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ApiError, errorMessage } from '../lib/api';
 import { READ_ONLY_REASON, useSession } from '../lib/session';
 
@@ -48,9 +48,25 @@ export function PageSkeleton({ label = 'Loading' }: { label?: string }) {
 	);
 }
 
+/** How many ReadOnlyNotice are on screen: a write button then keeps its reason for screen readers only, so it is not said twice. */
+const notices = { n: 0, subs: new Set<() => void>() };
+const subscribeNotices = (f: () => void) => {
+	notices.subs.add(f);
+	return () => void notices.subs.delete(f);
+};
+const setNotices = (d: number) => {
+	notices.n += d;
+	for (const f of notices.subs) f();
+};
+
 /** Shown once per page that has write actions, when the caller is a member. */
 export function ReadOnlyNotice({ className }: { className?: string }) {
 	const { canWrite } = useSession();
+	useEffect(() => {
+		if (canWrite) return;
+		setNotices(1);
+		return () => setNotices(-1);
+	}, [canWrite]);
 	if (canWrite) return null;
 	return (
 		<Alert variant="info" title="Read-only access" className={className} data-testid="read-only-notice">
@@ -68,6 +84,8 @@ export const WriteButton = forwardRef<HTMLButtonElement, ButtonProps & { reasonV
 		const { canWrite } = useSession();
 		const reasonId = useId();
 		const blocked = !canWrite;
+		// The page's ReadOnlyNotice already says why: keep this reason for screen readers only.
+		const noticeShown = useSyncExternalStore(subscribeNotices, () => notices.n > 0, () => false);
 		return (
 			<>
 				<Button
@@ -80,7 +98,7 @@ export const WriteButton = forwardRef<HTMLButtonElement, ButtonProps & { reasonV
 					{blocked ? <Lock aria-hidden /> : null}
 					{children}
 				</Button>
-				<span id={reasonId} className={reasonVisible && blocked ? 'text-sm text-ink-2' : 'sr-only'}>
+				<span id={reasonId} className={reasonVisible && blocked && !noticeShown ? 'text-sm text-ink-2' : 'sr-only'}>
 					{blocked ? READ_ONLY_REASON : null}
 				</span>
 			</>

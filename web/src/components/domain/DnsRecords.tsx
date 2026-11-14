@@ -149,12 +149,16 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		if (!found && ruaReady && onboarding.isPending) return <RowSkeleton label="DMARC" />;
 		// Without a report address of our own, no record can send reports here, whatever the lookup matched.
 		const has_rua = dns.data.has_rua && ruaReady;
-		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : !found && coverage.kind === 'inherited' && (coverage.policy === 'quarantine' || coverage.policy === 'reject') ? 'warn' : 'missing';
+		// A name with no record of its own that inherits a policy is not "missing": it is labelled as inherited, from where.
+		const inherited = !found && coverage.kind === 'inherited';
+		const inheritedEnforcing = inherited && (coverage.policy === 'quarantine' || coverage.policy === 'reject');
+		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : inherited ? (inheritedEnforcing ? 'pass' : 'warn') : 'missing';
 		const offerBlocked = !found && !floor;
 		const upToDate = !ruaReady || offerBlocked || (found && has_rua && current === recommended);
 		return (
 			<CheckResult
 				status={status}
+				{...(inherited && coverage.kind === 'inherited' ? { statusLabel: `Inherited from ${coverage.parent}` } : {})}
 				title="DMARC record"
 				summary={
 					!ruaReady

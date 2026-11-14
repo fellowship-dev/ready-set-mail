@@ -7,7 +7,8 @@ import { fail, renderApp, type Handler } from './render';
 const hoursAgo = (h: number) => Math.floor(Date.now() / 1000) - h * 3600;
 const domain = (id: number, name: string, extra = {}) => ({ id, domain: name, dmarc_policy: 'reject', rua_address: 'r@x.io', parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0, ...extra });
 const checked = { dns_checked_at: hoursAgo(3), dns_check_attempted_at: hoursAgo(3), dns_check_status: 'ok' };
-const summary = (id: number, name: string, extra = {}) => ({ domain_id: id, domain: name, dmarc_policy: 'reject', spf_record: 'v=spf1 -all', total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 3, dmarc_pct: 100, dmarc_sp: 'reject', ...checked, ...extra });
+/** A stored summary as a DNS read leaves it (0012): the governing record's p= follows the policy, it sends reports here. */
+const summary = (id: number, name: string, extra: Record<string, unknown> = {}) => ({ domain_id: id, domain: name, dmarc_policy: 'reject', spf_record: 'v=spf1 -all', total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 3, dmarc_pct: 100, dmarc_p: 'dmarc_policy' in extra ? extra.dmarc_policy : 'reject', dmarc_sp: null, dmarc_rua: 1, ...checked, ...extra });
 const stats = (passed: number, total = 100) => ({ domain: 'x', days: 30, stats: total ? [{ day: '2026-10-20', total, passed, failed: total - passed }] : [] });
 const noReports = stats(0, 0);
 
@@ -38,7 +39,8 @@ function toBatch(routes: Record<string, unknown | Handler>): Record<string, unkn
 const renderOverview = (opts: Parameters<typeof renderApp>[1] = {}): ReturnType<typeof renderApp> => renderApp(<OverviewPage />, { ...opts, routes: toBatch(opts.routes ?? {}) });
 
 /** The row for one domain: a list item named by its domain. */
-const row = (name: string | RegExp) => screen.findByRole('listitem', { name });
+// A settled row (not the loading one, which is aria-busy): its verdict is known.
+const row = (name: string | RegExp) => screen.findByRole('listitem', { name, busy: false });
 
 describe('OverviewPage: one row per domain that answers "am I done?"', () => {
 	const routes = {
@@ -79,7 +81,7 @@ describe('OverviewPage: one row per domain that answers "am I done?"', () => {
 		const ready = await row('ready.net');
 		expect(within(ready).getByText('Awaiting your approval')).toBeInTheDocument();
 		expect(within(ready).getByText('97% of 100 reported messages passed DMARC in the last 30 days.')).toBeInTheDocument();
-		expect(within(ready).getByRole('link', { name: /Review your senders, then approve p=quarantine/ })).toHaveAttribute('href', '/domains/4/dmarc-wizard');
+		expect(within(ready).getByRole('link', { name: /Approve moving DMARC to p=quarantine/ })).toHaveAttribute('href', '/domains/4/dmarc-wizard');
 
 		const done = await row('example.com');
 		expect(within(done).getByText('Verified')).toBeInTheDocument();
@@ -118,7 +120,7 @@ describe('OverviewPage: one row per domain that answers "am I done?"', () => {
 });
 
 describe('OverviewPage: unknown is never "not found"', () => {
-	const page = (sum: object, name = 'example.org', stat: object = noReports) =>
+	const page = (sum: Record<string, unknown>, name = 'example.org', stat: object = noReports) =>
 		renderOverview({
 			routes: {
 				'GET /api/domains': { domains: [domain(3, name, { dmarc_policy: null })] },
@@ -155,28 +157,29 @@ describe('OverviewPage: unknown is never "not found"', () => {
 		// The latest check failed: what is shown is the last good check, and it is never Verified.
 		expect(within(r).getByText('Unknown')).toBeInTheDocument();
 		expect(within(r).queryByText('Verified')).not.toBeInTheDocument();
-		expect(within(r).getByText(/^The latest DNS check failed\. At the last good check: public DNS shows/)).toBeInTheDocument();
+		expect(within(r).getByText(/^The latest DNS check failed\. From the last good check: public DNS shows/)).toBeInTheDocument();
 	});
 
 	it('once checked, a missing record is called missing', async () => {
 		page({ dmarc_policy: null, spf_record: 'v=spf1 -all' });
 		const r = await row('example.org');
 		expect(within(r).getByText('Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.')).toBeInTheDocument();
-		expect(within(r).getByRole('link', { name: /Publish a DMARC record with p=none/ })).toHaveAttribute('href', '/domains/3/setup/4');
+		expect(within(r).getByRole('link', { name: /Publish a DMARC record at p=none/ })).toHaveAttribute('href', '/domains/3/setup/4');
 	});
 
 	it('an inherited policy says where it comes from, and is not "no DMARC"', async () => {
 		page({ dmarc_policy: 'reject', dmarc_inherited_from: 'example.org' }, 'mail.example.org');
 		const r = await row('mail.example.org');
-		expect(within(r).getByText('Public DNS shows SPF and DMARC at p=reject, inherited from example.org, so mail that fails DMARC is rejected.')).toBeInTheDocument();
-		expect(within(r).queryByText(/no DMARC/)).not.toBeInTheDocument();
+		expect(within(r).getByText('Public DNS shows SPF. mail.example.org has no DMARC record of its own and follows p=reject from example.org, so mail from mail.example.org that fails DMARC is rejected.')).toBeInTheDocument();
+		// It names the record that governs it; never "no DMARC record" as a finding.
+		expect(within(r).queryByText(/but no DMARC record|No DMARC record covers/)).not.toBeInTheDocument();
 	});
 
 	it('several DMARC records: receivers ignore them; this is a finding, not "not checked"', async () => {
 		page({ dmarc_policy: null, dmarc_issue: 'multiple' });
 		const r = await row('example.org');
 		expect(within(r).getByText('Public DNS shows several DMARC records at _dmarc.example.org, so receivers ignore all of them.')).toBeInTheDocument();
-		expect(within(r).getByText('Keep one DMARC record and delete the others')).toBeInTheDocument();
+		expect(within(r).getByText('Keep one DMARC record at _dmarc.example.org and delete the others')).toBeInTheDocument();
 		expect(within(r).getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level 0 of 2: Delivering');
 	});
 
@@ -256,7 +259,7 @@ describe('OverviewPage: get to a first answer', () => {
 	});
 
 	it('shows each step from data, and disappears once all are done', async () => {
-		const routes = (sum: object, st: object) => ({
+		const routes = (sum: Record<string, unknown>, st: object) => ({
 			'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none' })] },
 			'GET /api/domains/1/check-summary': summary(1, 'example.com', sum),
 			'GET /api/domains/1/stats': st,

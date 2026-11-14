@@ -1,5 +1,5 @@
 import { Button, EmptyState, PageHeader, statusRank, toast } from '@ready-set-mail/ui';
-import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link } from 'react-router';
@@ -8,13 +8,14 @@ import { DomainRow } from '../../components/domain/DomainRow';
 import { GetStarted } from '../../components/GetStarted';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
-import { api, errorMessage } from '../../lib/api';
+import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
 import { getStartedSteps } from '../../lib/get-started';
-import { hostedKey, useHostedConfig, type HostedResponse } from '../../lib/hosted';
+import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
+import { suffixParentOf } from '../../lib/dmarc-step';
 import { domainVerdict, totalsFromSummary, unavailableVerdict, workspaceAnswer, type DomainVerdict, type ReportTotals } from '../../lib/verdict';
 
 /** Days of reports each row's evidence covers. */
@@ -115,10 +116,19 @@ export function OverviewPage() {
 	// when hosted records are on for the deployment.
 	const batch = useDomainSummaries(domains.length > 0);
 	const hostedOn = useHostedConfig();
-	const hosted = useQueries({ queries: domains.map((d) => ({ queryKey: hostedKey(d.id), queryFn: () => api<HostedResponse>(`/api/domains/${d.id}/hosted`), enabled: hostedOn })) });
+	const hostedAll = useHostedStatuses(hostedOn);
+	const hosted = domains.map((d): { isPending: boolean; data?: HostedResponse } => ({ isPending: hostedAll.isPending, data: hostedAll.data ? (hostedAll.data[d.id] ?? { enabled: false }) : undefined }));
 
 	const idByName = new Map(domains.map((d) => [d.domain, d.id]));
 	const summaryOf = (d: Domain): DomainCheckSummary | null | undefined => (batch.isPending ? undefined : batch.isError ? null : (batch.data.get(d.id) ?? null));
+	// Each domain's listed parent (nearest ancestor in the list): a parent whose own record does not cover the name is a
+	// public suffix, said plainly on the row (suffixParentOf), as on the domain page.
+	const parentName = new Map(domainRows(domains).map((r) => [r.d.id, r.parent]));
+	const suffixParent = (d: Domain): string | null => {
+		const p = parentName.get(d.id);
+		const pid = p ? idByName.get(p) : undefined;
+		return p && pid !== undefined ? suffixParentOf(summaryOf(d), { domain: p, summary: batch.data?.get(pid) }) : null;
+	};
 	const totals: Array<ReportTotals | null | undefined> = domains.map((d) => {
 		const s = summaryOf(d);
 		return s ? totalsFromSummary(s, WINDOW) : s;
@@ -130,7 +140,7 @@ export function OverviewPage() {
 		if (s === undefined || (hostedOn && h.isPending)) return null;
 		if (s === null) return unavailableVerdict('it is not in the summary yet. Reload the page.', d.domain);
 		const info = hostedOn && h.data?.enabled ? h.data : null;
-		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName });
+		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d) });
 	});
 	const retry = batch.isError ? () => void batch.refetch() : undefined;
 	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: verdicts[i] ?? null, retry }]));
@@ -143,13 +153,15 @@ export function OverviewPage() {
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
 	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), claims.length);
+	// In the rows' order, so the first-answer list's "Fix …" opens the first row that needs it.
+	const at = ordered.map((r) => domains.indexOf(r.d));
 	const steps = getStartedSteps({
 		hosted: hostedMode,
-		domains,
+		domains: at.map((k) => domains[k]!),
 		claims: claims.length,
-		summaries: domains.map(summaryOf),
-		verdicts,
-		reports: totals,
+		summaries: at.map((k) => summaryOf(domains[k]!)),
+		verdicts: at.map((k) => verdicts[k] ?? null),
+		reports: at.map((k) => totals[k]),
 	});
 
 	async function exportPdf() {

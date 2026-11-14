@@ -27,7 +27,9 @@ import { formatNumber } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
 import { hasReportAddress } from '../../lib/dmarc-record';
 import { useHosted, useSession } from '../../lib/session';
-import type { Domain } from '../../lib/types';
+import type { Domain, DomainCheckSummary } from '../../lib/types';
+import { suffixParentOf } from '../../lib/dmarc-step';
+import { inForceSentence, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
 
 const WINDOWS = [7, 30, 60] as const;
 const ALERT_VARIANT: Record<GuidanceTone, 'info' | 'success' | 'warning' | 'danger'> = { neutral: 'info', info: 'info', success: 'success', warning: 'warning', danger: 'danger' };
@@ -59,7 +61,7 @@ function LivePolicyBadge({ domain }: { domain: Domain }) {
 	return live ? <PolicyBadge policy={live as Domain['dmarc_policy']} /> : <Badge variant="outline">DMARC record has no p= tag</Badge>;
 }
 
-function Context({ domain, all }: { domain: Domain; all: Domain[] }) {
+function Context({ domain, all, summary, suffixParent = null }: { domain: Domain; all: Domain[]; /** The stored summary after this page's live read. */ summary?: DomainCheckSummary; suffixParent?: string | null }) {
 	const dns = useDnsCheck(domain.id);
 	const parent = domain.parent_id ? all.find((d) => d.id === domain.parent_id) : undefined;
 	const children = all.filter((d) => d.parent_id === domain.id);
@@ -69,10 +71,13 @@ function Context({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const badSp = invalidDmarcSp(record);
 	const ownRecord = !!dns.data && !dns.data.error && dns.data.found;
 	const lookupFailed = dns.isError || !!dns.data?.error;
+	// What the parent's record does for this name, in the one rule's words (sp= or p=, pct=).
+	const force = summary ? policyInForce(domain.domain, summary) : null;
+	const inherited = force?.kind === 'inherited' ? inForceSentence(force) : null;
 	return (
 		<div className="space-y-6">
 			{parent ? (
-				<Alert variant="info" title={ownRecord ? 'Has its own DMARC record' : lookupFailed ? 'Parent domain' : 'Inherits DMARC from its parent'}>
+				<Alert variant="info" title={ownRecord ? 'Has its own DMARC record' : lookupFailed || suffixParent || !inherited ? 'Parent domain' : 'Inherits DMARC from its parent'}>
 					{ownRecord ? (
 						<>
 							p={policyLabel(domain.dmarc_policy)} overrides the parent <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>.
@@ -81,10 +86,17 @@ function Context({ domain, all }: { domain: Domain; all: Domain[] }) {
 						<>
 							Subdomain of <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>. We could not check whether it has its own DMARC record.
 						</>
+					) : suffixParent ? (
+						<>
+							Listed under <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>. {parent.domain} is a public suffix, so its DMARC record does not apply to {domain.domain}: {domain.domain} counts as its own organization.
+						</>
+					) : inherited ? (
+						<>
+							{inherited} SPF and DKIM are independent and not inherited. <Link to={`/domains/${parent.id}`}>Open {parent.domain}</Link>
+						</>
 					) : (
 						<>
-							Inherits DMARC from <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>
-							{parent.dmarc_policy ? ` (p=${parent.dmarc_policy})` : ''}. SPF and DKIM are independent and not inherited.
+							Subdomain of <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>. No DMARC policy reaches {domain.domain} from it.
 						</>
 					)}
 				</Alert>
@@ -137,7 +149,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** True when a stored summary fetched at `fetchedAt` (ms) can describe a live read made at `readAt` (ms; 0: none yet). */
 export const summaryFetchedAfterRead = (fetchedAt: number, readAt: number): boolean => readAt === 0 || fetchedAt >= readAt;
 
-function WhereItStands({ domain, nxdomain = false, readAt = 0 }: { domain: Domain; /** The live read says the name does not exist: no setup to continue. */ nxdomain?: boolean; /** When this page's live read answered (ms): an older summary is being refetched. */ readAt?: number }) {
+function WhereItStands({ domain, nxdomain = false, readAt = 0, idByName, suffixParent = null }: { domain: Domain; /** The live read says the name does not exist: no setup to continue. */ nxdomain?: boolean; /** When this page's live read answered (ms): an older summary is being refetched. */ readAt?: number; idByName?: ReadonlyMap<string, number>; suffixParent?: string | null }) {
 	const summary = useCheckSummary(domain.id);
 	const hosted = useHostedInfo(domain.id);
 	const wizard = useWizardState(domain.id);
@@ -147,7 +159,7 @@ function WhereItStands({ domain, nxdomain = false, readAt = 0 }: { domain: Domai
 	// The same summary and 30-day totals the overview reads, so both pages say the same thing.
 	// A summary fetched before the live read may predate what it stored: wait for the refetch rather than show it.
 	const fresh = summaryFetchedAfterRead(summary.dataUpdatedAt, readAt) || !summary.isFetching;
-	const v = summary.isError ? unavailableVerdict(errorMessage(summary.error), domain.domain) : summary.data && fresh ? domainVerdict(domain, summary.data, totalsFromSummary(summary.data), hosted, undefined, { hostedMode }) : null;
+	const v = summary.isError ? unavailableVerdict(errorMessage(summary.error), domain.domain) : summary.data && fresh ? domainVerdict(domain, summary.data, totalsFromSummary(summary.data), hosted, undefined, { hostedMode, idByName, suffixParent }) : null;
 	const progress = canWrite && wizard.data ? wizardProgress(wizard.data, { hosted: hostedMode }) : null;
 	return (
 		<section aria-labelledby={headingId} className="space-y-3">
@@ -222,24 +234,30 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		return { total: s.total, passed: s.passed, failed: s.failed, passRate: s.passRate, days: n };
 	};
 	const week7 = totals(week, 7);
+	const hostedInfo = useHostedInfo(domain.id);
+	const parent = domain.parent_id ? all.find((d) => d.id === domain.parent_id) : undefined;
+	const parentSummary = useCheckSummary(parent?.id ?? 0, !!parent);
+	// The stored summary counts only once it was fetched after this page's live read (compare fetch times).
+	const summaryFresh = summaryFetchedAfterRead(summary.dataUpdatedAt, onboarding.isSuccess ? onboarding.dataUpdatedAt : 0);
+	// A listed parent whose own record does not cover this name: a public suffix (gov.uk above www.gov.uk).
+	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
 	const actionInput = {
 		domain,
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
 		summary: summary.data ?? (summary.isError ? null : undefined),
-		reports: week7,
 		sources: sources.data ?? null,
-		// A fix to an inherited policy belongs on the parent: link to it when it is in this workspace.
-		parentId: all.find((d) => d.domain === onboarding.data?.dmarc.effective?.inherited_from)?.id,
-		// The stored summary counts only once it was fetched after this page's live read (compare fetch times).
-		summaryFresh: summaryFetchedAfterRead(summary.dataUpdatedAt, onboarding.isSuccess ? onboarding.dataUpdatedAt : 0),
+		// A fix to an inherited policy belongs on the parent: link to it when it is in this workspace (as the overview does).
+		parentId: all.find((d) => d.domain === summary.data?.dmarc_inherited_from)?.id,
+		summaryFresh,
+		hosted: hostedInfo,
+		suffixParent,
 	};
 	const actions = domainActions(actionInput);
 
 	const sums = stats.data ? sumStats(stats.data.stats) : null;
 	const guidance = sums ? getGuidance(domain, sums.passRate, sums.total > 0, dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null) : null;
 
-	const parent = domain.parent_id ? all.find((d) => d.id === domain.parent_id) : undefined;
 	const children = all.filter((d) => d.parent_id === domain.id);
 	const selectors = onboarding.data?.dkim.selectors.length;
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject');
@@ -281,7 +299,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				canWrite={canWrite}
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
 			/>
-			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} />
+			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} />
 
 			{/* A name that does not resolve has nothing to host. */}
 			{nxdomain ? null : <HostedPanel key={domain.id} domainId={domain.id} />}
@@ -391,7 +409,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				{enforcing || rollout.isError ? (
 					<Disclosure
 						title="Rollout"
-						summary={rollout.data && enforcing ? `Step ${rollout.data.current_step_index + 1} of ${rollout.data.total_steps}, at p=${rollout.data.current_policy}.${rollout.data.next_step ? '' : ' Fully graduated.'}` : 'Could not be loaded.'}
+						summary={rollout.data && enforcing ? `Step ${rollout.data.current_step_index + 1} of ${rollout.data.total_steps}, at p=${rollout.data.current_policy}.${rollout.data.next_step ? '' : hasReportAddress(domain.rua_address) ? ' Fully graduated.' : ' The last step; reports are not connected, so the senders are not confirmed.'}` : 'Could not be loaded.'}
 					>
 						<Rollout domain={domain} />
 					</Disclosure>
@@ -399,7 +417,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 
 				{parent || children.length > 0 ? (
 					<Disclosure title={parent ? 'Parent domain' : 'Subdomains'} summary={parent ? `Subdomain of ${parent.domain}.` : `${plural(children.length, 'subdomain')} monitored.`}>
-						<Context domain={domain} all={all} />
+						<Context domain={domain} all={all} summary={summaryFresh ? summary.data : undefined} suffixParent={suffixParent} />
 					</Disclosure>
 				) : null}
 

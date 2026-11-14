@@ -13,7 +13,7 @@
 
 import type { TenantContext } from '../tenancy/context';
 import { hostedConfig, hostedEnabled } from './config';
-import { disableHosted, enableHosted, hostedStatus, HostedError, rotateHostedToken, verifyDomainPointers, type HostedDeps } from './service';
+import { disableHosted, enableHosted, hostedStatus, hostedStatuses, HostedError, rotateHostedToken, verifyDomainPointers, type HostedDeps } from './service';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number) => json({ error: message }, status);
@@ -33,6 +33,17 @@ export async function handleHostedRoutes(
     const enabled = hostedEnabled(tenant.env);
     const cfg = hostedConfig(tenant.env);
     return json({ enabled, reports: enabled && !!cfg.intakeDomain, records: enabled && !!cfg.intakeDomain && !!cfg.recordsZone });
+  }
+  // GET /api/hosted/statuses — every hosted domain's status in the caller's workspace, by domain id; a domain not listed is
+  // not hosted. The overview's one request (instead of GET /api/domains/:id/hosted per domain).
+  if (path === '/api/hosted/statuses' && request.method.toUpperCase() === 'GET') {
+    if (!hostedEnabled(tenant.env)) return err('not found', 404);
+    try {
+      return json({ statuses: await hostedStatuses(tenant) });
+    } catch (e) {
+      if (e instanceof HostedError) return err(e.message, e.status);
+      throw e;
+    }
   }
   const m = path.match(ROUTE);
   if (!m) return null;

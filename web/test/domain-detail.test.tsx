@@ -24,8 +24,9 @@ const onboarding = {
 const summary = {
 	domain_id: 1, domain: 'example.com', dmarc_policy: 'quarantine', spf_record: 'v=spf1 include:_spf.google.com -all', dns_checked_at: Math.floor(Date.now() / 1000) - 60,
 	dns_check_attempted_at: Math.floor(Date.now() / 1000) - 60, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok',
-	total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null,
-	spf_lookup_count: 4, dmarc_pct: 100, dmarc_sp: 'quarantine',
+	total_messages: 100, pass_messages: 97, fail_messages: 3, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null,
+	// The live record (above) sends reports elsewhere: the stored read says so (dmarc_rua 0), as the overview reads it.
+	spf_lookup_count: 4, dmarc_pct: 100, dmarc_p: 'quarantine', dmarc_sp: null, dmarc_rua: 0,
 };
 
 const routes = (over: Record<string, unknown> = {}) => ({
@@ -123,14 +124,14 @@ describe('DomainDetailPage', () => {
 
 	it('invites only writers to continue an unfinished setup', async () => {
 		const wizard = { 'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'not_started', dkim: 'not_started', dmarc: 'not_started', routing: 'not_started' } };
-		const unfinished = { ...wizard, 'GET /api/domains/1/check-summary': { ...summary, dmarc_policy: 'none', dmarc_sp: 'none' } };
+		const unfinished = { ...wizard, 'GET /api/domains/1/check-summary': { ...summary, dmarc_policy: 'none', dmarc_p: 'none' } };
 		const owner = page({ routes: routes(unfinished) });
 		expect(await screen.findByRole('link', { name: 'Continue setup' })).toBeInTheDocument();
 		owner.unmount();
 		// A domain DNS shows enforcing has finished setup, whatever the wizard recorded.
 		const enforced = page({ routes: routes(wizard) });
 		await screen.findByRole('region', { name: 'Where it stands' });
-		await screen.findByText(/Public DNS shows SPF and DMARC at p=quarantine/);
+		await screen.findByText(/example\.com's own DMARC record sets p=quarantine/);
 		expect(screen.queryByRole('link', { name: 'Continue setup' })).not.toBeInTheDocument();
 		enforced.unmount();
 		page({ role: 'member', routes: routes(unfinished) });
@@ -223,18 +224,28 @@ describe('DomainDetailPage: the first screen says what to do', () => {
 		page({ routes: routes() });
 		const section = await screen.findByRole('region', { name: 'Do this next' });
 		const items = await within(section).findAllByRole('listitem');
-		expect(items).toHaveLength(2);
-		expect(items[0]).toHaveAttribute('data-status', 'approval');
-		expect(within(items[0]!).getByText('Awaiting your approval')).toBeInTheDocument();
-		expect(within(items[0]!).getByText('Approve moving DMARC to p=reject')).toBeInTheDocument();
-		expect(within(items[0]!).getByText(/97% of 100 reported messages passed DMARC in the last 7 days/)).toBeInTheDocument();
-		expect(within(items[0]!).getByText('An owner or admin')).toBeInTheDocument();
-		expect(within(items[0]!).getByRole('link', { name: 'Review the change' })).toHaveAttribute('href', '/domains/1/dmarc-wizard');
-		// At p=quarantine the next step (reject) waits on reports, so the missing reports address is the step, not a note.
-		expect(items[1]).toHaveAttribute('data-status', 'improve');
-		expect(within(items[1]!).getByText('Add the reports address to your DMARC record')).toBeInTheDocument();
-		expect(within(items[1]!).getByText('Do this:')).toBeInTheDocument();
-		expect(within(items[1]!).getByText('Why:')).toBeInTheDocument();
+		// At p=quarantine the next rung (reject) waits on reports, and the live record sends them elsewhere: adding the
+		// reports address is THE step. No approval is offered on reports that cannot keep arriving.
+		expect(items).toHaveLength(1);
+		expect(items[0]).toHaveAttribute('data-status', 'improve');
+		expect(within(items[0]!).getByText('Worth fixing')).toBeInTheDocument();
+		expect(within(items[0]!).getByText('Add the reports address to your DMARC record')).toBeInTheDocument();
+		expect(within(items[0]!).getByText(/does not send reports here, so nobody can confirm its senders before moving to p=reject/)).toBeInTheDocument();
+		expect(within(items[0]!).getByText('You or your DNS manager')).toBeInTheDocument();
+		expect(within(items[0]!).getByRole('link', { name: 'Open the DMARC step' })).toHaveAttribute('href', '/domains/1/setup/4');
+		expect(within(items[0]!).getByText('Do this:')).toBeInTheDocument();
+		expect(within(items[0]!).getByText('Why:')).toBeInTheDocument();
+	});
+
+	it('with the reports address in the record and clean reports, the same page leads with the approval', async () => {
+		page({ routes: routes({ 'GET /api/domains/1/check-summary': { ...summary, dmarc_rua: 1 } }) });
+		const section = await screen.findByRole('region', { name: 'Do this next' });
+		const [first] = await within(section).findAllByRole('listitem');
+		expect(first).toHaveAttribute('data-status', 'approval');
+		expect(within(first!).getByText('Approve moving DMARC to p=reject')).toBeInTheDocument();
+		expect(within(first!).getByText(/97% of 100 reported messages passed DMARC in the last 30 days/)).toBeInTheDocument();
+		expect(within(first!).getByText('An owner or admin')).toBeInTheDocument();
+		expect(within(first!).getByRole('link', { name: 'Review the change' })).toHaveAttribute('href', '/domains/1/dmarc-wizard');
 	});
 
 	it('read-only members see the actions and who makes them, without being sent into a wizard', async () => {
@@ -242,14 +253,14 @@ describe('DomainDetailPage: the first screen says what to do', () => {
 		const section = await screen.findByRole('region', { name: 'Do this next' });
 		const [first] = await within(section).findAllByRole('listitem');
 		await waitFor(() => expect(within(first!).getByText('An owner or admin makes this change.')).toBeInTheDocument());
-		expect(within(first!).queryByRole('link', { name: 'Review the change' })).not.toBeInTheDocument();
+		expect(within(first!).queryByRole('link', { name: 'Open the DMARC step' })).not.toBeInTheDocument();
 	});
 
 	it('then where it stands: the level ladder, the state and its evidence', async () => {
 		page({ routes: routes() });
 		const section = await screen.findByRole('region', { name: 'Where it stands' });
 		expect(await within(section).findByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level 2 of 2: Protected');
-		expect(within(section).getByText(/Public DNS shows SPF and DMARC at p=quarantine/)).toBeInTheDocument();
+		expect(within(section).getByText(/Public DNS shows SPF\. example\.com's own DMARC record sets p=quarantine/)).toBeInTheDocument();
 		expect(within(section).getByText('Checked 1 minute ago')).toBeInTheDocument();
 	});
 

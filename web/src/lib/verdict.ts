@@ -1,7 +1,9 @@
 import { STATUS_RANK, statusRank, type Level, type StatusKind } from '@ready-set-mail/ui';
-import { enforcementLevel, hasReportAddress, weakerSubdomainPolicy } from './dmarc-record';
+import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { hasReportAddress } from './dmarc-record';
+import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
-import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, type HostedLevelInput } from './levels';
+import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, SPF_LOOKUP_LIMIT, type HostedLevelInput } from './levels';
 import type { Domain, DomainCheckSummary } from './types';
 import { HELP_PRIORITY } from '../components/TalkToMax';
 
@@ -12,12 +14,16 @@ import { HELP_PRIORITY } from '../components/TalkToMax';
  * Built only from what the overview already loads: the stored DNS facts (refreshed by the daily monitor and every time the
  * domain page reads DNS: SPF, the effective DMARC policy with its pct= and sp=, the SPF lookup count) and the report totals.
  *
+ * The DMARC part (the policy in force and the next step) is the one rule in packages/dns-checks/src/dmarc-next-step.ts,
+ * the same the domain page and the agent tools call, so they cannot disagree.
+ *
  * Truth rules:
  *  - Unknown is never "not found": a field that was never read, or a check that failed, is Unknown and says so.
- *  - Verified only from a successful check that is current (not older than STALE_DAYS, latest attempt not failed), at full
- *    enforcement (pct=100, subdomains not weaker), with SPF within 10 lookups and report evidence that is known (absent is
- *    known; failed to load is not).
+ *  - Verified only from a successful check that is current (not older than STALE_DAYS, latest attempt not failed), at
+ *    p=reject on all mail (pct=100, own subdomains not weaker), with SPF within 10 lookups and report evidence that is
+ *    known (absent is known; failed to load is not). p=quarantine is never Verified: its next step is p=reject.
  *  - p=none is never Verified and never "nothing to do".
+ *  - No pass-rate claim without a current reports address, whatever old totals the window holds.
  */
 export interface NextAction {
 	label: string;
@@ -63,15 +69,7 @@ export interface ReportTotals {
 	days: number;
 }
 
-export const WHO = {
-	dns: 'You or your DNS manager',
-	providers: 'You and your email providers',
-	approver: 'An owner or admin',
-	you: 'You',
-	nobody: 'Nobody',
-} as const;
-
-const NOTHING: NextAction = { label: 'Nothing to do', who: WHO.nobody };
+export const WHO = WHO_WORDS;
 
 /** Exact pass share in percent (not rounded: 94.6 is below 95). Null without reported mail. */
 export const exactRate = (r: Pick<ReportTotals, 'total' | 'passed'> | null | undefined): number | null => (r && r.total > 0 ? (r.passed / r.total) * 100 : null);
@@ -85,24 +83,18 @@ export const totalsFromSummary = (s: Pick<DomainCheckSummary, 'total_messages' |
 	days,
 });
 
-/** Pass share at which a p=none domain's senders look ready for quarantine, and an enforced one looks healthy. */
-const READY = 95;
-/** Under enforcement, below this much of your own mail is probably being rejected or quarantined. */
-const HARMFUL = 70;
-/** The DMARC wizard offers p=reject from quarantine at this rate (lib/dmarc.ts getGuidance). */
-const READY_FOR_REJECT = 90;
 /** A successful check older than this is not current: the domain is not called Verified on it. */
 export const STALE_DAYS = 7;
-const SPF_LIMIT = 10;
 
 /** Same condition as PR 142's useReportsNotConnected, minus the hosted-mode gate (an empty address means no reports in either mode). */
 export const reportsNotConnected = (domain: Pick<Domain, 'rua_address'>): boolean => !hasReportAddress(domain.rua_address);
 
 function reportsLine(domain: Pick<Domain, 'rua_address'>, r: ReportTotals | null | undefined): string {
+	// Without a current reports address no pass share is claimed, whatever older totals the window still holds.
+	if (reportsNotConnected(domain)) return 'Reports are not connected for this domain, so nobody has confirmed that every sender passes.';
 	if (r === undefined) return 'Report totals are loading.';
 	if (r === null) return 'Report totals could not be loaded, so whether every sender passes is unknown.';
 	if (r.total > 0 && r.passRate !== null) return `${r.passRate}% of ${formatNumber(r.total)} reported messages passed DMARC in the last ${r.days} days.`;
-	if (reportsNotConnected(domain)) return 'Reports are not connected for this domain, so nobody has confirmed that every sender passes.';
 	return `No DMARC reports in the last ${r.days} days, so nobody has confirmed that every sender passes.`;
 }
 
@@ -115,14 +107,20 @@ export function domainVerdict(
 	hosted: HostedLevelInput | null = null,
 	now = Date.now() / 1000,
 	/** `hostedMode`: the hosted service (MODE=saas). There, a domain with no report address has no report intake. */
-	opts: { hostedMode?: boolean; /** The workspace's domains by name: a fix that belongs on a listed parent links to its page. */ idByName?: ReadonlyMap<string, number> } = {},
+	opts: {
+		hostedMode?: boolean;
+		/** The workspace's domains by name: a fix that belongs on a listed parent links to its page. */
+		idByName?: ReadonlyMap<string, number>;
+		/** A listed parent whose own record does not cover this name (a public suffix): see suffixParentOf. */
+		suffixParent?: string | null;
+	} = {},
 ): DomainVerdict {
 	const intakeOff = !!opts.hostedMode && reportsNotConnected(domain);
-	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName);
+	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null);
 	const about = `about ${domain.domain}`;
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
-	const rate = exactRate(reports);
+	const rate = reportsNotConnected(domain) ? null : exactRate(reports);
 	return { ...core, reportsConfirmed: rate !== null && rate >= READY, reportsNotConnected: reportsNotConnected(domain), help };
 }
 
@@ -133,7 +131,8 @@ function coreVerdict(
 	hosted: HostedLevelInput | null,
 	now: number,
 	intakeOff: boolean,
-	idByName?: ReadonlyMap<string, number>,
+	idByName: ReadonlyMap<string, number> | undefined,
+	suffixParent: string | null,
 ): Core {
 	const page = `/domains/${domain.id}`;
 	const name = domain.domain;
@@ -162,7 +161,6 @@ function coreVerdict(
 	const levelKnown = (!spfUnknown && !dmarcUnknown) || (!dmarcUnknown && !policy);
 	const level: Level | null = levelKnown ? a.level : null;
 	const at = `_dmarc.${sum.dmarc_inherited_from ?? name}`;
-	const so = sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}, so` : ', so';
 	const setup = (step: number) => `${page}/setup/${step}`;
 
 	// Records we wrote in our zone that the customer's DNS does not point to yet.
@@ -185,8 +183,8 @@ function coreVerdict(
 		const known = [hasSpf ? 'SPF is published' : null, policy ? `DMARC is at p=${policy}` : null].filter(Boolean).join(' and ');
 		const rest = failed ? (known ? 'The last DNS check failed, so the rest is not confirmed.' : 'The last DNS check failed, so nothing is confirmed yet.') : known ? 'The rest has not been read from DNS yet.' : 'Nothing has been read from DNS for this domain yet.';
 		// A known problem (an ignored DMARC record) is still a problem; everything else waits for a read.
-		if (issue === 'invalid') return { status: 'attention', level, sentence: `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.`, evidence: null, checked, next: { label: 'Fix the DMARC record', who: WHO.dns, to: setup(4) } };
-		if (issue === 'multiple') return { status: 'attention', level, sentence: `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.`, evidence: null, checked, next: { label: 'Keep one DMARC record and delete the others', who: WHO.dns, to: page } };
+		if (issue === 'invalid') return { ...dmarcNext(), level, sentence: `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.`, evidence: null, checked };
+		if (issue === 'multiple') return { ...dmarcNext(), level, sentence: `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.`, evidence: null, checked };
 		return { status: 'unknown', level, sentence: known ? `${known}. ${rest}` : rest, evidence: null, checked, next: { label: failed ? 'Open the domain to check it again' : 'Open the domain to read its records from DNS', who: WHO.you, to: page } };
 	}
 
@@ -195,8 +193,10 @@ function coreVerdict(
 
 	// The latest attempt failed after an earlier good check: what is shown is the last good check, never Verified.
 	if (s.dns_check_status === 'failed') {
-		if (base.status === 'attention') return { ...base, sentence: `${base.sentence} (From the last good check; the latest check failed.)` };
-		return { ...base, status: 'unknown', sentence: `The latest DNS check failed. At the last good check: ${lower(base.sentence)}`, next: checkAgain };
+		// No check ever completed: what is shown came from partial reads, not from a "last good check".
+		const from = s.dns_checked_at ? 'the last good check' : 'partial reads (no check has completed yet)';
+		if (base.status === 'attention') return { ...base, sentence: `${base.sentence} (From ${from}; the latest check failed.)` };
+		return { ...base, status: 'unknown', sentence: `The latest DNS check failed. From ${from}: ${lower(base.sentence)}`, next: checkAgain };
 	}
 	// A good check that is too old is not current, whatever it said: no advice rests on it before a re-check. A problem it
 	// found keeps its status (it was real then), but the next step is the re-check either way.
@@ -211,73 +211,48 @@ function coreVerdict(
 		// What public DNS shows that is wrong, most basic first (the setup wizard's order: SPF, then DMARC).
 		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF and no DMARC record, so receivers cannot verify mail from ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
 		if (!hasSpf) return { status: 'attention', level, sentence: `Public DNS shows no SPF record, so receivers cannot tell which servers may send for ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
-		if (issue === 'multiple') return { status: 'attention', level, sentence: `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.`, evidence: null, checked, next: { label: 'Keep one DMARC record and delete the others', who: WHO.dns, to: page } };
-		if (issue === 'invalid') return { status: 'attention', level, sentence: `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.`, evidence: null, checked, next: { label: 'Fix the DMARC record', who: WHO.dns, to: setup(4) } };
-		if (!policy) return { status: 'attention', level, sentence: 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.', evidence: null, checked, next: { label: 'Publish a DMARC record with p=none', who: WHO.dns, to: setup(4) } };
+		if (!policy) {
+			const sentence = issue === 'multiple' ? `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.` : issue === 'invalid' ? `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.` : 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.';
+			return { ...dmarcNext(), level, sentence, evidence: null, checked };
+		}
 		const lookups = s.spf_lookup_count ?? null;
-		if (!hosted && lookups !== null && lookups > SPF_LIMIT) {
-			return { status: 'attention', level, sentence: `Public DNS shows an SPF record that needs ${lookups} DNS lookups. Past ${SPF_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, evidence, checked, next: { label: `Bring SPF down to ${SPF_LIMIT} DNS lookups or fewer`, who: WHO.dns, to: `${page}/spf-flatten` } };
+		if (!hosted && lookups !== null && lookups > SPF_LOOKUP_LIMIT) {
+			return { status: 'attention', level, sentence: `Public DNS shows an SPF record that needs ${lookups} DNS lookups. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, evidence, checked, next: { label: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, who: WHO.dns, to: `${page}/spf-flatten` } };
 		}
 
-		const rate = exactRate(reports);
-		// A policy inherited from a parent is changed at the parent: say so, and open the parent's page when it is listed.
-		const parent = sum.dmarc_inherited_from ?? null;
-		const parentId = parent ? idByName?.get(parent) : undefined;
-		const atParent = (label: string): NextAction => ({ label: `${label} at _dmarc.${parent}`, who: WHO.dns, to: parentId !== undefined ? `/domains/${parentId}` : page });
-		const connect = connectReports(page);
-		const fixSenders: NextAction = { label: 'Fix the senders that fail DMARC', who: WHO.providers, to: `${page}/analytics` };
-		const reloadReports: NextAction = { label: 'Open the domain to load its reports', who: WHO.you, to: page };
+		const force = dmarcForce();
+		const inForce = force.kind === 'own' || force.kind === 'inherited' ? inForceSentence(force) : null;
+		const sentence = inForce ? `Public DNS shows SPF. ${inForce}` : `Public DNS shows SPF and DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}.`;
+		return { ...dmarcNext(), level, sentence, evidence, checked };
+	}
 
-		if (policy === 'none') {
-			const sentence = `Public DNS shows SPF and DMARC at p=none${so} mail that fails DMARC is still delivered.`;
-			if (parent) return { status: rate !== null && rate >= READY ? 'approval' : 'improve', level, sentence, evidence, checked, next: atParent('Tighten DMARC') };
-			if (rate !== null && rate >= READY) return { status: 'approval', level, sentence, evidence, checked, next: { label: 'Review your senders, then approve p=quarantine', who: WHO.approver, to: `${page}/dmarc-wizard` } };
-			if (rate !== null) return { status: 'improve', level, sentence, evidence, checked, next: fixSenders };
-			if (reports === null) return { status: 'improve', level, sentence, evidence, checked, next: reloadReports };
-			return {
-				status: 'improve',
-				level,
-				sentence,
-				evidence,
-				checked,
-				// Without a reports address nothing can confirm the senders, so connecting reports is the step, not a note.
-				next: hasReportAddress(domain.rua_address) ? { label: 'Make sure your DMARC record sends reports here', who: WHO.dns, to: page } : connect,
-			};
-		}
-
-		// Enforced: p=quarantine or p=reject. How much is enforced comes from pct= and sp= of the same read.
-		const outcome = policy === 'reject' ? 'rejected' : 'quarantined, usually to spam';
-		if (!hosted && (s.dmarc_pct === null || s.dmarc_pct === undefined)) {
-			return { status: 'unknown', level, sentence: `Public DNS shows SPF and DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}. How much of it is enforced (pct= and sp=) has not been read yet, so it is not called enforced.`, evidence, checked, next: { label: 'Open the domain to read its DMARC record', who: WHO.you, to: page } };
-		}
-		const record = hosted ? `v=DMARC1; p=${policy}` : `v=DMARC1; p=${policy}; pct=${s.dmarc_pct ?? 100}${s.dmarc_sp ? `; sp=${s.dmarc_sp}` : ''}`;
-		const enforced = enforcementLevel(record);
-		// sp= only describes this domain's subdomains when the record is its own.
-		const weakSp = !hosted && !sum.dmarc_inherited_from ? weakerSubdomainPolicy(record) : null;
-		const sentence = `Public DNS shows SPF and DMARC at p=${policy}${so} mail that fails DMARC is ${outcome}.`;
-		if (rate !== null && rate < HARMFUL) return { status: 'attention', level, sentence: `${sentence} Only ${Math.floor(rate)}% of reported mail passes, so some of your own mail is likely ${policy === 'reject' ? 'rejected' : 'in spam'}.`, evidence, checked, next: fixSenders };
-		if (enforced.level === 'partial') {
-			return { status: 'improve', level, sentence: `Public DNS shows SPF and DMARC at p=${policy} with pct=${enforced.pct}${so} only ${enforced.pct}% of mail that fails DMARC is ${outcome}; receivers handle the rest one policy level weaker.`, evidence, checked, next: parent ? atParent(`Raise pct from ${enforced.pct} to 100`) : { label: `Raise pct from ${enforced.pct} to 100`, who: WHO.dns, to: page } };
-		}
-		if (weakSp) {
-			const sub = weakSp === 'none' ? 'still delivered' : 'quarantined, not rejected';
-			return { status: 'improve', level, sentence: `Public DNS shows SPF and DMARC at p=${policy}, so mail that fails DMARC from ${name} itself is ${outcome}. Subdomains without their own record follow sp=${weakSp}, so failing mail from them is ${sub}.`, evidence, checked, next: { label: `Set sp=${policy} to enforce subdomains too`, who: WHO.dns, to: page } };
-		}
-		if (policy === 'quarantine' && rate !== null && rate >= READY_FOR_REJECT) return { status: 'approval', level, sentence, evidence, checked, next: parent ? atParent('Move to p=reject') : { label: 'Review your senders, then approve p=reject', who: WHO.approver, to: `${page}/dmarc-wizard` } };
-		if (rate !== null && rate < READY) return { status: 'improve', level, sentence, evidence, checked, next: fixSenders };
-		// Report totals that failed to load are unknown evidence: never Verified on them.
-		if (reports === null) return { status: 'unknown', level, sentence, evidence, checked, next: reloadReports };
-		if (policy === 'quarantine' && !hasReportAddress(domain.rua_address)) return { status: 'verified', level, sentence, evidence, checked, next: connect };
-		if (policy === 'quarantine') return { status: 'verified', level, sentence, evidence, checked, next: parent ? atParent('Move to p=reject once reports confirm your senders') : { label: 'Move to p=reject once reports confirm your senders', who: WHO.you, to: page } };
-		return { status: 'verified', level, sentence, evidence, checked, next: NOTHING };
+	// DMARC: the one rule (dmarc-next-step), from the same stored facts the domain page reads.
+	function dmarcForce() {
+		return forceFor(name, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
+	}
+	function dmarcNext(): Pick<Core, 'status' | 'next'> {
+		const step = dmarcStepsFor(domain, s, reports, hosted, suffixParent)[0];
+		if (!step) return { status: 'unknown', next: { label: 'Wait for the report totals to load', who: WHO.nobody } };
+		const parentId = sum.dmarc_inherited_from ? idByName?.get(sum.dmarc_inherited_from) : undefined;
+		return { status: step.status, next: { label: step.do, who: WHO[step.who], to: stepLink(step, page, parentId) } };
 	}
 }
 
 /**
- * The step when no reports can reach this dashboard for a domain. One place to change when report connection ships as its
- * own flow (PR 150: "Connect reports").
+ * The DMARC steps for one domain, most urgent first, from its stored summary: the overview row shows [0], the domain page
+ * lists them. Both call this, so they say the same thing. Hosted domains read the record we serve (applyHostedInputs).
  */
-export const connectReports = (page: string): NextAction => ({ label: 'Set up a reports address so senders can be confirmed', who: WHO.you, to: page });
+export function dmarcStepsFor(
+	domain: Pick<Domain, 'domain' | 'rua_address'>,
+	s: DomainCheckSummary,
+	reports: ReportTotals | null | undefined,
+	hosted: HostedLevelInput | null,
+	suffixParent: string | null = null,
+): DmarcStep[] {
+	const sum = hosted ? applyHostedInputs(s, hosted).summary : s;
+	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy: sum.dmarc_policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
+	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent));
+}
 
 const lower = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 

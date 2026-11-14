@@ -115,7 +115,10 @@ describe('Hosted report intake on the domain page', () => {
 	});
 	it('self-host keeps the "RUA reporting address" section', async () => {
 		detail({ routes: detailRoutes({ 'GET /api/hosted/config': { enabled: false } }) });
-		expect(await screen.findByText('RUA reporting address')).toBeInTheDocument();
+		// Self-host: the reporting address (rua=) sits in the collapsed Reports section.
+		await userEvent.click(await screen.findByRole('button', { name: /^Reports/ }));
+		expect(await screen.findByText('Reporting address')).toBeInTheDocument();
+		expect(screen.getByText(/rua=mailto:/)).toBeInTheDocument();
 	});
 });
 
@@ -309,11 +312,12 @@ describe('Overview row for a hosted domain', () => {
 			routes: {
 				'GET /api/domains': { domains: [domain] },
 				'GET /api/hosted/config': { enabled: config, reports: false, records: config },
-				'GET /api/domains/1/hosted': hosted,
+				// One request for every hosted domain's status (a domain not in the map is not hosted).
+				'GET /api/hosted/statuses': { statuses: (hosted as { enabled?: boolean }).enabled ? { 1: hosted } : {} },
 				'GET /api/domains/summaries': { summaries: [summary], next_after: null, window_days: 30 },
 			},
 		});
-	const row = () => screen.findByRole('listitem', { name: 'example.com' });
+	const row = () => screen.findByRole('listitem', { name: 'example.com', busy: false });
 
 	it('reads level_inputs for a hosted domain whose pointers are verified', async () => {
 		card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
@@ -342,6 +346,13 @@ describe('Overview row for a hosted domain', () => {
 		const r = await row();
 		// Never read from DNS: unknown, not a level.
 		await waitFor(() => expect(within(r).getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level not known yet'));
+		expect(calls.some((c) => c.path === '/api/domains/1/hosted' || c.path === '/api/hosted/statuses')).toBe(false);
+	});
+
+	it('asks for every hosted status in one request, never one per domain', async () => {
+		const { calls } = card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
+		await row();
+		await waitFor(() => expect(calls.filter((c) => c.path === '/api/hosted/statuses')).toHaveLength(1));
 		expect(calls.some((c) => c.path === '/api/domains/1/hosted')).toBe(false);
 	});
 

@@ -92,6 +92,17 @@ async function view(tenant: TenantContext, domain: DomainRow): Promise<HostedVie
 
 export const hostedStatus = view;
 
+/** Every hosted domain's status in this workspace, by domain id (the overview's one request instead of one per domain). */
+export async function hostedStatuses(tenant: TenantContext): Promise<Record<number, HostedView>> {
+  const out: Record<number, HostedView> = {};
+  for (const h of await tenant.scope.hosted.list()) {
+    const d = await tenant.scope.domains.getById(h.domain_id);
+    const v = d ? await view(tenant, d) : null;
+    if (d && v) out[d.id] = v;
+  }
+  return out;
+}
+
 export interface EnableOptions {
   /** The SPF record to flatten into the hosted record. Default: what the domain publishes today. */
   spfRecord?: string;
