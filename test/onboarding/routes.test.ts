@@ -49,10 +49,10 @@ describe('onboarding routes', () => {
       ['_dmarc.a-corp.com', 'create', 'v=DMARC1; p=none'],
       ['_dmarc.a-two.org', 'create', 'v=DMARC1; p=none'],
     ]);
-    expect(p.not_written.some((n: any) => /SPF and DKIM/.test(n.what))).toBe(true);
+    expect(p.not_written.find((n: any) => /SPF and DKIM/.test(n.what))).toMatchObject({ step: null, link: '/domains/1/setup' });
 
     const res = await w.api(w.A.token, 'POST', '/api/onboarding/dns-apply', { domain_ids: [1, 2], step: 'dmarc', plan_id: p.plan_id });
-    expect((await json(res)).results).toEqual([{ id: 'dmarc:1', ok: true }, { id: 'dmarc:2', ok: true }]);
+    expect((await json(res)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: true }, { id: 'dmarc:2', ok: true, verified: true }]);
     expect(w.cf.records.get(Z.a1)!.some(r => r.name === '_dmarc.a-corp.com' && r.content === 'v=DMARC1; p=none')).toBe(true);
     expect(w.rows(`SELECT action FROM audit_log WHERE action = 'dns.create'`).length).toBeGreaterThanOrEqual(2);
 
@@ -63,6 +63,20 @@ describe('onboarding routes', () => {
     expect(again.status).toBe(409);
     expect((await json(again)).code).toBe('plan_changed');
     expect(w.cf.records.get(Z.a1)!.filter(r => r.name === '_dmarc.a-corp.com')).toHaveLength(1);
+  });
+
+  it('a write that Cloudflare does not show on read-back is ok but not verified', async () => {
+    const w = await world();
+    await connected(w);
+    const p = await plan(w, [1]);
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const res = await real(input, init);
+      if (init?.method === 'POST' && String(input).includes('/dns_records')) w.cf.records.set(Z.a1, []);
+      return res;
+    });
+    const res = await w.api(w.A.token, 'POST', '/api/onboarding/dns-apply', { domain_ids: [1], step: 'dmarc', plan_id: p.plan_id });
+    expect((await json(res)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: false }]);
   });
 
   it('a stale plan_id writes nothing', async () => {
@@ -84,7 +98,7 @@ describe('onboarding routes', () => {
     const writes = p.steps.find((s: any) => s.key === 'dmarc').writes;
     expect(writes).toHaveLength(1); // hosted: no rua, so the existing record needs nothing
     expect(writes[0]).toMatchObject({ domain: 'a-corp.com', action: 'none' });
-    expect(p.not_written.find((n: any) => n.domain === 'a-two.org')).toMatchObject({ link: '#/domains/2/setup' });
+    expect(p.not_written.find((n: any) => n.domain === 'a-two.org')).toMatchObject({ link: '/domains/2/setup', step: 'dmarc' });
   });
 
   it("another workspace's domain id plans nothing", async () => {

@@ -31,6 +31,7 @@ describe('reports mailbox plan (self-host)', () => {
     expect(ids).not.toContain('enable');
     expect(ids).toEqual(expect.arrayContaining(['mx:route1.mx.cloudflare.net', 'catch_all']));
     const note = plan.not_written.find(n => n.what === 'Email Routing')!;
+    expect(note.step).toBe('reports_mailbox');
     expect(note.reason).toBe('Email Routing is off for a-corp.com. Turning it on changes the mail records of a-corp.com itself, so Ready Set Mail leaves that to you: in Cloudflare, open a-corp.com → Email → Email Routing and follow its steps. Then run this step again.');
     expect(mail(plan).writes.find((x: any) => x.id === 'catch_all').content).toBe('Catch-all rule for a-corp.com: mail to any address at a-corp.com without its own rule goes to this Worker');
     expect(calls.every(c => c.startsWith('GET'))).toBe(true);
@@ -41,6 +42,7 @@ describe('reports mailbox plan (self-host)', () => {
     const { plan } = await buildPlan(tenant, [1]);
     expect(mail(plan).writes.map((x: any) => x.id)).not.toContain('catch_all');
     expect(plan.not_written.find(n => n.what === 'Catch-all rule')!.reason).toContain('forwards to boss@a-corp.com');
+    expect(plan.not_written.find(n => n.what === 'Catch-all rule')!.step).toBe('reports_mailbox');
   });
 
   it('a catch-all that already goes to this Worker is satisfied, an unreadable routing state says nothing', async () => {

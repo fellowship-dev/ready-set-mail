@@ -21,7 +21,7 @@ export interface PlanWrite {
   reason: string;
 }
 export interface PlanStep { key: 'dmarc' | 'reports_mailbox'; writes: PlanWrite[]; satisfied: boolean }
-export interface NotWritten { domain?: string; what: string; reason: string; link?: string }
+export interface NotWritten { domain?: string; what: string; reason: string; link?: string; /** The plan step this note belongs to; null = shown only on the final screen. */ step: 'dmarc' | 'reports_mailbox' | null }
 export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotWritten[] }
 
 /** What apply needs beyond the public write: the zone and record to touch. */
@@ -40,7 +40,7 @@ async function sha256Hex(s: string): Promise<string> {
   return [...d].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const setupLink = (domainId: number) => `#/domains/${domainId}/setup`;
+const setupLink = (domainId: number) => `/domains/${domainId}/setup`;
 
 async function inheritedFor(resolver: Resolver, domain: string): Promise<InheritedRead> {
   try {
@@ -84,7 +84,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       cf = await tenant.cfFor(d.domain);
       zone = await cf.zoneFor(d.domain);
     } catch (e) {
-      notWritten.push({ domain: d.domain, what: 'DMARC', reason: plainCloudflareError(e), link: setupLink(d.id) });
+      notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
       continue;
     }
     const dmarcName = `_dmarc.${d.domain}`;
@@ -92,14 +92,14 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     try {
       own = (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName, per_page: 50 })).map(r => r.content);
     } catch (e) {
-      notWritten.push({ domain: d.domain, what: 'DMARC', reason: plainCloudflareError(e), link: setupLink(d.id) });
+      notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
       continue;
     }
     const hasOwn = own.some(c => /^\s*v\s*=\s*DMARC1/i.test(unquote(c)));
     const inherited: InheritedRead = hasOwn ? { kind: 'none' } : await inheritedFor(resolver, d.domain);
     const decision = planDmarc({ ownRecords: own, inherited, rua });
     if (decision.action === 'skip') {
-      notWritten.push({ domain: d.domain, what: 'DMARC', reason: decision.reason, link: setupLink(d.id) });
+      notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: decision.reason, link: setupLink(d.id) });
     } else {
       const id = `dmarc:${d.id}`;
       const existing = decision.action === 'none' || decision.action === 'update'
@@ -120,7 +120,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         try {
           present = (await reportsCf.cf.listDnsRecords(reportsCf.zoneId, { type: 'TXT', name: authName, per_page: 5 })).length > 0;
         } catch (e) {
-          notWritten.push({ domain: d.domain, what: 'Report authorisation', reason: plainCloudflareError(e), link: setupLink(d.id) });
+          notWritten.push({ domain: d.domain, what: 'Report authorisation', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
           continue;
         }
       }
@@ -131,7 +131,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       });
       exec.set(id, { cf: reportsCf.cf, zoneId: reportsCf.zoneId, domainId: d.id, kind: 'auth' });
     } else if (reportsDomain && reportsError) {
-      notWritten.push({ domain: d.domain, what: 'Report authorisation', reason: reportsError, link: setupLink(d.id) });
+      notWritten.push({ domain: d.domain, what: 'Report authorisation', step: 'dmarc', reason: reportsError, link: setupLink(d.id) });
     }
   }
 
@@ -140,7 +140,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
   if (reportsDomain) {
     const writes: PlanWrite[] = [];
     if (!reportsCf) {
-      notWritten.push({ what: 'Reports mailbox', reason: reportsError ?? 'No Cloudflare connection manages the reports domain.' });
+      notWritten.push({ what: 'Reports mailbox', step: 'reports_mailbox', reason: reportsError ?? 'No Cloudflare connection manages the reports domain.' });
     } else {
       const { cf, zoneId, zoneName } = reportsCf;
       try {
@@ -165,7 +165,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         let routingOn: boolean | null = null;
         try { routingOn = !!(await cf.request<{ enabled?: boolean }>('GET', `/zones/${zoneId}/email/routing`))?.enabled; } catch { /* unreadable: say nothing about it */ }
         if (routingOn === false) {
-          notWritten.push({ what: 'Email Routing', reason: `Email Routing is off for ${zoneName}. Turning it on changes the mail records of ${zoneName} itself, so Ready Set Mail leaves that to you: in Cloudflare, open ${zoneName} → Email → Email Routing and follow its steps. Then run this step again.` });
+          notWritten.push({ what: 'Email Routing', step: 'reports_mailbox', reason: `Email Routing is off for ${zoneName}. Turning it on changes the mail records of ${zoneName} itself, so Ready Set Mail leaves that to you: in Cloudflare, open ${zoneName} → Email → Email Routing and follow its steps. Then run this step again.` });
         }
         // Cloudflare's catch-all rule belongs to the zone, not to the reports subdomain: one rule for every address of the zone.
         let rule: { enabled?: boolean; actions?: { type: string; value?: string[] }[] } | null = null;
@@ -175,7 +175,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         const theirs = !!action && !ours;
         if (theirs) {
           const now = action!.type === 'forward' ? `forwards to ${(action!.value ?? []).join(', ') || 'a mailbox'}` : action!.type === 'worker' ? `sends mail to the Worker ${(action!.value ?? []).join(', ')}` : action!.type === 'drop' ? 'drops the mail' : `does "${action!.type}"`;
-          notWritten.push({ what: 'Catch-all rule', reason: `${zoneName} already has a catch-all rule that ${now}. Ready Set Mail does not replace it. To receive reports here, change it to send mail to the Worker ${tenant.workerName}, or add an address rule yourself.` });
+          notWritten.push({ what: 'Catch-all rule', step: 'reports_mailbox', reason: `${zoneName} already has a catch-all rule that ${now}. Ready Set Mail does not replace it. To receive reports here, change it to send mail to the Worker ${tenant.workerName}, or add an address rule yourself.` });
         } else {
           mailbox.push({
             id: 'catch_all', domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: reportsDomain,
@@ -186,14 +186,14 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         }
         writes.push(...mailbox);
       } catch (e) {
-        notWritten.push({ what: 'Reports mailbox', reason: plainCloudflareError(e) });
+        notWritten.push({ what: 'Reports mailbox', step: 'reports_mailbox', reason: plainCloudflareError(e) });
       }
     }
     const satisfied = writes.every(w => w.action === 'none');
     if (writes.length && (selectedBase || !satisfied)) steps.push({ key: 'reports_mailbox', writes, satisfied });
   }
 
-  if (rows.length) notWritten.push({ what: 'SPF and DKIM', reason: 'They depend on which services send your mail, so they are never written here. Set them up per domain.', link: setupLink(rows[0].id) });
+  if (rows.length) notWritten.push({ what: 'SPF and DKIM', step: null, reason: 'They depend on which services send your mail, so they are never written here. Set them up per domain.', link: setupLink(rows[0].id) });
 
   const planId = await sha256Hex(JSON.stringify(steps.flatMap(s => s.writes)));
   return { plan: { plan_id: planId, steps, not_written: notWritten }, exec };

@@ -95,6 +95,31 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
   }
 }
 
+/** Reads the write back from Cloudflare. False when it cannot be confirmed (a failed read counts as not confirmed). */
+async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<typeof applyWrite>[2]): Promise<boolean> {
+  const norm = (c: string) => c.trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
+  try {
+    switch (x.kind) {
+      case 'dmarc':
+      case 'auth':
+      case 'mx': {
+        const list = await x.cf.listDnsRecords(x.zoneId, { type: x.kind === 'mx' ? 'MX' : 'TXT', name: w.name, per_page: 50 });
+        return list.some(r => norm(r.content) === norm(w.content));
+      }
+      case 'mx_delete': {
+        const list = await x.cf.listDnsRecords(x.zoneId, { type: 'MX', name: w.name, per_page: 50 });
+        return !list.some(r => r.id === x.recordId);
+      }
+      case 'catch_all': {
+        const rule = await x.cf.request<{ enabled?: boolean; actions?: { type: string; value?: string[] }[] }>('GET', `/zones/${x.zoneId}/email/routing/rules/catch_all`);
+        const a = rule?.actions?.[0];
+        return !!rule?.enabled && a?.type === 'worker' && (a.value ?? []).includes(tenant.workerName);
+      }
+    }
+  } catch { return false; }
+  return false;
+}
+
 export async function handleOnboardingRoutes(request: Request, tenant: TenantContext, ctx: ExecutionContext | undefined, caller: OnboardingCaller): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -134,7 +159,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const { plan, exec } = await buildPlan(tenant, input.ids);
     if (plan.plan_id !== input.body.plan_id) return json({ error: 'Cloudflare changed since you looked; review again.', code: 'plan_changed', plan }, 409);
     const writes = plan.steps.find(s => s.key === step)?.writes ?? [];
-    const results: { id: string; ok: boolean; error?: string; code?: string }[] = [];
+    const results: { id: string; ok: boolean; verified?: boolean; error?: string; code?: string }[] = [];
     for (const w of writes) {
       if (w.action === 'none') continue;
       try {
@@ -142,7 +167,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
         // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
         if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
         await applyWrite(tenant, w, x, ctx, caller);
-        results.push({ id: w.id, ok: true });
+        results.push({ id: w.id, ok: true, verified: await verifyWrite(tenant, w, x) });
       } catch (e) {
         const code = failureCode(e);
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });

@@ -98,7 +98,7 @@ wrangler secret put CLOUDFLARE_API_TOKEN  # the token you created above
 npm run deploy
 ```
 
-`npm run deploy` builds the dashboard, migrates the database, deploys the Worker, creates `TOKEN_ENCRYPTION_KEY` if it is missing (so the dashboard can connect Cloudflare; back it up) and prints a one-time **setup link**. The installation needs `OAUTH_KV` and a canonical HTTPS `BETTER_AUTH_URL`; domain intake and Cloudflare DNS/routing are set up from the dashboard afterwards. No Fellowship account, Google connection or outbound mail service is needed for a first live-DNS health report.
+`npm run deploy` builds the dashboard, migrates the database, deploys the Worker, creates `TOKEN_ENCRYPTION_KEY` if it is missing (a random key stored as a Worker secret and never printed, so the dashboard can connect Cloudflare; if it is ever replaced, stored Cloudflare connections must be reconnected) and prints a one-time **setup link**. The installation needs `OAUTH_KV` and a canonical HTTPS `BETTER_AUTH_URL`; domain intake and Cloudflare DNS/routing are set up from the dashboard afterwards. No Fellowship account, Google connection or outbound mail service is needed for a first live-DNS health report.
 
 **Option C — GitHub Actions (manual):** the `Deploy` workflow (`.github/workflows/deploy.yml`) runs only when you start it from the Actions tab (**Run workflow**); pushes to `main` never deploy. It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets listed at the top of the workflow.
 
