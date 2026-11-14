@@ -47,7 +47,7 @@ describe('instance preflight', () => {
 
  it('without TOKEN_ENCRYPTION_KEY: self-host gets an action with the fix, hosted only a note, and the key is never shown', async () => {
   const self = (await instancePreflight(env({ OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN, SEND_EMAIL: sendEmail }), ORIGIN)).items.find(i => i.id === 'cloudflare_connections');
-  expect(self).toMatchObject({ severity: 'action', setting: 'TOKEN_ENCRYPTION_KEY', message: expect.stringContaining('npm run deploy') });
+  expect(self).toMatchObject({ severity: 'action', setting: 'TOKEN_ENCRYPTION_KEY', message: expect.stringContaining('npx wrangler secret put TOKEN_ENCRYPTION_KEY') });
   expect(self!.message).toContain('npx wrangler secret put TOKEN_ENCRYPTION_KEY');
   const hosted = (await instancePreflight(env({ MODE: 'saas', SAAS_ENABLED: '1' }), ORIGIN)).items.find(i => i.id === 'cloudflare_connections');
   expect(hosted?.severity).toBe('note');

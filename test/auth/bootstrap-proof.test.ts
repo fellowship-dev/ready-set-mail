@@ -68,3 +68,12 @@ it('legacy and current headers both still create the owner; a setup link works o
  expect(row(db, 'setup_link')).toBeUndefined();
  expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
 });
+it('a proof equal to BOOTSTRAP_SECRET sent from the setup-link path creates the owner once; a second use is refused', async () => {
+ const { db, env } = await withLink(now() + 3600); // BOOTSTRAP_SECRET set, a stored link too
+ const first = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': SECRET }, body: { email: 'a@example.com', password: 'unique-test-password' } });
+ expect(first.status).toBe(201);
+ expect(row(db, 'bootstrap_consumed')).toEqual({ value: 'true' });
+ const second = await call(env, 'POST', '/api/auth/setup', { headers: { 'x-ready-set-mail-bootstrap': SECRET }, body: { email: 'b@example.com', password: 'unique-test-password' } });
+ expect(second.status).toBe(409); // already configured
+ expect(await verifyBootstrapProof(env, SECRET)).toBe(false);
+});

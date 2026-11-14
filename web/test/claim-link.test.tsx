@@ -62,12 +62,12 @@ describe('setup link', () => {
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Create account' }));
-		expect(await screen.findByText(/This setup link has expired or was already used\. Run `npm run setup-link`/)).toBeInTheDocument();
+		expect(await screen.findByText(/This setup link has expired or was already used\. Run `npm run setup` again/)).toBeInTheDocument();
 	});
 
 	it('without a link, leads with the instruction and keeps the proof behind a disclosure', async () => {
 		renderApp(<OwnerSetupPage />, { role: null, status: unconfigured });
-		expect(await screen.findByText(/Open the setup link printed when you deployed/)).toBeInTheDocument();
+		expect(await screen.findByText(/Open the setup link printed when you installed/)).toBeInTheDocument();
 		expect(screen.getByText('I have an installer proof')).toBeInTheDocument();
 	});
 });

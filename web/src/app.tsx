@@ -1,12 +1,12 @@
 import { Button, EmptyState, Toaster } from '@ready-set-mail/ui';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
-import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from 'react-router';
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router';
 import { FocusLayout } from './components/FocusLayout';
 import { Shell } from './components/Shell';
 import { WorkspaceRouter } from './components/WorkspaceRouter';
 import { PageSkeleton } from './components/states';
-import { ClaimLinkProvider } from './lib/claim-link';
+import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
 import { AuthPage } from './pages/auth/AuthPage';
@@ -19,8 +19,21 @@ import { ResetPage } from './pages/auth/ResetPage';
 import { WelcomePage } from './pages/auth/WelcomePage';
 
 /** Waits for the session, then shows the app, the sign-in screen (deep link preserved) or a "server unreachable" state. */
-function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
+export function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
 	const { state, retry, me, status } = useSession();
+	const claim = useClaimLink();
+	const [params, setParams] = useSearchParams();
+	const proof = params.get('proof');
+	const firstOwner = state === 'anon' && !!status && !status.configured && status.mode !== 'saas';
+	// A setup link printed as `#/setup?proof=<proof>`: held in memory for the owner form and taken out of the address bar and
+	// history at once. Anywhere else (signed in, already configured, hosted) the parameter is ignored and stripped.
+	useEffect(() => {
+		if (proof === null || state === 'loading' || state === 'unreachable') return;
+		if (firstOwner && proof) claim.hold(proof);
+		const next = new URLSearchParams(params);
+		next.delete('proof');
+		setParams(next, { replace: true });
+	}, [proof, state, firstOwner, claim, params, setParams]);
 	if (state === 'loading') return <div className="mx-auto max-w-2xl p-8"><PageSkeleton label="Starting up" /></div>;
 	if (state === 'unreachable') {
 		return (

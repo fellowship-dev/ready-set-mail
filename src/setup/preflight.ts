@@ -106,7 +106,7 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
   if (!hasEncryptionKey(env)) {
     items.push(hosted
       ? { id: 'cloudflare_connections', severity: 'note', setting: 'TOKEN_ENCRYPTION_KEY', message: 'There is no TOKEN_ENCRYPTION_KEY, so customers cannot connect Cloudflare from the dashboard.' }
-      : { id: 'cloudflare_connections', severity: 'action', setting: 'TOKEN_ENCRYPTION_KEY', message: "Cloudflare can't be connected from the dashboard: there is no TOKEN_ENCRYPTION_KEY. Run `npm run deploy` again (it creates one), or set it yourself: openssl rand -base64 32 | sed 's/^/k1:/' | npx wrangler secret put TOKEN_ENCRYPTION_KEY" });
+      : { id: 'cloudflare_connections', severity: 'action', setting: 'TOKEN_ENCRYPTION_KEY', message: "Cloudflare can't be connected from the dashboard: there is no TOKEN_ENCRYPTION_KEY. Set one: openssl rand -base64 32 | sed 's/^/k1:/' | npx wrangler secret put TOKEN_ENCRYPTION_KEY" });
   }
 
   // Rate limits: a missing ratelimit binding fails open, so the hosted service must have every one.

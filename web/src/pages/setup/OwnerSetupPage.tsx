@@ -61,7 +61,7 @@ export function OwnerSetupPage() {
 			navigate(res.has_domain === false ? '/setup' : '/', { replace: true });
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 403 && (err.body as { code?: string } | undefined)?.code === 'email_not_verified') setVerifyFor(email);
-			else if (linkToken && err instanceof ApiError && err.status === 403) setError('This setup link has expired or was already used. Run `npm run setup-link` where you deployed to get a new one.');
+			else if (linkToken && err instanceof ApiError && err.status === 403) setError('This setup link has expired or was already used. Run `npm run setup` again where you installed it to get a new one.');
 			else if (err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
 			else setError(errorMessage(err));
 		} finally {
@@ -80,7 +80,7 @@ export function OwnerSetupPage() {
 			<form onSubmit={submit} className="space-y-4">
 				{!linkToken ? (
 					<>
-						<p className="text-sm text-ink-2">Open the setup link printed when you deployed (it is also in the deploy log), or run <code className="font-mono">npm run setup-link</code>.</p>
+						<p className="text-sm text-ink-2">Open the setup link printed when you installed, or run <code className="font-mono">npm run setup</code> again to get a new one.</p>
 						<details open={proofOpen} onToggle={(e) => setProofOpen(e.currentTarget.open)}>
 							<summary className="cursor-pointer text-sm text-brand-ink underline underline-offset-4">I have an installer proof</summary>
 							<div className="pt-4">
