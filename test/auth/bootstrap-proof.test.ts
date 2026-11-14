@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { it, expect } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { verifyBootstrapProof, consumeBootstrapProof } from '../../src/auth/bootstrap';
+import { setupToken } from '../../scripts/setup/install.mjs';
 import { makeEnv, call, type TestDb } from './helpers';
 
 const SECRET = 'test-only-installer-proof-32-characters-minimum';
@@ -16,6 +17,12 @@ it('a token minted exactly as the installer does is accepted', async () => {
  const token = mint();
  expect(token.split('.')[1]).toHaveLength(43);
  expect(await verifyBootstrapProof(makeEnv(), token)).toBe(true);
+});
+it("the installer's own setupToken helper mints a token the server accepts, and not for another secret", async () => {
+ const token = setupToken(SECRET, Date.now());
+ expect(await verifyBootstrapProof(makeEnv(), token)).toBe(true);
+ expect(await verifyBootstrapProof(makeEnv(undefined, { BOOTSTRAP_SECRET: OTHER }), token)).toBe(false);
+ expect(await verifyBootstrapProof(makeEnv(), setupToken(SECRET, Date.now() - 20 * 60 * 1000))).toBe(false);
 });
 it('refuses a token dated further ahead than 15 minutes (plus a minute of clock difference)', async () => {
  expect(await verifyBootstrapProof(makeEnv(), mint(SECRET, now() + 960 + 5))).toBe(false);
