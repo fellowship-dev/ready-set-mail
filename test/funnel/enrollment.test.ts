@@ -252,3 +252,53 @@ describe('enrollLead', () => {
     expect(await enrollLead(w.env, { email: 'not-an-email', domain: 'x.com', summary: summary() })).toBe('disabled');
   });
 });
+
+describe('enrolment refuses results the receiver did not write (the report-intake defences)', () => {
+  /** A free check whose envelope sender, results header and DKIM-Signature count the test chooses. */
+  async function checkWith(t: ReturnType<typeof hosted>, envelope: string, auth: string, dkimSignatures: number) {
+    const s = await (await call(t.env, 'POST', '/api/check-sessions')).json() as { email: string };
+    const m = fakeMessage(s.email, rawWithAuth(auth), { from: envelope, dkimSignatures, headers: { 'authentication-results': auth, 'message-id': '<m1@example.com>' } });
+    await handleHostedEmail(m, t.env);
+    return m;
+  }
+
+  it('a dkim=pass in the results with no DKIM-Signature on the message does not enrol', async () => {
+    const t = hosted();
+    // smtp.mailfrom copied unquoted: "x;dkim=pass header.d=victim.com" became a resinfo of its own
+    const forged = 'mx.cloudflare.net; spf=pass smtp.mailfrom=x;dkim=pass header.d=victim.com header.s=s1; dmarc=fail header.from=victim.com';
+    const m = await checkWith(t, 'ceo@victim.com', forged, 0);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    expect(replyText(m)).not.toContain(DISCLOSURE);
+    expect(m.reply).toHaveBeenCalledOnce(); // the report itself is still sent
+  });
+
+  it('a second dmarc result in the receiver\'s header does not enrol', async () => {
+    const t = hosted();
+    const forged = 'mx.cloudflare.net; dkim=none; spf=pass smtp.mailfrom=x;dmarc=pass header.from=victim.com; dmarc=fail header.from=victim.com';
+    await checkWith(t, 'ceo@victim.com', forged, 0);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+  });
+
+  it('an envelope sender that is not a plain address (its smtp.mailfrom is not the envelope sender) does not enrol, even with the counts right', async () => {
+    const t = hosted();
+    const envelope = 'x;dkim=pass(c)header.d=victim.com(c)x=y@victim.com'; // no spaces: a valid address to the sequence
+    // what the receiver wrote when it copied that envelope sender: the parsed smtp.mailfrom is "x", not the envelope sender
+    const results = `mx.cloudflare.net; spf=pass smtp.mailfrom=${envelope}; dmarc=fail header.from=victim.com`;
+    const m = await checkWith(t, envelope, results, 1);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    expect(replyText(m)).not.toContain(DISCLOSURE);
+  });
+
+  it('the legitimate case still enrols: a plain envelope sender, one signature, one aligned dkim pass', async () => {
+    const t = hosted();
+    await checkWith(t, 'ceo@victim.com', authFor('victim.com'), 1);
+    expect(t.rows('SELECT email FROM leads')).toEqual([{ email: 'ceo@victim.com' }]);
+  });
+
+  it('proveSender (unit): refuses more dkim results than signatures, accepts the same header with its signature', () => {
+    const ID = 'mx.cloudflare.net';
+    const ar = 'mx.cloudflare.net; dkim=pass header.d=acme.com header.s=s1';
+    expect(proveSender({ ar, arc: null, dkimSignatures: 0 }, 'acme.com', ID, 'ar')).toMatchObject({ ok: false, reason: expect.stringMatching(/did not write \(1 dkim results for 0 signatures/) });
+    expect(proveSender({ ar, arc: null, dkimSignatures: 1 }, 'acme.com', ID, 'ar')).toEqual({ ok: true, via: 'ar' });
+  });
+});

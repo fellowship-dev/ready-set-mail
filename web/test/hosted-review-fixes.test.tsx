@@ -366,8 +366,10 @@ describe('email check page, hosted without a canary domain', () => {
 
 describe('hosted bulk-import results', () => {
 	it('a plain sentence, not "DNS provisioning: manual required"', async () => {
-		renderApp(<ImportResults result={{ total: 1, imported: 1, results: [{ domain: 'acme-agency.com', status: 'imported', manual_dns: true }] } as never} />, { status: HOSTED });
-		expect(await screen.findByText('Added. Its SPF, DKIM and DMARC records are checked from live DNS')).toBeInTheDocument();
+		renderApp(<ImportResults result={{ total: 2, imported: 2, results: [{ domain: 'acme-agency.com', status: 'imported', manual_dns: true, dns_checked: true }, { domain: 'acme-two.com', status: 'imported', manual_dns: true, dns_checked: false }] } as never} />, { status: HOSTED });
+		expect(await screen.findByText('Added. Its SPF and DMARC records were read from live DNS')).toBeInTheDocument();
+		// A domain the import could not check is not said to have been checked.
+		expect(screen.getByText('Added. Not checked yet: open the domain to read its records')).toBeInTheDocument();
 		expect(screen.queryByText(/provisioning/)).not.toBeInTheDocument();
 	});
 });

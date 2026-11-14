@@ -19,6 +19,7 @@ import { buildSummary, formatCheckReport } from './report-formatter';
 import { buildFreeCheckHtml } from './html-templates';
 import { globals } from '../db/scope';
 import { proveSender, readAuthHeaders, spfPassesFor, trustedResults, type AuthHeaders } from './sender-proof';
+import { envelopeIsPlain } from '../dmarc/reporter-auth';
 import { enrollLead, type EnrollResult } from '../funnel/enroll';
 import { DISCLOSURE } from '../funnel/copy';
 import { unsubscribeUrl } from '../mail/compliance';
@@ -74,6 +75,12 @@ async function enrollAndDisclose(
   summary: ReturnType<typeof buildSummary>,
 ): Promise<{ disclosure: { text: string; unsubscribeUrl: string } | null; lead: EnrollResult | null }> {
   try {
+    // The receiver may copy the envelope sender unquoted into its own results (smtp.mailfrom=): one that is not a plain address
+    // could plant a pass the receiver never wrote (reporter-auth.ts envelopeIsPlain), so nothing in the results is believed.
+    if (!envelopeIsPlain(fromEmail)) {
+      console.warn('[free-check] sender not enrolled in the sequence: the envelope sender is not a plain address');
+      return { disclosure: null, lead: null };
+    }
     const proof = proveSender(authHeaders, domain, tenant.env.AUTHSERV_ID, tenant.env.AUTHSERV_HEADER);
     if (!proof.ok) {
       console.warn(`[free-check] sender not enrolled in the sequence: ${proof.reason}`);

@@ -16,9 +16,11 @@ const STATUS = {
 
 function note(r: BulkImportItem, hosted: boolean): string {
 	const parts: string[] = [];
+	// What the import did with the domain's DNS: its first read stored, or not yet (an older server sends neither).
+	const checked = r.dns_checked === true ? 'Its SPF and DMARC records were read from live DNS' : r.dns_checked === false ? 'Not checked yet: open the domain to read its records' : null;
 	// Hosted has no report address, so there is no authorization record to create: say what does happen.
-	if (r.status === 'imported' && hosted) parts.push('Added. Its SPF, DKIM and DMARC records are checked from live DNS');
-	else if (r.status === 'imported') parts.push(r.manual_dns ? 'DNS provisioning: manual required' : 'DNS provisioned');
+	if (r.status === 'imported' && hosted) parts.push(checked ? `Added. ${checked}` : 'Added');
+	else if (r.status === 'imported') parts.push(r.manual_dns ? 'DNS provisioning: manual required' : 'DNS provisioned', ...(checked ? [checked] : []));
 	if (r.status === 'pending') parts.push('Add the TXT record below to prove ownership');
 	if (r.status === 'duplicate') parts.push('Already registered');
 	if (r.error) parts.push(r.error);
