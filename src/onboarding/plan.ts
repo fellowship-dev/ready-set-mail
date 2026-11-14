@@ -5,6 +5,7 @@ import { lookupDmarc, organizationalDomain, type Resolver } from '@ready-set-mai
 import type { TenantContext } from '../tenancy/context';
 import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
+import { assertDnsWriteAllowed } from '../dns/write-policy';
 import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError } from './errors';
 import { writableDomains } from './domains';
@@ -26,7 +27,13 @@ export interface NotWritten { domain?: string; what: string; reason: string; lin
 export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotWritten[] }
 
 /** What apply needs beyond the public write: the zone and record to touch. */
-export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'mx_delete' | 'catch_all' }
+export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string }
+
+/** An Email Routing rule as Cloudflare lists it. */
+export interface EmailRule { id?: string; enabled?: boolean; matchers?: { type: string; field?: string; value?: string }[]; actions?: { type: string; value?: string[] }[] }
+
+/** The addresses the product receives at the reports domain that a literal rule can match (src/email/handler.ts). */
+export const REPORT_ADDRESSES = ['rua', 'tls-rpt'] as const;
 
 
 const CF_MX: readonly { readonly content: string; readonly priority: number }[] = Object.freeze([
@@ -149,54 +156,75 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
 
   if (reportsDomain) {
     const writes: PlanWrite[] = [];
+    const note = (what: string, reason: string) => notWritten.push({ what, step: 'reports_mailbox', reason });
     if (!reportsCf) {
-      notWritten.push({ what: 'Reports mailbox', step: 'reports_mailbox', reason: reportsError ?? 'No Cloudflare connection manages the reports domain.' });
+      note('Reports mailbox', reportsError ?? 'No Cloudflare connection manages the reports domain.');
     } else {
       const { cf, zoneId, zoneName } = reportsCf;
       try {
         const mx = await cf.listDnsRecords(zoneId, { type: 'MX', name: reportsDomain, per_page: 50 });
-        const hasCfMx = mx.some(r => isCfMx(r.content));
-        const mailbox: PlanWrite[] = [];
-        if (!hasCfMx) {
-          for (const old of mx) {
-            const id = `mx-del:${old.id}`;
-            mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: old.content, priority: old.priority, action: 'delete', before: `${old.priority ?? ''} ${old.content}`.trim(), reason: 'Mail for this name must go to Cloudflare Email Routing only.' });
-            exec.set(id, { cf, zoneId, recordId: old.id, kind: 'mx_delete' });
-          }
-        }
-        for (const want of CF_MX) {
-          const present = mx.some(r => r.content.toLowerCase().replace(/\.$/, '') === want.content);
-          const id = `mx:${want.content}`;
-          mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: want.content, priority: want.priority, action: present ? 'none' : 'create', before: null, reason: present ? 'Already in place.' : 'Receives the DMARC reports sent to this domain.' });
-          exec.set(id, { cf, zoneId, kind: 'mx' });
-        }
-        // Email Routing is never turned on from here: Cloudflare's zone-level enable adds and locks MX and SPF records at the
-        // zone apex, which can break the zone's existing mail. Off is reported, and left to the owner.
-        let routingOn: boolean | null = null;
-        try { routingOn = !!(await cf.request<{ enabled?: boolean }>('GET', `/zones/${zoneId}/email/routing`))?.enabled; } catch { /* unreadable: say nothing about it */ }
-        if (routingOn === false) {
-          notWritten.push({ what: 'Email Routing', step: 'reports_mailbox', reason: `Email Routing is off for ${zoneName}. Turning it on changes the mail records of ${zoneName} itself, so Ready Set Mail leaves that to you: in Cloudflare, open ${zoneName} → Email → Email Routing and follow its steps. Then run this step again.` });
-        }
-        // Cloudflare's catch-all rule belongs to the zone, not to the reports subdomain: one rule for every address of the zone.
-        let rule: { enabled?: boolean; actions?: { type: string; value?: string[] }[] } | null = null;
-        try { rule = await cf.request('GET', `/zones/${zoneId}/email/routing/rules/catch_all`); } catch { /* no catch-all rule yet */ }
-        const action = rule?.enabled ? rule.actions?.[0] : undefined;
-        const ours = !!action && action.type === 'worker' && (action.value ?? []).includes(tenant.workerName);
-        const theirs = !!action && !ours;
-        if (theirs) {
-          const now = action!.type === 'forward' ? `forwards to ${(action!.value ?? []).join(', ') || 'a mailbox'}` : action!.type === 'worker' ? `sends mail to the Worker ${(action!.value ?? []).join(', ')}` : action!.type === 'drop' ? 'drops the mail' : `does "${action!.type}"`;
-          notWritten.push({ what: 'Catch-all rule', step: 'reports_mailbox', reason: `${zoneName} already has a catch-all rule that ${now}. Ready Set Mail does not replace it. To receive reports here, change it to send mail to the Worker ${tenant.workerName}, or add an address rule yourself.` });
+        const foreign = mx.filter(r => !isCfMx(r.content));
+        // Mail records are never deleted or replaced from here: a name that already receives mail elsewhere, or the zone apex
+        // (the mail of the whole domain), is left alone and no mailbox is planned for it.
+        if (reportsDomain === zoneName) {
+          note('Reports mailbox', `${reportsDomain} is the apex of its zone, so mail records here would change the mail of the whole domain. Ready Set Mail leaves its mail records alone; use a reports subdomain such as reports.${zoneName}.`);
+        } else if (foreign.length > 0) {
+          note('Reports mailbox', `${reportsDomain} already receives mail elsewhere (${foreign.map(r => r.content).join(', ')}). Ready Set Mail leaves its mail records alone; change them yourself if you want reports delivered here.`);
         } else {
-          mailbox.push({
-            id: 'catch_all', domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: reportsDomain,
-            content: `Catch-all rule for ${zoneName}: mail to any address at ${zoneName} without its own rule goes to this Worker`,
-            action: ours ? 'none' : 'rule', before: null, reason: ours ? 'Already in place.' : 'Delivers report emails to Ready Set Mail.',
-          });
-          exec.set('catch_all', { cf, zoneId, kind: 'catch_all' });
+          const mailbox: PlanWrite[] = [];
+          // The DNS write policy decides first, with the inputs apply will use: if any create would be refused, no MX is planned.
+          let mxAllowed = true;
+          let refusedBecause = '';
+          for (const want of CF_MX) {
+            try { assertDnsWriteAllowed({ method: 'POST', zoneName, type: 'MX', name: reportsDomain, content: want.content, mode: tenant.mode }); }
+            catch (e) { mxAllowed = false; refusedBecause = e instanceof Error ? e.message : 'refused'; break; }
+          }
+          if (!mxAllowed) note('Reports mailbox', `The MX records for ${reportsDomain} are not something this connection may write (${refusedBecause}). Set up Email Routing for it yourself in Cloudflare.`);
+          else {
+            for (const want of CF_MX) {
+              const present = mx.some(r => r.content.toLowerCase().replace(/\.$/, '') === want.content);
+              const id = `mx:${want.content}`;
+              mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: want.content, priority: want.priority, action: present ? 'none' : 'create', before: null, reason: present ? 'Already in place.' : 'Receives the DMARC reports sent to this domain.' });
+              exec.set(id, { cf, zoneId, kind: 'mx' });
+            }
+          }
+          // Email Routing is never turned on from here: Cloudflare's zone-level enable adds and locks MX and SPF records at the
+          // zone apex, which can break the zone's existing mail. Off is reported, and left to the owner.
+          let routingOn: boolean | null = null;
+          try { routingOn = !!(await cf.request<{ enabled?: boolean }>('GET', `/zones/${zoneId}/email/routing`))?.enabled; } catch { /* unreadable: say nothing about it */ }
+          if (routingOn === false) {
+            note('Email Routing', `Email Routing is off for ${zoneName}. Turning it on changes the mail records of ${zoneName} itself, so Ready Set Mail leaves that to you: in Cloudflare, open ${zoneName} → Email → Email Routing and follow its steps. Then run this step again.`);
+          }
+          // One literal address rule per fixed report address. Existing rules (the catch-all included, enabled or not) are never
+          // touched; a literal rule for the same address that goes elsewhere is a conflict and nothing is written for it.
+          if (mxAllowed) {
+            let rules: EmailRule[] = [];
+            let rulesRead = true;
+            try { rules = (await cf.request<EmailRule[]>('GET', `/zones/${zoneId}/email/routing/rules`)) ?? []; } catch { rulesRead = false; }
+            if (!rulesRead) note('Address rules', 'Ready Set Mail could not read the Email Routing rules of this zone, so it plans none. Add rules for rua@ and tls-rpt@ yourself, or run this step again.');
+            else {
+              for (const local of REPORT_ADDRESSES) {
+                const address = `${local}@${reportsDomain}`;
+                const existing = rules.find(r => (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === address));
+                const act = existing?.actions?.[0];
+                const ours = !!existing && existing.enabled !== false && act?.type === 'worker' && (act.value ?? []).includes(tenant.workerName);
+                if (existing && !ours) {
+                  const now = existing.enabled === false ? 'is switched off' : act?.type === 'forward' ? `forwards to ${(act.value ?? []).join(', ') || 'a mailbox'}` : act?.type === 'worker' ? `sends mail to the Worker ${(act.value ?? []).join(', ')}` : act?.type === 'drop' ? 'drops the mail' : existing.enabled === false ? 'is switched off' : `does "${act?.type ?? 'nothing'}"`;
+                  note(`Address rule for ${address}`, `${address} already has a rule that ${now}. Ready Set Mail does not change it. To receive reports here, point it at the Worker ${tenant.workerName} yourself.`);
+                  continue;
+                }
+                const id = `rule:${local}`;
+                mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: address, content: `Address rule: mail to ${address} goes to this Worker`, action: ours ? 'none' : 'rule', before: null, reason: ours ? 'Already in place.' : `Delivers ${local === 'rua' ? 'DMARC' : 'TLS'} reports to Ready Set Mail.` });
+                exec.set(id, { cf, zoneId, kind: 'rule', address });
+              }
+              // check+<token>@ is a different address for every check: only a catch-all can receive it, and a catch-all belongs to the whole zone.
+              note(`Free-check replies (check+<token>@${reportsDomain})`, `Every check uses its own address, which an address rule cannot match, and Ready Set Mail does not change the catch-all rule of ${zoneName}. DMARC and TLS reports work without it; for free-check replies, send your catch-all to the Worker ${tenant.workerName} yourself.`);
+            }
+          }
+          writes.push(...mailbox);
         }
-        writes.push(...mailbox);
       } catch (e) {
-        notWritten.push({ what: 'Reports mailbox', step: 'reports_mailbox', reason: plainCloudflareError(e) });
+        note('Reports mailbox', plainCloudflareError(e));
       }
     }
     const satisfied = writes.every(w => w.action === 'none');

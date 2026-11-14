@@ -171,7 +171,12 @@ export interface CfRequestOptions {
   dns?: DnsWriteContext;
 }
 
-export interface DnsWriteContext { cnameTargets?: string[]; allowedApexes?: string[] }
+export interface DnsWriteContext {
+  cnameTargets?: string[];
+  allowedApexes?: string[];
+  /** DELETE only: the record being removed. The write policy decides on this, so a delete is as constrained as a create. */
+  expect?: { type: string; name: string };
+}
 
 interface CfEnvelope<T> { success?: boolean; result?: T; errors?: CfErrorDetail[] }
 
@@ -253,8 +258,8 @@ export class CfClient {
     const w = {
       method,
       zoneName: this.#zoneNames.get(zoneId) ?? this.#policy?.zoneName?.(zoneId),
-      type: b.type as string | undefined,
-      name: b.name as string | undefined,
+      type: method === 'DELETE' ? ctx?.expect?.type : (b.type as string | undefined),
+      name: method === 'DELETE' ? ctx?.expect?.name : (b.name as string | undefined),
       content: b.content as string | undefined,
       patchKeys: Object.keys(b),
       cnameTargets: ctx?.cnameTargets,
@@ -386,9 +391,9 @@ export class CfClient {
   }
 
   /** Idempotent: a record that is already gone is not an error. Returns whether something was deleted. */
-  async deleteDnsRecord(zoneId: string, recordId: string): Promise<boolean> {
+  async deleteDnsRecord(zoneId: string, recordId: string, expect: { type: string; name: string }): Promise<boolean> {
     try {
-      await this.request('DELETE', `/zones/${zoneId}/dns_records/${recordId}`);
+      await this.request('DELETE', `/zones/${zoneId}/dns_records/${recordId}`, { dns: { expect } });
       return true;
     } catch (e) {
       if (!(e instanceof CfNotFoundError)) throw e;

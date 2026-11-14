@@ -317,7 +317,7 @@ describe('DELETE /api/domains/:id', () => {
     const env = makeEnv();
     seedDomain(env, { id: 5, domain: 'acme.com', dns_record_id: 'cf-rec-abc' });
     await handleApi(req('DELETE', '/api/domains/5'), env, ctx);
-    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc');
+    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc', 'acme.com');
   });
 
   it('returns 404 when domain not found', async () => {

@@ -11,7 +11,7 @@ import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { recordFirstDnsCheck } from '../domains/first-check';
 import { writableDomains } from './domains';
-import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
+import { buildPlan, type DnsPlan, type EmailRule, type PlanWrite } from './plan';
 import { failureCode, plainCloudflareError } from './errors';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -81,18 +81,14 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
       logAudit(tenant, { ...actor, action: 'dns.create', resource_type: 'dns_record', resource_id: rec.id, resource_name: w.name, after_value: { type: 'MX', name: w.name, content: w.content, priority: w.priority } }, ctx);
       return;
     }
-    case 'mx_delete': {
-      if (x.recordId && await x.cf.deleteDnsRecord(x.zoneId, x.recordId)) {
-        logAudit(tenant, { ...actor, action: 'dns.delete', resource_type: 'dns_record', resource_id: x.recordId, resource_name: w.name, before_value: { type: 'MX', name: w.name, content: w.content, priority: w.priority } }, ctx);
-      }
+    case 'rule': {
+      if (!x.address) throw new Error('This rule has no address; plan again.');
+      await x.cf.request('POST', `/zones/${x.zoneId}/email/routing/rules`, {
+        body: { name: `${x.address} → ${tenant.workerName}`, enabled: true, matchers: [{ type: 'literal', field: 'to', value: x.address }], actions: [{ type: 'worker', value: [tenant.workerName] }] },
+      });
+      logAudit(tenant, { ...actor, action: 'setup.email_routing', resource_type: 'email_routing', resource_name: x.address, after_value: { address_rule: x.address, worker: tenant.workerName } }, ctx);
       return;
     }
-    case 'catch_all':
-      await x.cf.request('PUT', `/zones/${x.zoneId}/email/routing/rules/catch_all`, {
-        body: { actions: [{ type: 'worker', value: [tenant.workerName] }], enabled: true, matchers: [{ type: 'all' }], name: `catch-all → ${tenant.workerName}` },
-      });
-      logAudit(tenant, { ...actor, action: 'setup.email_routing', resource_type: 'email_routing', resource_name: w.name, after_value: { catch_all: tenant.workerName } }, ctx);
-      return;
   }
 }
 
@@ -107,14 +103,9 @@ async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<ty
         const list = await x.cf.listDnsRecords(x.zoneId, { type: x.kind === 'mx' ? 'MX' : 'TXT', name: w.name, per_page: 50 });
         return list.some(r => norm(r.content) === norm(w.content));
       }
-      case 'mx_delete': {
-        const list = await x.cf.listDnsRecords(x.zoneId, { type: 'MX', name: w.name, per_page: 50 });
-        return !list.some(r => r.id === x.recordId);
-      }
-      case 'catch_all': {
-        const rule = await x.cf.request<{ enabled?: boolean; actions?: { type: string; value?: string[] }[] }>('GET', `/zones/${x.zoneId}/email/routing/rules/catch_all`);
-        const a = rule?.actions?.[0];
-        return !!rule?.enabled && a?.type === 'worker' && (a.value ?? []).includes(tenant.workerName);
+      case 'rule': {
+        const rules = (await x.cf.request<EmailRule[]>('GET', `/zones/${x.zoneId}/email/routing/rules`)) ?? [];
+        return rules.some(r => r.enabled !== false && (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === (x.address ?? '').toLowerCase()) && (r.actions ?? []).some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName)));
       }
     }
   } catch { return false; }

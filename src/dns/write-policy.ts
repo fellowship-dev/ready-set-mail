@@ -11,6 +11,9 @@
 //   (DKIM and BIMI records are never written; hosted pointers are customer-side and go through assertHostedDnsWrite.)
 //   MX     the Cloudflare Email Routing hosts of the reports domain (self-host only)
 // Everything else (A, AAAA, NS, SRV, MX in saas, a CNAME at the apex, a TXT with some other name or content) is refused.
+//
+// DELETE follows the same name/type rules, and the caller must say which record it removes (type, name): the TXT names above
+// and the mta-sts CNAME may be deleted; MX, SPF and everything else never are. A delete that does not name its record is refused.
 
 import { CfRecordNotAllowedError } from '../tenancy/cf-client';
 import type { Mode } from '../tenancy/mode';
@@ -56,11 +59,25 @@ function resolveName(w: DnsWrite, name: string, type: string): string {
   return refuse(w, `record name ${n} is outside zone ${zone}`);
 }
 
-/** Throws CfRecordNotAllowedError unless this DNS write is one the product makes. DELETE is checked by id elsewhere. */
+/** A delete is allowed for the records the product manages, by name and type; never MX, SPF or anything it does not write. */
+function assertDeleteAllowed(w: DnsWrite): void {
+  if (typeof w.type !== 'string' || typeof w.name !== 'string') refuse(w, 'a DNS record delete must say which record it removes (type and name)');
+  const type = w.type.toUpperCase();
+  const name = resolveName(w, w.name, type);
+  if (type === 'TXT') {
+    if (name.startsWith('_dmarc.') || name.startsWith('_mta-sts.') || name.startsWith('_smtp._tls.') || REPORT_AUTH.test(name)) return;
+    return refuse(w, `TXT ${name} is not a record Ready Set Mail manages`);
+  }
+  if (type === 'CNAME' && name.startsWith('mta-sts.')) return;
+  if (type === 'MX') return refuse(w, 'MX records are never deleted by Ready Set Mail');
+  return refuse(w, `${type} ${name} is not a record Ready Set Mail manages`);
+}
+
+/** Throws CfRecordNotAllowedError unless this DNS write is one the product makes. */
 export function assertDnsWriteAllowed(w: DnsWrite): void {
   const method = w.method.toUpperCase();
   if (method === 'GET' || method === 'HEAD') return;
-  if (method === 'DELETE') return;
+  if (method === 'DELETE') return assertDeleteAllowed(w);
   if (method === 'PATCH') {
     for (const k of w.patchKeys ?? []) if (!PATCH_KEYS.has(k)) refuse(w, `a DNS record update may not change "${k}"`);
     if (w.name === undefined && w.type === undefined) return; // content/ttl/... of a record we hold the id of
@@ -117,7 +134,14 @@ export function assertHostedDnsWrite(w: Pick<DnsWrite, 'method' | 'zoneName' | '
   if (!cfg.recordsZone) refuse(full, 'hosted-records zone is not configured');
   const zone = norm(cfg.recordsZone);
   if (!w.zoneName || norm(w.zoneName) !== zone) refuse(full, `hosted records may only be written in zone ${zone}`);
-  if (method === 'DELETE') return;
+  if (method === 'DELETE') {
+    if (typeof w.name !== 'string') refuse(full, 'a DNS record delete must say which record it removes');
+    const dn = norm(w.name);
+    const dapex = `${cfg.recordsLabel.toLowerCase()}.${zone}`;
+    if (!HOST_RE.test(dn) || !dn.endsWith(`.${dapex}`)) refuse(full, `hosted records may only be deleted under *.${dapex}`);
+    if (w.type !== undefined && !['TXT', 'AAAA', 'CNAME'].includes(w.type.toUpperCase())) refuse(full, `${w.type} records are not written in the hosted zone`);
+    return;
+  }
   if (method === 'PATCH') {
     for (const k of w.patchKeys ?? []) if (!PATCH_KEYS.has(k)) refuse(full, `a DNS record update may not change "${k}"`);
     if (w.name === undefined && w.type === undefined) return;

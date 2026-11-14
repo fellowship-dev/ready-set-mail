@@ -108,6 +108,8 @@ export async function provisionDomain(
 export async function deprovisionDomain(
   tenant: TenantContext,
   recordId: string,
+  /** The monitored domain whose authorization record this is: the write policy checks the delete by name. */
+  domain: string,
   audit?: DnsAuditOpts,
 ): Promise<void> {
   const reportsDomain = tenant.settings.reportsDomain;
@@ -118,7 +120,7 @@ export async function deprovisionDomain(
   try {
     const cf = await tenant.cfFor(reportsDomain);
     const zone = await cf.zoneFor(reportsDomain);
-    await cf.deleteDnsRecord(zone.id, recordId);
+    await cf.deleteDnsRecord(zone.id, recordId, { type: 'TXT', name: `${domain}._report._dmarc.${reportsDomain}` });
   } catch (e) {
     // Domain delete must still succeed: warn and move on.
     console.warn(`deprovisionDomain: could not delete record ${recordId}: ${e instanceof Error ? e.message : String(e)}`);

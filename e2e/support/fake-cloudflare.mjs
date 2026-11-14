@@ -41,7 +41,7 @@ function freshState() {
   return {
     zones,
     records,
-    routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null }])),
+    routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null, rules: [] }])),
     nsOverrides: new Map(), // name -> NS hosts (DoH only)
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
@@ -212,7 +212,12 @@ export function createFakeCloudflare() {
         return ok(routing.catchAll);
       }
     }
-    if (rest === '/email/routing/rules' && method === 'GET') return ok([]);
+    if (rest === '/email/routing/rules' && method === 'GET') return ok(routing.rules);
+    if (rest === '/email/routing/rules' && method === 'POST') {
+      const rule = { id: hex(`rule:${zone.id}:${routing.rules.length}:${JSON.stringify(body?.matchers)}`), tag: '', name: body?.name ?? 'rule', enabled: body?.enabled ?? true, actions: body?.actions ?? [], matchers: body?.matchers ?? [] };
+      routing.rules.push(rule);
+      return ok(rule);
+    }
 
     return notFound(`Fake Cloudflare does not implement ${method} ${path}`);
   }
