@@ -33,7 +33,7 @@ interface BaseDomainResult {
 export const DOMAIN_PATTERN = /^[a-z0-9.-]+\.[a-z]{2,}$/;
 
 /** Step 1, only when the instance has no domain yet: choose the home-base domain that receives all reports. */
-export function DomainStep({ onDomainSet }: { onDomainSet: (domainId: number) => void }) {
+export function DomainStep({ onDomainSet, secondary = false, title }: { onDomainSet: (domainId: number) => void; /** The Cloudflare card beside this one carries the primary button. */ secondary?: boolean; title?: string }) {
 	const fieldId = useId();
 	const hintId = useId();
 	// The domain asked for on the website, if any: a prefill the person confirms with Continue.
@@ -113,7 +113,7 @@ export function DomainStep({ onDomainSet }: { onDomainSet: (domainId: number) =>
 	const atLimit = save.isError ? planLimitOf(save.error) : null;
 	const error = validation || (save.isError && !atLimit ? errorMessage(save.error) : '');
 	return (
-		<StepCard title={hosted ? 'Which domain do you send email from?' : "What's your main domain?"} focusHeading={false}>
+		<StepCard title={title ?? (hosted ? 'Which domain do you send email from?' : "What's your main domain?")} focusHeading={false}>
 			<form onSubmit={submit} className="space-y-4" noValidate>
 				{hosted ? (
 					<p className="text-sm text-ink-2">
@@ -182,7 +182,7 @@ export function DomainStep({ onDomainSet }: { onDomainSet: (domainId: number) =>
 				</div>
 				<StepFooter
 					end={
-						<WriteButton type="submit" loading={save.isPending} disabled={!domain.trim()}>
+						<WriteButton type="submit" variant={secondary ? 'secondary' : undefined} loading={save.isPending} disabled={!domain.trim()}>
 							{save.isPending ? 'Setting up…' : 'Continue'}
 						</WriteButton>
 					}

@@ -14,7 +14,7 @@ import { HELP_PRIORITY, TalkToMax } from '../../components/TalkToMax';
 import type { WizardState, WizardStepState } from '../../lib/types';
 import { DkimStep } from './setup/DkimStep';
 import { DmarcStep } from './setup/DmarcStep';
-import { DomainStep } from './setup/DomainStep';
+import { FirstScreen } from './cloudflare/FirstScreen';
 import { setupKeys, useOnboardingStatus, useWizardState } from './setup/hooks';
 import { ReportsStep } from './setup/ReportsStep';
 import { RoutingStep } from './setup/RoutingStep';
@@ -80,7 +80,7 @@ function EntryFlow() {
 
 	return (
 		<Frame title="Let's set up Ready Set Mail" subtitle={`0 of ${hosted ? 4 : 5} steps complete`} skipTo="/" wizard={DEFAULT_WIZARD} current={0}>
-			<DomainStep
+			<FirstScreen
 				onDomainSet={(newId) => {
 					void qc.invalidateQueries({ queryKey: keys.domains });
 					void qc.invalidateQueries({ queryKey: ['auth-status'] });
