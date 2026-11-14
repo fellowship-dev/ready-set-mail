@@ -56,7 +56,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: `/tmp/inbox-agent-settings-${width}.png`, fullPage: true });
+    await page.screenshot({ path: test.info().outputPath(`agent-settings-${width}.png`), fullPage: true });
   }
   await page.getByRole('button', { name: `Revoke ${serviceName}`, exact: true }).click();
   await expect.poll(async () => (await machine.get('/api/resources')).status()).toBe(401);
@@ -67,7 +67,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
   await page.getByRole('button', { name: /^Email health report/ }).click();
   await expect(page.getByText('Inbox placement', { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: '/tmp/inbox-agent-report-mobile.png', fullPage: true });
+  await page.screenshot({ path: test.info().outputPath('agent-report-mobile.png'), fullPage: true });
   const registered = await page.request.post('/oauth/register', { data: {
     client_name: 'Local acceptance client', redirect_uris: ['https://client.example/callback'],
     grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none',
@@ -86,6 +86,6 @@ test('operator enrollment, finite product access, revocation and responsive repo
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: `/tmp/inbox-agent-consent-${width}.png`, fullPage: true });
+    await page.screenshot({ path: test.info().outputPath(`agent-consent-${width}.png`), fullPage: true });
   }
 });

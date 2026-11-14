@@ -3,6 +3,7 @@
 // except inside the one setup link.
 import { describe, expect, it } from 'vitest';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, statSync, readdirSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
@@ -373,6 +374,55 @@ describe('npm run setup (fake Cloudflare)', () => {
     expect((await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
     expect(fake.world.lastExport).toBe(ours);
     expect(fake.world.d1.map(d => d.id)).toEqual([forkDb.id]);
+  });
+
+  it('the database export is private like every other archived file: 0600, created under a 077 umask', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect((await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+    expect(fake.world.exportUmask).toBe(0o077);
+    const dir = join(home, '.config', 'ready-set-mail', 'ready-set-mail');
+    const archive = join(dir, readdirSync(dir).find(f => f.startsWith('removed-'))!);
+    const files = readdirSync(archive);
+    expect(files).toContain('ready-set-mail-d1-export.sql');
+    for (const f of files) expect([f, statSync(join(archive, f)).mode & 0o777]).toEqual([f, 0o600]);
+    expect(statSync(archive).mode & 0o777).toBe(0o700);
+  });
+
+  it('uninstall failures say "Uninstall stopped", installs say "Setup stopped"', async () => {
+    const { repo, home } = sandbox();
+    const fake = createFakeCloudflare({ repoRoot: repo });
+    const none = await run(['--uninstall', '--confirm', 'ready-set-mail'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(none.code).toBe(1);
+    expect(none.out).toMatch(/^Uninstall stopped: No install of "ready-set-mail" is recorded/m);
+    expect(none.out).not.toMatch(/Setup stopped/);
+    const bad = await run([], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+    expect(bad.out).toMatch(/^Setup stopped: Not a terminal/m);
+  });
+
+  it('the throwaway export config is removed on Ctrl-C and on SIGTERM while Wrangler exports', async () => {
+    for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+      const { repo, home } = sandbox();
+      const fake = createFakeCloudflare({ repoRoot: repo });
+      expect((await run(['--yes'], { fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } })).code).toBe(0);
+      const proc = Object.assign(new EventEmitter(), { exit: (c: number) => { exited = c; } });
+      let exited = -1;
+      let configPath = '';
+      let goneAfterSignal = false;
+      fake.world.onExport = (args: string[]) => {
+        configPath = args[args.indexOf('--config') + 1];
+        expect(existsSync(configPath)).toBe(true);
+        proc.emit(signal, signal);
+        goneAfterSignal = !existsSync(configPath);
+      };
+      const d = fakeDeps({ fake, repoRoot: repo, home, env: { CLOUDFLARE_API_TOKEN: TOKEN } });
+      (d.deps as Record<string, unknown>).proc = proc;
+      await main(['--uninstall', '--confirm', 'ready-set-mail'], d.deps);
+      expect(goneAfterSignal).toBe(true);
+      expect(exited).toBe(code);
+      expect(proc.listenerCount('SIGINT') + proc.listenerCount('SIGTERM')).toBe(0);
+    }
   });
 
   it('an empty export stops the uninstall before anything is deleted', async () => {
