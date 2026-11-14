@@ -122,6 +122,28 @@ export interface DmarcEvidence {
   suffixParent?: string | null;
 }
 
+/**
+ * True when `rua` is a usable reports address (one mailbox: no spaces, `;` or `,`). The dashboard, the agent tools and the
+ * stored reports match all use this check, so an address one of them rejects is not counted by another.
+ */
+export function isReportAddress(rua: string | null | undefined): rua is string {
+  return typeof rua === 'string' && /^[^\s@;,]+@[^\s@;,]+$/.test(rua.trim());
+}
+
+/**
+ * A listed parent whose own DMARC record does not cover this name (the parent is a public suffix such as gov.uk, so the
+ * name is its own organization): only when the name was read, has no record of its own and inherits none.
+ */
+export function publicSuffixParent(
+  s: Pick<StoredDmarc, 'dmarc_policy' | 'dmarc_issue' | 'dmarc_inherited_from'> & { dns_checked_at?: number | null } | null | undefined,
+  parent: { domain: string; summary: Pick<StoredDmarc, 'dmarc_policy' | 'dmarc_inherited_from'> | null | undefined } | null | undefined,
+): string | null {
+  if (!s || !parent?.summary || !s.dns_checked_at) return null;
+  const covered = !!s.dmarc_policy || !!s.dmarc_issue || !!s.dmarc_inherited_from;
+  const parentOwn = !!parent.summary.dmarc_policy && !parent.summary.dmarc_inherited_from;
+  return !covered && parentOwn ? parent.domain : null;
+}
+
 /** Pass share at which a p=none name's senders look ready for quarantine, and pct= ready for 100. */
 export const READY = 95;
 /** From p=quarantine the policy wizard offers p=reject at this share. */

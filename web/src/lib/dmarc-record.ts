@@ -1,14 +1,14 @@
 /** Pure DMARC record helpers shared by the setup wizard, the graduation wizard and the domain page. */
 
 import { parseDmarcTags, readDmarcTag } from '@ready-set-mail/dns-checks/dmarc-tags';
+import { isReportAddress } from '@ready-set-mail/dns-checks/dmarc-next-step';
 
 /**
  * True when `rua` is a usable report address. A domain added before a reports domain was configured has an
- * empty one, and a missing field arrives as undefined: neither may end up in a record as `mailto:`.
+ * empty one, and a missing field arrives as undefined: neither may end up in a record as `mailto:`. The one check the
+ * agent tools use too (isReportAddress).
  */
-export function hasReportAddress(rua: string | null | undefined): rua is string {
-	return typeof rua === 'string' && /^[^\s@;,]+@[^\s@;,]+$/.test(rua.trim());
-}
+export const hasReportAddress = isReportAddress;
 
 // The one RFC 7489 tag parser, shared with the server checks and the daily refresh.
 export { parseDmarcTags };

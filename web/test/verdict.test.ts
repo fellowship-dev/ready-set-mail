@@ -307,3 +307,45 @@ describe('slots for hosted help (PR 142)', () => {
 		expect(domainVerdict(domain, summary(), reports(null)).reportsNotConnected).toBe(false);
 	});
 });
+
+describe('follow-ups after review', () => {
+	const sub = { ...domain, domain: 'www.example.org' };
+	const inherited = summary({ ...passing(95), domain: 'www.example.org', dmarc_inherited_from: 'example.org', dmarc_policy: 'quarantine', dmarc_p: 'reject', dmarc_sp: 'quarantine' });
+
+	it('a parent not in this workspace: no link on the overview; the page says so and offers to add it', () => {
+		const v = domainVerdict(sub, inherited, totalsFromSummary(inherited), null, now, { idByName: new Map() });
+		expect(v.next.label).toBe('Set sp=reject at _dmarc.example.org');
+		expect(v.next.to).toBeUndefined();
+		const [a] = domainActions(input({ domain: sub, summary: inherited }));
+		expect(a).toMatchObject({ do: 'Set sp=reject at _dmarc.example.org', to: '/add?domain=example.org', cta: 'Add example.org to this workspace', writes: true });
+		expect(a!.why).toMatch(/example\.org is not in this workspace, so its record cannot be checked or changed here\.$/);
+		// Listed: the parent's page, as before.
+		expect(domainVerdict(sub, inherited, totalsFromSummary(inherited), null, now, { idByName: new Map([['example.org', 9]]) }).next.to).toBe('/domains/9');
+		expect(domainActions(input({ domain: sub, summary: inherited, parentId: 9 }))[0]).toMatchObject({ to: '/domains/9', cta: 'Open example.org' });
+	});
+
+	it('a parent sp= that is not a valid policy: the name follows p=, and a note says so with the fix', () => {
+		const s = summary({ ...passing(99), domain: 'www.example.org', dmarc_inherited_from: 'example.org', dmarc_policy: 'reject', dmarc_p: 'reject', dmarc_sp: null });
+		const ob = onboarding({ dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: 'reject', inherited_from: 'example.org', issue: null, record: 'v=DMARC1; p=reject; sp=bogus' } } });
+		const got = domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: ob }));
+		expect(got.map((a) => `${a.status}:${a.key}`)).toEqual(['verified:done', 'note:parent-sp-invalid']);
+		expect(got[1]).toMatchObject({ do: 'Fix sp=bogus at _dmarc.example.org' });
+		expect(got[1]!.why).toBe("example.org's DMARC record has sp=bogus, which is not a valid policy (none, quarantine or reject), so receivers ignore it and www.example.org follows its p=reject. Set sp= to the policy you mean for its subdomains, or remove the tag.");
+		// A valid sp= gets no note.
+		const okOb = onboarding({ dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: 'reject', inherited_from: 'example.org', issue: null, record: 'v=DMARC1; p=reject; sp=reject' } } });
+		expect(domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: okOb })).some((a) => a.key === 'parent-sp-invalid')).toBe(false);
+	});
+
+	it('M9, both branches: only revoked keys with mail passing (DMARC or DKIM) is a note; without passing reports it is Unknown', () => {
+		const revoked = onboarding({ dkim: { selectors: [{ name: 's._domainkey.example.com', record: 'v=DKIM1; p=' }], source: 'doh' } });
+		const byDmarc = domainActions(input({ onboarding: revoked }));
+		expect(byDmarc.find((a) => a.key === 'dkim-revoked')).toMatchObject({ status: 'note', do: 'Remove the revoked DKIM key when convenient' });
+		expect(byDmarc.find((a) => a.key === 'dkim-revoked')!.why).toMatch(/reported mail passes DMARC, so your provider signs with another selector/);
+		const byDkim = domainActions(input({ onboarding: revoked, summary: summary({ ...passing(80), dkim_total: 1000, dkim_pass: 990 }) }));
+		expect(byDkim.find((a) => a.key === 'dkim-revoked')).toMatchObject({ status: 'note' });
+		expect(byDkim.find((a) => a.key === 'dkim-revoked')!.why).toMatch(/99% of reported mail passes DKIM/);
+		const none = domainActions(input({ onboarding: revoked, summary: summary(passing(null)) }));
+		expect(none.find((a) => a.key === 'dkim-revoked')).toMatchObject({ status: 'unknown', do: 'Ask your email provider which DKIM selector it signs with' });
+		expect(none.some((a) => a.status === 'attention')).toBe(false);
+	});
+});

@@ -2,6 +2,7 @@ import { statusRank, type StatusKind } from '@ready-set-mail/ui';
 import { isDkimRecord } from '@ready-set-mail/dns-checks/dkim';
 import { isRevokedDkimKey } from './dkim';
 import { dkimWildcardSummary } from './dkim-wildcard';
+import { invalidDmarcSp, parseDmarcPolicy } from './dmarc-record';
 import { stepLink, type DmarcStep } from './dmarc-step';
 import type { DnsCheck, OnboardingResult } from './domain-queries';
 import { didNotResolve, SPF_LOOKUP_LIMIT, type HostedLevelInput } from './levels';
@@ -68,6 +69,16 @@ const CTA: Partial<Record<DmarcStep['where'], string>> = {
 
 /** One shared DMARC step as a page action. */
 function fromStep(step: DmarcStep, page: string, parentId: number | undefined, sources: FailingSource[] | null | undefined): DomainAction {
+	// The change belongs on a parent that is not in this workspace: say so and offer to add it, never a link to this page.
+	if (step.where === 'parent' && parentId === undefined && step.at) {
+		return {
+			...fromStep({ ...step, where: 'none' }, page, parentId, sources),
+			why: `${step.why} ${step.at} is not in this workspace, so its record cannot be checked or changed here.`,
+			to: `/add?domain=${encodeURIComponent(step.at)}`,
+			cta: `Add ${step.at} to this workspace`,
+			writes: true,
+		};
+	}
 	const to = step.where === 'recheck' || step.where === 'reload-reports' || step.where === 'self' || step.where === 'connect-reports' ? undefined : stepLink(step, page, parentId);
 	const top = step.key === 'senders' && sources?.length ? ` The largest failing source is ${sources[0]!.org ?? sources[0]!.base_domain ?? sources[0]!.source_ip}.` : '';
 	return {
@@ -119,6 +130,22 @@ export function domainActions(input: ActionInput): DomainAction[] {
 	const dmarc = summary && !dmarcFailed ? dmarcStepsFor(domain, summary, totalsFromSummary(summary), input.hosted ?? null, input.suffixParent ?? null) : null;
 	const done = dmarc?.[0]?.key === 'done' ? fromStep(dmarc[0], page, input.parentId, sources) : null;
 	for (const step of dmarc ?? []) if (step.key !== 'done') out.push(fromStep(step, page, input.parentId, sources));
+
+	// The parent's sp= is present but not a valid policy: receivers ignore it and this name follows the parent's p= (the
+	// policy in force above already does). Say so, with the fix.
+	const eff = onboarding?.dmarc.effective;
+	const badSp = eff?.inherited_from && !dmarcFailed ? invalidDmarcSp(eff.record ?? null) : null;
+	if (eff?.inherited_from && badSp) {
+		const p = parseDmarcPolicy(eff.record ?? null);
+		out.push({
+			key: 'parent-sp-invalid',
+			status: 'note',
+			do: `Fix sp=${badSp} at _dmarc.${eff.inherited_from}`,
+			why: `${eff.inherited_from}'s DMARC record has sp=${badSp}, which is not a valid policy (none, quarantine or reject), so receivers ignore it and ${name} follows its p=${p ?? 'none'}. Set sp= to the policy you mean for its subdomains, or remove the tag.`,
+			who: WHO.dns,
+			...(input.parentId !== undefined ? { to: `/domains/${input.parentId}`, cta: `Open ${eff.inherited_from}` } : {}),
+		});
+	}
 
 	// DKIM. DNS cannot list selectors: none found, or a wildcard answer, is Unknown, never missing. Revoked keys are
 	// judged against the reports: when mail passes, the provider signs with a selector we did not check.
