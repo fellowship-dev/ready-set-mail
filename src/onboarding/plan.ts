@@ -7,6 +7,7 @@ import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
 import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError } from './errors';
+import { writableDomains } from './domains';
 
 export interface PlanWrite {
   id: string;
@@ -64,7 +65,9 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
   const rua = reportsDomain ? `rua@${reportsDomain}` : null;
   const resolver = resolverFor(tenant.env);
 
-  const rows = (await Promise.all([...new Set(domainIds)].map(id => tenant.scope.domains.getById(id)))).filter(<T>(r: T | null | undefined): r is T => !!r);
+  const rows = await writableDomains(tenant, domainIds);
+  // Nothing verified in this workspace to act on (pending claims, other workspaces' ids, unknown ids): no writes of any kind.
+  if (rows.length === 0) return { plan: { plan_id: await sha256Hex('[]'), steps: [{ key: 'dmarc', writes: [], satisfied: true }], not_written: [] }, exec };
   let selectedBase = false;
 
   let reportsCf: { cf: CfClient; zoneId: string; zoneName: string } | null = null;

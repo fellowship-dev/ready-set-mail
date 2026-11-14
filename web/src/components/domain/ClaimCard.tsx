@@ -6,6 +6,9 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import type { Domain, DomainClaim } from '../../lib/types';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { PlanLimitNotice, planLimitOf, type PlanLimit } from '../PlanLimitNotice';
+import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
+import { useCfConnections, usableConnection } from '../../lib/cloudflare';
+import { useSession } from '../../lib/session';
 import { ClaimPreview } from './ClaimPreview';
 import { CopyField } from './CopyField';
 
@@ -68,6 +71,10 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 		onError: (e) => setError(errorMessage(e)),
 	});
 	const lost = claim.status === 'lost';
+	// A Cloudflare connection that manages the domain's zone proves ownership by itself (Verify checks it): offer it before the TXT record.
+	const session = useSession();
+	const conns = useCfConnections(session.canWrite && canWrite && !lost);
+	const offerConnect = !lost && !!conns.data && !usableConnection(conns.data) && (conns.data.oauth.available || conns.data.token_paste);
 
 	return (
 		<div className="space-y-4 rounded-lg border border-line p-4" data-testid={`claim-${claim.id}`}>
@@ -86,6 +93,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 					<p className="text-sm text-ink-2">
 						Prove you own <strong>{claim.domain}</strong> by adding this DNS record where you manage it, then press Verify. DNS changes can take a few minutes to propagate.
 					</p>
+					{offerConnect ? <ConnectCloudflareLink>Connect Cloudflare to verify this for you</ConnectCloudflareLink> : null}
 					<div className="grid gap-3 sm:grid-cols-3">
 						<CopyField label="Type" value="TXT" />
 						<CopyField label="Name" value={claim.txt_name} />

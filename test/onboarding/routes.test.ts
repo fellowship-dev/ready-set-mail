@@ -125,4 +125,51 @@ describe('onboarding routes', () => {
     expect(r.results).toHaveLength(1);
     expect(r.results[0].domain_id).toBe(1);
   });
+
+  describe('hosted: only verified domains of the workspace get writes', () => {
+    const none = (p: any) => p.steps.flatMap((s: any) => s.writes);
+
+    it('a pending claim id yields no plan, no writes and no first check', async () => {
+      const w = await world();
+      await connected(w);
+      let claimId = 0;
+      for (const d of ['pend-one.org', 'pend-two.org', 'pend-three.org', 'pend-four.org', 'pend-five.org']) {
+        const r = await json(await w.api(w.A.token, 'POST', '/api/domains', { domain: d }));
+        expect(r.pending).toBe(true);
+        claimId = r.claim.id;
+      }
+      expect(claimId).toBeGreaterThan(3); // beyond every domain id, so it names no domain
+      expect(w.rows('SELECT id FROM domains WHERE workspace_id = ?', w.A.ws).map(r => r.id)).not.toContain(claimId);
+      const before = JSON.stringify([...w.cf.records.entries()]);
+
+      const p = await plan(w, [claimId]);
+      expect(none(p)).toEqual([]);
+      const res = await w.api(w.A.token, 'POST', '/api/onboarding/dns-apply', { domain_ids: [claimId], step: 'dmarc', plan_id: p.plan_id });
+      expect(res.status).toBe(200);
+      expect((await json(res)).results).toEqual([]);
+      expect((await json(await w.api(w.A.token, 'POST', '/api/onboarding/first-check', { domain_ids: [claimId] }))).results).toEqual([]);
+      expect(JSON.stringify([...w.cf.records.entries()])).toBe(before);
+      expect(w.rows(`SELECT 1 FROM audit_log WHERE action LIKE 'dns.%'`)).toEqual([]);
+    });
+
+    it('a subdomain admitted through a parent that left the workspace is refused; a proven one is planned', async () => {
+      const w = await world();
+      await connected(w);
+      w.db.sqlite.prepare(`INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (4, ?, 'x.a-corp.com', 'rua@x', 'parent')`).run(w.A.ws);
+      expect(none(await plan(w, [4]))).toEqual([]);
+      w.db.sqlite.prepare(`UPDATE domains SET verified_via = 'cloudflare' WHERE id = 1`).run();
+      w.db.sqlite.prepare('UPDATE domains SET cf_connection_id = (SELECT cf_connection_id FROM domains WHERE id = 1) WHERE id = 4').run();
+      const ok = await plan(w, [4]);
+      expect(none(await plan(w, [4])).map((x: any) => x.name)).toEqual(['_dmarc.x.a-corp.com']);
+    });
+
+    it('mixed ids: only the verified domain of the caller is written', async () => {
+      const w = await world();
+      await connected(w);
+      const p = await plan(w, [1, 3, 999]);
+      expect(none(p).map((x: any) => x.name)).toEqual(['_dmarc.a-corp.com']);
+      const fc = await json(await w.api(w.A.token, 'POST', '/api/onboarding/first-check', { domain_ids: [1, 3, 999] }));
+      expect(fc.results.map((x: any) => x.domain_id)).toEqual([1]);
+    });
+  });
 });

@@ -10,6 +10,7 @@ import { resolverFor } from '../dns/resolver';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { recordFirstDnsCheck } from '../domains/first-check';
+import { writableDomains } from './domains';
 import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { failureCode, plainCloudflareError } from './errors';
 
@@ -180,9 +181,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const input = await domainIds(request);
     if (input instanceof Response) return input;
     const results: { domain_id: number; stored: boolean }[] = [];
-    for (const id of [...new Set(input.ids)]) {
-      const d = await tenant.scope.domains.getById(id);
-      if (!d) continue;
+    for (const d of await writableDomains(tenant, input.ids)) {
+      const id = d.id;
       results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain, { resolver: resolverFor(tenant.env) })) !== null });
     }
     return json({ results });

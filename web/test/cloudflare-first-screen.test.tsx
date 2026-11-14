@@ -94,4 +94,37 @@ describe('first screen: Cloudflare first', () => {
 		expect(screen.queryByRole('heading', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
 		expect(calls.some((c) => c.path === '/api/cloudflare/connections')).toBe(false);
 	});
+
+	it('hosted with a pasted-token path shows the two-path chooser', async () => {
+		render(offer(), { hosted: true });
+		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: "I'll add DNS records myself" })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		expect(screen.queryByText(/TOKEN_ENCRYPTION_KEY/)).not.toBeInTheDocument();
+	});
+
+	it('hosted with OAuth shows the chooser', async () => {
+		render(offer({ oauth: { available: true, scopes: [], via_relay: false } }), { hosted: true });
+		expect(await screen.findByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+	});
+
+	it('hosted without an encryption key never shows the self-host command, whatever else is reported', async () => {
+		render(offer({ encryption_configured: false, token_paste: true }), { hosted: true });
+		expect(await screen.findByRole('heading', { name: 'Which domain do you send email from?' })).toBeInTheDocument();
+		expect(screen.queryByText(/TOKEN_ENCRYPTION_KEY|wrangler/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
+	});
+
+	it('hosted: a waiting claim offers to connect Cloudflare to verify it', async () => {
+		renderApp(<Page />, {
+			route: '/setup',
+			status: { mode: 'saas', has_domain: false },
+			routes: {
+				...base,
+				'GET /api/cloudflare/connections': offer(),
+				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
+			},
+		});
+		expect(await screen.findByRole('link', { name: 'Connect Cloudflare to verify this for you' })).toBeInTheDocument();
+	});
 });

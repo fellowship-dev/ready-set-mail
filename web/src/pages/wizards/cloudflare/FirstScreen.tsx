@@ -33,6 +33,8 @@ export function FirstScreen({ onDomainSet }: { onDomainSet: (domainId: number) =
 	if (hosted && (claims.data ?? []).some((c) => c.status === 'pending')) return plain;
 
 	const data = conns.data;
+	// Hosted: a customer cannot set the encryption key, so without it there is no Cloudflare path to offer.
+	if (hosted && !data.encryption_configured) return plain;
 	const usable = usableConnection(data);
 	const workspace = me?.workspace_id ?? null;
 	const toWizard = (step: 'connect' | 'domains') => {
