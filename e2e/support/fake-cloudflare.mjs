@@ -27,7 +27,7 @@ function hex(seed) { return createHash('sha256').update(seed).digest('hex').slic
 
 function freshState() {
   let seq = 0;
-  const zones = ZONE_NAMES.map(name => ({ id: hex(`zone:${name}`), name, status: 'active', account: { id: ACCOUNT.id, name: ACCOUNT.name } }));
+  const zones = ZONE_NAMES.map(name => ({ id: hex(`zone:${name}`), name, status: 'active', type: 'full', account: { id: ACCOUNT.id, name: ACCOUNT.name } }));
   const seeded = [
     ['brightwave-mail.com', { type: 'TXT', name: '_dmarc.brightwave-mail.com', content: 'v=DMARC1; p=quarantine; pct=50' }],
     ['quietfield.net', { type: 'MX', name: 'quietfield.net', content: 'mail.quietfield.net', priority: 10 }],
@@ -97,7 +97,7 @@ export function createFakeCloudflare() {
       const reply = body => { res.writeHead(200, { 'Content-Type': 'application/dns-json' }); res.end(JSON.stringify(body)); };
       if (!zone || !CODES[type]) return reply({ Status: zone ? 0 : 3, Question: [{ name, type: CODES[type] ?? 1 }] });
       const rows = type === 'NS' && name === zone.name
-        ? [{ data: 'ns1.fake-dns.invalid.' }, { data: 'ns2.fake-dns.invalid.' }]
+        ? [{ data: 'ada.ns.cloudflare.com.' }, { data: 'bob.ns.cloudflare.com.' }]
         : st.records.get(zone.id).filter(r => r.name === name && r.type === type).map(r => ({
             data: type === 'TXT' ? JSON.stringify(stripQuotes(r.content)) : type === 'MX' ? `${r.priority ?? 0} ${r.content}.` : r.type === 'CNAME' || type === 'NS' ? `${r.content}.` : r.content,
           }));
@@ -127,7 +127,7 @@ export function createFakeCloudflare() {
     }
 
     let m = path.match(/^\/zones\/([^/]+)$/);
-    if (m && method === 'GET') { const z = zoneById(m[1]); return z ? ok(z) : notFound('Zone not found'); }
+    if (m && method === 'GET') { const z = zoneById(m[1]); return z ? ok({ ...z, name_servers: st.nsOverrides.get(z.name) ?? ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'] }) : notFound('Zone not found'); }
 
     // Account level: email routing destination addresses, Workers subdomain.
     m = path.match(/^\/accounts\/([^/]+)(\/.*)?$/);

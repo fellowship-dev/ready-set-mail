@@ -360,7 +360,7 @@ export class CfClient {
     return hit;
   }
 
-  getZone(zoneId: string): Promise<{ id: string; name: string; account?: { id: string } }> {
+  getZone(zoneId: string): Promise<{ id: string; name: string; status?: string; type?: string; name_servers?: string[]; account?: { id: string } }> {
     return this.request('GET', `/zones/${zoneId}`);
   }
 
