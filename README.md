@@ -175,7 +175,7 @@ npm run test:e2e        # Playwright against http://127.0.0.1:8787 (start `npm r
 
 Agent authorization requires a canonical HTTPS origin even for local protocol acceptance. Keep local fixture/protocol proof distinct from deployed desktop-client and live Google acceptance; see [acceptance boundaries](docs/agent-operations.md#owner-recovery-and-acceptance-boundaries).
 
-`test:e2e` targets local `wrangler dev` by default; set `E2E_BASE_URL` to point elsewhere. It is not part of CI. There is no Workers-runtime (`@cloudflare/vitest-pool-workers`) suite yet — the old `test:workers` script just re-ran the node tests, so it was removed. Add a pool-workers config alongside the first real Worker integration test.
+`test:e2e` targets local `wrangler dev` by default; set `E2E_BASE_URL` to point elsewhere. It is not part of CI. To run the whole suite in one step in a devbox or Linux CI (fresh local database, private first-owner proof, `wrangler dev`, then Playwright), use `scripts/e2e-devbox.sh` (optionally followed by spec files); it refuses to run on macOS. There is no Workers-runtime (`@cloudflare/vitest-pool-workers`) suite yet — the old `test:workers` script just re-ran the node tests, so it was removed. Add a pool-workers config alongside the first real Worker integration test.
 
 ---
 

@@ -105,6 +105,8 @@ export function createFakeCloudflare({ accounts = [ACCOUNT], subdomain = 'exampl
       const { id, db } = resolveD1(cfg, args[2]);
       if (!db) return { code: 1, output: `Executing on remote database ${args[2]} (${id})\nCouldn't find DB with id ${id}\n` };
       const out = args[args.indexOf('--output') + 1];
+      world.exportUmask = opts.umask;
+      if (world.onExport) world.onExport(args);
       writeFileSync(out, world.emptyExport ? '' : `-- export of ${db.name} (${db.id})\n`);
       world.lastExport = db.id;
       return { code: 0, output: `Executing on remote database ${db.name} (${db.id})\nexported to ${out}\n` };
