@@ -3,10 +3,11 @@
 **Short version:** run `npm run migrate` **before** the new Worker serves traffic. `npm run deploy` does this for you.
 
 ```sh
-git pull && npm install
-npm run migrate        # wrangler d1 migrations apply DB --remote
-npm run deploy         # also runs the migrate step first
+git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, then deploys
 ```
+
+`npm run migrate` on its own runs `wrangler d1 migrations apply DB --remote` against the installation in `wrangler.local.jsonc`
+(written by `npm run setup`; see [docs/self-hosting.md](../../docs/self-hosting.md)).
 
 Local dev database: `npm run migrate:local`.
 
@@ -35,12 +36,24 @@ Migrations `0006_access_grants.sql` and `0007_metrics.sql` are additive. Apply t
 
 Existing owners sign in and issue replacement finite product/domain/action grants and one-time `ias_…` credentials through Settings. Old `ia_…` keys and `API_KEY` environment authority no longer authenticate. Test each integration's permitted report and sibling-resource denial before declaring the conversion complete. See [agent operations](../../docs/agent-operations.md#upgrade-from-broad-prelaunch-keys) for namespace/origin setup, private bootstrap custody and rotation. Do not use the historical pre-baseline boundary below as a reason to recreate a current database.
 
-## History was reset before the first release
+## Installs from v1.2.0 and earlier cannot be upgraded in place
 
-The migration history was **squashed into a single baseline before the first release**, and the tenant concept was renamed
-from "account" to **workspace** in the same change (`workspaces`, `workspace_id`, `ws_default`). There were no installs
-to carry forward, so there is no upgrade path from the pre-release schemas and no adoption/repair machinery: a database
-created before the reset must be recreated (`wrangler d1 export` a backup if you need its rows, then migrate an empty database).
+On 2026-10-22 the migration history was **squashed into a single baseline** (`migrations/0001_baseline.sql`), and the tenant
+concept was renamed from "account" to **workspace** in the same change (`workspaces`, `workspace_id`, `ws_default`). The
+v1.2.0 release (March 2026) and earlier recorded different migration files in `d1_migrations` (`0001_initial.sql` to
+`0004_monitor_subscriptions.sql`) and changed further tables from the Worker at runtime (`src/db/migrate.ts`, since removed).
+Running `npm run migrate` against such a database would try to apply the new baseline on top of the old tables and fail; there
+is no adoption or repair step that converts one into the other.
+
+To move a v1.x installation to the current release:
+
+1. Keep the old Worker running and export its database: `npx wrangler d1 export <old database name> --remote --output v1-backup.sql`.
+   Keep that file: it is the only copy of the old report history once you remove the old installation.
+2. Install the current release next to it under a new name: `npm run setup -- --name <new name>`.
+3. Become the owner of the new instance, add your domains again, and point each domain's DMARC `rua` at the new reports address.
+4. When reports arrive at the new instance, remove the old Worker and database.
+
+Report history from v1.x is not imported into the new database automatically; the export keeps it readable with any SQLite tool.
 
 `migrations/0001_baseline.sql` creates the complete original schema (later files are additive; see each file) and the implicit workspace `ws_default`.
 
@@ -60,7 +73,7 @@ Prefer additive changes (new tables, nullable or defaulted columns) so the old W
 
 ## Rollback
 
-Take a backup first: `wrangler d1 export ready-set-mail --remote --output backup.sql`. The old Worker may not run against a newer
+Take a backup first: `npm run wrangler -- d1 export DB --remote --output backup.sql`. The old Worker may not run against a newer
 schema, so roll back by restoring the backup together with the previous Worker version.
 
 ## Requirements

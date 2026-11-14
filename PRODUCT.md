@@ -23,7 +23,7 @@ Hosted: sign up, prove you own a domain and see from live DNS where it stands an
 
 ## Operating Context
 - Hosted (primary): sign-up, email verification, domain ownership proof (a DNS TXT record), then live DNS checks, levels and records to copy. DMARC report intake is not connected yet, so every report view says "Reports not connected yet" and nothing that needs reports (pass rates, failing senders, readiness to enforce) is claimed. The setup wizard's fifth step is "Reports" instead of "Routing".
-- Self-hosted deployment (one-click Deploy to Cloudflare, CLI, or manual GitHub Actions), then first-owner setup with an installer-held proof. The installer proof is self-host only: the hosted service never asks for one.
+- Self-hosted deployment (`npm run setup` from a clone, or the manual path in docs/self-hosting.md), then first-owner setup through the installer's setup link, which carries an installer-held proof. The installer proof is self-host only: the hosted service never asks for one.
 - Self-host: reports arrive by email at `rua@reports.<domain>`; arrival timing and coverage vary, so the dashboard states source windows and missing evidence.
 - DNS records are added at Cloudflare (applied with one click) or at an external DNS provider (the dashboard shows the record to copy).
 - One login may belong to several workspaces, each with its own domains, reports, members and roles.
