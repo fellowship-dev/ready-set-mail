@@ -13,7 +13,7 @@ const TABLE = [
 	{ n: 8, level: 'near', status: 'warn', severity: 'warning', finding: 'warn', broken: false, advice: /close to the lookup limit/ },
 	{ n: 9, level: 'near', status: 'warn', severity: 'warning', finding: 'warn', broken: false, advice: /close to the lookup limit/ },
 	{ n: 10, level: 'at', status: 'warn', severity: 'warning', finding: 'warn', broken: false, advice: /at the lookup limit\. At the limit, not over it, so SPF still works/ },
-	{ n: 11, level: 'over', status: 'fail', severity: 'error', finding: 'fail', broken: true, advice: /over the lookup limit\. Receivers stop at 10 lookups/ },
+	{ n: 11, level: 'over', status: 'fail', severity: 'error', finding: 'fail', broken: true, advice: /^SPF passed for this message, but your record needs 11 DNS lookups, more than the limit of 10\. Receivers that enforce the limit treat the record as a permanent error/ },
 ] as const;
 
 const summary = (n: number) => ({ dmarc_policy: 'reject', spf_record: 'v=spf1 ~all', dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, dns_checked_at: 1, spf_lookup_count: n, dmarc_pct: 100 });

@@ -1,7 +1,7 @@
 import { STATUS_RANK, statusRank, type Level, type StatusKind } from '@ready-set-mail/ui';
 import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { hasReportAddress } from './dmarc-record';
-import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep } from './dmarc-step';
+import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, type HostedLevelInput } from './levels';
@@ -119,11 +119,11 @@ export function domainVerdict(
 		/** A listed parent whose own record does not cover this name (a public suffix): see suffixParentOf. */
 		suffixParent?: string | null;
 		/** False: this workspace cannot connect reports (hosted plan), so connecting is no one's next step. */
-		reportsAvailable?: boolean;
+		reportsRefusal?: ReportsRefusal | null;
 	} = {},
 ): DomainVerdict {
 	const intakeOff = !!opts.hostedMode && reportsNotConnected(domain);
-	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null, opts.reportsAvailable);
+	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null, opts.reportsRefusal);
 	const about = `about ${domain.domain}`;
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
@@ -140,7 +140,7 @@ function coreVerdict(
 	intakeOff: boolean,
 	idByName: ReadonlyMap<string, number> | undefined,
 	suffixParent: string | null,
-	reportsAvailable?: boolean,
+	reportsRefusal?: ReportsRefusal | null,
 ): Core {
 	const page = `/domains/${domain.id}`;
 	const name = domain.domain;
@@ -239,7 +239,7 @@ function coreVerdict(
 		return forceFor(name, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
 	}
 	function dmarcNext(): Pick<Core, 'status' | 'next'> {
-		const step = dmarcStepsFor(domain, s, reports, hosted, suffixParent, null, reportsAvailable)[0];
+		const step = dmarcStepsFor(domain, s, reports, hosted, suffixParent, null, reportsRefusal)[0];
 		if (!step) return { status: 'unknown', next: { label: 'Wait for the report totals to load', who: WHO.nobody } };
 		const parentId = sum.dmarc_inherited_from ? idByName?.get(sum.dmarc_inherited_from) : undefined;
 		return { status: step.status, next: { label: step.do, who: WHO[step.who], to: stepLink(step, page, parentId) } };
@@ -258,12 +258,12 @@ export function dmarcStepsFor(
 	suffixParent: string | null = null,
 	/** The governing record's adkim=/aspf= from a live read (the domain page has one; the overview does not). */
 	alignment?: { adkim?: 'r' | 's'; aspf?: 'r' | 's' } | null,
-	/** False: this workspace cannot connect reports, so connecting is not a step (see DmarcEvidence.reportsAvailable). */
-	reportsAvailable?: boolean,
+	/** Why reports cannot be connected for this domain (see DmarcEvidence.reportsRefusal); null: they can. */
+	reportsRefusal?: ReportsRefusal | null,
 ): DmarcStep[] {
 	const sum = hosted ? applyHostedInputs(s, hosted).summary : s;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy: sum.dmarc_policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsAvailable }));
+	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsRefusal }));
 }
 
 /**
@@ -276,13 +276,13 @@ export function nextPolicyGate(
 	s: DomainCheckSummary,
 	hosted: HostedLevelInput | null,
 	policy: 'none' | 'quarantine',
-	reportsAvailable?: boolean,
+	reportsRefusal?: ReportsRefusal | null,
 ): { ready: true } | { ready: false; step: DmarcStep } | undefined {
 	// The wizard tightens the domain's own record from the policy it shows (the live one, or the one just applied).
 	const own: DomainCheckSummary = { ...s, dmarc_policy: policy, dmarc_p: policy, dmarc_inherited_from: null, dmarc_issue: null };
 	const sum = hosted ? { ...applyHostedInputs(own, hosted).summary, dmarc_policy: policy } : own;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsAvailable }));
+	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsRefusal }));
 	if (steps.length === 0) return undefined;
 	if (steps.some((x) => x.key === 'tighten' && x.status === 'approval')) return { ready: true };
 	return { ready: false, step: steps[0]! };

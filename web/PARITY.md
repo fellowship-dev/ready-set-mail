@@ -174,13 +174,11 @@ Setup-incomplete banner:
 Summary:
 - [x] Four stats for selected window: Pass rate % (or dash), Total, Passed, Failed (sums of daily stats).
 
-Guidance card (`getGuidance`, pure client logic on policy + pass rate + hasData + live record):
-- [x] No data: grey "Waiting for first reports" text + DNS hint.
-- [x] policy none: amber "Monitoring only - not enforcing" with button "Upgrade to quarantine ->" -> `#/domains/:id/dmarc-wizard`.
-- [x] quarantine: pass rate >= 90 => blue "Ready to enforce" with "Upgrade to reject ->" button; else amber "Not ready for reject yet".
-- [x] reject: pass rate < 70 => red "Legitimate mail may be blocked"; else green "Fully protected".
-- [x] When total==0 and dns-check done: italic "DNS record detected - reports will start arriving soon." or "DNS record not found yet..." warning (based on `found && has_rua`).
-- [x] Note: the computed recommended record (`buildRecommendedRecord`) is built but only used for the (now link-only) action; DNS value is not displayed here.
+DMARC step card (the shared rule, `dmarcStepsFor` -> packages/dns-checks/src/dmarc-next-step.ts; `getGuidance` is removed):
+- [x] The first DMARC step, the same "Do this next" and the overview row give: title = the step, body = its why; a policy move links to `#/domains/:id/dmarc-wizard` ("Review the change") for writers.
+- [x] The rule's "done" step is titled "DMARC needs no change": it speaks for DMARC only, never for the whole domain.
+- [x] Where reports cannot be connected for the domain, the step follows the server's per-domain refusal: "Check each service that sends as <domain>, then move to p=<next>" (operator-only or no intake), or the refusal's own step (prove ownership, hosted records).
+- [x] When nothing was counted and nothing arrived (`emptyReportsState` is `none`): what DNS shows about whether reports can arrive ("DNS record detected. Reports will start arriving soon." / "not applied as published" / "DNS record not found yet…").
 
 Rollout progress (RFC 9989 staged rollout; shown only if `rollout.current_policy` is quarantine or reject):
 - [x] Shows "Rollout progress", policy label + " (testing, t=y)" if `current_testing`, "Behind schedule" pill, progress bar `(current_step_index+1)/total_steps`, "Step X of Y" and "Next: <policy>[ (testing, t=y)]" or "Complete".

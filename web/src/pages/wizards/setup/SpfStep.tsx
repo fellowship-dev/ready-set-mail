@@ -10,7 +10,7 @@ import { StepCard } from '../../../components/wizard/StepCard';
 import { StepFooter, StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
 import { SPF_PROVIDERS, detectProviders } from '@ready-set-mail/dns-checks/email-service-providers';
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { RadioCard } from '../../../components/wizard/RadioCard';
 import { useDebouncedValue, setupKeys } from './hooks';
@@ -86,6 +86,8 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 
 	const preview = selected.length > 0 || otherMechanisms.length > 0 ? buildSpfRecord(selected, qualifier, otherMechanisms) : null;
 	const hasChanges = preview !== spf.record;
+	// The one SPF record rule (validateSpfRecord): nothing is offered to apply or copy that receivers would treat as broken.
+	const invalid = preview ? validateSpfRecord(preview) : null;
 
 	// The real count walks nested includes server-side; wait for typing to settle, and skip the call when the record is unchanged.
 	const debounced = useDebouncedValue(preview, 400);
@@ -212,7 +214,13 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 				<p className="text-sm text-ink-2">Your SPF record is healthy. Ready Set Mail checks it daily and warns you if it drifts toward the lookup limit.</p>
 			) : null}
 
-			{hasChanges && preview ? (
+			{hasChanges && preview && invalid ? (
+				<Alert variant="warning" title="This record cannot be published">
+					{invalid}
+				</Alert>
+			) : null}
+
+			{hasChanges && preview && !invalid ? (
 				<div className="space-y-2">
 					<div className="flex flex-col gap-2 sm:flex-row">
 						{cf_available ? (

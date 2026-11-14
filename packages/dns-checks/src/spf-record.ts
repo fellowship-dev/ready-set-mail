@@ -33,6 +33,26 @@ export function buildSpfRecord(includes: string[], qualifier: SpfQualifier | nul
 }
 
 /**
+ * Why an SPF record must not be published, in plain words, or null when it may. A record ends in exactly one `all`
+ * mechanism, or, with no `all`, in exactly one `redirect=` (RFC 7208 sections 5.1 and 6.1: with an `all` present the
+ * redirect is ignored). More than one of either is refused, and so are `+all` and `?all`, which let any server send.
+ * The setup wizard checks a proposal with this before offering Apply; the server's apply route can use the same function.
+ */
+export function validateSpfRecord(record: string): string | null {
+	const terms = record.trim().split(/\s+/).filter(Boolean);
+	if (terms[0]?.toLowerCase() !== 'v=spf1') return 'An SPF record starts with v=spf1.';
+	const alls = terms.filter((t) => /^[+?~-]?all$/i.test(t));
+	const redirects = terms.filter(isRedirect);
+	if (alls.length > 1) return 'The record has more than one all mechanism, so receivers treat it as an error.';
+	if (redirects.length > 1) return 'The record has more than one redirect=, so receivers treat it as an error.';
+	const all = alls[0];
+	if (all && /^[+?]/.test(all)) return `${all} lets any server send as this domain. End the record with ~all or -all.`;
+	if (!all && redirects.length === 0) return 'The record must end with ~all or -all, or with a redirect= to another record.';
+	if (!all && redirects[0]!.length <= 'redirect='.length) return 'redirect= needs the domain whose record applies.';
+	return null;
+}
+
+/**
  * The `all` a rebuilt record keeps: `-all` stays `-all` (never weakened), anything else becomes the softfail default
  * (`+all` and `?all` let anyone send). Null for a record that ends in `redirect=` without an `all`: it is complete, and
  * judged by the record it redirects to.

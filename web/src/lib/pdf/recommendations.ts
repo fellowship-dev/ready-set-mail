@@ -1,5 +1,6 @@
 import type { StatusKind } from '@ready-set-mail/ui';
 import type { HostedLevelInput } from '../levels';
+import type { ReportsRefusal } from '../dmarc-step';
 import type { Domain, DomainCheckSummary } from '../types';
 import { domainVerdict, totalsFromSummary, type DomainVerdict } from '../verdict';
 
@@ -16,7 +17,7 @@ export interface PdfDomainContext {
 	hostedMode?: boolean;
 	idByName?: ReadonlyMap<string, number>;
 	suffixParent?: string | null;
-	reportsAvailable?: boolean;
+	reportsRefusal?: ReportsRefusal | null;
 }
 
 const SEVERITY: Record<StatusKind, Recommendation['severity'] | null> = {
@@ -37,7 +38,7 @@ function passRate(pass: number, total: number): number | null {
 
 /** The domain's verdict, exactly as the overview row computes it (the shared DMARC rule, report visibility included). */
 export function pdfVerdict(summary: DomainCheckSummary, ctx: PdfDomainContext): DomainVerdict {
-	return domainVerdict(ctx.domain, summary, totalsFromSummary(summary), ctx.hosted, undefined, { hostedMode: ctx.hostedMode, idByName: ctx.idByName, suffixParent: ctx.suffixParent ?? null, reportsAvailable: ctx.reportsAvailable });
+	return domainVerdict(ctx.domain, summary, totalsFromSummary(summary), ctx.hosted, undefined, { hostedMode: ctx.hostedMode, idByName: ctx.idByName, suffixParent: ctx.suffixParent ?? null, reportsRefusal: ctx.reportsRefusal });
 }
 
 export function getRecommendations(summary: DomainCheckSummary, ctx: PdfDomainContext): Recommendation[] {

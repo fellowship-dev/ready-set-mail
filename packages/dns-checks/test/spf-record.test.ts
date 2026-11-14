@@ -1,8 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms } from "../src/spf-record";
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, validateSpfRecord } from "../src/spf-record";
 
 /** What the wizard proposes from a live record with `add` selected on top of its includes. */
 const propose = (record: string, add: string[] = []) => buildSpfRecord([...new Set([...extractIncludes(record), ...add])], existingQualifier(record), extractOtherMechanisms(record));
+
+describe("validateSpfRecord: one all, or one redirect= and no all", () => {
+  it.each([
+    ["v=spf1 include:mail.test -all", null],
+    ["v=spf1 include:mail.test ~all", null],
+    ["v=spf1 redirect=_spf.x.test", null],
+    ["v=spf1 include:mail.test redirect=_spf.x.test", null],
+    ["v=spf1 include:a.test -all redirect=x.test", null],
+  ])("accepts %s", (r, want) => expect(validateSpfRecord(r)).toBe(want));
+  it.each([
+    ["v=spf1 include:allmail.com", /must end with ~all or -all, or with a redirect=/],
+    ["v=spf1 include:mail.test", /must end with/],
+    ["v=spf1 include:a.test +all", /\+all lets any server send/],
+    ["v=spf1 include:a.test ?all", /\?all lets any server send/],
+    ["v=spf1 ~all -all", /more than one all/],
+    ["v=spf1 redirect=a.test redirect=b.test", /more than one redirect=/],
+    ["v=spf1 redirect=", /redirect= needs the domain/],
+    ["spf1 -all", /starts with v=spf1/],
+  ])("refuses %s", (r, why) => expect(validateSpfRecord(r)).toMatch(why));
+  it("every record the builder proposes from a valid live record is valid", () => {
+    for (const live of ["v=spf1 redirect=icann.org", "v=spf1 include:a.test -all", "v=spf1 include:a.test +all", "v=spf1 include:a.test", "v=spf1 mx redirect=x.test"]) expect(validateSpfRecord(propose(live, ["b.test"]))).toBeNull();
+  });
+});
 
 describe("buildSpfRecord: never voids a redirect, never weakens -all (RFC 7208 section 6.1)", () => {
   it("redirect only: unchanged, no all added", () => {

@@ -57,7 +57,7 @@ const sub = (parent: string, p: string, sp: string | null, pct: number, rua: 0 |
 export const TRUTH: Row[] = [
 	// Own record
 	{ name: 'reject, pct=100, reports pass', sum: passing(99), status: 'verified', level: 2, sentence: /example\.com's own DMARC record sets p=reject, so mail from example\.com that fails DMARC is rejected\.$/, next: 'Nothing to do' },
-	{ name: 'reject, no reports yet', sum: passing(null), status: 'verified', level: 2, sentence: /is rejected\.$/, next: 'Nothing to do', why: /Nothing in public DNS needs a change/ },
+	{ name: 'reject, no reports yet', sum: passing(null), status: 'verified', level: 2, sentence: /is rejected\.$/, next: 'Nothing to do', why: /Nothing about DMARC in public DNS needs a change/ },
 	{ name: 'reject, pct=10, reports pass', sum: { ...passing(99), dmarc_pct: 10 }, status: 'approval', level: 1, sentence: /sets p=reject at pct=10, so only 10% of mail/, next: 'Raise pct from 10 to 100' },
 	{ name: 'reject, pct=10, no reports', sum: { ...passing(null), dmarc_pct: 10 }, status: 'gathering', level: 1, sentence: /pct=10/, next: 'Wait for DMARC reports before raising pct to 100' },
 	{ name: 'reject, own sp=none, reports pass: one rung for subdomains', sum: { ...passing(99), dmarc_sp: 'none' }, status: 'approval', level: 2, sentence: /p=reject/, next: 'Set sp=quarantine to enforce subdomains too' },
@@ -330,7 +330,8 @@ describe('follow-ups after review', () => {
 		const got = domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: ob }));
 		expect(got.map((a) => `${a.status}:${a.key}`)).toEqual(['verified:done', 'note:parent-sp-invalid']);
 		expect(got[1]).toMatchObject({ do: 'Fix sp=bogus at _dmarc.example.org' });
-		expect(got[1]!.why).toBe("example.org's DMARC record has sp=bogus, which is not a valid policy (none, quarantine or reject), so receivers ignore it and www.example.org follows its p=reject. Set sp= to the policy you mean for its subdomains, or remove the tag.");
+		// RFC 7489 section 6.6.3: an invalid sp= means the record is not applied as written.
+		expect(got[1]!.why).toBe("example.org's DMARC record has sp=bogus, which is not a valid policy (none, quarantine or reject), so receivers do not apply that record as written: with a valid rua= they treat it as p=none, without one they ignore it. Neither example.org nor www.example.org gets its p=reject. Set sp= to the policy you mean for its subdomains, or remove the tag.");
 		// A valid sp= gets no note.
 		const okOb = onboarding({ dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: 'reject', inherited_from: 'example.org', issue: null, record: 'v=DMARC1; p=reject; sp=reject' } } });
 		expect(domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: okOb })).some((a) => a.key === 'parent-sp-invalid')).toBe(false);

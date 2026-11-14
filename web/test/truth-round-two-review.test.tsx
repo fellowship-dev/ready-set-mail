@@ -144,7 +144,8 @@ describe('review item 7: the domain page says an invalid sp= is not valid', () =
 			},
 		);
 		expect(await screen.findByText('sp= is not a valid policy')).toBeInTheDocument();
-		expect(screen.getByText(/which is not none, quarantine or reject, so it is ignored: subdomains without their own record inherit p=reject/)).toBeInTheDocument();
+		// RFC 7489 section 6.6.3: the whole record is not applied as written (p=none with a valid rua=, else no DMARC).
+		expect(screen.getByText(/which is not none, quarantine or reject, so receivers do not apply the record as written: with a valid rua= they treat it as p=none/)).toBeInTheDocument();
 		expect(screen.queryByText(/not enforced/)).toBeNull();
 	});
 });

@@ -29,6 +29,23 @@ function makeEnv(n: number): Env {
 }
 const get = async (env: Env, path: string) => handleApi(new Request(`https://api.readysetmail.com${path}`), env, ctx);
 
+describe('GET /api/domains/summaries: what the overview must say besides the numbers', () => {
+  it('a domain with nothing counted carries the report visibility (counting note, uncounted reports); a counted one does not need it', async () => {
+    const env = makeEnv(3);
+    (env as any).REPORT_COUNTING = 'registry'; // no AUTHSERV_*: nothing can be counted
+    const db = (env as any).DB;
+    db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, workspace_id, reporter_tier) VALUES (2, 3, 'x', 'r2', ?, ?, 40, 40, 0, 'ws_default', 'unknown')").run(NOW - 3600, NOW);
+    const body = await (await get(env, '/api/domains/summaries')).json() as any;
+    const d3 = body.summaries.find((s: any) => s.domain === 'd3.com');
+    expect(d3.total_messages).toBe(0);
+    expect(d3.counting_note).toMatch(/AUTHSERV_ID and AUTHSERV_HEADER/);
+    expect(d3.uncounted.reports).toBe(1);
+    expect(d3.intake).toBeDefined();
+    // Self-host: no hosted report intake, so nothing is decided per domain here.
+    expect(d3.report_connect).toBeNull();
+  });
+});
+
 describe('GET /api/domains/summaries', () => {
   it('returns every domain of the workspace with pct, sp, SPF lookups and report totals counted once', async () => {
     const res = await get(makeEnv(3), '/api/domains/summaries');

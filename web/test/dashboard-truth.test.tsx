@@ -2,9 +2,8 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import { domainActions } from '../src/lib/actions';
 import { assessDomain } from '../src/lib/levels';
-import { WHO, dmarcStepsFor, domainVerdict, totalsFromSummary } from '../src/lib/verdict';
+import { domainVerdict, totalsFromSummary } from '../src/lib/verdict';
 import { DomainDetailPage, summaryFreshness } from '../src/pages/domains/DomainDetailPage';
 import { DmarcWizardPage } from '../src/pages/wizards/DmarcWizardPage';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
@@ -148,36 +147,7 @@ describe('9. one voice on the domain page', () => {
 	});
 });
 
-describe('B. hosted plan where this workspace cannot connect reports', () => {
-	const hostedDomain = { ...D, rua_address: '' };
-	const rows = [
-		{ name: 'p=none', s: { dmarc_policy: 'none', dmarc_p: 'none', dmarc_pct: 100 } },
-		{ name: 'p=quarantine', s: { dmarc_policy: 'quarantine', dmarc_p: 'quarantine', dmarc_pct: 100 } },
-		{ name: 'p=reject pct=50', s: { dmarc_policy: 'reject', dmarc_p: 'reject', dmarc_pct: 50 } },
-		{ name: 'p=reject', s: { dmarc_policy: 'reject', dmarc_p: 'reject', dmarc_pct: 100 } },
-	];
-	it.each(rows)('$name: connecting reports is nobody\'s step; overview and domain page agree', ({ name, s }) => {
-		const sum = { ...SUM, ...s, dmarc_rua: null, total_messages: 0, pass_messages: 0, fail_messages: 0 } as never;
-		const v = domainVerdict(hostedDomain, sum, totalsFromSummary(sum), null, undefined, { hostedMode: true, reportsAvailable: false });
-		expect(v.next.label).not.toMatch(/Connect reports/);
-		expect(v.next.who).toBe(WHO.nobody);
-		const steps = dmarcStepsFor(hostedDomain, sum, totalsFromSummary(sum), null, null, null, false);
-		expect(steps.some((x) => x.key === 'connect-reports')).toBe(false);
-		const actions = domainActions({ domain: hostedDomain, dns: { found: true, has_rua: false, current_record: 'v=DMARC1', cf_managed: false } as never, onboarding: { ...ONB, rua_address: '' } as never, summary: sum, sources: [], reportsAvailable: false });
-		expect(actions.some((a) => /Connect reports/.test(a.do) || a.who === WHO.you)).toBe(false);
-		if (name === 'p=reject') {
-			expect(v.status).toBe('verified');
-			expect(actions[0]!.do).toBe('Nothing to do');
-		} else {
-			expect(v.next.label).toBe('Nothing to do until reports are available');
-			expect(actions[0]!.do).toBe(v.next.label);
-			expect(actions[0]!.why).toMatch(/Reports are not available on this plan yet.*waits on them/);
-		}
-		// Where reports can be connected, connecting stays the step for you.
-		const open = domainVerdict(hostedDomain, sum, totalsFromSummary(sum), null, undefined, { hostedMode: true });
-		if (name !== 'p=reject') expect(open.next.label).toBe('Connect reports so senders can be confirmed');
-	});
-});
+// Item B (reports refused per domain) is covered in dashboard-truth-2.test.tsx.
 
 describe('C and A. the setup wizard', () => {
 	const setup = (step: number, onb: unknown, extra: Record<string, unknown> = {}) =>

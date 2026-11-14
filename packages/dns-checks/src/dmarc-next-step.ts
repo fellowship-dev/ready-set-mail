@@ -157,11 +157,17 @@ export interface DmarcEvidence {
    */
   emptyReportsNote?: string | null;
   /**
-   * False when reports cannot be connected for this name from here (a hosted plan that does not offer report intake to
-   * this workspace). Connecting is then nobody's step: what can be judged comes from public DNS alone, and advice that
-   * needs reports says it waits on them. Absent: they can be connected.
+   * Why reports cannot be connected for this name here, per domain, as the server decides it (src/hosted/report-address.ts):
+   * `operator_only` and `unavailable` mean reports cannot come here at all, so the person checks the senders themselves
+   * and moves one rung at a time; `ownership` and `hosted_records` have a step of their own. Absent or null: they can be.
    */
-  reportsAvailable?: boolean;
+  reportsRefusal?: ReportsRefusal | null;
+}
+
+export interface ReportsRefusal {
+  kind: 'unavailable' | 'hosted_records' | 'ownership' | 'operator_only';
+  /** The connect panel's own words. */
+  reason: string;
 }
 
 /**
@@ -292,19 +298,32 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     ...(inh ? { record: dmarcRecordFor({ policy: f.policy, pct: f.policy === 'none' ? 100 : f.pct, ...align }, ev.ruaAddress), recordAt: `_dmarc.${name}` } : {}),
   });
   const connectStep = (why: string, status: StepStatus): DmarcStep => ({ key: 'connect-reports', status, do: 'Connect reports so senders can be confirmed', why, who: 'you', where: 'connect-reports' });
-  // Reports cannot be connected from here: not a step for anyone, only a note on what waits on them.
-  const unavailableStep = (waits: string): DmarcStep => ({
-    key: 'reports-unavailable', status: 'note', do: 'Nothing to do until reports are available', who: 'nobody', where: 'none',
-    why: `Reports are not available on this plan yet, so nobody can confirm that every service sending as ${name} passes. ${waits} Everything else here is checked from public DNS.`,
-  });
+  // "moving to p=quarantine" -> "move to p=quarantine": the same rung, said as the thing to do.
+  const imperative = (next: string) => next.replace(/^moving/, 'move').replace(/^raising/, 'raise').replace(/^adding/, 'add');
+  // Reports cannot be connected for this name: what that means for the next rung, by why (the server's own reason).
+  const refusedStep = (r: ReportsRefusal, next: string, where: StepWhere): DmarcStep => {
+    if (r.kind === 'ownership' || r.kind === 'hosted_records') {
+      return {
+        key: 'reports-refused', status: 'improve', who: 'you', where: r.kind === 'hosted_records' ? 'connect-reports' : 'none',
+        do: r.kind === 'ownership' ? `Prove that you control ${name}, then connect reports` : 'Connect reports through the hosted records',
+        why: `${r.reason} Until reports arrive, nobody can confirm that every service sending as ${name} passes, so ${next} would be a guess.`,
+      };
+    }
+    // Reports cannot come here at all: the person checks each sender, then moves one rung (the wizard asks them to confirm).
+    return {
+      key: 'check-senders', status: 'improve', who: 'you', where, at: f.at,
+      do: `Check each service that sends as ${name}, then ${imperative(next)}`,
+      why: `Reports are not available for this domain, so nobody here can confirm that every service sending as ${name} passes. Check each one (your mail provider, newsletter, invoicing and support tools), then ${imperative(next)}.`,
+    };
+  };
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
   const sendersStep = (status: StepStatus, why: string): DmarcStep => ({ key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' });
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
-  const gate = (next: string, threshold: number): DmarcStep | 'ready' | 'loading' => {
+  const gate = (next: string, threshold: number, where: StepWhere = inh ? 'parent' : 'dmarc-wizard'): DmarcStep | 'ready' | 'loading' => {
     if (!ev.reportsAddress) {
-      return ev.reportsAvailable === false
-        ? unavailableStep(`Advice on ${next} waits on them.`)
+      return ev.reportsRefusal
+        ? refusedStep(ev.reportsRefusal, next, where)
         : connectStep(`Without reports, nobody can confirm that every service sending as ${name} passes, so ${next} would be a guess.`, 'improve');
     }
     if (f.reportsHere === false) return ruaStep(`The record that governs ${name} does not send reports here, so nobody can confirm its senders before ${next}.`, 'improve');
@@ -336,8 +355,12 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   } else if (!target && !harmful) {
     // p=reject at pct=100: protection is in place. Reports are evidence of it: missing ones are a note, a failing share is not.
     if (!ev.reportsAddress) {
-      steps.push(ev.reportsAvailable === false
-        ? unavailableStep('Protection is in place either way.')
+      const r = ev.reportsRefusal;
+      steps.push(r
+        ? {
+            key: 'reports-refused', status: 'note', do: 'Nothing to do', who: 'nobody', where: 'none',
+            why: `Protection is in place either way. ${r.kind === 'operator_only' || r.kind === 'unavailable' ? `Reports are not available for this domain, so nobody here sees which services send as ${name} and whether they pass.` : r.reason}`,
+          }
         : connectStep(`Protection is in place either way; reports would show which services send as ${name} and whether they pass.`, 'note'));
     }
     else if (f.reportsHere === false) steps.push(ruaStep(`Protection is in place either way; without it, nobody sees which services send as ${name} and whether they pass.`, 'note'));
@@ -349,7 +372,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   // time (sp=none -> quarantine -> reject, never past p=), on the same report evidence.
   if (!inh && f.policy !== 'none' && f.sp && RANK[f.sp] < RANK[f.policy] && !harmful) {
     const spTarget: Policy = f.sp === 'none' ? 'quarantine' : 'reject';
-    const g = gate(`moving sp to ${spTarget}`, spTarget === 'reject' ? READY_FOR_REJECT : READY);
+    const g = gate(`moving sp to ${spTarget}`, spTarget === 'reject' ? READY_FOR_REJECT : READY, 'self');
     const pctNote = f.pct < 100 ? ` The record's pct=${f.pct} applies to sp= too, so only ${f.pct}% of that mail would be affected until pct is 100.` : '';
     if (g === 'ready') {
       steps.push({
@@ -364,7 +387,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   if (!blocking && f.policy === 'reject' && f.pct >= 100) {
     if (reports === undefined && ev.reportsAddress) return [];
     const scope = shown ? `public DNS and ${reports!.total.toLocaleString('en-US')} reported messages` : 'public DNS';
-    return [{ key: 'done', status: 'verified', do: 'Nothing to do', why: `${inForceSentence(f)} Nothing in ${scope} needs a change.`, who: 'nobody', where: 'none' }, ...sorted];
+    return [{ key: 'done', status: 'verified', do: 'Nothing to do', why: `${inForceSentence(f)} Nothing about DMARC in ${scope} needs a change.`, who: 'nobody', where: 'none' }, ...sorted];
   }
   return sorted;
 }

@@ -5,9 +5,9 @@ import { api, errorMessage } from '../../lib/api';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { isRevokedDkimKey } from '../../lib/dkim';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
-import { hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
+import { dmarcRecordProblem, hasReportAddress, parseDmarcPolicy, sameDmarcRecord } from '../../lib/dmarc-record';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
-import { domainKeys, invalidateDomain, useDnsCheck, useOnboardingStatus } from '../../lib/domain-queries';
+import { domainKeys, invalidateDomain, useCheckSummary, useDnsCheck, useOnboardingStatus } from '../../lib/domain-queries';
 import { useHosted } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 import { Section, WriteButton } from '../states';
@@ -62,6 +62,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	const current = dns.data?.current_record ?? null;
+	// The stored read's issue for this name's own record (several records at _dmarc), when it has one.
+	const stored = useCheckSummary(domain.id).data;
+	const ownIssue = stored && !stored.dmarc_inherited_from ? stored.dmarc_issue : null;
 	const ruaReady = hasReportAddress(domain.rua_address);
 	// Hosted, before report intake: no report address exists, but a missing record still gets a plain p=none to publish.
 	const hostedNoReports = useHosted() && !ruaReady;
@@ -146,6 +149,15 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const { found } = dns.data;
 		if (hostedNoReports) return hostedDmarcRow();
 		if (!found && ruaReady && onboarding.isPending) return <RowSkeleton label="DMARC" />;
+		// Several records, a TXT that is not DMARC, an invalid p= or sp=: the problem it is, never "Published".
+		const problem = found ? dmarcRecordProblem(current, dmarcName, ownIssue) : null;
+		if (problem) {
+			return (
+				<CheckResult status="fail" title="DMARC record" summary={problem}>
+					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
+				</CheckResult>
+			);
+		}
 		// Without a report address of our own, no record can send reports here, whatever the lookup matched.
 		const has_rua = dns.data.has_rua && ruaReady;
 		// A name with no record of its own that inherits a policy is not "missing": it is labelled as inherited, from where.
@@ -153,7 +165,8 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const inheritedEnforcing = inherited && (coverage.policy === 'quarantine' || coverage.policy === 'reject');
 		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : inherited ? (inheritedEnforcing ? 'pass' : 'warn') : 'missing';
 		const offerBlocked = !found && !floor;
-		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && current === recommended);
+		// Compared tag by tag: a record that differs only in letter case or spacing needs no change.
+		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended));
 		return (
 			<CheckResult
 				status={status}

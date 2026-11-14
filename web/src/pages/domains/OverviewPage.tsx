@@ -17,8 +17,7 @@ import { useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
 import { listedParentFinder } from '../../lib/listed-parent';
-import { useReportsAvailable } from '../../lib/report-address';
-import { hasReportAddress } from '../../lib/dmarc-record';
+import { reportsRefusalOf } from '../../lib/dmarc-step';
 import { domainVerdict, totalsFromSummary, unavailableVerdict, workspaceAnswer, type DomainVerdict, type ReportTotals } from '../../lib/verdict';
 
 /** Days of reports each row's evidence covers. */
@@ -114,17 +113,16 @@ export function OverviewPage() {
 		const s = summaryOf(d);
 		return s ? totalsFromSummary(s, WINDOW) : s;
 	});
-	// Whether this workspace can connect reports (the same answer the domain page gets; asked for a domain without them).
-	const askReports = domains.find((d) => !hasReportAddress(d.rua_address))?.id;
-	const reportsAvailable = useReportsAvailable(askReports);
+
 	const verdicts: Array<DomainVerdict | null> = domains.map((d, i) => {
 		const s = summaryOf(d);
 		if (batch.isError) return unavailableVerdict(errorMessage(batch.error), d.domain);
 		const h = hosted[i]!;
-		if (s === undefined || (hostedOn && h.isPending) || (askReports !== undefined && reportsAvailable === undefined)) return null;
+		if (s === undefined || (hostedOn && h.isPending)) return null;
 		if (s === null) return unavailableVerdict('it is not in the summary yet. Reload the page.', d.domain);
 		const info = hostedOn && h.data?.enabled ? h.data : null;
-		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsAvailable });
+		// Per domain, as the server decides it (report_connect in the same batch): the domain page reads the same row.
+		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(s) });
 	});
 	const retry = batch.isError ? () => void batch.refetch() : undefined;
 	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: verdicts[i] ?? null, retry }]));
@@ -167,7 +165,7 @@ export function OverviewPage() {
 			if (hostedOn && !statuses) throw new Error('The hosted record status could not be loaded. Try again.');
 			const contexts = domains.map((d) => {
 				const h = statuses?.[d.id];
-				return { domain: d, hosted: h?.enabled ? h : null, hostedMode, idByName, suffixParent: suffixParent(d), reportsAvailable };
+				return { domain: d, hosted: h?.enabled ? h : null, hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(batch.data?.get(d.id)) };
 			});
 			downloadPdfReport({ summaries: summaryData, contexts, trends });
 			toast({ title: 'Report downloaded', description: 'email-auth-report.pdf', variant: 'success' });

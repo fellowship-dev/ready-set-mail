@@ -192,8 +192,11 @@ export function spfAdvice(result: string | null, lookupCount: number | null): st
 		return `SPF permerror — your record requires ${lookupCount ?? '?'} DNS lookups, exceeding the ${SPF_LOOKUP_LIMIT}-lookup limit. Receivers treat this as a fail. Flatten your SPF record or use a dynamic SPF service.`;
 	}
 	const j = lookupCount === null ? null : spfLookupJudgement(lookupCount);
+	if (j?.level === 'over') {
+		return `SPF passed for this message, but your record needs ${lookupCount} DNS lookups, more than the limit of ${SPF_LOOKUP_LIMIT}. Receivers that enforce the limit treat the record as a permanent error, and then SPF fails for your mail. Remove includes you no longer use, or flatten the record.`;
+	}
 	if (j && j.level !== 'ok') {
-		return `SPF ${j.level === 'over' ? 'passed this time' : 'passed'}. Your record uses ${spfLookupCount(lookupCount!)}: ${j.label.toLowerCase()}. ${j.detail}`;
+		return `SPF passed. Your record uses ${spfLookupCount(lookupCount!)}: ${j.label.toLowerCase()}. ${j.detail}`;
 	}
 	if (result === 'pass') return `SPF passed — the sending server is authorized by your DNS record.${lookupCount !== null ? ` Uses ${spfLookupCount(lookupCount)}.` : ''}`;
 	if (result === 'softfail') return "SPF soft-failed (~all). Consider tightening to -all once you've verified all senders.";

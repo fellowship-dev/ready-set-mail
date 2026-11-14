@@ -1,5 +1,5 @@
 import { dmarcRecordFor, type Alignment, type Enforcement } from '@ready-set-mail/dns-checks/dmarc-next-step';
-import { buildRecommendedRecord, enforcementLevel, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
+import { buildRecommendedRecord, enforcementLevel, invalidDmarcSp, isDmarcTxt, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
 import type { OnboardingStatus } from './types';
 
 /**
@@ -82,7 +82,13 @@ export const recordFor = dmarcRecordFor;
  * Null when nothing may be offered: the policy that applies is unknown.
  */
 export function offeredDmarcRecord(current: string | null | undefined, coverage: DmarcCoverage, rua: string | null | undefined): string | null {
-	if (current) return buildRecommendedRecord(current, parseDmarcPolicy(current) ?? 'none', rua);
+	if (current) {
+		// Only a valid DMARC record is built on: a TXT that is not DMARC, an invalid p= or an invalid sp= gets no offer
+		// (receivers do not apply it as written; the page says what is wrong instead).
+		const p = parseDmarcPolicy(current);
+		if (!isDmarcTxt(current) || (p !== 'none' && p !== 'quarantine' && p !== 'reject') || invalidDmarcSp(current)) return null;
+		return buildRecommendedRecord(current, p, rua);
+	}
 	const e = offerEnforcement(coverage);
 	return e ? recordFor(e, rua) : null;
 }

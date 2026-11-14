@@ -12,7 +12,7 @@ import { ReportsNotConnected } from '../../components/ReportsNotConnected';
 import { api, errorMessage } from '../../lib/api';
 import { useHosted } from '../../lib/session';
 import { normalizeDomain } from '../../lib/dmarc';
-import { hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
+import { dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
 import { domainKeys, useOnboardingStatus, type DnsCheck } from '../../lib/domain-queries';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { clearSignupDomainIf, readSignupDomain } from '../../lib/signup-intent';
@@ -137,6 +137,7 @@ function SelfHostSetupStep({ result }: { result: AddDomainResult }) {
 	else if (nxdomain) heading = { title: 'This domain does not resolve', description: `DNS says ${domain.domain} does not exist, so there is no DMARC record to add. Check the spelling, or register the domain.` };
 	else if (lookup === 'failed') heading = { title: 'Could not read your DMARC record', description: `We could not read the current DMARC record for ${domain.domain}, so no record is offered until the lookup works.` };
 	else if (inPlace) heading = { title: 'Your DNS record is in place', description: `The DMARC record for ${domain.domain} already sends reports here.` };
+	else if (live && !record) heading = { title: 'Fix your DMARC record', description: dmarcRecordProblem(live, `_dmarc.${domain.domain}`) ?? `The DMARC record for ${domain.domain} is not valid as published, so no record is offered.` };
 	else if (live) heading = { title: 'Update your DMARC record', description: `${domain.domain} already has a DMARC record. Replace it with this one: it keeps your settings and adds our reports address.` };
 	else if (!floor) heading = { title: 'Could not tell which DMARC policy applies', description: `We could not tell whether a parent domain's policy covers ${domain.domain}, so no record is offered until the lookup works.` };
 	else if (coverage.kind === 'inherited') heading = { title: 'Add this DNS record', description: `${inheritedSentence(domain.domain, coverage)} To receive reports here, add this TXT record: it keeps ${floor ? keptEnforcement(coverage, floor) : ''} and adds our reports address.` };

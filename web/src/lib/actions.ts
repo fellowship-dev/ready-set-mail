@@ -4,7 +4,7 @@ import { isRevokedDkimKey } from './dkim';
 import { dkimWildcardSummary } from './dkim-wildcard';
 import { invalidDmarcSp, parseDmarcPolicy } from './dmarc-record';
 import { recordAlignment } from './dmarc-coverage';
-import { stepLink, type DmarcStep } from './dmarc-step';
+import { stepLink, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import type { DnsCheck, OnboardingResult } from './domain-queries';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { didNotResolve, type HostedLevelInput } from './levels';
@@ -59,7 +59,7 @@ export interface ActionInput {
 	/** A listed parent whose own record does not cover this name (a public suffix). */
 	suffixParent?: string | null;
 	/** False: this workspace cannot connect reports (hosted plan), so connecting is not a step for anyone here. */
-	reportsAvailable?: boolean;
+	reportsRefusal?: ReportsRefusal | null;
 }
 
 const MAX = 3;
@@ -133,7 +133,7 @@ export function domainActions(input: ActionInput): DomainAction[] {
 	// DMARC: the overview's rule on the same stored summary (stored by this page's live read) and the same 30-day totals.
 	// The live read's governing record: an offered record of the name's own keeps its adkim=/aspf=, as the DNS records section does.
 	const governing = onboarding?.dmarc.effective?.inherited_from ? (onboarding.dmarc.effective.record ?? null) : null;
-	const dmarc = summary && !dmarcFailed ? dmarcStepsFor(domain, summary, totalsFromSummary(summary), input.hosted ?? null, input.suffixParent ?? null, governing ? recordAlignment(governing) : null, input.reportsAvailable) : null;
+	const dmarc = summary && !dmarcFailed ? dmarcStepsFor(domain, summary, totalsFromSummary(summary), input.hosted ?? null, input.suffixParent ?? null, governing ? recordAlignment(governing) : null, input.reportsRefusal) : null;
 	const done = dmarc?.[0]?.key === 'done' ? fromStep(dmarc[0], page, input.parentId, sources) : null;
 	for (const step of dmarc ?? []) if (step.key !== 'done') out.push(fromStep(step, page, input.parentId, sources));
 
@@ -147,7 +147,8 @@ export function domainActions(input: ActionInput): DomainAction[] {
 			key: 'parent-sp-invalid',
 			status: 'note',
 			do: `Fix sp=${badSp} at _dmarc.${eff.inherited_from}`,
-			why: `${eff.inherited_from}'s DMARC record has sp=${badSp}, which is not a valid policy (none, quarantine or reject), so receivers ignore it and ${name} follows its p=${p ?? 'none'}. Set sp= to the policy you mean for its subdomains, or remove the tag.`,
+			// RFC 7489 section 6.6.3: an invalid sp= means the record is not applied as written (p=none with a valid rua=, else no DMARC).
+			why: `${eff.inherited_from}'s DMARC record has sp=${badSp}, which is not a valid policy (none, quarantine or reject), so receivers do not apply that record as written: with a valid rua= they treat it as p=none, without one they ignore it. Neither ${eff.inherited_from} nor ${name} gets its p=${p ?? 'none'}. Set sp= to the policy you mean for its subdomains, or remove the tag.`,
 			who: WHO.dns,
 			...(input.parentId !== undefined ? { to: `/domains/${input.parentId}`, cta: `Open ${eff.inherited_from}` } : {}),
 		});

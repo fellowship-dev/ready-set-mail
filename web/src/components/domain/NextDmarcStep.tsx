@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { hasReportAddress } from '../../lib/dmarc-record';
 import { useCheckSummary } from '../../lib/domain-queries';
 import { useHostedLevelInput } from '../../lib/hosted';
-import { useReportsAvailable } from '../../lib/report-address';
+import { useReportsRefusal } from '../../lib/report-address';
 import { useSession } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 import { dmarcStepsFor, totalsFromSummary } from '../../lib/verdict';
@@ -19,11 +19,11 @@ export const STEP_ALERT: Record<StatusKind, 'info' | 'success' | 'warning' | 'da
 export function NextDmarcStep({ domain }: { domain: Pick<Domain, 'id' | 'domain' | 'rua_address'> }) {
 	const summary = useCheckSummary(domain.id);
 	const hosted = useHostedLevelInput(domain.id);
-	const reportsAvailable = useReportsAvailable(hasReportAddress(domain.rua_address) ? undefined : domain.id);
+	const { pending: refusalPending, refusal: reportsRefusal } = useReportsRefusal(domain.id);
 	const { canWrite } = useSession();
-	if (summary.isPending || hosted.pending || reportsAvailable === undefined) return <Skeleton className="h-16 w-full" />;
+	if (summary.isPending || hosted.pending || refusalPending) return <Skeleton className="h-16 w-full" />;
 	if (summary.isError) return null;
-	const step = dmarcStepsFor(domain, summary.data, totalsFromSummary(summary.data), hosted.info, null, null, reportsAvailable)[0];
+	const step = dmarcStepsFor(domain, summary.data, totalsFromSummary(summary.data), hosted.info, null, null, reportsRefusal)[0];
 	if (!step) return null;
 	return (
 		<Alert variant={STEP_ALERT[step.status]} title={`Next: ${step.do}`}>

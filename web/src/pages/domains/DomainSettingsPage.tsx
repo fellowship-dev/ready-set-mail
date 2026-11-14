@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
 import { CopyField } from '../../components/domain/CopyField';
 import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { ApiError, api, errorMessage } from '../../lib/api';
-import { hasReportAddress } from '../../lib/dmarc-record';
+import { dmarcRecordProblem, hasReportAddress } from '../../lib/dmarc-record';
 import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useOnboardingStatus, type MonitorSub } from '../../lib/domain-queries';
 import { downloadFile } from '../../lib/download';
@@ -228,6 +228,7 @@ function LiveDmarcRecord({ domain }: { domain: Domain }) {
 	if (!live && onboarding.isPending) return <Info label="DMARC record">Checking the live DMARC record…</Info>;
 	const coverage = dmarcCoverage(onboarding.data ?? null, onboarding.isError || (onboarding.data?.dns_errors ?? []).some((e) => e.startsWith('dmarc:')));
 	const record = offeredDmarcRecord(live, coverage, domain.rua_address);
+	if (!record && live) return <Info label="DMARC record">{dmarcRecordProblem(live, `_dmarc.${domain.domain}`) ?? 'The live DMARC record is not valid as published, so no record is offered.'}</Info>;
 	if (!record) return <Info label="DMARC record">We could not tell whether a parent domain&apos;s policy covers {domain.domain}, so no record is offered. Reload to try again.</Info>;
 	return <CopyField label="DMARC record" value={record} />;
 }

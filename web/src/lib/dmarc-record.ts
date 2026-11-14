@@ -48,6 +48,41 @@ export function buildRecommendedRecord(current: string | null, policy: string, r
 	return record;
 }
 
+/** True when a TXT value is a DMARC record (`v=DMARC1` first); anything else at _dmarc is ignored by receivers. */
+export function isDmarcTxt(record: string | null | undefined): boolean {
+	return !!record && /^\s*v\s*=\s*DMARC1\s*(;|$)/i.test(record);
+}
+
+/**
+ * Two records that say the same thing: every tag, names and values compared case-insensitively and without spaces
+ * (rua= addresses as a set). `p=Reject` and `p=reject` are the same record, so no no-op change is offered.
+ */
+export function sameDmarcRecord(a: string | null | undefined, b: string | null | undefined): boolean {
+	const norm = (r: string | null | undefined) =>
+		Object.entries(parseDmarcTags(r))
+			.map(([k, v]) => `${k}=${k === 'rua' || k === 'ruf' ? v.toLowerCase().split(',').map((x) => x.trim()).filter(Boolean).sort().join(',') : v.toLowerCase().replace(/\s+/g, '')}`)
+			.sort()
+			.join(';');
+	return !!a && !!b && norm(a) === norm(b);
+}
+
+/**
+ * What is wrong with a DMARC record as receivers apply it, in one plain sentence, or null when nothing is: several records
+ * at the name (`issue` 'multiple' from the stored read), a TXT that is not DMARC, an invalid p= or an invalid sp=.
+ * RFC 7489 section 6.6.3: a record with an invalid p= or sp= is not applied as written; with a valid rua= receivers act
+ * as if it said p=none, without one they apply no DMARC.
+ */
+export function dmarcRecordProblem(record: string | null | undefined, at: string, issue?: string | null): string | null {
+	if (issue === 'multiple') return `There are several DMARC records at ${at}, so receivers ignore all of them. Keep one and delete the others.`;
+	if (!record) return null;
+	if (!isDmarcTxt(record)) return `The TXT record at ${at} is not a DMARC record (it does not start with v=DMARC1), so receivers ignore it.`;
+	const p = parseDmarcPolicy(record);
+	if (p !== 'none' && p !== 'quarantine' && p !== 'reject') return `The DMARC record at ${at} has no valid p= policy (none, quarantine or reject), so receivers do not apply it as written: with a valid rua= they treat it as p=none, without one they ignore it. Set p= to none, quarantine or reject.`;
+	const sp = invalidDmarcSp(record);
+	if (sp) return `The DMARC record at ${at} has sp=${sp}, which is not a valid policy, so receivers do not apply it as written: with a valid rua= they treat the whole record as p=none, for the domain and its subdomains; without one they ignore it. Fix sp= or remove it.`;
+	return null;
+}
+
 /** The `p=` value of a record, lower-cased, or null. */
 export function parseDmarcPolicy(record: string | null): string | null {
 	const p = parseDmarcTags(record).p;
