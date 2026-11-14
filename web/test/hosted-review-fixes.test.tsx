@@ -228,7 +228,7 @@ describe('one contextual Talk to Max per screen', () => {
 });
 
 describe('hosted DMARC graduation wizard', () => {
-	it('says what DNS alone can and cannot confirm, with no pass-rate advice', async () => {
+	it('says what the next policy waits on (reports), with no pass-rate advice and nothing for the customer to do that they cannot', async () => {
 		renderApp(
 			<Routes>
 				<Route path="/domains/:id/dmarc-wizard" element={<DmarcWizardPage />} />
@@ -236,12 +236,24 @@ describe('hosted DMARC graduation wizard', () => {
 			{
 				route: '/domains/7/dmarc-wizard',
 				status: HOSTED,
-				routes: { 'GET /api/domains': { domains: [domain] }, 'GET /api/domains/7/dns-check': { found: true, has_rua: false, current_record: 'v=DMARC1; p=none', cf_managed: false }, 'GET /api/domains/7/onboarding-status': onboarding({ dmarc: { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none' } }) },
+				routes: {
+					'GET /api/domains': { domains: [domain] },
+					'GET /api/domains/7/dns-check': { found: true, has_rua: false, current_record: 'v=DMARC1; p=none', cf_managed: false },
+					'GET /api/domains/7/onboarding-status': onboarding({ dmarc: { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none' } }),
+					// Report intake is not offered to this workspace on this server.
+					'GET /api/hosted/config': { enabled: true, reports: false, records: false },
+					'GET /api/domains/7/check-summary': {
+						domain_id: 7, domain: 'example.com', dmarc_policy: 'none', spf_record: 'v=spf1 -all', dns_checked_at: Math.floor(Date.now() / 1000), dns_check_attempted_at: null, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok',
+						total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: null,
+					},
+				},
 			},
 		);
-		expect(await screen.findByText(/DNS shows that this domain publishes an SPF record and a DMARC record/)).toBeInTheDocument();
+		expect(await screen.findByText('Not ready for p=quarantine yet')).toBeInTheDocument();
+		expect(screen.getByText(/Reports are not available on this plan yet.*Advice on moving to p=quarantine waits on them/)).toBeInTheDocument();
 		expect(screen.queryByText(/pass rate/i)).not.toBeInTheDocument();
-		expect(screen.getByText(/Not sure every sender passes\?/)).toBeInTheDocument();
+		expect(screen.queryByText(/Connect reports/)).not.toBeInTheDocument();
+		expect(screen.getByText(/Want reports for your domains\?/)).toBeInTheDocument();
 	});
 });
 

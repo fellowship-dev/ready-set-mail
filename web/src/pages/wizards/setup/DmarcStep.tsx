@@ -8,11 +8,12 @@ import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
-import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, recordFor } from '../../../lib/dmarc-coverage';
+import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
 import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
+import { NextDmarcStep } from '../../../components/domain/NextDmarcStep';
 import type { StepProps } from './SpfStep';
 import { dmarcSeverity, dnsErrorDetail, dnsErrorsFor } from './steps';
 
@@ -60,13 +61,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	// policy when that enforces (never weaker), and nothing is offered when the policy that applies is unknown.
 	const floor = offerEnforcement(coverage);
 	const recommended = rua
-		? dmarc.current_record
-			? buildRecommendedRecord(dmarc.current_record, parseDmarcPolicy(dmarc.current_record) ?? 'none', rua)
-			: floor
-				? recordFor(floor, rua)
-				: null
+		? offeredDmarcRecord(dmarc.current_record, coverage, rua)
 		: hostedNoReports && coverage.kind === 'none'
-			? buildRecommendedRecord(null, 'none', null)
+			? offeredDmarcRecord(null, coverage, null)
 			: null;
 
 	const patch = (fn: (s: OnboardingStatus) => OnboardingStatus) => qc.setQueryData<OnboardingStatus>(setupKeys.status(status.domain_id), (s) => (s ? fn(s) : s));
@@ -171,6 +168,10 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							Reports will start arriving within 24 hours. Once there is data, the dashboard guides you from <code className="font-mono">p=none</code> to{' '}
 							<code className="font-mono">p=reject</code> safely.
 						</Alert>
+					) : null}
+					{/* A record of its own is in place: the next step toward enforcement, from the shared rule. */}
+					{dmarc.found && dmarc.current_record && !applied && severity !== 'error' && severity !== 'warning' ? (
+						<NextDmarcStep domain={{ id: status.domain_id, domain: status.domain, rua_address: status.rua_address }} />
 					) : null}
 					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
 						<div className="space-y-3">

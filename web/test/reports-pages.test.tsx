@@ -37,7 +37,7 @@ const page = (el: ReactElement, path: string, route: string, routes: Record<stri
 
 describe('ExplorePage', () => {
 	it('shows an empty state for no sources', async () => {
-		page(<ExplorePage />, '/domains/:id/explore', '/domains/1/explore', { 'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] } });
+		page(<ExplorePage />, '/domains/:id/explore', '/domains/1/explore', { 'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] }, 'GET /api/domains/1/stats': { domain: 'example.com', days: 30, stats: [] } });
 		expect(await screen.findByText('No sources in the last 30 days')).toBeInTheDocument();
 		expect(screen.getByText(/No DMARC reports arrived in this window/)).toBeInTheDocument();
 	});

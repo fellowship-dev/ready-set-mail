@@ -12,9 +12,9 @@ import { ReportsNotConnected } from '../../components/ReportsNotConnected';
 import { api, errorMessage } from '../../lib/api';
 import { useHosted } from '../../lib/session';
 import { normalizeDomain } from '../../lib/dmarc';
-import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
+import { hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
 import { domainKeys, useOnboardingStatus, type DnsCheck } from '../../lib/domain-queries';
-import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, recordFor } from '../../lib/dmarc-coverage';
+import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { clearSignupDomainIf, readSignupDomain } from '../../lib/signup-intent';
 import type { AddDomainResult, PendingDomainResult } from '../../lib/types';
 
@@ -127,7 +127,7 @@ function SelfHostSetupStep({ result }: { result: AddDomainResult }) {
 	const floor = live ? { policy: 'none' as const, pct: 100 } : offerEnforcement(coverage);
 	// DNS says the name does not exist: there is no record to add anywhere.
 	const nxdomain = ob.data?.nxdomain === true;
-	const record = rua && lookup === 'done' && floor && !nxdomain ? (live ? buildRecommendedRecord(live, livePolicy ?? 'none', rua) : recordFor(floor, rua)) : null;
+	const record = rua && lookup === 'done' && floor && !nxdomain ? offeredDmarcRecord(live, coverage, rua) : null;
 	const inPlace = lookup === 'done' && !!q.data?.found && !!q.data.has_rua;
 	const offered = record !== null && !inPlace;
 

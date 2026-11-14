@@ -10,7 +10,7 @@ import { StepCard } from '../../../components/wizard/StepCard';
 import { StepFooter, StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
 import { SPF_PROVIDERS, detectProviders } from '@ready-set-mail/dns-checks/email-service-providers';
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { RadioCard } from '../../../components/wizard/RadioCard';
 import { useDebouncedValue, setupKeys } from './hooks';
@@ -79,7 +79,8 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 	const otherMechanisms = spf.record ? extractOtherMechanisms(spf.record) : [];
 
 	const [selected, setSelected] = useState<string[]>(() => [...new Set(existingIncludes)]);
-	const [qualifier, setQualifier] = useState<SpfQualifier>(() => existingQualifier(spf.record));
+	// Null: the record ends in redirect=, so it gets no `all` (one would void the redirect) and there is nothing to choose.
+	const [qualifier, setQualifier] = useState<SpfQualifier | null>(() => existingQualifier(spf.record));
 	const [applied, setApplied] = useState(false);
 	const [overwrite, setOverwrite] = useState<(SpfOverwrite & { record: string }) | null>(null);
 
@@ -162,6 +163,11 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 				)}
 			</div>
 
+			{qualifier === null ? (
+				<p className="text-sm text-ink-2">
+					Your record ends in <code className="font-mono text-xs">redirect=</code>, so mail from anyone else is handled by the record it redirects to. No <code className="font-mono text-xs">all</code> is added: one would make receivers ignore the redirect.
+				</p>
+			) : (
 			<fieldset className="space-y-2">
 				<legend className="text-sm font-medium text-ink-1">Mail from anyone else</legend>
 				<div className="grid gap-2 sm:grid-cols-2">
@@ -173,6 +179,7 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 					</RadioCard>
 				</div>
 			</fieldset>
+			)}
 
 			{preview ? (
 				<div className="flex flex-wrap items-center gap-2 text-sm" aria-live="polite">
@@ -180,9 +187,9 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 					{counting ? <span className="text-ink-2">Counting lookups…</span> : <LookupBadge count={lookupCount} estimate={realCount === null} suffix="lookups" />}
 				</div>
 			) : null}
-			{preview && lookupCount > 10 && !counting ? (
-				<Alert variant="warning" title="Over the 10-lookup limit">
-					Receivers stop evaluating SPF after 10 DNS lookups and treat the record as a permanent error. Remove providers you do not need, or flatten the record later.
+			{preview && spfLookupJudgement(lookupCount).level === 'over' && !counting ? (
+				<Alert variant="warning" title={`Over the ${SPF_LOOKUP_LIMIT}-lookup limit`}>
+					{spfLookupJudgement(lookupCount).detail}
 				</Alert>
 			) : null}
 

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
 import { domainKeys, invalidateDomain } from './domain-queries';
 import { HOSTED_CONFIG_KEY } from './hosted';
+import { useHosted } from './session';
 import type { ReportVisibilityFields } from './uncounted';
 
 /**
@@ -60,6 +61,31 @@ export function useReportIntakeEnabled(): boolean {
 		retry: false,
 	});
 	return q.data?.enabled === true && q.data.reports === true;
+}
+
+/**
+ * Can reports be connected for `domainId` from this workspace? Self-hosted: yes (the deployment's reports address). Hosted:
+ * only with report intake on and the server's `can_connect` (HOSTED_CONNECT_REPORTS may admit only the operator's
+ * workspaces). Undefined while unknown; without a domain to ask about, the deployment's answer alone.
+ */
+export function useReportsAvailable(domainId: number | undefined): boolean | undefined {
+	const hosted = useHosted();
+	const config = useQuery({
+		queryKey: HOSTED_CONFIG_KEY,
+		queryFn: () => api<{ enabled: boolean; reports?: boolean; records?: boolean }>('/api/hosted/config'),
+		staleTime: Infinity,
+		retry: false,
+		enabled: hosted,
+	});
+	const intake = config.data?.enabled === true && config.data.reports === true;
+	const address = useReportAddress(domainId ?? 0, hosted && intake && domainId !== undefined);
+	if (!hosted) return true;
+	if (config.isPending) return undefined;
+	if (!intake) return false;
+	if (domainId === undefined) return true;
+	if (address.isPending) return undefined;
+	if (address.isError) return true; // unknown: the connect step stays, as before
+	return address.data.available ? address.data.can_connect : false;
 }
 
 export function useReportAddress(domainId: number, enabled = true) {

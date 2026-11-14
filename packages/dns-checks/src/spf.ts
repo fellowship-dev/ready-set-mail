@@ -4,6 +4,7 @@
 // walks every mechanism that could be evaluated and reports the worst-case cost.
 
 import { normalizeName, type Resolver } from './doh';
+import { SPF_LOOKUP_LIMIT } from './spf-record';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -75,7 +76,8 @@ export interface SpfAnalysis {
   includes: string[];
 }
 
-export const SPF_LOOKUP_LIMIT = 10;
+// The one lookup limit, with its judgement (spfLookupJudgement), lives in the pure spf-record module the dashboard imports.
+export { SPF_LOOKUP_LIMIT };
 export const SPF_VOID_LIMIT = 2;
 export const SPF_MX_NAME_LIMIT = 10;
 const MAX_DEPTH = 12; // hard recursion guard; real chains are shallower than the 10-lookup cap

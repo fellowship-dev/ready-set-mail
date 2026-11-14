@@ -1,4 +1,5 @@
-import { enforcementLevel, hasReportAddress, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
+import { dmarcRecordFor, type Alignment, type Enforcement } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { buildRecommendedRecord, enforcementLevel, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
 import type { OnboardingStatus } from './types';
 
 /**
@@ -19,8 +20,15 @@ export type DmarcCoverage =
 	| { kind: 'none' }
 	| { kind: 'inherited'; parent: string; policy: string | null; issue: string | null; pct: number; sp: string | null; parentPolicy: string | null; adkim: Alignment | null; aspf: Alignment | null };
 
-type Alignment = 'r' | 's';
 const alignment = (v: string | undefined): Alignment | null => (v?.toLowerCase() === 's' ? 's' : v?.toLowerCase() === 'r' ? 'r' : null);
+
+/** The alignment modes a record sets (`adkim=`/`aspf=`), as the rule's evidence takes them. */
+export function recordAlignment(record: string | null | undefined): { adkim?: Alignment; aspf?: Alignment } {
+	const tags = parseDmarcTags(record);
+	const adkim = alignment(tags.adkim);
+	const aspf = alignment(tags.aspf);
+	return { ...(adkim ? { adkim } : {}), ...(aspf ? { aspf } : {}) };
+}
 
 /** The inherited coverage from the parent's live record: what applies to a subdomain that has no record of its own. */
 export function inheritedCoverage(parent: string, record: string | null, policy: string | null, issue: string | null = null): Extract<DmarcCoverage, { kind: 'inherited' }> {
@@ -50,14 +58,7 @@ export function dmarcCoverage(status: Pick<OnboardingStatus, 'dmarc'> | null | u
 	return { kind: 'none' };
 }
 
-export interface Enforcement {
-	policy: 'none' | 'quarantine' | 'reject';
-	/** Share of failing mail the policy applies to; 100 unless the inherited record says less. */
-	pct: number;
-	/** The inherited alignment modes, carried as published (strict alignment is part of the enforcement in force). */
-	adkim?: Alignment;
-	aspf?: Alignment;
-}
+export type { Enforcement };
 
 /**
  * The enforcement a record of the domain's own must carry so that publishing it changes nothing about how failing
@@ -70,14 +71,20 @@ export function offerEnforcement(c: DmarcCoverage): Enforcement | null {
 	return { policy: 'none', pct: 100, ...align };
 }
 
-/** A new record at exactly `e`, with the report address when there is one (`pct=` only when under 100). */
-export function recordFor(e: Enforcement, rua: string | null | undefined): string {
-	const parts = ['v=DMARC1', `p=${e.policy}`];
-	if (e.pct < 100) parts.push(`pct=${e.pct}`);
-	if (e.adkim) parts.push(`adkim=${e.adkim}`);
-	if (e.aspf) parts.push(`aspf=${e.aspf}`);
-	if (hasReportAddress(rua)) parts.push(`rua=mailto:${rua.trim()}`);
-	return parts.join('; ');
+/** A new record at exactly `e`: the one builder the "Do this next" steps use too (dmarcRecordFor). */
+export const recordFor = dmarcRecordFor;
+
+/**
+ * The one DMARC record any page offers for a name, never weaker than the policy in force:
+ *  - with a live record of its own, that record with every tag kept (pct=, sp=, adkim=, aspf=, other rua= addresses),
+ *    its p= read by the shared tag parser (any letter case, spaces around `=`), and the report address added;
+ *  - without one, a new record at exactly the enforcement in force (offerEnforcement), inherited pct= and alignment kept.
+ * Null when nothing may be offered: the policy that applies is unknown.
+ */
+export function offeredDmarcRecord(current: string | null | undefined, coverage: DmarcCoverage, rua: string | null | undefined): string | null {
+	if (current) return buildRecommendedRecord(current, parseDmarcPolicy(current) ?? 'none', rua);
+	const e = offerEnforcement(coverage);
+	return e ? recordFor(e, rua) : null;
 }
 
 /** "p=quarantine at pct=5", or for an inherited sp=: "the inherited sp=quarantine as its p=quarantine at pct=5". */

@@ -21,7 +21,16 @@ describe('item 1: no reports address is never rendered as an empty mailto', () =
 			<Routes>
 				<Route path="/domains/:id/settings" element={<DomainSettingsPage />} />
 			</Routes>,
-			{ route: '/domains/1/settings', routes: { 'GET /api/domains': { domains: [d] }, 'GET /api/domains/1/monitor-subs': { subs: [] }, 'GET /api/domains/1/dns-check': dns } },
+			{
+				route: '/domains/1/settings',
+				routes: {
+					'GET /api/domains': { domains: [d] },
+					'GET /api/domains/1/monitor-subs': { subs: [] },
+					'GET /api/domains/1/dns-check': dns,
+					// No record of its own and none to inherit: a plain p=none is the record to publish.
+					'GET /api/domains/1/onboarding-status': { domain_id: 1, dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null } } },
+				},
+			},
 		);
 
 	it('settings page: says so, shows no empty rua=mailto: and no empty copy field', async () => {
@@ -126,13 +135,18 @@ describe('item 10: read-only members do not get the Upgrade button', () => {
 		detail('owner');
 		expect(await screen.findByRole('link', { name: 'Review the change' })).toHaveAttribute('href', '/domains/1/dmarc-wizard');
 		await userEvent.click(screen.getByRole('button', { name: /^Reports/ }));
-		expect(await screen.findByRole('link', { name: 'Upgrade to quarantine' })).toBeInTheDocument();
+		// The Reports section renders the same shared step, not a verdict of its own.
+		await waitFor(() => expect(screen.getAllByRole('link', { name: 'Review the change' })).toHaveLength(2));
+		for (const l of screen.getAllByRole('link', { name: 'Review the change' })) expect(l).toHaveAttribute('href', '/domains/1/dmarc-wizard');
+		expect(screen.queryByText('Monitoring only, not enforcing')).toBeNull();
 	});
 
-	it('member sees the guidance but not the button', async () => {
+	it('member sees the step but not the button', async () => {
 		detail('member');
-		expect(await screen.findByText('Monitoring only, not enforcing')).toBeInTheDocument();
-		await waitFor(() => expect(screen.queryByRole('link', { name: /Upgrade to/ })).toBeNull());
+		expect((await screen.findAllByText('Approve moving DMARC to p=quarantine')).length).toBeGreaterThan(0);
+		await userEvent.click(screen.getByRole('button', { name: /^Reports/ }));
+		await waitFor(() => expect(screen.getAllByText('Approve moving DMARC to p=quarantine').length).toBe(2));
+		expect(screen.queryByRole('link', { name: 'Review the change' })).toBeNull();
 	});
 });
 

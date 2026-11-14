@@ -3,8 +3,10 @@ import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-st
 import { hasReportAddress } from './dmarc-record';
 import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
-import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, SPF_LOOKUP_LIMIT, type HostedLevelInput } from './levels';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, type HostedLevelInput } from './levels';
 import type { Domain, DomainCheckSummary } from './types';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from './uncounted';
 import { HELP_PRIORITY } from '../components/TalkToMax';
 
 /**
@@ -89,12 +91,15 @@ export const STALE_DAYS = 7;
 /** Same condition as PR 142's useReportsNotConnected, minus the hosted-mode gate (an empty address means no reports in either mode). */
 export const reportsNotConnected = (domain: Pick<Domain, 'rua_address'>): boolean => !hasReportAddress(domain.rua_address);
 
-function reportsLine(domain: Pick<Domain, 'rua_address'>, r: ReportTotals | null | undefined): string {
+function reportsLine(domain: Pick<Domain, 'rua_address'>, r: ReportTotals | null | undefined, v: ReportVisibilityFields | null | undefined): string {
 	// Without a current reports address no pass share is claimed, whatever older totals the window still holds.
 	if (reportsNotConnected(domain)) return 'Reports are not connected for this domain, so nobody has confirmed that every sender passes.';
 	if (r === undefined) return 'Report totals are loading.';
 	if (r === null) return 'Report totals could not be loaded, so whether every sender passes is unknown.';
 	if (r.total > 0 && r.passRate !== null) return `${r.passRate}% of ${formatNumber(r.total)} reported messages passed DMARC in the last ${r.days} days.`;
+	// Nothing counted is not "nothing arrived": reports dropped, limited or not counted are said as such (uncounted.ts).
+	const empty = emptyReportsState(0, v) === 'none' ? null : emptyReportsMessage(0, v);
+	if (empty) return `${empty} Nobody has confirmed that every sender passes.`;
 	return `No DMARC reports in the last ${r.days} days, so nobody has confirmed that every sender passes.`;
 }
 
@@ -113,10 +118,12 @@ export function domainVerdict(
 		idByName?: ReadonlyMap<string, number>;
 		/** A listed parent whose own record does not cover this name (a public suffix): see suffixParentOf. */
 		suffixParent?: string | null;
+		/** False: this workspace cannot connect reports (hosted plan), so connecting is no one's next step. */
+		reportsAvailable?: boolean;
 	} = {},
 ): DomainVerdict {
 	const intakeOff = !!opts.hostedMode && reportsNotConnected(domain);
-	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null);
+	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null, opts.reportsAvailable);
 	const about = `about ${domain.domain}`;
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
@@ -133,11 +140,12 @@ function coreVerdict(
 	intakeOff: boolean,
 	idByName: ReadonlyMap<string, number> | undefined,
 	suffixParent: string | null,
+	reportsAvailable?: boolean,
 ): Core {
 	const page = `/domains/${domain.id}`;
 	const name = domain.domain;
 	const checked = hosted ? null : dnsCheckLine(s);
-	const evidence = reportsLine(domain, reports);
+	const evidence = reportsLine(domain, reports, s);
 	const checkAgain: NextAction = { label: 'Open the domain to check it again', who: WHO.you, to: page };
 
 	const unresolved = hosted ? null : didNotResolve(s);
@@ -216,7 +224,7 @@ function coreVerdict(
 			return { ...dmarcNext(), level, sentence, evidence: null, checked };
 		}
 		const lookups = s.spf_lookup_count ?? null;
-		if (!hosted && lookups !== null && lookups > SPF_LOOKUP_LIMIT) {
+		if (!hosted && lookups !== null && spfLookupJudgement(lookups).level === 'over') {
 			return { status: 'attention', level, sentence: `Public DNS shows an SPF record that needs ${lookups} DNS lookups. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, evidence, checked, next: { label: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, who: WHO.dns, to: `${page}/spf-flatten` } };
 		}
 
@@ -231,7 +239,7 @@ function coreVerdict(
 		return forceFor(name, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
 	}
 	function dmarcNext(): Pick<Core, 'status' | 'next'> {
-		const step = dmarcStepsFor(domain, s, reports, hosted, suffixParent)[0];
+		const step = dmarcStepsFor(domain, s, reports, hosted, suffixParent, null, reportsAvailable)[0];
 		if (!step) return { status: 'unknown', next: { label: 'Wait for the report totals to load', who: WHO.nobody } };
 		const parentId = sum.dmarc_inherited_from ? idByName?.get(sum.dmarc_inherited_from) : undefined;
 		return { status: step.status, next: { label: step.do, who: WHO[step.who], to: stepLink(step, page, parentId) } };
@@ -248,10 +256,36 @@ export function dmarcStepsFor(
 	reports: ReportTotals | null | undefined,
 	hosted: HostedLevelInput | null,
 	suffixParent: string | null = null,
+	/** The governing record's adkim=/aspf= from a live read (the domain page has one; the overview does not). */
+	alignment?: { adkim?: 'r' | 's'; aspf?: 'r' | 's' } | null,
+	/** False: this workspace cannot connect reports, so connecting is not a step (see DmarcEvidence.reportsAvailable). */
+	reportsAvailable?: boolean,
 ): DmarcStep[] {
 	const sum = hosted ? applyHostedInputs(s, hosted).summary : s;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy: sum.dmarc_policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent));
+	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsAvailable }));
+}
+
+/**
+ * Whether the shared rule offers the next policy from `policy` for a domain's own record now. The DMARC wizard asks this
+ * before it offers a record. `ready: false` carries the step it waits on (connect reports, reports to arrive, senders to
+ * pass, pct= first, a fresh read); undefined while the report totals load.
+ */
+export function nextPolicyGate(
+	domain: Pick<Domain, 'domain' | 'rua_address'>,
+	s: DomainCheckSummary,
+	hosted: HostedLevelInput | null,
+	policy: 'none' | 'quarantine',
+	reportsAvailable?: boolean,
+): { ready: true } | { ready: false; step: DmarcStep } | undefined {
+	// The wizard tightens the domain's own record from the policy it shows (the live one, or the one just applied).
+	const own: DomainCheckSummary = { ...s, dmarc_policy: policy, dmarc_p: policy, dmarc_inherited_from: null, dmarc_issue: null };
+	const sum = hosted ? { ...applyHostedInputs(own, hosted).summary, dmarc_policy: policy } : own;
+	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
+	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsAvailable }));
+	if (steps.length === 0) return undefined;
+	if (steps.some((x) => x.key === 'tighten' && x.status === 'approval')) return { ready: true };
+	return { ready: false, step: steps[0]! };
 }
 
 const lower = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);

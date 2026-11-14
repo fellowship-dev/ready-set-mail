@@ -16,6 +16,9 @@ import { useDomainClaims, useDomains } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
+import { listedParentFinder } from '../../lib/listed-parent';
+import { useReportsAvailable } from '../../lib/report-address';
+import { hasReportAddress } from '../../lib/dmarc-record';
 import { domainVerdict, totalsFromSummary, unavailableVerdict, workspaceAnswer, type DomainVerdict, type ReportTotals } from '../../lib/verdict';
 
 /** Days of reports each row's evidence covers. */
@@ -39,30 +42,8 @@ export function buildTree(domains: Domain[]): Array<{ root: Domain; children: Do
  * ranking by its most urgent member, so every domain counted in the answer has exactly one row.
  */
 export function domainRows(domains: Domain[], rank: (d: Domain) => number = () => 0): Array<{ d: Domain; parent?: string; depth: number }> {
-	const byId = new Map(domains.map((d) => [d.id, d]));
-	const parentOf = (d: Domain): Domain | null => {
-		// Nearest present ancestor, never itself (a loop makes the domain a root).
-		const seen = new Set<number>([d.id]);
-		let p = d.parent_id ?? null;
-		while (p !== null && p !== undefined) {
-			if (seen.has(p)) return null;
-			seen.add(p);
-			const hit = byId.get(p);
-			if (hit) {
-				// Walking on from hit must not lead back to d either.
-				let q = hit.parent_id ?? null;
-				const chain = new Set<number>([hit.id]);
-				while (q !== null && q !== undefined && byId.has(q)) {
-					if (q === d.id || chain.has(q)) return null;
-					chain.add(q);
-					q = byId.get(q)!.parent_id ?? null;
-				}
-				return hit;
-			}
-			return null; // the parent is not in this workspace's list: the domain stands alone
-		}
-		return null;
-	};
+	// The same nearest listed ancestor the domain page uses (listedParentFinder).
+	const parentOf = listedParentFinder(domains);
 	const kids = new Map<number, Domain[]>();
 	const roots: Domain[] = [];
 	for (const d of domains) {
@@ -133,14 +114,17 @@ export function OverviewPage() {
 		const s = summaryOf(d);
 		return s ? totalsFromSummary(s, WINDOW) : s;
 	});
+	// Whether this workspace can connect reports (the same answer the domain page gets; asked for a domain without them).
+	const askReports = domains.find((d) => !hasReportAddress(d.rua_address))?.id;
+	const reportsAvailable = useReportsAvailable(askReports);
 	const verdicts: Array<DomainVerdict | null> = domains.map((d, i) => {
 		const s = summaryOf(d);
 		if (batch.isError) return unavailableVerdict(errorMessage(batch.error), d.domain);
 		const h = hosted[i]!;
-		if (s === undefined || (hostedOn && h.isPending)) return null;
+		if (s === undefined || (hostedOn && h.isPending) || (askReports !== undefined && reportsAvailable === undefined)) return null;
 		if (s === null) return unavailableVerdict('it is not in the summary yet. Reload the page.', d.domain);
 		const info = hostedOn && h.data?.enabled ? h.data : null;
-		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d) });
+		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsAvailable });
 	});
 	const retry = batch.isError ? () => void batch.refetch() : undefined;
 	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: verdicts[i] ?? null, retry }]));
@@ -178,7 +162,14 @@ export function OverviewPage() {
 				if (t) trends[d.id] = t.stats;
 			});
 			const { downloadPdfReport } = await import('../../lib/pdf/report');
-			downloadPdfReport({ summaries: summaryData, trends });
+			// The PDF's DMARC lines are the overview's verdict: the same hosted status, parents and report visibility.
+			const statuses = hostedOn ? (hostedAll.data ?? (await hostedAll.refetch()).data) : undefined;
+			if (hostedOn && !statuses) throw new Error('The hosted record status could not be loaded. Try again.');
+			const contexts = domains.map((d) => {
+				const h = statuses?.[d.id];
+				return { domain: d, hosted: h?.enabled ? h : null, hostedMode, idByName, suffixParent: suffixParent(d), reportsAvailable };
+			});
+			downloadPdfReport({ summaries: summaryData, contexts, trends });
 			toast({ title: 'Report downloaded', description: 'email-auth-report.pdf', variant: 'success' });
 		} catch (e) {
 			toast({ title: 'Could not export the PDF', description: errorMessage(e), variant: 'danger' });

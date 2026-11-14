@@ -54,8 +54,9 @@ describe('AddDomainPage', () => {
 		});
 		await userEvent.type(await screen.findByLabelText('Your domain'), 'new.example.org');
 		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-		expect((await screen.findAllByText(/already protected by the parent/)).length).toBeGreaterThan(0);
-		expect(screen.getByText('SPF does not inherit')).toBeInTheDocument();
+		expect(await screen.findByText('SPF does not inherit')).toBeInTheDocument();
+		// What DMARC applies is said once, from the live read: the banner makes no verdict of its own.
+		expect(screen.queryByText(/already protected by the parent|can be spoofed/)).toBeNull();
 		expect(await screen.findByText('Not found')).toBeInTheDocument();
 	});
 

@@ -1,5 +1,6 @@
 import type { Severity } from '../../../components/wizard/SeverityBadge';
 import { findUnsignedSpfProviders } from '@ready-set-mail/dns-checks/email-service-providers';
+import { spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { isRevokedDkimKey } from '../../../lib/dkim';
 import type { OnboardingStatus, WizardState } from '../../../lib/types';
 
@@ -55,10 +56,8 @@ export const dnsErrorDetail = (entry: string): string => entry.replace(/^[^:]*:\
 export function spfSeverity(spf: OnboardingStatus['spf'], lookupFailed = false): Severity {
 	if (lookupFailed) return 'unknown';
 	if (!spf.record) return 'warning';
-	const c = spf.lookup_count ?? 0;
-	if (c > 9) return 'error';
-	if (c >= 8) return 'warning';
-	return 'good';
+	const { level } = spfLookupJudgement(spf.lookup_count ?? 0);
+	return level === 'over' ? 'error' : level === 'ok' ? 'good' : 'warning';
 }
 
 /** Selectors split the way the domain page counts them: an empty p= is a revoked key and never counts as present. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildRecommendedRecord, parseDmarcPolicy } from '../src/lib/dmarc-record';
 import { SPF_PROVIDERS, detectProviders, findUnsignedSpfProviders, getAllDkimSelectors, matchDkimProvider } from '@ready-set-mail/dns-checks/email-service-providers';
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, lookupLevel, normalizeCustomInclude } from '@ready-set-mail/dns-checks/spf-record';
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, normalizeCustomInclude, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { DEFAULT_WIZARD, dnsErrorsFor, resolveStep, routingSeverity, spfSeverity, dkimSeverity } from '../src/pages/wizards/setup/steps';
 
 describe('spf.ts', () => {
@@ -24,7 +24,8 @@ describe('spf.ts', () => {
 
 	it('round-trips: re-building an existing record preserves what it said', () => {
 		const rebuilt = buildSpfRecord(extractIncludes(record), existingQualifier(record), extractOtherMechanisms(record));
-		expect(rebuilt).toBe('v=spf1 include:_spf.google.com include:custom.example.net mx ip4:203.0.113.0/24 redirect=other.example -all');
+		// The redirect= is written last; with an all present it was (and stays) ignored by receivers.
+		expect(rebuilt).toBe('v=spf1 include:_spf.google.com include:custom.example.net mx ip4:203.0.113.0/24 -all redirect=other.example');
 	});
 
 	it('defaults to softfail unless the record already hardfails', () => {
@@ -41,7 +42,7 @@ describe('spf.ts', () => {
 	});
 
 	it('bands lookup counts around the limit of 10', () => {
-		expect([0, 7, 8, 9, 10, 11].map(lookupLevel)).toEqual(['ok', 'ok', 'near', 'near', 'over', 'over']);
+		expect([0, 7, 8, 9, 10, 11].map((n) => spfLookupJudgement(n).level)).toEqual(['ok', 'ok', 'near', 'near', 'at', 'over']);
 	});
 });
 
@@ -147,6 +148,6 @@ describe('setup step logic', () => {
 
 	it('grades SPF lookup counts', () => {
 		const s = (n: number) => spfSeverity({ record: 'v=spf1 ~all', lookup_count: n, flattening_active: false });
-		expect([s(3), s(8), s(10)]).toEqual(['good', 'warning', 'error']);
+		expect([s(3), s(8), s(10), s(11)]).toEqual(['good', 'warning', 'warning', 'error']);
 	});
 });

@@ -2,10 +2,11 @@ import { Button, CheckResult, CheckResultList, RecordBlock, Skeleton, toast, typ
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { api, errorMessage } from '../../lib/api';
+import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { isRevokedDkimKey } from '../../lib/dkim';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
-import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
-import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, recordFor } from '../../lib/dmarc-coverage';
+import { hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
+import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { domainKeys, invalidateDomain, useDnsCheck, useOnboardingStatus } from '../../lib/domain-queries';
 import { useHosted } from '../../lib/session';
 import type { Domain } from '../../lib/types';
@@ -13,7 +14,6 @@ import { Section, WriteButton } from '../states';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { ConfirmDialog } from './ConfirmDialog';
 
-const SPF_LOOKUP_LIMIT = 10;
 
 function RowSkeleton({ label }: { label: string }) {
 	return (
@@ -24,11 +24,11 @@ function RowSkeleton({ label }: { label: string }) {
 	);
 }
 
+/** The SPF row from the one lookup judgement (spfLookupJudgement), in its words. */
 function spfStatus(count: number | null): { status: CheckStatus; note: string | null } {
 	if (count === null) return { status: 'pass', note: null };
-	if (count > SPF_LOOKUP_LIMIT) return { status: 'fail', note: `${count} of ${SPF_LOOKUP_LIMIT} DNS lookups. Over the limit, so receivers may reject your SPF record. Flattening can fix this.` };
-	if (count >= 8) return { status: 'warn', note: `${count} of ${SPF_LOOKUP_LIMIT} DNS lookups. Close to the limit.` };
-	return { status: 'pass', note: `${count} of ${SPF_LOOKUP_LIMIT} DNS lookups.` };
+	const j = spfLookupJudgement(count);
+	return { status: j.status, note: j.level === 'ok' ? `${spfLookupCount(count)}.` : `${spfLookupCount(count)}. ${j.label}. ${j.detail}` };
 }
 
 /** The DKIM record blocks behind one control: the count first ("Show 12 DKIM records"), the records on demand. */
@@ -62,7 +62,6 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	const current = dns.data?.current_record ?? null;
-	const policy = current?.match(/\bp=([a-z]+)/)?.[1] ?? 'none';
 	const ruaReady = hasReportAddress(domain.rua_address);
 	// Hosted, before report intake: no report address exists, but a missing record still gets a plain p=none to publish.
 	const hostedNoReports = useHosted() && !ruaReady;
@@ -71,7 +70,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const coverage = dmarcCoverage(onboarding.data ?? null, onboarding.isError || (onboarding.data?.dns_errors ?? []).some((e) => e.startsWith('dmarc:')));
 	// With a record: keep its policy and add our address. Without: exactly the enforcement in force (policy and pct).
 	const floor = current ? null : offerEnforcement(coverage);
-	const recommended = current ? buildRecommendedRecord(current, policy, domain.rua_address) : recordFor(floor ?? { policy: 'none', pct: 100 }, domain.rua_address);
+	const recommended = offeredDmarcRecord(current, coverage, domain.rua_address);
 	const dmarcName = `_dmarc.${domain.domain}`;
 	const cfAvailable = !!(dns.data?.cf_managed || onboarding.data?.cf_available);
 
@@ -123,7 +122,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			return (
 				<CheckResult status="missing" title="DMARC record" summary={`No DMARC policy applies to ${domain.domain}: there is no record at ${dmarcName} and none to inherit. Publish this record: p=none only monitors, so no mail is blocked or redirected.`}>
 					<div className="space-y-3">
-						<RecordBlock title="Add this record" record={{ type: 'TXT', name: dmarcName, value: buildRecommendedRecord(null, 'none', null), ttl: 3600 }} />
+						<RecordBlock title="Add this record" record={{ type: 'TXT', name: dmarcName, value: offeredDmarcRecord(null, coverage, null) ?? '', ttl: 3600 }} />
 						<p className="text-ink-2">Add this record at your DNS provider.</p>
 					</div>
 				</CheckResult>
@@ -154,7 +153,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const inheritedEnforcing = inherited && (coverage.policy === 'quarantine' || coverage.policy === 'reject');
 		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : inherited ? (inheritedEnforcing ? 'pass' : 'warn') : 'missing';
 		const offerBlocked = !found && !floor;
-		const upToDate = !ruaReady || offerBlocked || (found && has_rua && current === recommended);
+		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && current === recommended);
 		return (
 			<CheckResult
 				status={status}
@@ -178,7 +177,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
 					{!upToDate ? (
 						<>
-							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended, ttl: 3600 }} />
+							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
 							{cfAvailable ? (
 								<WriteButton size="sm" onClick={() => setConfirmOpen(true)}>
 									Apply to Cloudflare
@@ -289,7 +288,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 				error={apply.isError ? errorMessage(apply.error) : null}
 				onConfirm={() => apply.mutate()}
 			>
-				<RecordBlock record={{ type: 'TXT', name: dmarcName, value: recommended, ttl: 3600 }} />
+				<RecordBlock record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
 			</ConfirmDialog>
 		</Section>
 	);

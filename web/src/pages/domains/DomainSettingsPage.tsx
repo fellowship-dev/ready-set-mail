@@ -9,8 +9,9 @@ import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
 import { CopyField } from '../../components/domain/CopyField';
 import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { ApiError, api, errorMessage } from '../../lib/api';
-import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../lib/dmarc-record';
-import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, type MonitorSub } from '../../lib/domain-queries';
+import { hasReportAddress } from '../../lib/dmarc-record';
+import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
+import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useOnboardingStatus, type MonitorSub } from '../../lib/domain-queries';
 import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
@@ -215,14 +216,20 @@ function DangerZone({ domain }: { domain: Domain }) {
 
 /**
  * The DMARC record to publish, built from the record DNS serves now: every tag stays and p= never goes below the live
- * policy. The stored policy is not used, it can lag DNS. Unknown (loading, lookup failed) is said, not guessed.
+ * policy. Without a record of its own, exactly the policy it inherits (the same rule as every other page). The stored
+ * policy is not used, it can lag DNS. Unknown (loading, lookup failed) is said, not guessed.
  */
 function LiveDmarcRecord({ domain }: { domain: Domain }) {
 	const dns = useDnsCheck(domain.id);
+	const onboarding = useOnboardingStatus(domain.id);
+	const live = dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null;
 	if (dns.isPending) return <Info label="DMARC record">Checking the live DMARC record…</Info>;
 	if (dns.isError || dns.data.error) return <Info label="DMARC record">The live DMARC record could not be checked, so no record is offered. Reload to try again.</Info>;
-	const live = dns.data.found ? dns.data.current_record : null;
-	return <CopyField label="DMARC record" value={buildRecommendedRecord(live, parseDmarcPolicy(live) ?? 'none', domain.rua_address)} />;
+	if (!live && onboarding.isPending) return <Info label="DMARC record">Checking the live DMARC record…</Info>;
+	const coverage = dmarcCoverage(onboarding.data ?? null, onboarding.isError || (onboarding.data?.dns_errors ?? []).some((e) => e.startsWith('dmarc:')));
+	const record = offeredDmarcRecord(live, coverage, domain.rua_address);
+	if (!record) return <Info label="DMARC record">We could not tell whether a parent domain&apos;s policy covers {domain.domain}, so no record is offered. Reload to try again.</Info>;
+	return <CopyField label="DMARC record" value={record} />;
 }
 
 function Settings({ domain }: { domain: Domain }) {

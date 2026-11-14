@@ -96,9 +96,10 @@ describe('email check advice', () => {
 	it('covers the SPF branches', () => {
 		expect(spfAdvice(null, null)).toMatch(/^No SPF record found/);
 		expect(spfAdvice('permerror', 12)).toContain('requires 12 DNS lookups');
-		expect(spfAdvice('pass', 10)).toContain('at or over the limit');
-		expect(spfAdvice('pass', 8)).toContain('close to the limit');
-		expect(spfAdvice('pass', 3)).toContain('Uses 3/10 DNS lookups.');
+		expect(spfAdvice('pass', 10)).toContain('at the lookup limit');
+		expect(spfAdvice('pass', 10)).toContain('SPF still works');
+		expect(spfAdvice('pass', 8)).toContain('close to the lookup limit');
+		expect(spfAdvice('pass', 3)).toContain('Uses 3 of 10 DNS lookups.');
 		expect(spfAdvice('softfail', null)).toContain('soft-failed');
 		expect(spfAdvice('fail', null)).toContain('hard-failed');
 		expect(spfAdvice('temperror', null)).toContain('"temperror"');

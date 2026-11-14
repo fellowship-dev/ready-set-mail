@@ -1,4 +1,7 @@
-import type { DomainCheckSummary } from '../types';
+import type { StatusKind } from '@ready-set-mail/ui';
+import type { HostedLevelInput } from '../levels';
+import type { Domain, DomainCheckSummary } from '../types';
+import { domainVerdict, totalsFromSummary, type DomainVerdict } from '../verdict';
 
 export interface Recommendation {
 	domain: string;
@@ -6,45 +9,46 @@ export interface Recommendation {
 	message: string;
 }
 
+/** What the overview knows about a domain besides its summary, so the PDF's verdict is the overview's. */
+export interface PdfDomainContext {
+	domain: Pick<Domain, 'id' | 'domain' | 'rua_address'>;
+	hosted: HostedLevelInput | null;
+	hostedMode?: boolean;
+	idByName?: ReadonlyMap<string, number>;
+	suffixParent?: string | null;
+	reportsAvailable?: boolean;
+}
+
+const SEVERITY: Record<StatusKind, Recommendation['severity'] | null> = {
+	attention: 'critical',
+	improve: 'warning',
+	approval: 'warning',
+	unknown: 'warning',
+	gathering: 'info',
+	prepared: 'info',
+	note: 'info',
+	verified: null,
+};
+
 function passRate(pass: number, total: number): number | null {
 	if (total === 0) return null;
 	return pass / total;
 }
 
-export function getRecommendations(summary: DomainCheckSummary): Recommendation[] {
+/** The domain's verdict, exactly as the overview row computes it (the shared DMARC rule, report visibility included). */
+export function pdfVerdict(summary: DomainCheckSummary, ctx: PdfDomainContext): DomainVerdict {
+	return domainVerdict(ctx.domain, summary, totalsFromSummary(summary), ctx.hosted, undefined, { hostedMode: ctx.hostedMode, idByName: ctx.idByName, suffixParent: ctx.suffixParent ?? null, reportsAvailable: ctx.reportsAvailable });
+}
+
+export function getRecommendations(summary: DomainCheckSummary, ctx: PdfDomainContext): Recommendation[] {
 	const recs: Recommendation[] = [];
 
-	// DMARC policy
-	if (!summary.dmarc_policy) {
-		// Not checked is not "none": say so, and do not tell anyone to change a policy we have not seen.
-		recs.push({
-			domain: summary.domain,
-			severity: 'info',
-			message: 'DMARC policy has not been checked yet.',
-		});
-	} else if (summary.dmarc_policy === 'none') {
-		recs.push({
-			domain: summary.domain,
-			severity: 'critical',
-			message: 'DMARC policy is set to "none" (monitor only). Upgrade to "quarantine" or "reject" to protect against spoofing.',
-		});
-	} else if (summary.dmarc_policy === 'quarantine') {
-		recs.push({
-			domain: summary.domain,
-			severity: 'warning',
-			message: 'DMARC policy is "quarantine". Consider upgrading to "reject" once pass rates are stable.',
-		});
-	}
-
-	// DMARC pass rate
-	const dmarcRate = passRate(summary.pass_messages, summary.total_messages);
-	if (dmarcRate !== null && dmarcRate < 0.95) {
-		const pct = Math.round(dmarcRate * 100);
-		recs.push({
-			domain: summary.domain,
-			severity: dmarcRate < 0.7 ? 'critical' : 'warning',
-			message: `DMARC pass rate is ${pct}%. Investigate failing sources in the dashboard to improve deliverability.`,
-		});
+	// DMARC, its policy and its reports: the overview's verdict in its own words (what is true now, the evidence, the next
+	// step), never rules of the PDF's own. A verified domain needs no recommendation.
+	const v = pdfVerdict(summary, ctx);
+	const severity = SEVERITY[v.status];
+	if (severity) {
+		recs.push({ domain: summary.domain, severity, message: [v.sentence, v.evidence, `Next: ${v.next.label}.`].filter(Boolean).join(' ') });
 	}
 
 	// SPF pass rate
@@ -67,15 +71,6 @@ export function getRecommendations(summary: DomainCheckSummary): Recommendation[
 		});
 	}
 
-	// No messages at all
-	if (summary.total_messages === 0) {
-		recs.push({
-			domain: summary.domain,
-			severity: 'info',
-			message: 'No DMARC reports received in the last 30 days. Verify the RUA address in your DMARC record is correct.',
-		});
-	}
-
 	// MTA-STS not enabled
 	if (!summary.mta_sts_enabled) {
 		recs.push({
@@ -88,6 +83,7 @@ export function getRecommendations(summary: DomainCheckSummary): Recommendation[
 	return recs;
 }
 
-export function getAllRecommendations(summaries: DomainCheckSummary[]): Recommendation[] {
-	return summaries.flatMap(getRecommendations);
+/** `contexts[i]` belongs to `summaries[i]`. */
+export function getAllRecommendations(summaries: DomainCheckSummary[], contexts: readonly PdfDomainContext[]): Recommendation[] {
+	return summaries.flatMap((s, i) => getRecommendations(s, contexts[i] ?? { domain: { id: s.domain_id, domain: s.domain, rua_address: '' }, hosted: null }));
 }

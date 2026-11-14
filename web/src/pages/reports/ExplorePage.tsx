@@ -5,7 +5,10 @@ import { useState } from 'react';
 import { BackLink, Segmented, SourceTable, WindowPills, useRouteDomainId } from '../../components/reports';
 import { ListSkeleton, LoadError } from '../../components/states';
 import { api } from '../../lib/api';
+import { useStats } from '../../lib/domain-queries';
+import { sumStats } from '../../lib/dmarc';
 import { useDomain } from '../../lib/queries';
+import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { DEFAULT_WINDOW, isFailing, plural, type WindowDays } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 
@@ -24,6 +27,10 @@ export function ExplorePage() {
 		enabled: !Number.isNaN(id),
 	});
 
+	// The window's counted totals and report visibility: "no reports arrived" only when none did (emptyReportsState).
+	const stats = useStats(id, days);
+	const counted = stats.data ? sumStats(stats.data.stats).total : 0;
+	const emptyNote = stats.data && emptyReportsState(counted, stats.data) !== 'none' && counted === 0 ? emptyReportsMessage(counted, stats.data) : null;
 	const name = domain?.domain ?? q.data?.domain;
 	const sources = q.data?.sources ?? [];
 	const anomalyCount = sources.filter(isFailing).length;
@@ -61,7 +68,7 @@ export function ExplorePage() {
 
 			{reportsOff ? (
 				<ReportsNotConnected domain={domain?.domain} domainId={domain?.id} />
-			) : q.isPending ? (
+			) : q.isPending || (q.isSuccess && sources.length === 0 && stats.isPending) ? (
 				<ListSkeleton rows={4} label="Loading sources" />
 			) : q.isError ? (
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load sources" />
@@ -79,7 +86,7 @@ export function ExplorePage() {
 				) : (
 					<EmptyState
 						title={`No sources in the last ${days} days`}
-						description="No DMARC reports arrived in this window. Receivers send them about once a day once your DMARC record points to Ready Set Mail; a longer window may show older ones."
+						description={emptyNote ?? 'No DMARC reports arrived in this window. Receivers send them about once a day once your DMARC record points to Ready Set Mail; a longer window may show older ones.'}
 						action={days < 90 ? <Button variant="secondary" onClick={() => setDays(90)}>Look back 90 days</Button> : undefined}
 					/>
 				)
