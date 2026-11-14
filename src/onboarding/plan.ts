@@ -209,7 +209,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
                 const act = existing?.actions?.[0];
                 const ours = !!existing && existing.enabled !== false && act?.type === 'worker' && (act.value ?? []).includes(tenant.workerName);
                 if (existing && !ours) {
-                  const now = existing.enabled === false ? 'is switched off' : act?.type === 'forward' ? `forwards to ${(act.value ?? []).join(', ') || 'a mailbox'}` : act?.type === 'worker' ? `sends mail to the Worker ${(act.value ?? []).join(', ')}` : act?.type === 'drop' ? 'drops the mail' : existing.enabled === false ? 'is switched off' : `does "${act?.type ?? 'nothing'}"`;
+                  const now = existing.enabled === false ? 'is switched off' : act?.type === 'forward' ? `forwards to ${(act.value ?? []).join(', ') || 'a mailbox'}` : act?.type === 'worker' ? `sends mail to the Worker ${(act.value ?? []).join(', ')}` : act?.type === 'drop' ? 'drops the mail' : `does "${act?.type ?? 'nothing'}"`;
                   note(`Address rule for ${address}`, `${address} already has a rule that ${now}. Ready Set Mail does not change it. To receive reports here, point it at the Worker ${tenant.workerName} yourself.`);
                   continue;
                 }
