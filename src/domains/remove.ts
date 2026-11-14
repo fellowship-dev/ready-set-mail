@@ -4,6 +4,7 @@ import { disableHosted } from '../hosted/service';
 import { hostedEnabled } from '../hosted/config';
 import { deprovisionDomain } from '../dns/provision';
 import { logAudit } from '../audit/log';
+import { removalAction, keptFromError, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import type { TenantContext } from '../tenancy/context';
 import type { DomainRow } from '@ready-set-mail/db';
 
@@ -16,18 +17,24 @@ export async function removeHostedRecords(tenant: TenantContext, domain: DomainR
   return true;
 }
 
-/** Best-effort removal of the report-authorisation DNS record (non-fatal if it fails), with its audit entry. */
-export async function removeAuthRecord(tenant: TenantContext, domain: DomainRow, actor?: Actor, ctx?: ExecutionContext): Promise<void> {
-  if (!domain.dns_record_id) return;
+/**
+ * Best-effort removal of the report-authorisation DNS record (never fatal), with the audit entry the outcome deserves:
+ * `dns.delete` only for a record that was deleted, `dns.already_gone` when it was not there, `dns.kept` when it was left
+ * in place. Returns the records that were kept, so the caller can tell the customer.
+ */
+export async function removeAuthRecord(tenant: TenantContext, domain: DomainRow, actor?: Actor, ctx?: ExecutionContext): Promise<KeptRecord[]> {
+  if (!domain.dns_record_id) return [];
   const rdomain = tenant.settings.reportsDomain;
   const recordName = rdomain ? `${domain.domain}._report._dmarc.${rdomain}` : domain.dns_record_id;
-  const removed = await deprovisionDomain(tenant, domain.dns_record_id, domain.domain).catch(e => { console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e); return false; });
-  // A delete that was refused (the id holds some other record) or failed is not audited as a removal.
-  if (removed === false) return;
+  const removal: DnsRemoval = await deprovisionDomain(tenant, domain.dns_record_id, domain.domain)
+    .then(r => r ?? { state: 'deleted' as const }) // a stub that resolves to nothing: no refusal was reported
+    .catch((e): DnsRemoval => { console.warn(`deprovisionDomain failed for domain ${domain.id}:`, e); return keptFromError(e); });
   logAudit(tenant, {
     actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: actor ? 'user' : 'system',
-    action: 'dns.delete',
+    action: removalAction(removal),
     resource_type: 'dns_record', resource_id: domain.dns_record_id, resource_name: recordName,
     before_value: { type: 'TXT', name: recordName, content: 'v=DMARC1;', ttl: 3600 },
+    ...(removal.state === 'kept' ? { after_value: { kept: true, reason: removal.reason } } : {}),
   }, ctx);
+  return removal.state === 'kept' ? [{ type: 'TXT', name: recordName, reason: removal.reason }] : [];
 }

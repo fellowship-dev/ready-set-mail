@@ -27,7 +27,7 @@
 //   GET    /api/instance/preflight            — configuration check by setting name (instance owner only; src/setup/preflight.ts)
 //   GET    /api/domains                       — list domains
 //   POST   /api/domains                       — add a domain
-//   DELETE /api/domains/:id                   — remove a domain
+//   DELETE /api/domains/:id                   — remove a domain: { ok, kept } (the DNS records it left in place, and why)
 //   GET    /api/domains/:id/stats             — daily pass/fail stats (days, max 90)
 //   GET    /api/domains/:id/reports?date=     — report sources for a specific date
 //   GET    /api/domains/:id/sources           — top failing sources (days, max 90)
@@ -109,6 +109,7 @@ import { getMode } from '../tenancy/mode';
 import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
+import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { admitDomain, claimView, demoteOrphanedSubdomains, listClaims, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, assertDomainRoom, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
@@ -122,7 +123,7 @@ import { track } from '../telemetry';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
-import { CfApiError, CfAuthError, CfConnectionError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText } from '../tenancy/cf-client';
+import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
 import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/spf-flattener';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
@@ -135,6 +136,7 @@ import {
   provisionMtaSts,
   updateMtaStsTxtRecord,
   deprovisionMtaSts,
+  type MtaStsRemoval,
   discoverMxHosts,
   generatePolicyId,
   buildPolicyFile,
@@ -213,6 +215,7 @@ function cfFailure(e: unknown, fallbackStatus = 500): Response {
   if (e instanceof CfConnectionError) return json({ error: e.message, code: `cf_connection_${e.code}`, connection_id: e.connectionId }, 409);
   if (e instanceof CfZoneNotAllowedError) return json({ error: e.message, code: 'cf_zone_not_allowed', connection_id: e.connectionId }, 403);
   if (e instanceof CfRecordNotAllowedError) return json({ error: e.message, code: 'cf_record_not_allowed' }, 403);
+  if (e instanceof CfIncompleteListError) return json({ error: incompleteListMessage(e), code: 'cf_list_incomplete' }, 502);
   return err(cfErrorText(e), fallbackStatus);
 }
 
@@ -302,9 +305,10 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
     before_value: { domain: domain.domain, rua_address: domain.rua_address },
   }, ctx);
 
-  await removeAuthRecord(tenant, domain, actor, ctx);
+  // A record the customer changed is not deleted: the removal still succeeds and says which records were kept and why.
+  const kept = await removeAuthRecord(tenant, domain, actor, ctx);
 
-  return new Response(null, { status: 204 });
+  return json({ ok: true, kept });
 }
 
 /** A stored report as the API shows it: whether it counts toward the numbers, and without the storing attempt's internal id. */
@@ -808,6 +812,7 @@ async function _handleApi(
         const zones = (await cf.listZones()).map(z => ({ id: z.id, name: z.name, status: z.status }));
         return json({ zones });
       } catch (e) {
+        if (e instanceof CfIncompleteListError) return cfFailure(e);
         if (e instanceof CfApiError || e instanceof CfAuthError) return err(cfErrorText(e), 502);
         return err('Failed to fetch zones from Cloudflare', 502);
       }
@@ -1105,8 +1110,8 @@ async function _handleApi(
               const cf = await tenant.cfFor(domain.domain);
               const zone = await cf.zoneFor(domain.domain);
               const [txtRecords, cnameRecords] = await Promise.all([
-                cf.listDnsRecords(zone.id, { type: 'TXT', per_page: 100 }),
-                cf.listDnsRecords(zone.id, { type: 'CNAME', per_page: 100 }),
+                cf.listDnsRecords(zone.id, { type: 'TXT' }),
+                cf.listDnsRecords(zone.id, { type: 'CNAME' }),
               ]);
               // A TXT record under _domainkey counts only if it is DKIM-shaped; a CNAME is a named selector as it stands. A zone wildcard
               // (`*._domainkey`) answers every selector alike, so it names none.
@@ -1976,36 +1981,52 @@ async function _handleApi(
         const config = await tenant.scope.mtaSts.get(id);
         if (!config) return new Response(null, { status: 204 });
 
+        // What became of each record. Without a Cloudflare connection nothing was deleted, and each says so.
+        let removals: MtaStsRemoval[];
         if (tenant.hasCloudflare()) {
-          try {
-            await deprovisionMtaSts(
-              tenant,
-              domain.domain,
-              {
-                mta_sts_record_id: config.mta_sts_record_id ?? null,
-                tls_rpt_record_id: config.tls_rpt_record_id ?? null,
-                cname_record_id: config.cname_record_id ?? null,
-              }
-            );
-          } catch (e) {
-            console.warn(`[mta-sts] deprovision DNS failed for ${domain.domain}:`, e);
-          }
+          removals = await deprovisionMtaSts(
+            tenant,
+            domain.domain,
+            {
+              mta_sts_record_id: config.mta_sts_record_id ?? null,
+              tls_rpt_record_id: config.tls_rpt_record_id ?? null,
+              cname_record_id: config.cname_record_id ?? null,
+            }
+          );
+        } else {
+          const none: DnsRemoval = { state: 'kept', reason: 'no Cloudflare connection is available to delete it' };
+          const d = domain.domain;
+          removals = [];
+          if (config.mta_sts_record_id) removals.push({ id: config.mta_sts_record_id, type: 'TXT', name: `_mta-sts.${d}`, removal: none });
+          if (config.tls_rpt_record_id) removals.push({ id: config.tls_rpt_record_id, type: 'TXT', name: `_smtp._tls.${d}`, removal: none });
+          if (config.cname_record_id) removals.push({ id: config.cname_record_id, type: 'CNAME', name: `mta-sts.${d}`, removal: none });
         }
+        const kept: KeptRecord[] = removals.flatMap(r => r.removal.state === 'kept' ? [{ type: r.type, name: r.name, reason: r.removal.reason }] : []);
 
+        const rd = tenant.settings.reportsDomain;
+        const who = { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user' as const };
         logAudit(tenant, {
-              actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
+          ...who,
           action: 'mta_sts.disable',
           resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
           before_value: { mode: config.mode, mx_hosts: config.mx_hosts?.split(',').filter(Boolean) ?? [], policy_id: config.policy_id },
+          ...(kept.length ? { after_value: { kept } } : {}),
         }, ctx);
-        // Log each DNS record deleted
-        const rd = tenant.settings.reportsDomain;
-        if (config.mta_sts_record_id) logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.delete', resource_type: 'dns_record', resource_id: config.mta_sts_record_id, resource_name: `_mta-sts.${domain.domain}`, before_value: { type: 'TXT', name: `_mta-sts.${domain.domain}`, content: `v=STSv1; id=${config.policy_id}` } }, ctx);
-        if (config.tls_rpt_record_id && rd) logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.delete', resource_type: 'dns_record', resource_id: config.tls_rpt_record_id, resource_name: `_smtp._tls.${domain.domain}`, before_value: { type: 'TXT', name: `_smtp._tls.${domain.domain}`, content: `v=TLSRPTv1; rua=mailto:tls-rpt@${rd}` } }, ctx);
-        if (config.cname_record_id) logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.delete', resource_type: 'dns_record', resource_id: config.cname_record_id, resource_name: `mta-sts.${domain.domain}`, before_value: { type: 'CNAME', name: `mta-sts.${domain.domain}` } }, ctx);
+        // One audit entry per record, saying what really happened to it: dns.delete only for a record that was deleted.
+        const before = (r: MtaStsRemoval) => r.type === 'CNAME' ? { type: 'CNAME', name: r.name } : r.name.startsWith('_mta-sts.')
+          ? { type: 'TXT', name: r.name, content: `v=STSv1; id=${config.policy_id}` } : { type: 'TXT', name: r.name, content: `v=TLSRPTv1; rua=mailto:tls-rpt@${rd}` };
+        for (const r of removals) {
+          logAudit(tenant, {
+            ...who, action: removalAction(r.removal), resource_type: 'dns_record', resource_id: r.id, resource_name: r.name, before_value: before(r),
+            ...(r.removal.state === 'kept' ? { after_value: { kept: true, reason: r.removal.reason } } : {}),
+          }, ctx);
+        }
         track(tenant, { event: 'mta_sts.disable' }); // fire-and-forget
+        // The row goes even when a record was kept: it drives the policy file and the cron, and a disabled feature serves
+        // neither. The kept record is not forgotten: it is in this response and in its dns.kept audit entry (it is the
+        // customer's record now; re-enabling would need them to remove or fix it first).
         await tenant.scope.mtaSts.delete(id);
-        return new Response(null, { status: 204 });
+        return json({ ok: true, kept });
       }
     }
 
@@ -2099,7 +2120,7 @@ async function _handleApi(
 
     return err('not found', 404);
   } catch (e: any) {
-    if (e instanceof CfConnectionError || e instanceof CfZoneNotAllowedError || e instanceof TokenKeyError || e instanceof TokenEnvelopeError) return cfFailure(e);
+    if (e instanceof CfConnectionError || e instanceof CfIncompleteListError || e instanceof CfZoneNotAllowedError || e instanceof TokenKeyError || e instanceof TokenEnvelopeError) return cfFailure(e);
     if (e instanceof DomainServiceError && e.body) return json(e.body, e.status);
     if (e?.status && e?.message) return err(e.message, e.status);
     console.error('API error', e);

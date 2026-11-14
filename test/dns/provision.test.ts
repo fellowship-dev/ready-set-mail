@@ -133,20 +133,25 @@ describe('deprovisionDomain', () => {
     expect((fetchMock.mock.calls as [string, RequestInit][]).some(([, o]) => o.method === 'DELETE')).toBe(false);
   });
 
+  it('a record the customer changed is kept, with the reason', async () => {
+    vi.stubGlobal('fetch', answer({ ...AUTH, content: 'v=spf1 -all' }));
+    await expect(deprovisionDomain(ENV, 'dns-record-1', 'acme.com')).resolves.toEqual({ state: 'kept', reason: 'its content no longer matches what Ready Set Mail wrote' });
+  });
+
   it('resolves without throwing on 404 (idempotent)', async () => {
     mockFetch(404, { success: false, errors: [{ message: 'not found' }] });
-    await expect(deprovisionDomain(ENV, 'gone-id', 'acme.com')).resolves.toBe(true); // already gone
+    await expect(deprovisionDomain(ENV, 'gone-id', 'acme.com')).resolves.toEqual({ state: 'already_gone' });
   });
 
   it('resolves without throwing when fetch fails (network error)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    await expect(deprovisionDomain(ENV, 'some-id', 'acme.com')).resolves.toBe(false); // left in place
+    await expect(deprovisionDomain(ENV, 'some-id', 'acme.com')).resolves.toMatchObject({ state: 'kept', reason: expect.stringContaining('Cloudflare could not delete it') });
   });
 
   it('resolves without calling fetch when credentials are not configured', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    await deprovisionDomain(makeTenant(), 'some-id');
+    await expect(deprovisionDomain(makeTenant(), 'some-id', 'acme.com')).resolves.toMatchObject({ state: 'kept' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

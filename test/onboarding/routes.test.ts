@@ -89,7 +89,7 @@ describe('onboarding routes', () => {
       return res;
     });
     const res = await w.api(w.A.token, 'POST', '/api/onboarding/dns-apply', { domain_ids: [1], step: 'dmarc', plan_id: p.plan_id });
-    expect((await json(res)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: false }]);
+    expect((await json(res)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: false, verify_note: '_dmarc.a-corp.com was not found when read back from Cloudflare.' }]);
   });
 
   it('a stale plan_id writes nothing', async () => {

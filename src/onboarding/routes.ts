@@ -109,15 +109,16 @@ async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<ty
       case 'auth':
       case 'mx': {
         const list = await x.cf.listDnsRecords(x.zoneId, { type: x.kind === 'mx' ? 'MX' : 'TXT', name: w.name });
-        return { verified: list.some(r => norm(r.content) === norm(w.content)) };
+        return list.some(r => norm(r.content) === norm(w.content)) ? { verified: true } : { verified: false, reason: `${w.name} was not found when read back from Cloudflare.` };
       }
       case 'rule': {
-        const rules = await listEmailRules(x.cf, x.zoneId);
-        return { verified: rules.some(r => r.enabled !== false && (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === (x.address ?? '').toLowerCase()) && (r.actions ?? []).some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName))) };
+        const rules = await listEmailRules(x.cf, x.zoneId, 2); // the plan read at most the cap; this run added at most the two report rules
+        const found = rules.some(r => r.enabled !== false && (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === (x.address ?? '').toLowerCase()) && (r.actions ?? []).some(a => a.type === 'worker' && (a.value ?? []).includes(tenant.workerName)));
+        return found ? { verified: true } : { verified: false, reason: `The rule for ${x.address} was not found when read back from Cloudflare.` };
       }
     }
   } catch (e) { return { verified: false, reason: `Could not read ${w.name} back from Cloudflare to check it: ${plainCloudflareError(e)}` }; }
-  return { verified: false };
+  return { verified: false, reason: 'This kind of write cannot be read back.' };
 }
 
 export async function handleOnboardingRoutes(request: Request, tenant: TenantContext, ctx: ExecutionContext | undefined, caller: OnboardingCaller): Promise<Response | null> {

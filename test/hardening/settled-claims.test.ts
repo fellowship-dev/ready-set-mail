@@ -67,7 +67,7 @@ describe('a settled claim', () => {
   it('after the domain is removed the settled id is 404, and add → remove → re-add works', async () => {
     const w = await settled();
     const id = (await json(w.first)).domain.id;
-    expect((await w.api(w.a, 'DELETE', `/api/domains/${id}`)).status).toBe(204);
+    expect((await w.api(w.a, 'DELETE', `/api/domains/${id}`)).status).toBe(200);
     expect((await w.verify(w.claim.id)).status).toBe(404);
 
     const claim2 = await w.add('acme.org');

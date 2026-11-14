@@ -33,7 +33,7 @@ describe('Cloudflare wizard: connect', () => {
 		});
 		expect(await screen.findByText('Zone Resources: the zones you want Ready Set Mail to manage.')).toBeInTheDocument();
 		expect(screen.getByText(/It writes only the DMARC, report-authorisation and reports-mailbox records you approve/)).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: 'Create a token at Cloudflare' })).toHaveAttribute('href', 'https://dash.cloudflare.com/profile/api-tokens');
+		expect(screen.getByRole('link', { name: 'Create the token in Cloudflare' })).toHaveAttribute('target', '_blank');
 		const field = screen.getByLabelText('Cloudflare API token');
 		expect(field).toHaveAttribute('type', 'password');
 		await userEvent.type(field, 'x'.repeat(40));
