@@ -160,6 +160,8 @@ dist
 
 # wrangler project
 
+# this checkout's installation, written by `npm run setup`
+wrangler.local.jsonc
 .dev.vars*
 !.dev.vars.example
 .env*

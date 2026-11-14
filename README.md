@@ -48,76 +48,41 @@ Sending MTA → attempts TLS → policy says "enforce" → must succeed or rejec
 
 Self-hosting runs the whole product on your own Cloudflare account and makes you its operator.
 
-### What self-hosting takes
+### Install
 
-- **A Cloudflare account** holding a Worker, a D1 database and a KV namespace (`OAUTH_KV`), plus a runtime API token with the permissions below. One-click DNS changes for a monitored domain need that domain's DNS on Cloudflare; on any other DNS host you copy the records by hand.
-- **Configuration before first use:** a canonical HTTPS origin (`BETTER_AUTH_URL`) and a private, single-use installer proof (`BOOTSTRAP_SECRET`). A successful deploy is not a finished setup.
-- **For DMARC report ingestion:** Cloudflare Email Routing on your reports domain (MX records and a rule to the Worker). The `_report._dmarc` authorization records also live in the reports domain's zone, not in each monitored domain's zone, so a monitored domain on external DNS can still have its reports ingested: it only adds the reports address to its own DMARC record. Live DNS checks work without any of this.
-- **For mail to arbitrary recipients** (free-check replies, alerts to addresses that are not verified destinations): a sending domain onboarded in Cloudflare Email Service, which needs Workers Paid. Without it, outbound mail reaches only verified Email Routing destinations.
-- **Costs:** whatever Cloudflare charges for Workers, D1, KV and email under your plan and usage. This project charges nothing.
-- **Upgrades are yours:** back up D1, run migrations, redeploy ([Upgrading](#upgrading)). `GET /api/version` shows when a newer release exists.
-- **No support guarantee:** MIT licensed and provided as is, with no warranty, support agreement or uptime commitment. Issues are welcome on GitHub.
-
-### Before you start — create your Cloudflare API token
-
-The Worker needs a token at runtime to manage Email Routing rules and DNS records.
-
-1. Go to [dash.cloudflare.com](https://dash.cloudflare.com) → **My Profile** → **API Tokens** → **Create Token** → **Create Custom Token**
-2. Give it a name (e.g. `ready-set-mail-runtime`)
-3. Set these permissions:
-
-| Scope | Resource | Permission |
-|---|---|---|
-| Account | Account Settings | Read |
-| Account | Email Sending | Edit |
-| Account | Email Routing Addresses | Edit |
-| Zone | Zone | Read |
-| Zone | Email Routing Rules | Edit |
-| Zone | DNS | Edit |
-| Zone | Workers Routes | Edit |
-
-4. Under **Zone Resources**, select the zone where your domain lives
-5. Click **Continue to summary** → **Create Token** — copy it
-
----
-
-### Step 1 — Deploy
-
-**Option A — one click (recommended):**
-
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/fellowship-dev/ready-set-mail)
-
-The button starts the Worker/D1 deployment and prompts for the runtime API token. Before first-owner setup, also complete the installation-owned OAuth namespace, canonical HTTPS origin and private installer-proof steps in [the operator guide](docs/agent-operations.md#installer-setup). Do not treat a successful deployment as completed setup.
-
-**Option B — CLI:**
+You need a Cloudflare account, [Node.js](https://nodejs.org) 22.22.2 or newer (24.15.0+ on the 24 line) and git, on macOS or Linux (on Windows, use WSL).
 
 ```bash
+git clone https://github.com/fellowship-dev/ready-set-mail.git
+cd ready-set-mail
 npm install
-wrangler secret put CLOUDFLARE_API_TOKEN  # the token you created above
-# Create/bind your D1 and OAUTH_KV, set BETTER_AUTH_URL, and upload BOOTSTRAP_SECRET
-# using the private-file procedure in docs/agent-operations.md before first setup.
-npm run deploy
+npm run setup
 ```
 
-The installation needs `OAUTH_KV`, a canonical HTTPS `BETTER_AUTH_URL` and private `BOOTSTRAP_SECRET`; domain intake and optional Cloudflare DNS/routing configuration are separate setup steps. No Fellowship account, Google connection or outbound mail service is needed for a first live-DNS health report.
+`npm install` brings Wrangler, Cloudflare's command-line tool, with it. `npm run setup` logs you in to Cloudflare if needed, finds your account, shows what it is about to create and asks once, then creates the database and storage, deploys, checks that the instance answers, and ends with its address and **one link to click to become the owner**. It asks a second question only if your login can see several Cloudflare accounts.
 
-**Option C — GitHub Actions (manual):** the `Deploy` workflow (`.github/workflows/deploy.yml`) runs only when you start it from the Actions tab (**Run workflow**); pushes to `main` never deploy. It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets listed at the top of the workflow.
+Open the link to create your owner account. It is valid until your owner account exists, for at most 15 minutes; `npm run setup -- --new-link` prints a new one. If the page asks for an installer proof, paste the contents of `~/.config/ready-set-mail/ready-set-mail/bootstrap-proof`.
 
----
+Then add your domain in the dashboard: it checks SPF, DKIM and DMARC from live DNS right away and shows the records to change. Letting Ready Set Mail write DNS for you is optional: use **Connect Cloudflare** in the dashboard.
+
+Everything else is in [docs/self-hosting.md](docs/self-hosting.md): what the installer does, flags for agents and CI (`--yes --json`), [token permissions](docs/self-hosting.md#permissions), the [scheduled jobs](docs/self-hosting.md#scheduled-jobs) the Worker runs, and the [manual install](docs/self-hosting.md#manual-install).
+
+### What self-hosting takes
+
+- **One Cloudflare account** holding a Worker, a D1 database and a KV namespace, created by the installer. One-click DNS changes for a monitored domain need that domain's DNS on Cloudflare; on any other DNS host you copy the records by hand.
+- **For DMARC report ingestion:** Cloudflare Email Routing on your reports domain (MX records and a rule to the Worker); the dashboard sets it up when Cloudflare is connected. The `_report._dmarc` authorization records live in the reports domain's zone, not in each monitored domain's zone, so a monitored domain on external DNS can still have its reports ingested: it only adds the reports address to its own DMARC record. Live DNS checks work without any of this.
+- **For mail to arbitrary recipients** (free-check replies, alerts to addresses that are not verified destinations): a sending domain onboarded in Cloudflare Email Service, which needs Workers Paid. Without it, outbound mail reaches only verified Email Routing destinations.
+- **Costs:** whatever Cloudflare charges for Workers, D1, KV and email under your plan and usage. This project charges nothing.
+- **Upgrades are yours:** `git pull && npm install && npm run deploy` ([Upgrading](#upgrading)).
+- **No support guarantee:** MIT licensed and provided as is, with no warranty, support agreement or uptime commitment. Issues are welcome on GitHub.
 
 <a id="post-deploy"></a>
 
-### Step 2 — Create your account
-
-Open the canonical HTTPS Worker URL. Enter your email, new password and the installer-held proof in the masked **Installer proof** field. Successful setup consumes the proof and creates the owner; public visitors and social sign-in cannot claim first ownership. Keep proof/password values out of chat, URLs and logs. See [installer setup and recovery](docs/agent-operations.md).
-
----
-
-### Step 3 — Set up your domain
+### Set up your domain
 
 After creating your account, the setup wizard walks you through five steps:
 
-1. **Domain** — enter your domain (e.g. `yourdomain.com`). Zone ID and Cloudflare account ID are auto-resolved from the Cloudflare API.
+1. **Domain** — enter your domain (e.g. `yourdomain.com`). With Cloudflare connected, the zone and account are found automatically.
 2. **SPF** — checks your SPF record and lookup depth
 3. **DKIM** — scans for DKIM selectors
 4. **DMARC** — shows your current record and recommended changes. Can apply via Cloudflare DNS with one click.
@@ -141,7 +106,7 @@ A visitor emails their `check+<token>@<reports domain>` address and gets the rep
 
 Auth is [Better Auth](https://www.better-auth.com) on D1 (sessions, logins and reset tokens live in your database).
 
-* **First owner:** email/password setup requires the installation's private, single-use `BOOTSTRAP_SECRET` proof. Without valid proof it stays closed; no shared default password or first-visitor ownership race exists. Social sign-in cannot create the first owner. Further self-host users join by invite.
+* **First owner:** email/password setup requires the installation's private, single-use `BOOTSTRAP_SECRET` proof, which `npm run setup` generates; the setup link it prints carries a short-lived signature derived from it. Without valid proof setup stays closed, and there is no shared default password. Social sign-in cannot create the first owner. Further self-host users join by invite.
 * **Roles** are per workspace. Owners/admins can perform permitted domain operations; members read. Product grants, credential administration and Google Postmaster connections require a browser **owner**, not merely an admin. Delegated principals remain constrained by their current finite grants.
 * **Workspaces:** one login can belong to several workspaces, each with its own domains, reports, members and roles. Switch from the top of the sidebar. Only the self-host instance owner creates further workspaces; only the default workspace uses the server's Cloudflare token. See [workspaces](docs/workspaces.md).
 * **GitHub / Google sign-in** appears when its separate credentials are configured (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`). Callbacks are `https://<your-worker>/api/auth/callback/github` and `…/google`. An invited self-host user must satisfy the existing account/invite policy; social login is not bootstrap proof.
@@ -152,19 +117,19 @@ Auth is [Better Auth](https://www.better-auth.com) on D1 (sessions, logins and r
 * **Security:** auth POSTs (setup, login, logout, reset, invite…) must be `application/json` and, when sent by a browser, same-origin (login-CSRF protection); cookie-authenticated writes must come from the same origin (set `TRUSTED_ORIGINS` for extra ones); login, sign-up and reset are rate-limited per IP in D1; resetting a password signs out every session; password reset never reveals whether an address exists.
 * Optional settings: `OWNER_EMAIL`; `MODE=saas` + `SAAS_ENABLED=1` (hosted mode, **not launched**: every sign-up gets its own workspace and everything — data, audit entries, invites and delegated grants — is scoped to the caller's workspace; without `SAAS_ENABLED=1` the Worker answers 503 in `MODE=saas`), `BETTER_AUTH_SECRET` (session signing secret — generated and stored in D1 if unset), `BETTER_AUTH_URL` (canonical HTTPS installation origin), `BOOTSTRAP_SECRET` (private first-owner proof) and `OAUTH_KV` (installation-owned agent OAuth storage). Optional `MCP_DCR_ENABLED=1` enables dynamic registration for clients that require it; client-ID metadata documents are supported by default.
 
-Google Postmaster uses a separate owner-approved read connection and explicit 1–90 day sync. Configure its `GOOGLE_POSTMASTER_CLIENT_ID`, `GOOGLE_POSTMASTER_CLIENT_SECRET` and `TOKEN_ENCRYPTION_KEY`; Google account sign-in alone grants no metrics. [Source definitions, unavailable states and recovery](docs/agent-operations.md#google-postmaster-is-a-separate-owner-connection) are part of the operator workflow.
+Google Postmaster uses a separate owner-approved read connection and explicit 1–90 day sync. Configure its `GOOGLE_POSTMASTER_CLIENT_ID` and `GOOGLE_POSTMASTER_CLIENT_SECRET` (it also needs `TOKEN_ENCRYPTION_KEY`, which `npm run setup` sets); Google account sign-in alone grants no metrics. [Source definitions, unavailable states and recovery](docs/agent-operations.md#google-postmaster-is-a-separate-owner-connection) are part of the operator workflow.
 
 ## Upgrading
 
-The schema is managed by `packages/db` migrations; the Worker no longer changes it at runtime.
+```bash
+git pull && npm install && npm run deploy
+```
 
-1. Back up D1: `wrangler d1 export ready-set-mail --remote --output backup.sql`
-2. Run `npm run migrate` before serving the new Worker. The wrapper applies unapplied migration files through Wrangler.
-3. Convert retired broad credentials to owner-issued finite grants and credentials. Current access/metrics migrations are additive; no data reset is required. Preserve a database/Worker backup pair for rollback.
+`npm run deploy` builds the dashboard, applies new database migrations, then deploys, using the `wrangler.local.jsonc` the installer wrote. Until the migrations are applied the Worker answers 503 and inbound email is refused for retry. To keep a rollback point, back up first: `npm run wrangler -- d1 export DB --remote --output backup.sql`. `GET /api/version` compares your instance's version with the repository's.
 
-An existing installation keeps its Worker by deploying under the name it already has: set `name` and the `WORKER_NAME` var in `wrangler.jsonc` to what you deployed before (an installation from before the rename is usually `inbox-angel-worker`; the database is still the one you created, whatever its name), and keep your own `database_id` and `OAUTH_KV` id. Deploying under a different name creates a second Worker next to the old one instead of updating it. <!-- @legacy-name: the pre-rename worker name is real -->
+An installation made before the installer keeps its Worker by deploying under the name it already has: copy `wrangler.jsonc` to `wrangler.local.jsonc` and set `name`, `vars.WORKER_NAME`, `account_id`, its own `database_id`, `OAUTH_KV` id and `BETTER_AUTH_URL` there (an installation from before the rename is usually `inbox-angel-worker`). Deploying under a different name creates a second Worker next to the old one instead of updating it. <!-- @legacy-name: the pre-rename worker name is real -->
 
-Until migrated, the Worker answers 503 and inbound email is refused for retry. Details, rollback and edge cases: [packages/db/UPGRADING.md](packages/db/UPGRADING.md).
+Installs of v1.2.0 and earlier (March 2026) cannot be upgraded in place. Details, rollback and edge cases: [packages/db/UPGRADING.md](packages/db/UPGRADING.md).
 
 ## Stack
 
@@ -182,15 +147,15 @@ Until migrated, the Worker answers 503 and inbound email is refused for retry. D
 
 ## Repository layout
 
-The deployable Worker stays at the repo root so the Deploy to Cloudflare button (which clones the whole repo and builds from its root) keeps working with the plain root URL. Shared code lives in npm workspaces:
+The deployable Worker stays at the repo root, so `npm run setup` and `npm run deploy` work from a plain clone. Shared code lives in npm workspaces:
 
 | Path | What |
 |---|---|
-| `src/`, `web/`, `migrations/`, `test/`, `e2e/`, `scripts/`, `wrangler.jsonc`, `deploy.json` | The Worker app (root `package.json`) |
+| `src/`, `web/`, `migrations/`, `test/`, `e2e/`, `scripts/`, `wrangler.jsonc` | The Worker app (root `package.json`); `scripts/setup.mjs` is the installer |
 | `packages/*` | Workspace packages. `@ready-set-mail/dns-checks` (pure SPF/DKIM/DMARC/MTA-STS/BIMI checks) is imported by name from the app and bundled by wrangler |
 | `tools/*` | Offline tooling (`tools/audit-fleet`) |
 
-**Why npm workspaces, not pnpm:** the Deploy button and most self-hosters already run `npm install` against a `package-lock.json`. npm needs no extra tool or corepack step, so it carries the least risk. pnpm can be revisited later.
+**Why npm workspaces, not pnpm:** self-hosters already run `npm install` against a `package-lock.json`. npm needs no extra tool or corepack step, so it carries the least risk. pnpm can be revisited later.
 
 ## Local Development
 
@@ -228,34 +193,13 @@ Without this, receiving mail servers silently reject the external RUA address. T
 
 ## Uninstalling
 
-**1. Export your data first**
-
-Dashboard → any domain → Settings → Export. Downloads a full JSON export of all reports, sources, and stats for that domain.
-
-**2. Remove your domains from the dashboard**
-
-Dashboard → each domain → Settings → Delete domain. This removes the DNS authorization records the Worker provisioned.
-
-**3. Update your DMARC records**
-
-Remove the `rua@reports.yourdomain.com` address from each domain's `_dmarc` TXT record.
-
-**4. Delete the Worker and database**
+Export what you want to keep and delete each domain in the dashboard (that removes the DNS records it added), then:
 
 ```bash
-wrangler delete                      # removes the Worker and its routes
-wrangler d1 delete ready-set-mail    # permanently deletes the D1 database
+npm run setup -- --uninstall --name ready-set-mail
 ```
 
-**5. Clean up email routing**
-
-Cloudflare dashboard → your zone → Email → Routing:
-- Delete the catch-all rule pointing to this Worker
-- Delete the MX records added for `reports.yourdomain.com`
-
-**6. Delete the API token**
-
-Cloudflare dashboard → My Profile → API Tokens → delete the token you created.
+It lists exactly what it will delete and asks you to type the name; it deletes only what the installer created, after exporting the database next to your backups. Full steps, including Email Routing and token cleanup: [docs/self-hosting.md#uninstall](docs/self-hosting.md#uninstall).
 
 ---
 
