@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 export const SETUP_LINK_TTL_SECONDS = 24 * 60 * 60;
 
 function d1(target, sql) {
- const r = spawnSync('npx', ['wrangler', 'd1', 'execute', 'DB', target, '--json', '--command', sql], { encoding: 'utf8' });
+ const r = spawnSync('npx', ['wrangler', 'd1', 'execute', 'DB', ...[target].flat(), '--json', '--command', sql], { encoding: 'utf8' });
  if (r.status !== 0) throw new Error((r.stderr || r.stdout || 'wrangler d1 execute failed').trim().split('\n').slice(-3).join('\n'));
  try {
   const parsed = JSON.parse(r.stdout);
@@ -49,9 +49,9 @@ export function originFromDeployOutput(text) {
  * Returns { status: 'created', url } | { status: 'owner_exists' } | { status: 'skipped' } | throws on D1 failure.
  * Prints nothing itself.
  */
-export function mintSetupLink({ local = false, origin = null, env = process.env } = {}) {
+export function mintSetupLink({ local = false, origin = null, persistTo = null, env = process.env } = {}) {
  if (env.GITHUB_ACTIONS === 'true') return { status: 'skipped' };
- const target = local ? '--local' : '--remote';
+ const target = local ? (persistTo ? ['--local', '--persist-to', persistTo] : '--local') : '--remote';
  const owners = d1(target, "SELECT COUNT(*) AS n FROM memberships WHERE role = 'owner'");
  if (Number(owners[0]?.n ?? 0) > 0) return { status: 'owner_exists' };
  const token = randomBytes(32).toString('base64url');
@@ -75,7 +75,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
  const args = process.argv.slice(2);
  const urlIdx = args.indexOf('--url');
  try {
-  printResult(mintSetupLink({ local: args.includes('--local'), origin: urlIdx >= 0 ? args[urlIdx + 1] : null }));
+  const persistIdx = args.indexOf('--persist-to');
+  printResult(mintSetupLink({ local: args.includes('--local'), origin: urlIdx >= 0 ? args[urlIdx + 1] : null, persistTo: persistIdx >= 0 ? args[persistIdx + 1] : null }));
  } catch (e) {
   console.error(`Could not create the setup link: ${e.message}`);
   console.error('Check that you are logged in to Wrangler (npx wrangler whoami) and the DB binding exists, then run `npm run setup-link` again.');

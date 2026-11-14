@@ -14,7 +14,8 @@
 // Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
 // harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
 //
-// Test helpers (not part of Cloudflare's API): GET /__state, POST /__reset.
+// Test helpers (not part of Cloudflare's API): GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
+// everything under it answers NS queries with those hosts, zone or not; ns:[] removes it).
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +42,7 @@ function freshState() {
     zones,
     records,
     routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null }])),
+    nsOverrides: new Map(), // name -> NS hosts (DoH only)
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
   };
@@ -75,6 +77,11 @@ export function createFakeCloudflare() {
 
     // Test helpers.
     if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses });
+    if (url.pathname === '/__ns' && method === 'POST') {
+      const n = String(body?.name ?? '').toLowerCase().replace(/\.$/, '');
+      if (Array.isArray(body?.ns) && body.ns.length) st.nsOverrides.set(n, body.ns); else st.nsOverrides.delete(n);
+      return send(200, { ok: true });
+    }
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
 
     // DNS-over-HTTPS (application/dns-json) from the in-memory records.
@@ -82,6 +89,10 @@ export function createFakeCloudflare() {
       const name = (url.searchParams.get('name') ?? '').toLowerCase().replace(/\.$/, '');
       const type = (url.searchParams.get('type') ?? 'A').toUpperCase();
       const CODES = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28 };
+      if (type === 'NS') {
+        const hit = [...st.nsOverrides].filter(([n]) => name === n || name.endsWith(`.${n}`)).sort((a, b) => b[0].length - a[0].length)[0];
+        if (hit) { res.writeHead(200, { 'Content-Type': 'application/dns-json' }); return res.end(JSON.stringify({ Status: 0, Question: [{ name, type: 2 }], Answer: hit[1].map(h => ({ name, type: 2, TTL: 60, data: `${h.replace(/\.$/, '')}.` })) })); }
+      }
       const zone = [...st.zones].filter(z => name === z.name || name.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
       const reply = body => { res.writeHead(200, { 'Content-Type': 'application/dns-json' }); res.end(JSON.stringify(body)); };
       if (!zone || !CODES[type]) return reply({ Status: zone ? 0 : 3, Question: [{ name, type: CODES[type] ?? 1 }] });
