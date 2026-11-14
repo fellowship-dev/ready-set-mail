@@ -29,8 +29,11 @@ const directive = (csp: string, name: string) => csp.split(';').map((d) => d.tri
 describe('public/_headers', () => {
 	it('keeps the cache rules', () => {
 		expect(get('/assets/*', 'Cache-Control')).toContain('immutable');
-		expect(get('/index.html', 'Cache-Control')).toBe('no-cache, no-transform');
-		expect(get('/', 'Cache-Control')).toBe('no-cache, no-transform');
+		// Every path that can answer with the HTML shell (the single-page-application fallback serves it for any unknown path),
+		// not only / and /index.html: /* carries it, and the asset folders detach it before setting their own.
+		expect(get('/*', 'Cache-Control')).toBe('no-cache, no-transform');
+		const raw = readFileSync(resolve(root, 'public/_headers'), 'utf8');
+		for (const folder of ['/assets/*', '/fonts/*']) expect(raw).toMatch(new RegExp(`^${folder.replace('*', '\\*')}\\n  ! Cache-Control\\n  Cache-Control:`, 'm'));
 		// Hashed assets keep their cache rule untouched.
 		expect(get('/assets/*', 'Cache-Control')).not.toContain('no-transform');
 		// Fixed-name fonts for the server-rendered agent pages: cached long, but not immutable (the name never changes).
