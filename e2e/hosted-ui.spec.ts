@@ -7,7 +7,9 @@ import { expect, test } from '@playwright/test';
 import { ensureDomain } from './support/db';
 import { signIn } from './support/session';
 
-const DOMAIN = 'hosted-e2e.test';
+// A name that exists in public DNS: the domain page offers hosted records only for a name that resolves (a .test name
+// does not, and gets "Check the spelling, or remove this domain" instead). example.net is IANA's reserved example domain.
+const DOMAIN = 'example.net';
 const ID = 'k3j2h4g5f6d7s8a9';
 const status = (over: Record<string, unknown> = {}) => ({
 	enabled: true, hosted_id: ID, mta_sts: false,
@@ -28,7 +30,8 @@ test('enable hosted records, copy the pointers, verify, and the addresses are no
 
 	let enabled = false;
 	let verified = false;
-	await page.route('**/api/hosted/config', (r) => r.fulfill({ json: { enabled: true } }));
+	// Hosted records need a records zone: `records: true` (without it the dashboard offers no "Enable hosted records").
+	await page.route('**/api/hosted/config', (r) => r.fulfill({ json: { enabled: true, reports: false, records: true } }));
 	await page.route(`**/api/domains/${domain.id}/hosted`, async (r) => {
 		if (r.request().method() === 'POST') {
 			enabled = true;

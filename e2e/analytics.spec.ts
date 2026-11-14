@@ -56,5 +56,6 @@ test('sender inventory, what to fix next and readiness from seeded reports', asy
 	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Analytics' }).click();
 	await expect(page.getByRole('heading', { name: 'Analytics', level: 1 })).toBeVisible();
 	await page.getByRole('link', { name: DOMAIN }).first().click();
-	await expect(page).toHaveURL(new RegExp(`#/domains/${domain.id}/analytics$`));
+	// Pages live under the workspace: #/w/<workspace>/domains/<id>/analytics.
+	await expect(page).toHaveURL(new RegExp(`#/w/[^/]+/domains/${domain.id}/analytics$`));
 });

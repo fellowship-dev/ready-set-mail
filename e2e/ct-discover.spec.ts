@@ -4,62 +4,65 @@
 //
 // Run: npm run dev (wrangler dev), then npm run test:e2e  (override target with E2E_BASE_URL).
 // Pre-condition: local dashboard reachable; operator file contains email, password and installer proof.
+//
+// The search itself goes to crt.sh, a public service that is often slow or down. The result tests answer
+// GET /api/domains/ct-discover with page.route (this proves the dashboard flow: results, select-all, import); the empty
+// result runs against the real Worker with a name crt.sh has no entries for.
 
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { signIn } from './support/session';
 
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
+const ROOT = 'ct-e2e-example.com';
+const SUBS = ['www.ct-e2e-example.com', 'mail.ct-e2e-example.com', 'shop.ct-e2e-example.com'];
 
-// A known domain with public CT entries; any widely-used domain works.
-const KNOWN_DOMAIN = 'cloudflare.com';
+async function answerWith(page: Page, subdomains: string[]) {
+  await page.route('**/api/domains/ct-discover?**', (r) => r.fulfill({ json: { domain: ROOT, subdomains } }));
+}
+async function search(page: Page, root: string) {
+  await page.goto(`/#/ct-discover`);
+  await page.getByLabel('Root domain').fill(root);
+  await page.getByRole('button', { name: 'Discover' }).click();
+}
 
 test.describe('CT log subdomain discovery', () => {
   test('navigates to /ct-discover and shows the form', async ({ page }) => {
     await page.goto(`/#/ct-discover`);
-    await expect(page.getByRole('heading', { name: 'Discover subdomains' })).toBeVisible();
-    await expect(page.locator('input[id="ct-domain-input"]')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Discover' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Discover subdomains', level: 1 })).toBeVisible();
+    await expect(page).toHaveURL(/#\/w\/[^/]+\/ct-discover$/);
+    await expect(page.getByLabel('Root domain')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discover' })).toBeDisabled(); // nothing typed yet
   });
 
-  test('returns subdomains for a known root domain within 10 seconds', async ({ page }) => {
-    await page.goto(`/#/ct-discover`);
-    await page.locator('input[id="ct-domain-input"]').fill(KNOWN_DOMAIN);
-    await page.getByRole('button', { name: 'Discover' }).click();
-
-    // Results should appear within 10s
-    await expect(page.locator('text=/subdomain.*found/')).toBeVisible({ timeout: 12_000 });
-
-    // At least one subdomain checkbox should be rendered
-    await expect(page.locator('label input[type="checkbox"]').nth(1)).toBeVisible();
+  test('lists the subdomains found, all selected', async ({ page }) => {
+    await answerWith(page, SUBS);
+    await search(page, ROOT);
+    const found = page.getByRole('region', { name: 'Discovered subdomains' });
+    await expect(found.getByText('3 subdomains found')).toBeVisible();
+    for (const s of SUBS) await expect(found.getByRole('checkbox', { name: s })).toBeChecked();
+    await expect(found.getByText('3 selected', { exact: true })).toBeVisible();
+    await expect(found.getByRole('button', { name: 'Import 3 selected' })).toBeEnabled();
   });
 
-  test('select-all selects every subdomain', async ({ page }) => {
-    await page.goto(`/#/ct-discover`);
-    await page.locator('input[id="ct-domain-input"]').fill(KNOWN_DOMAIN);
-    await page.getByRole('button', { name: 'Discover' }).click();
-    await expect(page.locator('text=/subdomain.*found/')).toBeVisible({ timeout: 12_000 });
-
-    // Uncheck all first, then select all
-    const header = page.locator('label', { has: page.locator('strong:text-matches(/subdomain.*found/)') });
-    const headerCheckbox = header.locator('input[type="checkbox"]');
-    await headerCheckbox.uncheck();
-    await headerCheckbox.check();
-
-    // Selected count should match total
-    const headerText = await page.locator('strong:text-matches(/subdomain.*found/)').textContent();
-    const total = parseInt(headerText?.match(/^(\d+)/)?.[1] ?? '0', 10);
-    await expect(page.locator('text=/^' + total + ' selected/')).toBeVisible();
+  test('select-all clears and selects every subdomain', async ({ page }) => {
+    await answerWith(page, SUBS);
+    await search(page, ROOT);
+    const found = page.getByRole('region', { name: 'Discovered subdomains' });
+    const all = found.getByRole('checkbox', { name: '3 subdomains found' });
+    await all.click();
+    await expect(found.getByText('0 selected', { exact: true })).toBeVisible();
+    await expect(found.getByRole('button', { name: 'Import 0 selected' })).toBeDisabled();
+    await all.click();
+    await expect(found.getByText('3 selected', { exact: true })).toBeVisible();
+    for (const s of SUBS) await expect(found.getByRole('checkbox', { name: s })).toBeChecked();
   });
 
-  test('returns empty list message for a domain with no CT history', async ({ page }) => {
-    await page.goto(`/#/ct-discover`);
-    await page.locator('input[id="ct-domain-input"]').fill('no-ct-history-xyz-12345.invalid');
-    await page.getByRole('button', { name: 'Discover' }).click();
-
-    // Should show empty message (no error, just 0 results) OR an error from upstream
+  test('a name with no certificate history says so, or names the failure', async ({ page }) => {
+    await search(page, 'no-ct-history-xyz-12345.invalid');
+    // crt.sh answers an empty list, or it fails (it is often down): either is said plainly, never a silent nothing.
     await expect(
-      page.locator('text=/No subdomains found/').or(page.locator('p[style*="dc2626"]'))
-    ).toBeVisible({ timeout: 12_000 });
+      page.getByText('No subdomains found for no-ct-history-xyz-12345.invalid').or(page.getByRole('alert').filter({ hasText: 'Search failed' })),
+    ).toBeVisible({ timeout: 30_000 });
   });
 });
