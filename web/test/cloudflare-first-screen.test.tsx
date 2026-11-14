@@ -43,6 +43,7 @@ describe('first screen: Cloudflare first', () => {
 		for (const t of ['Reads the zones in your Cloudflare account', 'Shows every record before anything is written', 'Writes them when you press the button']) expect(screen.getByText(t)).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeInTheDocument();
 		expect(screen.queryByRole('progressbar')).toBeNull();
+		expect(screen.queryByText(/steps complete/)).toBeNull(); // no "0 of 5" before a path is chosen
 		expect(screen.queryByText('Routing')).toBeNull();
 		expect(screen.queryByRole('textbox')).toBeNull();
 		expect(screen.queryByRole('heading', { name: "I'll add DNS records myself" })).toBeNull();
@@ -57,6 +58,7 @@ describe('first screen: Cloudflare first', () => {
 		expect(screen.getByRole('heading', { name: "I'll add DNS records myself" })).toBeInTheDocument();
 		expect(screen.getByRole('textbox')).toHaveFocus();
 		expect(screen.getByText('Routing')).toBeInTheDocument();
+		expect(screen.getByText('0 of 5 steps complete')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
 	});
 
@@ -99,6 +101,7 @@ describe('first screen: Cloudflare first', () => {
 		expect(await screen.findByRole('heading', { name: "What's your main domain?" })).toBeInTheDocument();
 		expect(screen.queryByRole('heading', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
 		expect(screen.getByText('Routing')).toBeInTheDocument(); // today's screen, progress bar included
+		expect(screen.getByText('0 of 5 steps complete')).toBeInTheDocument();
 	});
 
 	it('members see the manual path only', async () => {
@@ -114,6 +117,7 @@ describe('first screen: Cloudflare first', () => {
 		expect(screen.getByRole('button', { name: "I'll add DNS records myself" })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
 		expect(screen.queryByText('Routing')).toBeNull();
+		expect(screen.queryByText(/steps complete/)).toBeNull();
 		expect(screen.queryByText(/TOKEN_ENCRYPTION_KEY/)).not.toBeInTheDocument();
 	});
 
