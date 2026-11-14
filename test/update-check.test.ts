@@ -1,8 +1,8 @@
 // The update check compares the running version with the latest PUBLISHED GitHub release (src/update-check.ts):
 // semantic versions, cached, failing quiet, switchable off, never reading the main branch.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  checkForUpdate, compareSemver, parseSemver, resetUpdateCheckCache, updateCheckEnabled,
+  checkForUpdate, compareSemver, parseSemver, updateCheckEnabled,
   RELEASES_API_URL, RELEASES_LATEST_URL, UPDATE_CHECK_KV_KEY, ANSWER_TTL_S, FAILURE_TTL_S,
 } from '../src/update-check';
 import { buildDigestBody } from '../src/digest/weekly';
@@ -29,7 +29,6 @@ class MemoryKV {
 }
 const kvEnv = (kv: MemoryKV, extra: Record<string, string> = {}) => ({ OAUTH_KV: kv as unknown as KVNamespace, ...extra });
 
-beforeEach(() => resetUpdateCheckCache());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('semantic versions', () => {
@@ -81,7 +80,6 @@ describe('checkForUpdate', () => {
   it('older: running ahead of the latest release (for example main) is never told to "update" backwards', async () => {
     const info = await checkForUpdate({}, { fetch: fetchReturning(release('v2.0.0')), now: NOW, current: '2.1.0-dev' });
     expect(info).toMatchObject({ latest: '2.0.0', status: 'older', update_available: false });
-    resetUpdateCheckCache();
     expect(await checkForUpdate({}, { fetch: fetchReturning(release('v1.2.0')), now: NOW, current: '2.0.0' })).toMatchObject({ status: 'older', update_available: false });
   });
 
@@ -91,7 +89,6 @@ describe('checkForUpdate', () => {
 
   it('a malformed tag, a pre-release, a draft or no release at all is "unknown", not "up to date"', async () => {
     for (const res of [release('latest'), release('v2'), release(42), release('v3.0.0-rc.1'), release('v3.0.0', { prerelease: true }), release('v3.0.0', { draft: true }), new Response('not json', { status: 200 }), new Response('{}', { status: 404 })]) {
-      resetUpdateCheckCache();
       const info = await checkForUpdate({}, { fetch: fetchReturning(res), now: NOW, current: '2.0.0' });
       expect(info).toMatchObject({ latest: null, status: 'unknown', update_available: false, release_url: RELEASES_LATEST_URL });
     }
@@ -99,7 +96,6 @@ describe('checkForUpdate', () => {
 
   it('network failure and timeouts fail quiet: "unknown"', async () => {
     for (const failure of [new TypeError('fetch failed'), Object.assign(new Error('timed out'), { name: 'TimeoutError' }), new Response('', { status: 500 }), new Response('', { status: 502 })]) {
-      resetUpdateCheckCache();
       const info = await checkForUpdate({}, { fetch: fetchReturning(failure), now: NOW, current: '2.0.0' });
       expect(info).toMatchObject({ latest: null, status: 'unknown', update_available: false, checked_at: NOW / 1000 });
     }
@@ -117,13 +113,15 @@ describe('checkForUpdate', () => {
   });
 
   it('rate-limited API and page: "unknown", cached for an hour, not re-asked per page view', async () => {
+    const kv = new MemoryKV();
     const f = fetchReturning(new Response('', { status: 429 }), new Response('', { status: 429 }));
-    expect(await checkForUpdate({}, { fetch: f, now: NOW, current: '2.0.0' })).toMatchObject({ status: 'unknown' });
-    expect(await checkForUpdate({}, { fetch: f, now: NOW + (FAILURE_TTL_S - 1) * 1000, current: '2.0.0' })).toMatchObject({ status: 'unknown' });
+    expect(await checkForUpdate(kvEnv(kv), { fetch: f, now: NOW, current: '2.0.0' })).toMatchObject({ status: 'unknown' });
+    expect(await checkForUpdate(kvEnv(kv), { fetch: f, now: NOW + (FAILURE_TTL_S - 1) * 1000, current: '2.0.0' })).toMatchObject({ status: 'unknown' });
     expect(f).toHaveBeenCalledTimes(2);
+    expect(kv.store.get(UPDATE_CHECK_KV_KEY)?.ttl).toBe(FAILURE_TTL_S);
     // After the hour it asks again.
     const g = fetchReturning(release('v2.0.0'));
-    expect(await checkForUpdate({}, { fetch: g, now: NOW + FAILURE_TTL_S * 1000, current: '2.0.0' })).toMatchObject({ status: 'same' });
+    expect(await checkForUpdate(kvEnv(kv), { fetch: g, now: NOW + FAILURE_TTL_S * 1000, current: '2.0.0' })).toMatchObject({ status: 'same' });
     expect(g).toHaveBeenCalledOnce();
   });
 
@@ -132,19 +130,13 @@ describe('checkForUpdate', () => {
     expect(await checkForUpdate({}, { fetch: f, now: NOW, current: '2.0.0' })).toMatchObject({ status: 'unknown' });
   });
 
-  it('cache hit: one GitHub call for many page views, in memory and through OAUTH_KV across isolates', async () => {
+  it('cache hit: one GitHub call for many page views, through OAUTH_KV', async () => {
     const kv = new MemoryKV();
     const f = fetchReturning(release('v2.1.0'));
-    for (let i = 0; i < 5; i++) expect(await checkForUpdate(kvEnv(kv), { fetch: f, now: NOW + i * 60_000, current: '2.0.0' })).toMatchObject({ status: 'newer' });
+    for (let i = 0; i < 5; i++) expect(await checkForUpdate(kvEnv(kv), { fetch: f, now: NOW + i * 600_000, current: '2.0.0' })).toMatchObject({ status: 'newer', latest: '2.1.0' });
     expect(f).toHaveBeenCalledOnce();
     expect(kv.put).toHaveBeenCalledOnce();
     expect(kv.store.get(UPDATE_CHECK_KV_KEY)?.ttl).toBe(ANSWER_TTL_S);
-
-    // A new isolate (empty memory) reads KV instead of GitHub.
-    resetUpdateCheckCache();
-    const none = fetchReturning();
-    expect(await checkForUpdate(kvEnv(kv), { fetch: none, now: NOW + 3600_000, current: '2.0.0' })).toMatchObject({ status: 'newer', latest: '2.1.0' });
-    expect(none).not.toHaveBeenCalled();
 
     // Expired: asks again.
     const again = fetchReturning(release('v2.2.0'));
@@ -152,10 +144,14 @@ describe('checkForUpdate', () => {
     expect(again).toHaveBeenCalledOnce();
   });
 
-  it('concurrent page views share one request', async () => {
+  it('cache hit without OAUTH_KV: the Cache API', async () => {
+    const entries = new Map<string, string>();
+    vi.stubGlobal('caches', { default: {
+      match: vi.fn(async (req: Request) => (entries.has(req.url) ? new Response(entries.get(req.url)) : undefined)),
+      put: vi.fn(async (req: Request, res: Response) => { entries.set(req.url, await res.text()); }),
+    } });
     const f = fetchReturning(release('v2.1.0'));
-    const all = await Promise.all([1, 2, 3].map(() => checkForUpdate({}, { fetch: f, now: NOW, current: '2.0.0' })));
-    expect(all.map(a => a.status)).toEqual(['newer', 'newer', 'newer']);
+    for (let i = 0; i < 3; i++) expect(await checkForUpdate({}, { fetch: f, now: NOW + i * 60_000, current: '2.0.0' })).toMatchObject({ status: 'newer' });
     expect(f).toHaveBeenCalledOnce();
   });
 

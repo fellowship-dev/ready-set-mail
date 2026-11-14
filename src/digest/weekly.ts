@@ -173,8 +173,8 @@ export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now())
       }
     }
 
-    // Only for a digest that is sent. Off in MODE=saas and with UPDATE_CHECK=off; cached, so a run over many
-    // workspaces makes at most one GitHub call.
+    // Only for a digest that is sent. Off in MODE=saas and with UPDATE_CHECK=off; cached in OAUTH_KV, so a run over
+    // many workspaces makes one GitHub call.
     const check = await checkForUpdate(tenant.env);
     const update: DigestUpdate | null = check.status === 'newer' ? check : null;
     if (update) console.log(`[digest] update available: v${update.latest} (running v${update.current})`);

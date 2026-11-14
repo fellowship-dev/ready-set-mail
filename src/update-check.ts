@@ -8,9 +8,9 @@
 // running version. Tags are compared as semantic versions (newer / same / older); a pre-release or a tag that is not
 // a version is ignored.
 //
-// Cached so page views and per-workspace digests never each make a call: in memory per isolate and, when the
-// installation has its OAUTH_KV namespace, in KV under `update-check:v1` (6 hours after an answer, 1 hour after a
-// failure). Each request times out after 5 seconds. Failing quiet: when GitHub cannot be reached the status is
+// Cached so page views and per-workspace digests never each make a call: in the installation's OAUTH_KV namespace
+// under `update-check:v1`, or, without OAUTH_KV, in the Workers Cache API (6 hours after an answer, 1 hour after a
+// failure). No module-level state (test/tenancy/guards.test.ts). Each request times out after 5 seconds. Failing quiet: when GitHub cannot be reached the status is
 // "unknown" (shown as "could not check"), never "same".
 //
 // Off: UPDATE_CHECK=off (or 0, false, no) makes no outbound call at all; MODE=saas (the hosted service) is always off,
@@ -93,15 +93,6 @@ export function compareSemver(a: SemVer, b: SemVer): -1 | 0 | 1 {
 /** release: a usable release tag was found. unusable: GitHub answered, but with no release, a pre-release or a tag that is not a version. failed: no answer. */
 interface Checked { outcome: 'release' | 'unusable' | 'failed'; tag: string | null; checked_at: number }
 
-let memo: Checked | null = null;
-let inflight: Promise<Checked> | null = null;
-
-/** Tests only. */
-export function resetUpdateCheckCache(): void {
-  memo = null;
-  inflight = null;
-}
-
 export function updateCheckEnabled(env: UpdateCheckEnv): boolean {
   if (getMode(env) === 'saas') return false;
   return !['off', '0', 'false', 'no'].includes((env.UPDATE_CHECK ?? '').trim().toLowerCase());
@@ -169,25 +160,33 @@ async function askGitHub(fetcher: typeof fetch, nowS: number): Promise<Checked> 
   }
 }
 
-async function latestRelease(env: UpdateCheckEnv, fetcher: typeof fetch, nowS: number): Promise<Checked> {
-  if (fresh(memo, nowS)) return memo;
+interface Store { get(): Promise<string | null>; put(value: string, ttlS: number): Promise<void> }
+
+/** Where the answer is cached: OAUTH_KV when bound (shared by every isolate), else the Cache API when the runtime has it. */
+function cacheStore(env: UpdateCheckEnv): Store | null {
   const kv = env.OAUTH_KV;
-  if (kv) {
+  if (kv) return { get: () => kv.get(UPDATE_CHECK_KV_KEY), put: (value, ttlS) => kv.put(UPDATE_CHECK_KV_KEY, value, { expirationTtl: Math.max(60, ttlS) }) };
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  if (!cache) return null;
+  const key = () => new Request(`https://update-check.invalid/${UPDATE_CHECK_KV_KEY}`);
+  return {
+    get: async () => (await cache.match(key()))?.text() ?? null,
+    put: (value, ttlS) => cache.put(key(), new Response(value, { headers: { 'Cache-Control': `max-age=${ttlS}`, 'Content-Type': 'application/json' } })),
+  };
+}
+
+async function latestRelease(env: UpdateCheckEnv, fetcher: typeof fetch, nowS: number): Promise<Checked> {
+  const store = cacheStore(env);
+  if (store) {
     let stored: Checked | null = null;
-    try { stored = parseChecked(await kv.get(UPDATE_CHECK_KV_KEY)); } catch { stored = null; }
-    if (fresh(stored, nowS)) return (memo = stored);
+    try { stored = parseChecked(await store.get()); } catch { stored = null; }
+    if (fresh(stored, nowS)) return stored;
   }
-  if (!inflight) {
-    inflight = (async () => {
-      const checked = await askGitHub(fetcher, nowS);
-      memo = checked;
-      if (kv) {
-        try { await kv.put(UPDATE_CHECK_KV_KEY, JSON.stringify(checked), { expirationTtl: ttl(checked) }); } catch { /* cache only */ }
-      }
-      return checked;
-    })().finally(() => { inflight = null; });
+  const checked = await askGitHub(fetcher, nowS);
+  if (store) {
+    try { await store.put(JSON.stringify(checked), ttl(checked)); } catch { /* the cache is an optimisation */ }
   }
-  return inflight;
+  return checked;
 }
 
 export function updateInfo(current: string, checked: Checked | null, enabled: boolean): UpdateInfo {

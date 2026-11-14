@@ -6,7 +6,7 @@ vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { handleApi } from '../../src/api/router';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { RELEASES_API_URL, resetUpdateCheckCache } from '../../src/update-check';
+import { RELEASES_API_URL } from '../../src/update-check';
 import pkg from '../../package.json';
 
 const release = (tag: string) => new Response(JSON.stringify({ tag_name: tag, draft: false, prerelease: false }), { status: 200 });
@@ -14,7 +14,7 @@ const env = (extra: Record<string, string> = {}) => ({ DB: createMigratedD1() as
 const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
 const get = (e: ReturnType<typeof env>) => handleApi(new Request('https://rsm.example.com/api/version'), e as never, ctx);
 
-afterEach(() => { vi.unstubAllGlobals(); resetUpdateCheckCache(); });
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('GET /api/version', () => {
   it('reports the update check and never reads main', async () => {

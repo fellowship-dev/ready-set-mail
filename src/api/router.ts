@@ -503,7 +503,7 @@ async function _handleApi(
   }
 
   // GET /api/version — the running version against the latest PUBLISHED GitHub release (src/update-check.ts:
-  // semantic-version comparison, cached in memory and OAUTH_KV, 5 s timeout, "unknown" when GitHub cannot be reached,
+  // semantic-version comparison, cached in OAUTH_KV or the Cache API, 5 s timeout, "unknown" when GitHub cannot be reached,
   // off with UPDATE_CHECK=off and in MODE=saas). Never reads the main branch.
   if (path === '/api/version' && method === 'GET') {
     return json({
