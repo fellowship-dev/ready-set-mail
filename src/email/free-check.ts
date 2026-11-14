@@ -68,6 +68,9 @@ export function buildReplyRaw(
  * configured (it fails closed: see sender-proof.ts). The enrolled address is the header From, the address DKIM signs and
  * DMARC aligns to, and it must be the envelope sender too: a pass proves the domain, never the mailbox, so a message
  * signed for attacker@gmail.com and resent with MAIL FROM:<victim@gmail.com> passes for gmail.com but enrols nobody.
+ * The proof is a DKIM pass aligned with the From domain (provesDomainByDkim): a DMARC pass that rests on SPF alone does
+ * not enrol, since a shared sending service in the domain's SPF lets anyone choose the envelope sender. Such a sender still
+ * gets the report. Trade-off: a domain that sends without DKIM (a Microsoft 365 domain before DKIM is set up) is not enrolled.
  * Everyone still gets the report.
  */
 async function enrollAndDisclose(

@@ -41,7 +41,8 @@ describe('apply-spf record validation', () => {
     'v=spf1 redirect=_spf.provider.example',
     'v=spf1 include:_spf.google.com redirect=_spf.provider.example',
     'v=spf1 include:_spf.google.com -all exp=explain.acme.com',
-    'V=SPF1 include:_spf.google.com ?all',
+    'V=SPF1 include:_spf.google.com ~all',
+    'v=spf1 ip4:0.0.0.0/0 ip6:::1 ip6:::ffff:192.0.2.1 ip6:2001:db8:0:0:0:0:0:1/128 ip6:fe80::/10 -all',
   ];
   it.each(accepted)('applies %s', async (record) => {
     const res = await handleApi(apply(record), makeEnv(), ctx);
@@ -54,6 +55,15 @@ describe('apply-spf record validation', () => {
     ['incomplete (the old substring test passed it: "mallory" contains "all")', 'v=spf1 include:mallory.test', /must end with an all mechanism or a redirect= modifier/],
     ['+all', 'v=spf1 include:_spf.google.com +all', /must not use \+all/],
     ['a bare all (+ by default)', 'v=spf1 all', /must not use \+all/],
+    ['?all (neutral)', 'v=spf1 include:_spf.google.com ?all', /must not use \?all: neutral protects nothing/],
+    ['an IPv4 address out of range', 'v=spf1 ip4:999.1.1.1 -all', /"ip4:999.1.1.1" is not a valid IPv4 address or prefix/],
+    ['an IPv4 prefix over 32', 'v=spf1 ip4:1.2.3.4/33 -all', /"ip4:1.2.3.4\/33" is not a valid IPv4/],
+    ['an IPv4 address with three parts', 'v=spf1 ip4:1.2.3 -all', /not a valid IPv4/],
+    ['an IPv6 address that is not one', 'v=spf1 ip6:zz -all', /"ip6:zz" is not a valid IPv6 address or prefix/],
+    ['an IPv6 prefix over 128', 'v=spf1 ip6:2001:db8::/129 -all', /not a valid IPv6/],
+    ['an IPv6 address with too many groups', 'v=spf1 ip6:1:2:3:4:5:6:7:8:9 -all', /not a valid IPv6/],
+    ['ptr', 'v=spf1 ptr:acme.com -all', /must not use ptr: RFC 7208 says not to/],
+    ['a bare ptr', 'v=spf1 ptr -all', /must not use ptr/],
     ['both all and redirect', 'v=spf1 include:_spf.google.com ~all redirect=_spf.provider.example', /both an all mechanism and redirect=: receivers ignore redirect=/],
     ['all not last', 'v=spf1 -all include:_spf.google.com', /must end with its all mechanism/],
     ['an unknown mechanism', 'v=spf1 foo:bar.test -all', /"foo:bar.test" is not an SPF mechanism/],
@@ -68,6 +78,13 @@ describe('apply-spf record validation', () => {
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toMatch(message);
     expect(cf.calls.filter((c) => c.method !== 'GET')).toHaveLength(0);
+  });
+
+  it('trims the record before validating and publishes the trimmed text', async () => {
+    const res = await handleApi(apply('  v=spf1 include:_spf.google.com -all \n'), makeEnv(), ctx);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { record: string }).record).toBe('v=spf1 include:_spf.google.com -all');
+    expect(cf.records.get('zone-acme')).toEqual([expect.objectContaining({ content: 'v=spf1 include:_spf.google.com -all' })]);
   });
 
   it('spfApplyProblem (unit): null exactly for the accepted records', () => {

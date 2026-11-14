@@ -137,7 +137,7 @@ import {
   generatePolicyId,
   buildPolicyFile,
 } from '../email/mta-sts';
-import { dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
+import { MAX_DMARC_RECORD_LENGTH, dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
 import { spfApplyProblem } from '../dns/spf-apply-check';
 
 /** Free-check sessions one IP may create per window. */
@@ -1223,6 +1223,11 @@ async function _handleApi(
       const record = body.record.trim();
       const problem = dmarcRecordProblem(record);
       if (problem) return err(`Not a valid DMARC record: ${problem}`, 400);
+      // A later policy change (PATCH) rewrites p= and adds our rua= when missing: what that can grow to must fit the cap too, so a
+      // record applied here is never refused there for its length. p=quarantine is the longest policy.
+      if (withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) {
+        return err(`Not a valid DMARC record: with our report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
+      }
 
       const recordName = `_dmarc.${domain.domain}`;
 
@@ -1302,7 +1307,8 @@ async function _handleApi(
       const body = await parseBody<{ record?: string; confirm_overwrite?: boolean }>(request);
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
-      const spfProblem = spfApplyProblem(body.record);
+      const record = body.record.trim(); // published exactly as validated: a leading space makes receivers discard the record
+      const spfProblem = spfApplyProblem(record);
       if (spfProblem) return err(spfProblem, 400);
 
       const recordName = domain.domain;
@@ -1323,14 +1329,14 @@ async function _handleApi(
 
       // Safety: require explicit confirmation when overwriting an existing record
       if (existingSpf && !body.confirm_overwrite) {
-        return json({ ok: false, needs_confirmation: true, existing_record: existingSpf.content.replace(/^"|"$/g, ''), proposed_record: body.record }, 200);
+        return json({ ok: false, needs_confirmation: true, existing_record: existingSpf.content.replace(/^"|"$/g, ''), proposed_record: record }, 200);
       }
 
       let written;
       try {
         written = existingId
-          ? await cf.patchDnsRecord(zoneId, existingId, { content: body.record }, { allowedApexes: [recordName] })
-          : await cf.createDnsRecord(zoneId, { type: 'TXT', name: recordName, content: body.record, ttl: 3600 }, { allowedApexes: [recordName] });
+          ? await cf.patchDnsRecord(zoneId, existingId, { content: record }, { allowedApexes: [recordName] })
+          : await cf.createDnsRecord(zoneId, { type: 'TXT', name: recordName, content: record, ttl: 3600 }, { allowedApexes: [recordName] });
       } catch (e) {
         return cfFailure(e);
       }
@@ -1340,10 +1346,10 @@ async function _handleApi(
         action: existingId ? 'dns.update' : 'dns.create',
         resource_type: 'dns_record', resource_id: written?.id ?? '', resource_name: recordName,
         before_value: existingSpf ? { type: 'TXT', name: recordName, content: existingSpf.content } : null,
-        after_value: { type: 'TXT', name: recordName, content: body.record },
+        after_value: { type: 'TXT', name: recordName, content: record },
       }, ctx);
 
-      return json({ ok: true, record: body.record, created: !existingId });
+      return json({ ok: true, record, created: !existingId });
     }
 
     // POST /api/setup/custom-domain — register ready-set-mail.{BASE_DOMAIN} as CF Custom Domain

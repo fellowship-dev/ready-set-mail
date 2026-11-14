@@ -88,6 +88,19 @@ export function provesDomain(results: string | null, addressDomain: string): boo
   return proof.dkimAligned(addressDomain) || proof.dmarcAligned(addressDomain);
 }
 
+/**
+ * True when `results` hold a DKIM pass aligned with `addressDomain`. No DMARC shortcut: a dmarc=pass can rest on SPF alone, and
+ * SPF passes for anyone using a sending service the domain's SPF includes, with any envelope sender. Enrolment uses this.
+ *
+ * Alignment is RELAXED (same organisational domain, DMARC's default): a provider signing with d=em.corp.example proves
+ * ceo@corp.example. Strict alignment would refuse those legitimate senders; the cost of relaxed is that a sender on a delegated
+ * subdomain can enrol an apex address of the same organisation, which only that organisation's own DNS delegation allows.
+ */
+export function provesDomainByDkim(results: string | null, addressDomain: string): boolean {
+  if (!results) return false;
+  return authProof(parseAuthResults(results)).dkimAligned(addressDomain);
+}
+
 export type SenderProof = { ok: true; via: 'ar' | 'arc' } | { ok: false; reason: string };
 
 /**
@@ -136,7 +149,7 @@ export function trustedResults(headers: AuthHeaders, authservId: string | undefi
   const sel = selectTrusted(headers, authservId, only);
   return sel.kind === 'ok' ? sel.value : null;
 }
-/** Decide whether the sender proved `addressDomain`. Fails closed, with the reason (for the log; it never names the sender). */
+/** Decide whether the sender proved `addressDomain` (enrolment): a DKIM pass aligned with it. Fails closed, with the reason (for the log; it never names the sender). */
 export function proveSender(headers: AuthHeaders, addressDomain: string, authservId: string | undefined, only: string | undefined): SenderProof {
   if (!authservId?.trim()) return { ok: false, reason: 'AUTHSERV_ID is not set' };
   const mode = only?.trim().toLowerCase();
@@ -145,9 +158,9 @@ export function proveSender(headers: AuthHeaders, addressDomain: string, authser
   if (trusted) {
     const overclaim = resultsOverclaim(headers, parseAuthResults(trusted));
     if (overclaim) return { ok: false, reason: `the receiver's results hold text it did not write (${overclaim})` };
-    return provesDomain(trusted, addressDomain)
+    return provesDomainByDkim(trusted, addressDomain)
       ? { ok: true, via: mode }
-      : { ok: false, reason: mode === 'ar' ? 'the receiver\'s results do not show an aligned DKIM pass or a DMARC pass' : 'the receiver\'s ARC results do not show an aligned DKIM pass or a DMARC pass' };
+      : { ok: false, reason: mode === 'ar' ? 'the receiver\'s results do not show a DKIM pass aligned with the address\'s domain' : 'the receiver\'s ARC results do not show a DKIM pass aligned with the address\'s domain' };
   }
   return { ok: false, reason: headers.ar || headers.arc ? 'no Authentication-Results (or ARC i=1) header names the configured AUTHSERV_ID' : 'the message has no Authentication-Results header' };
 }

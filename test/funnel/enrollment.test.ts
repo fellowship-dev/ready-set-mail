@@ -326,6 +326,26 @@ describe('enrolment refuses results the receiver did not write (the report-intak
     expect(sent).toHaveLength(0);
   });
 
+  it('a DMARC pass that rests on SPF alone enrols nobody (a shared sending service in the SPF lets anyone pick the envelope)', async () => {
+    const t = hosted();
+    const spfOnly = 'mx.cloudflare.net; dkim=none; spf=pass smtp.mailfrom=ceo@corp.example; dmarc=pass header.from=corp.example';
+    const m = await checkWith(t, 'ceo@corp.example', spfOnly, 0);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+    expect(replyText(m)).not.toContain(DISCLOSURE);
+    expect(m.reply).toHaveBeenCalledOnce(); // the report itself is still sent
+    // A DKIM pass for another organisation does not help either.
+    await checkWith(t, 'ceo@corp.example', 'mx.cloudflare.net; dkim=pass header.d=sendgrid.net header.s=s1; spf=pass smtp.mailfrom=ceo@corp.example; dmarc=pass header.from=corp.example', 1);
+    expect(t.rows('SELECT * FROM leads')).toEqual([]);
+  });
+
+  it('a DKIM pass aligned with the From domain enrols, relaxed: a provider signing with a subdomain proves the apex address', async () => {
+    const t = hosted();
+    await checkWith(t, 'ceo@corp.example', 'mx.cloudflare.net; dkim=pass header.d=corp.example header.s=s1; spf=fail smtp.mailfrom=ceo@corp.example; dmarc=pass header.from=corp.example', 1);
+    expect(t.rows('SELECT email FROM leads')).toEqual([{ email: 'ceo@corp.example' }]);
+    await checkWith(t, 'cfo@corp.example', 'mx.cloudflare.net; dkim=pass header.d=em.corp.example header.s=s1; dmarc=pass header.from=corp.example', 1);
+    expect(t.rows('SELECT email FROM leads ORDER BY email')).toEqual([{ email: 'ceo@corp.example' }, { email: 'cfo@corp.example' }]);
+  });
+
   it('the legitimate case still enrols: a plain envelope sender, one signature, one aligned dkim pass', async () => {
     const t = hosted();
     await checkWith(t, 'ceo@victim.com', authFor('victim.com'), 1);

@@ -188,6 +188,23 @@ describe('PATCH /api/domains/:id/dmarc', () => {
     expect(again.slice(1, -1).split('" "').join('')).toBe(long.replace('p=none', 'p=reject'));
   });
 
+  it('length: a record apply-dmarc accepts is never refused by a later PATCH for its length', async () => {
+    const env = makeEnv([{ id: 1, domain: 'acme.com', dns_record_id: 'auth-elsewhere' }]);
+    const applyReq = (record: string) => new Request('https://x.test/api/domains/1/apply-dmarc', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'k' }, body: JSON.stringify({ record }) });
+    const pad = (n: number) => `v=DMARC1; p=none; x-pad=${'a'.repeat(n)}`;
+    // Fits the cap as sent, but not once p=quarantine and our rua= are added: refused up front.
+    const tight = pad(1024 - 'v=DMARC1; p=none; x-pad='.length);
+    expect(tight.length).toBe(1024);
+    const refused = await handleApi(applyReq(tight), env, ctx);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/with our report address added it would be longer than 1024 characters/);
+    // The longest record it accepts still takes every policy afterwards.
+    const room = 1024 - '; rua=mailto:rua@reports.acme.com'.length - ('quarantine'.length - 'none'.length);
+    const fits = pad(room - 'v=DMARC1; p=none; x-pad='.length);
+    expect((await handleApi(applyReq(fits), env, ctx)).status).toBe(200);
+    for (const policy of ['quarantine', 'reject', 'none', 'quarantine']) expect((await call(1, policy, env)).status, policy).toBe(200);
+  });
+
   it('400s for a bad policy and 404s for an unknown domain', async () => {
     const env = makeEnv([{ id: 1, domain: 'acme.com' }]);
     expect((await call(1, 'monitor', env)).status).toBe(400);
