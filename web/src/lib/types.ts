@@ -386,7 +386,7 @@ export interface AgentStatus {
 
 /** GET /api/instance/preflight (instance owner only): configuration problems by setting name, never a value. */
 export interface PreflightItem {
-  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits';
+  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'public_reports';
   severity: 'action' | 'note';
   setting: string;
   message: string;
@@ -395,4 +395,6 @@ export interface Preflight {
   mode: 'self-host' | 'saas';
   agents: AgentStatus;
   items: PreflightItem[];
+  /** Present when public reports are on or any are stored: their storage against PUBLIC_REPORTS_TOTAL_BYTES. */
+  public_reports?: { enabled: boolean; stored_reports: number; stored_bytes: number; total_budget_bytes: number; used_percent: number; near_limit: boolean };
 }

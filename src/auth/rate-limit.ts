@@ -2,9 +2,9 @@
 // in-memory limiter would not limit anything. A single atomic upsert (globalQueries.rateLimit.hit)
 // both counts the request and tells us the count, so concurrent requests cannot all slip under the limit.
 //
-// Expired rows are swept opportunistically (hosted instances run no crons): about one write in 16 deletes up to 200 rows
-// whose last window ended more than two days ago (the longest window kept here is one day). Spraying random keys, such as
-// random addresses at sign-in, therefore cannot grow the table without bound.
+// Expired rows are swept on writes: about one write in 16 deletes up to 200 rows whose last window ended more than two days ago
+// (the longest window kept here is one day), and the daily retention job (04:00 UTC, src/lifecycle/retention.ts) sweeps the rest.
+// Spraying random keys, such as random addresses at sign-in, therefore cannot grow the table without bound.
 import { globalQueries } from '@ready-set-mail/db';
 
 /** Older than the longest window (one day), with a day of margin. */

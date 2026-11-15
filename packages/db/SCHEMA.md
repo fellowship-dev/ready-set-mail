@@ -22,6 +22,8 @@ Every workspace-owned table has `workspace_id TEXT NOT NULL DEFAULT 'ws_default'
 | `settings` | ✔ | PK `(workspace_id, key)` |
 | `invites`, `audit_log` | ✔ | |
 | `check_results` | global | anonymous free-check results |
+| `public_reports` | global | dated free-check reports at a private link (`/r/<id>`); kept until deleted with their token or by the operator |
+| `public_report_usage` | global | one row of running counters (reports and bytes today and in total) behind the public-report budgets |
 | `ip_info` | global | shared public IP-metadata cache |
 | `password_reset_tokens` | global | keyed by `user_id`; unused (see `verifications`) |
 | `sessions`, `auth_accounts`, `verifications`, `auth_rate_limits` | global | Better Auth. `auth_accounts` = login methods per user (credential / OAuth provider) — **not** the tenant; that is `workspaces`. Camel-case properties in `schema.ts`; `users` has a second view in `auth-schema.ts` |
