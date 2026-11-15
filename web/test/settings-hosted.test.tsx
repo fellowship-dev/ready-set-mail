@@ -19,16 +19,18 @@ describe('Settings by mode', () => {
 		expect(screen.getByRole('button', { name: 'Copy agent address' })).toBeInTheDocument();
 		expect(screen.getByText('Your account and workspace.')).toBeInTheDocument();
 		await waitFor(() => expect(screen.queryByText('Loading metric connections…')).toBeNull());
-		for (const gone of [/MCP endpoint/i, /Service principal/i, /resources:read/, /installer must configure/i, /Google Postmaster/, /Instance/, /Base domain/, /service credentials/i, /Products and service credentials/]) {
+		for (const gone of [/MCP endpoint/i, /Access keys/i, /resources:read/, /installer must configure/i, /Google Postmaster/, /Instance/, /Base domain/, /service credentials/i, /New group name/]) {
 			expect(screen.queryByText(gone)).toBeNull();
 		}
-		expect(screen.queryByLabelText(/Service principal/)).toBeNull();
+		expect(screen.queryByLabelText('Key name')).toBeNull();
+		expect(screen.queryByRole('button', { name: /Access keys for scripts and services/ })).toBeNull();
 	});
 
 	it('self-hosted: keeps the operator view', async () => {
 		renderApp(<SettingsPage />, { status: { mode: 'self-host' }, routes });
 		expect(await screen.findByLabelText("This installation's MCP endpoint")).toBeInTheDocument();
-		expect(await screen.findByLabelText('Service principal and credential name')).toBeInTheDocument();
+		expect(await screen.findByRole('button', { name: /^Access keys for scripts and services/ })).toHaveAttribute('aria-expanded', 'false');
+		expect(await screen.findByLabelText('Key name')).toBeInTheDocument();
 		expect(screen.getByText('resources:read')).toBeInTheDocument();
 		expect(await screen.findByText(/The installer must configure its Google OAuth application/)).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Instance' })).toBeInTheDocument();
