@@ -86,6 +86,13 @@ export class CfRecordNotAllowedError extends Error {
     this.name = 'CfRecordNotAllowedError';
   }
 }
+/** A delete was refused because the record under that id is no longer the one the caller meant to remove (it was changed). */
+export class CfRecordChangedError extends CfRecordNotAllowedError {
+  constructor(reason: string, request?: { method?: string; type?: string; name?: string; path?: string }) {
+    super(reason, request);
+    this.name = 'CfRecordChangedError';
+  }
+}
 /** None of the domain's candidate zones exists on the token's Cloudflare account. */
 export class CfZoneNotFoundError extends Error {
   constructor(readonly domain: string) {
@@ -197,6 +204,13 @@ export class CfIncompleteListError extends Error {
     super(`Cloudflare list ${path} could not be read completely: ${why}`);
     this.name = 'CfIncompleteListError';
   }
+}
+
+/** The plain sentence for a list Cloudflare returned in full only beyond what can be read (zones and accounts: the token is too wide). */
+export function incompleteListMessage(e: CfIncompleteListError): string {
+  const what = e.path === '/zones' ? 'zones' : e.path === '/accounts' ? 'accounts' : null;
+  if (what && /more than/.test(e.why)) return `Cloudflare returned more ${what} than Ready Set Mail can read at once (${what === 'zones' ? 5000 : LIST_MAX_ITEMS}). Limit the token to the ${what} you want to manage.`;
+  return `Cloudflare returned ${what ? `the ${what}` : 'a list'} in a way that could not be read completely (${e.why}). Try again in a moment.`;
 }
 
 export const LIST_PER_PAGE = 50;
@@ -313,8 +327,8 @@ export class CfClient {
   }
 
   /** Every entry of a list, 50 per page, following result_info; throws CfIncompleteListError rather than return part of it. */
-  listAll<T>(path: string, query: CfRequestOptions['query'] = {}): Promise<T[]> {
-    return readAllPages<T>(path, (page, perPage) => this.requestPage<T[]>('GET', path, { query: { ...query, per_page: perPage, page } }));
+  listAll<T>(path: string, query: CfRequestOptions['query'] = {}, caps?: { maxPages?: number; maxItems?: number }): Promise<T[]> {
+    return readAllPages<T>(path, (page, perPage) => this.requestPage<T[]>('GET', path, { query: { ...query, per_page: perPage, page } }), caps);
   }
 
   /** Every non-GET request touching dns_records passes the write policy here, the one choke point. */
@@ -482,7 +496,7 @@ export class CfClient {
       const norm = (v: string) => String(v ?? '').trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
       const same = norm(stored?.type) === norm(expect.type) && norm(stored?.name) === norm(expect.name)
         && (expect.content === undefined || (typeof expect.content === 'string' ? norm(stored?.content) === norm(expect.content) : expect.content.test(String(stored?.content ?? ''))));
-      if (!same) throw new CfRecordNotAllowedError(`the record ${recordId} is not the ${expect.type} record ${expect.name} that was meant to be removed`, { method: 'DELETE', type: stored?.type, name: stored?.name, path });
+      if (!same) throw new CfRecordChangedError(`the record ${recordId} is not the ${expect.type} record ${expect.name} that was meant to be removed`, { method: 'DELETE', type: stored?.type, name: stored?.name, path });
       await this.request('DELETE', path, { dns: { expect } });
       return true;
     } catch (e) {

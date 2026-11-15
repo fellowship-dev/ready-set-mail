@@ -402,7 +402,7 @@ describe('review blockers (fixed address)', () => {
     const w = await world();
     await w.connect(1);
     await w.connect(5); // mail.a-corp.com, verified via parent
-    expect((await call(w.env, 'DELETE', '/api/domains/1', { key: w.A.token })).status).toBe(204);
+    expect((await call(w.env, 'DELETE', '/api/domains/1', { key: w.A.token })).status).toBe(200);
     expect(w.rows('SELECT verified_via FROM domains WHERE id = 5')).toEqual([{ verified_via: 'legacy' }]); // demoted at the source
     w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (9, ?, 'a-corp.com', ?, 'txt')").run(w.B.ws, FIXED);
     expect((await w.deliver(FIXED, 'mail.a-corp.com', 'after-move')).setReject).not.toHaveBeenCalled();
@@ -414,7 +414,7 @@ describe('review blockers (fixed address)', () => {
     const w = await world();
     await w.connect(1);
     await w.connect(5);
-    expect((await call(w.env, 'DELETE', '/api/domains/1', { key: w.A.token })).status).toBe(204);
+    expect((await call(w.env, 'DELETE', '/api/domains/1', { key: w.A.token })).status).toBe(200);
     w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (10, ?, 'a-corp.com', ?, 'txt')").run(w.A.ws, FIXED);
     expect((await w.deliver(FIXED, 'mail.a-corp.com', 'readded')).setReject).not.toHaveBeenCalled();
     expect(w.stored()).toEqual([{ workspace_id: w.A.ws, domain_id: 10, report_id: 'readded' }]); // under the proven parent, not the legacy row

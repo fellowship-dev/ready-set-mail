@@ -7,7 +7,7 @@ import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
 import { assertDnsWriteAllowed } from '../dns/write-policy';
 import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
-import { plainCloudflareError } from './errors';
+import { plainCloudflareError, rulesReadFailure } from './errors';
 import { writableDomains } from './domains';
 import { listEmailRules, type EmailRule } from './rules';
 
@@ -179,13 +179,15 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
             try { assertDnsWriteAllowed({ method: 'POST', zoneName, type: 'MX', name: reportsDomain, content: want.content, mode: tenant.mode }); }
             catch (e) { mxAllowed = false; refusedBecause = e instanceof Error ? e.message : 'refused'; break; }
           }
+          // MX records are only planned once the rules list was read completely and at least one rule can be written: mail
+          // delivered to a name with no rule behind it goes nowhere. They are held here and committed below.
+          const mxWrites: PlanWrite[] = [];
           if (!mxAllowed) note('Reports mailbox', `The MX records for ${reportsDomain} are not something this connection may write (${refusedBecause}). Set up Email Routing for it yourself in Cloudflare.`);
           else {
             for (const want of CF_MX) {
               const present = mx.some(r => r.content.toLowerCase().replace(/\.$/, '') === want.content);
               const id = `mx:${want.content}`;
-              mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: want.content, priority: want.priority, action: present ? 'none' : 'create', before: null, reason: present ? 'Already in place.' : 'Receives the DMARC reports sent to this domain.' });
-              exec.set(id, { cf, zoneId, kind: 'mx' });
+              mxWrites.push({ id, domain: reportsDomain, zone: zoneName, type: 'MX', name: reportsDomain, content: want.content, priority: want.priority, action: present ? 'none' : 'create', before: null, reason: present ? 'Already in place.' : 'Receives the DMARC reports sent to this domain.' });
             }
           }
           // Email Routing is never turned on from here: Cloudflare's zone-level enable adds and locks MX and SPF records at the
@@ -200,9 +202,11 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
           if (mxAllowed) {
             let rules: EmailRule[] = [];
             let rulesRead = true;
-            try { rules = await listEmailRules(cf, zoneId); } catch { rulesRead = false; }
-            if (!rulesRead) note('Address rules', 'Ready Set Mail could not read the Email Routing rules of this zone, so it plans none. Add rules for rua@ and tls-rpt@ yourself, or run this step again.');
+            let cause = '';
+            try { rules = await listEmailRules(cf, zoneId); } catch (e) { rulesRead = false; cause = rulesReadFailure(e, zoneName); }
+            if (!rulesRead) note('Address rules', `${cause} So Ready Set Mail plans no address rules and no MX records for ${reportsDomain} either. Add rules for rua@ and tls-rpt@ yourself, or run this step again.`);
             else {
+              const ruleWrites: PlanWrite[] = [];
               for (const local of REPORT_ADDRESSES) {
                 const address = `${local}@${reportsDomain}`;
                 const existing = rules.find(r => (r.matchers ?? []).some(m => m.type === 'literal' && m.field === 'to' && (m.value ?? '').toLowerCase() === address));
@@ -214,8 +218,13 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
                   continue;
                 }
                 const id = `rule:${local}`;
-                mailbox.push({ id, domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: address, content: `Address rule: mail to ${address} goes to this Worker`, action: ours ? 'none' : 'rule', before: null, reason: ours ? 'Already in place.' : `Delivers ${local === 'rua' ? 'DMARC' : 'TLS'} reports to Ready Set Mail.` });
+                ruleWrites.push({ id, domain: reportsDomain, zone: zoneName, type: 'EMAIL_ROUTING', name: address, content: `Address rule: mail to ${address} goes to this Worker`, action: ours ? 'none' : 'rule', before: null, reason: ours ? 'Already in place.' : `Delivers ${local === 'rua' ? 'DMARC' : 'TLS'} reports to Ready Set Mail.` });
                 exec.set(id, { cf, zoneId, kind: 'rule', address });
+              }
+              if (ruleWrites.length === 0) note('Reports mailbox', `No address rule can be written for ${reportsDomain} (see above), so Ready Set Mail plans no MX records for it either: mail would arrive with no rule to take it.`);
+              else {
+                for (const w of mxWrites) exec.set(w.id, { cf, zoneId, kind: 'mx' });
+                mailbox.push(...mxWrites, ...ruleWrites);
               }
               // check+<token>@ is a different address for every check: only a catch-all can receive it, and a catch-all belongs to the whole zone.
               note(`Free-check replies (check+<token>@${reportsDomain})`, `Every check uses its own address, which an address rule cannot match, and Ready Set Mail does not change the catch-all rule of ${zoneName}. DMARC and TLS reports work without it; for free-check replies, send your catch-all to the Worker ${tenant.workerName} yourself.`);

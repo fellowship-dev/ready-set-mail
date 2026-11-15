@@ -493,7 +493,7 @@ All under `/api/domains/:id/hosted`, authenticated like every other route and sc
 }
 ```
 
-MTA-STS on a hosted domain: `POST /api/domains/:id/mta-sts` answers `409` (use `mta_sts: true` above); `PATCH` (mode, `refresh_mx`) and `DELETE` act on the hosted records through the hosted writer (`DELETE` removes only the MTA-STS records); the legacy daily MX job skips hosted domains and the hosted daily job refreshes them. `DELETE /api/domains/:id` removes the hosted records and quota first; if that DNS cleanup fails the domain is **not** deleted (`502`).
+MTA-STS on a hosted domain: `POST /api/domains/:id/mta-sts` answers `409` (use `mta_sts: true` above); `PATCH` (mode, `refresh_mx`) and `DELETE` act on the hosted records through the hosted writer (`DELETE` removes only the MTA-STS records); the legacy daily MX job skips hosted domains and the hosted daily job refreshes them. `DELETE /api/domains/:id` answers `{ ok: true, kept: [{ type, name, reason }] }`, the DNS records it left in place because they no longer match what Ready Set Mail wrote; it removes the hosted records and quota first; if that DNS cleanup fails the domain is **not** deleted (`502`).
 
 Errors: `409` already enabled · `422` SPF cannot be resolved, no MX for MTA-STS, several SPF records · `502` Cloudflare/DNS failure · `507` records zone full.
 Enabling is all-or-nothing: if Cloudflare fails part-way, the records already written are removed.

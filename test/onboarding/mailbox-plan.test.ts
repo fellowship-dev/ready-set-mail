@@ -92,11 +92,27 @@ describe('reports mailbox plan (self-host)', () => {
     expect(plan.not_written.map(n => n.what)).not.toContain('Email Routing');
   });
 
-  it('rules that cannot be read plan no rules and say so', async () => {
+  it('rules that cannot be read plan no rules and no MX either, and say so', async () => {
     const { tenant } = setup({ routing: true, rules: new Error('nope') });
+    const { plan, exec } = await buildPlan(tenant, [1]);
+    expect(mail(plan)).toBeUndefined();
+    expect([...exec.keys()].some(k => k.startsWith('mx') || k.startsWith('rule'))).toBe(false);
+    expect(plan.not_written.find(n => n.what === 'Address rules')!.reason).toContain('no MX records for reports.a-corp.com either');
+  });
+
+  it('every address already has a conflicting rule: nothing to write, so no MX either, with a note', async () => {
+    const other = { type: 'forward', value: ['boss@a-corp.com'] };
+    const { tenant, } = setup({ routing: true, rules: [literal('rua@reports.a-corp.com', other), literal('tls-rpt@reports.a-corp.com', other)] });
+    const { plan, exec } = await buildPlan(tenant, [1]);
+    expect(mail(plan)).toBeUndefined();
+    expect([...exec.keys()].some(k => k.startsWith('mx') || k.startsWith('rule'))).toBe(false);
+    expect(plan.not_written.find(n => n.what === 'Reports mailbox')!.reason).toMatch(/plans no MX records for it either/);
+  });
+
+  it('rules read in full and one writable: the MX records are planned with the rule', async () => {
+    const { tenant } = setup({ routing: true, rules: [literal('rua@reports.a-corp.com', { type: 'forward', value: ['boss@a-corp.com'] })] });
     const { plan } = await buildPlan(tenant, [1]);
-    expect(mail(plan).writes.map((x: any) => x.id).filter((i: string) => i.startsWith('rule:'))).toEqual([]);
-    expect(plan.not_written.some(n => n.what === 'Address rules')).toBe(true);
+    expect(mail(plan).writes.map((x: any) => x.id)).toEqual(['mx:route1.mx.cloudflare.net', 'mx:route2.mx.cloudflare.net', 'mx:route3.mx.cloudflare.net', 'rule:tls-rpt']);
   });
 
   it('a non-Cloudflare MX on the reports name: no mailbox at all, no delete, the plain sentence', async () => {
@@ -143,5 +159,15 @@ describe('report authorisation record', () => {
     const { sameOrganisation } = await import('../../src/onboarding/plan');
     expect(sameOrganisation('a.co.uk', 'reports.a.co.uk')).toBe(true);
     expect(sameOrganisation('a.co.uk', 'b.co.uk')).toBe(false);
+  });
+});
+
+describe('rulesReadFailure: one sentence per cause', () => {
+  it('maps the cap, a Cloudflare error and a missing permission, and never carries a token', async () => {
+    const { rulesReadFailure } = await import('../../src/onboarding/errors');
+    const { CfIncompleteListError, CfApiError, CfAuthError } = await import('../../src/tenancy/cf-client');
+    expect(rulesReadFailure(new CfIncompleteListError('/x', '1500 entries is more than 1000 entries or 20 pages'), 'a.com')).toBe('a.com has more Email Routing rules than Ready Set Mail can read at once (1000).');
+    expect(rulesReadFailure(new CfApiError('boom', 'GET', '/x', 502, [{ message: 'upstream Bearer-less trouble' }]), 'a.com')).toBe('Cloudflare returned an error when reading the Email Routing rules of a.com (HTTP 502: upstream Bearer-less trouble).');
+    expect(rulesReadFailure(new CfAuthError('no', 'GET', '/x', 403), 'a.com')).toBe('The Cloudflare token cannot read Email Routing for a.com: it lacks the Email Routing permission (HTTP 403).');
   });
 });

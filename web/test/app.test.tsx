@@ -73,6 +73,8 @@ describe('setup redirect', () => {
 			'GET /api/auth/status': () => ({ ...STATUS, has_domain: hasDomain }),
 			'GET /api/me': me('owner'),
 			'GET /api/zones': fail(400),
+			// AddDomainPage waits for the Cloudflare offer: answer it, so nothing races the assertions.
+			'GET /api/cloudflare/connections': { connections: [], oauth: { available: false, scopes: [], via_relay: false }, token_paste: false, encryption_configured: false },
 			'POST /api/domains': () => ((hasDomain = true), { domain: { id: 1, domain: 'acme.com', rua_address: 'rua@reports.acme.com', dmarc_policy: 'none', parent_id: null, created_at: 1, alerts_enabled: 1, is_default: 0 }, rua_hint: '' }),
 		});
 		const input = await screen.findByPlaceholderText('yourcompany.com');
