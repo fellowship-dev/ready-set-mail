@@ -4,7 +4,12 @@
 // Self-host limitation: Cloudflare's send_email delivers only to addresses verified as Email Routing destinations on the
 // account, so a configured binding and sender address do not mean a code reaches anyone. That is why a self-hosted instance
 // asks a person for a code only after that person has once entered one (codeProven in codes.ts), and why every send reports
-// whether the provider accepted it: a send that failed is never answered as "code sent".
+// whether the provider accepted it. Sign-in, sign-up, invite and test codes are sent before the answer, so a refused send is
+// never answered as "code sent"; a reset code is sent after it (an address with no account is mailed nothing, so the answer
+// must not wait on a send).
+//
+// Mail to an address without an account: only the sign-up code (to the address just typed, behind the bot check) and the
+// hosted invite code (to the invited address, by the holder of a valid invite). Nothing else.
 // Without SEND_EMAIL (or a sender address) nothing is sent and the Worker log records only a static reason: the code, the
 // recipient and provider errors are never logged.
 import { forWorkspace, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
@@ -91,20 +96,6 @@ export function signupNoticeText(origin: string): string {
 
 export async function sendSignupNotice(env: AuthEnv, to: string, origin: string): Promise<boolean> {
   return send(env, 'signup notice', to, SIGNUP_NOTICE_SUBJECT, signupNoticeText(origin));
-}
-
-export const NO_ACCOUNT_RESET_SUBJECT = 'Ready Set Mail password reset';
-
-/**
- * To an address with no account, when someone asked to reset its password. Sent so that a reset request does the same work
- * (one email) whether or not the address has an account: the answer and its timing say nothing about who signed up.
- */
-export function noAccountResetText(origin: string): string {
-  return `Hi,\n\nSomeone asked to reset the Ready Set Mail password for this email address, but there is no Ready Set Mail account with it at ${origin}, so nothing was changed.\n\nIf it was you, you may have signed up with another address. If it wasn't you, you can ignore this email.`;
-}
-
-export async function sendNoAccountResetNotice(env: AuthEnv, to: string, origin: string): Promise<boolean> {
-  return send(env, 'reset notice', to, NO_ACCOUNT_RESET_SUBJECT, noAccountResetText(origin));
 }
 
 export const SIGNIN_ALERT_SUBJECT = 'Someone entered your Ready Set Mail password';

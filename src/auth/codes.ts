@@ -21,8 +21,9 @@
 //    address): OPEN_FAILS_PER_DAY per address together, with a separate budget for a browser holding that account's device
 //    cookie. CODE_FAILS_PER_IP an hour per IP, across every address;
 //  - the first try on a freshly mailed code is always compared, even over the open and per-IP budgets, so a stranger who
-//    spends them cannot stop the owner who types the code right first time (one extra guess per mailed code at most, and
-//    mailed codes are bounded by the mail allowances);
+//    spends them cannot stop the owner who types the code right first time. "First" is decided atomically: the try is counted
+//    before anything else, and only the request that moved the attempt's count from 0 to 1 is the first try, however many
+//    arrive at once (one extra guess per mailed code at most, and mailed codes are bounded by the mail allowances);
 //  - mail allowances per address and pool (CODE_MAIL_CAPS), which also bound how many codes a guesser can get.
 import { globalQueries } from '@ready-set-mail/db';
 import type { AuthEnv } from './config';
@@ -55,8 +56,8 @@ const DAY = 86400;
  * Code mail per address, per pool. Separate pools, so one cannot use up another: a stranger can spend `signup` (bot-checked)
  * and `reset` (bot-checked on hosted), never `signin`, which only sends after the right password, nor `reset-device`, which is
  * the reset allowance of a browser that holds the account's device cookie.
- * `signup` also carries hosted invite codes and the "someone tried to sign up with your address" notice; `reset` also carries
- * the "no account with this address" notice; `signin` also carries self-host test codes and the wrong-codes alert.
+ * `signup` also carries hosted invite codes and the "someone tried to sign up with your address" notice; `signin` also carries
+ * self-host test codes and the wrong-codes alert. An address with no account is never mailed by a reset request.
  */
 export type MailPool = 'signup' | 'signin' | 'reset' | 'reset-device';
 export const CODE_MAIL_CAPS: Readonly<Record<MailPool, { hour: number; day: number }>> = Object.freeze({
@@ -195,12 +196,15 @@ const toAttempt = (s: Stored): Attempt => ({
 
 export type CodeRefusal = 'code_expired' | 'code_wrong' | 'code_used_up';
 
+/** A try counted on an attempt. `firstTry`: this request moved the count from 0 to 1 (exactly one request per attempt). */
+export interface CountedTry { id: string; stored: Stored; firstTry: boolean }
+
 /**
- * Check a code against the attempt behind `handle`. The try is counted first (atomically, only while fewer than
- * CODE_MAX_TRIES were made), then compared in constant time; a right code deletes the attempt, so it works once even when
- * sent twice at the same moment. `compared` says whether a comparison happened (only a compared wrong code is a wrong code).
+ * Count one try on the attempt behind `handle`, atomically and only while fewer than CODE_MAX_TRIES were made. Done before
+ * anything else (the wrong-code budgets, the comparison), so concurrent requests each get their own count and only one of
+ * them can be the first try.
  */
-export async function checkCode(env: AuthEnv, handle: string, code: string, now = Date.now()): Promise<{ attempt: Attempt } | { refused: CodeRefusal; triesLeft?: number; compared: boolean }> {
+export async function countTry(env: AuthEnv, handle: string, now = Date.now()): Promise<CountedTry | { refused: 'code_expired' | 'code_used_up' }> {
   const db = env.DB as D1Database;
   const id = await identifierFor(handle);
   const nowS = Math.floor(now / 1000);
@@ -208,9 +212,23 @@ export async function checkCode(env: AuthEnv, handle: string, code: string, now 
     .bind(id, nowS, CODE_MAX_TRIES).first<{ value: string }>();
   if (!counted) {
     const live = await db.prepare('SELECT 1 AS x FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(id, nowS).first();
-    return { refused: live ? 'code_used_up' : 'code_expired', compared: false };
+    return { refused: live ? 'code_used_up' : 'code_expired' };
   }
   const stored = JSON.parse(counted.value) as Stored;
+  return { id, stored, firstTry: stored.t === 1 };
+}
+
+/** Give a counted try back: the request was refused by a wrong-code budget before any comparison. */
+export async function uncountTry(env: AuthEnv, counted: CountedTry): Promise<void> {
+  await (env.DB as D1Database).prepare("UPDATE verifications SET value = json_set(value, '$.t', json_extract(value, '$.t') - 1) WHERE identifier = ?1 AND json_extract(value, '$.t') > 0").bind(counted.id).run();
+}
+
+/**
+ * Compare a code with a counted try's attempt, in constant time. A right code deletes the attempt, so it works once even when
+ * sent twice at the same moment. `compared` says whether a comparison happened (only a compared wrong code is a wrong code).
+ */
+export async function compareCode(env: AuthEnv, counted: CountedTry, code: string): Promise<{ attempt: Attempt } | { refused: CodeRefusal; triesLeft?: number; compared: boolean }> {
+  const { id, stored } = counted;
   const wellFormed = new RegExp(`^\\d{${CODE_LENGTH}}$`).test(code);
   const mac = await codeMac(env, id, wellFormed ? code : 'x');
   const decoy = stored.u === null && !stored.n;
@@ -218,9 +236,16 @@ export async function checkCode(env: AuthEnv, handle: string, code: string, now 
     const left = CODE_MAX_TRIES - stored.t;
     return left > 0 ? { refused: 'code_wrong', triesLeft: left, compared: true } : { refused: 'code_used_up', compared: true };
   }
-  const used = await db.prepare('DELETE FROM verifications WHERE identifier = ?1').bind(id).run();
+  const used = await (env.DB as D1Database).prepare('DELETE FROM verifications WHERE identifier = ?1').bind(id).run();
   if ((used.meta.changes ?? 0) !== 1) return { refused: 'code_expired', compared: false }; // the same code, sent twice: one wins
   return { attempt: toAttempt(stored) };
+}
+
+/** Count a try and compare (no wrong-code budgets): the whole check, for callers that apply none. */
+export async function checkCode(env: AuthEnv, handle: string, code: string, now = Date.now()): Promise<{ attempt: Attempt } | { refused: CodeRefusal; triesLeft?: number; compared: boolean }> {
+  const counted = await countTry(env, handle, now);
+  if ('refused' in counted) return { refused: counted.refused, compared: false };
+  return compareCode(env, counted, code);
 }
 
 /** Drop every pending attempt of an account (its password was set or changed: whatever was typed before is void). */
@@ -244,11 +269,6 @@ export async function markCodeProven(env: AuthEnv, userId: string): Promise<void
     db.prepare('DELETE FROM verifications WHERE identifier = ?1').bind(provenIdentifier(userId)),
     db.prepare('INSERT INTO verifications (id, identifier, value, expires_at) VALUES (?1, ?2, ?3, ?4)').bind(crypto.randomUUID(), provenIdentifier(userId), String(Math.floor(Date.now() / 1000)), Math.floor(Date.now() / 1000) + 20 * 365 * DAY),
   ]);
-}
-
-/** A code could not be sent to this account: back to the password alone until it proves delivery again. */
-export async function clearCodeProven(env: AuthEnv, userId: string): Promise<void> {
-  await (env.DB as D1Database).prepare('DELETE FROM verifications WHERE identifier = ?1').bind(provenIdentifier(userId)).run();
 }
 
 // ── Wrong-code budgets across codes ──────────────────────────────

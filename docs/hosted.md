@@ -184,9 +184,18 @@ the pointer instructions name `h.<zone>` from config, so they must read the doma
 address (`src/auth/codes.ts`). Sign-up asks for the email and one password (and the bot check); sign-in asks for the email and
 password and, only when the password is right, emails a code. Every sign-in needs a fresh code: there is no "remember this
 device". A reset asks for the email (and the bot check when the keys are set), then the code and a new password on one screen;
-saving signs in without a second code and ends every other session. Every code is sent before the answer: when the mail provider
-refuses it, the answer is "We couldn't send the code. Try again in a minute." (`503 code_not_sent`), the same words for every
-address, and no attempt is kept.
+saving signs in without a second code and ends every other session. Sign-in, sign-up and invite codes are sent before the
+answer: when the mail provider refuses one, the answer is "We couldn't send the code. Try again in a minute."
+(`503 code_not_sent`), the same words for every address, no attempt is kept and the failure is audited (`auth.code_not_sent`).
+A reset code is sent after the answer and an address with no account is mailed nothing, so every reset request gets the same
+answer after the same database work. The cost: during a mail outage a reset looks sent but no code arrives (sign-in still shows
+the outage with its 503). Hosted has no fallback while mail is down: every sign-in, sign-up and reset waits for it; sessions
+already open (30 days) keep working.
+
+**Mail to an address without an account:** only the sign-up code (to the address just typed, behind the bot check) and the
+hosted invite code (to the invited address, by the holder of a valid invite). A reset request never mails an address without an
+account. The "Someone tried to create a Ready Set Mail account with your email" notice goes to an existing account's owner, about
+their own account, within the sign-up allowance.
 
 * **The code.** Six digits from `crypto.getRandomValues` (rejection sampling, no bias). Stored only as HMAC-SHA256 under the auth
   secret, bound to its attempt; compared in constant time; single use; valid 10 minutes (`CODE_SECONDS`, the number the mail
@@ -209,12 +218,13 @@ address, and no attempt is kept.
   "Someone tried to create a Ready Set Mail account with your email" (within the sign-up allowance). The answer to a sign-up is
   the same for new, pending and verified addresses (`{ code_required, purpose, email, expires_in }` and a pending cookie), and so
   is the work: one password hash, one lookup, one mail allowance spent, one attempt stored and one email (the code or the
-  notice). A reset request for an address with no account sends "Ready Set Mail password reset" (there is no account with this
-  address) in place of the code, so reset requests also do the same work for every address. Sign-in for an unknown address runs
+  notice). A reset request does the same database work for every address; it mails nothing to an address with no account, and
+  the code to a real account goes out after the answer. Sign-in for an unknown address runs
   the same query and one PBKDF2 verification against a real dummy hash made by the same `hashPassword`.
 * **Limits.** Per code: 5 tries. Across codes, counted only when a comparison found the code wrong (never a used-up, expired or
   replaced code; a wrong code is reserved before the comparison in one conditional statement and given back when the code was
-  right, so parallel requests cannot pass a cap): sign-in 10 an hour and 20 a day per address; sign-up, invite and reset 10 a day
+  right, so parallel requests cannot pass a cap; the try itself is counted first, and only the request that moved an attempt's
+  count from 0 to 1 is its first try): sign-in 10 an hour and 20 a day per address; sign-up, invite and reset 10 a day
   per address together (a browser holding the account's device cookie has its own 10); 30 an hour per IP. The first try on a
   freshly mailed code is always compared, even when the address or the IP is over its sign-up/invite/reset budget, so a stranger
   who spends it cannot stop the owner who types the code right the first time; over the budget a second try answers "Too many
@@ -224,13 +234,11 @@ address, and no attempt is kept.
   10th wrong sign-in code in a day the owner gets, once a day at most, "Someone entered your Ready Set Mail password": whoever
   typed the codes knew the password. Wrong sign-in codes never feed the wrong-password throttle. Code mail per address, in
   separate allowances: sign-up and invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour
-  and 30 a day, reset 3 an hour and 10 a day (also the no-account notice), and a separate reset allowance of 3 an hour and 10 a
-  day for a request carrying the account's device cookie. Over the sign-up or reset allowance nothing is sent, the answer is
-  unchanged, and the attempt can never succeed (its code was never sent), so only mailed codes can be guessed at. Hosted reset
-  always needs the bot check; without the keys it answers "Password reset isn't available right now. Try again later." Over the
-  sign-in allowance, which
-  only someone with the password can reach, the answer says so: "We have sent this address several sign-in codes recently. Use
-  the newest one you received, or try again in N minutes." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
+  and 30 a day, reset 3 an hour and 10 a day, and a separate reset allowance of 3 an hour and 10 a day for a request carrying the
+  account's device cookie. The allowance is spent the same way for every address, account or not, so over it the answer can say
+  so without revealing anything: "Several codes were sent to this address recently. Use the newest one, or try again in N
+  minutes." (`429 code_mail_limit`); nothing is stored or sent, so only mailed codes can be guessed at. Hosted reset always needs
+  the bot check; without the keys it answers "Password reset isn't available right now. Try again later." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
   (D1), plus `AUTH_LIMITER`.
 * **Guessing.** Each guess is a 1-in-1,000,000 chance, and a 1% chance needs about 10,050 guesses. Against one address a day:
   sign-up, invite and reset together at most 10 wrong codes, plus one first try on each code mailed after those 10 were spent
@@ -245,8 +253,10 @@ address, and no attempt is kept.
   can spend its daily sign-up/reset wrong-code budget, but the owner's first try on a new code is always compared, and the
   owner's own browser (device cookie) has its own reset mail and its own wrong-code budget. What a stranger can still do to an
   owner without a device cookie: spend the address's reset mail allowance (3 an hour, 10 a day; each request needs a solved bot
-  check and counts against 10 reset requests an hour per IP), so the owner's own reset request in that hour answers as usual but
-  sends nothing. Sign-in is never affected: its codes need the password.
+  check and counts against 10 reset requests an hour per IP), so the owner's own reset request in that hour is told "Several
+  codes were sent to this address recently…" and gets no code. And after one mistyped code on an address whose daily budget a
+  stranger spent, the owner needs a new code (a new email, within the allowance): the first try on each new code always counts.
+  Sign-in is never affected: its codes need the password.
 
 **Links from before codes.** Confirmation links sent before codes (`<origin>/#/welcome/<token>`, or the older
 `GET /api/auth/verify-email?token=…`, which only moves the token into that fragment) open a page that says to sign in, or, if no
@@ -283,9 +293,10 @@ it nothing is sent and the Worker log records only a static reason (never the co
 person is asked for one only after a code has reached them: a test code from Settings → Account → Sign-in, or a reset code
 (a `code-proven:<user id>` row in `verifications`). Until then, and on an instance without a sender address, sign-in is the
 password alone. That matters because Cloudflare Email Routing delivers only to verified destination addresses: a configured
-sender does not mean a code reaches the owner or a teammate. A sign-in whose code the provider refused goes ahead with the
-password alone, says so, and turns codes off for that person until a test code reaches them again; a reset whose code cannot be
-sent says so plainly. `SIGNIN_CODES=off` turns codes off on a self-hosted instance; hosted ignores it. Owner setup (the setup
+sender does not mean a code reaches the owner or a teammate. For someone codes have reached, a sign-in whose code the provider
+refused does not complete: "We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off
+with SIGNIN_CODES=off)." Their proof is kept and the failure is audited. A reset answers the same whether or not its code could
+be sent (it goes out after the answer), so the reset form does not tell anyone which addresses have accounts. `SIGNIN_CODES=off` turns codes off on a self-hosted instance; hosted ignores it. Owner setup (the setup
 link or the installer proof) opens the owner's session with no code. Self-host invites work as before. Settings → Account →
 Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason`
 (`hosted`, `mail`, `no_mail`, `turned_off`), and `GET /api/auth/codes` (signed in) says whether codes are on for the caller.

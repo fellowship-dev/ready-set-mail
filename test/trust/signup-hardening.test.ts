@@ -33,25 +33,31 @@ describe('1. a flood of resets cannot use up the code a sign-up sends, and repea
     expect(w.sentTo('victim@example.com')).toBe(1);
     for (let i = 0; i < 12; i++) await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'victim@example.com' }, ...ip() });
     await flushBackground();
-    expect(w.sentTo('victim@example.com')).toBe(1 + CODE_MAIL_CAPS.reset.hour); // the reset allowance, then nothing
+    expect(w.sentTo('victim@example.com')).toBe(1); // no account yet: a reset request mails nothing
     const own = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'victim@example.com', password: 'victims-own-pass-1' }, ...ip() });
     expect(own.status).toBe(first.status);
     expect(await json(own.clone())).toEqual(await json(first));
     await flushBackground();
-    expect(w.sentTo('victim@example.com')).toBe(2 + CODE_MAIL_CAPS.reset.hour);
+    expect(w.sentTo('victim@example.com')).toBe(2);
     expect((await enterCode(w.env, pendingCookieOf(own), await lastCodeFor(w.env, 'victim@example.com'))).status).toBe(200);
   }, 30000);
 
-  it('repeated sign-ups cannot flood: 2 an hour and 4 a day from the sign-up allowance, every answer the same', async () => {
+  it('repeated sign-ups cannot flood: 2 an hour and 4 a day from the sign-up allowance; past it one plain refusal', async () => {
     expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 2, day: 4 });
     const w = hosted();
     const t0 = Date.now();
     const bodies = new Set<string>();
+    const statuses: number[] = [];
     for (let hour = 0; hour < 4; hour++) {
       vi.spyOn(Date, 'now').mockReturnValue(t0 + hour * 3601_000);
-      for (let i = 0; i < 3; i++) bodies.add(JSON.stringify(await json(await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123' }, ...ip() }))));
+      for (let i = 0; i < 3; i++) {
+        const r = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123' }, ...ip() });
+        statuses.push(r.status);
+        if (r.status === 200) bodies.add(JSON.stringify(await json(r)));
+      }
     }
     await Promise.all((ctx.waitUntil as any).mock.calls.map((c: any[]) => c[0])); // background sends finished
+    expect(statuses).toEqual([200, 200, 429, 200, 200, 429, 429, 429, 429, 429, 429, 429]);
     expect(bodies.size).toBe(1);
     expect(w.sentTo('v@example.com')).toBe(4);
   }, 30000);

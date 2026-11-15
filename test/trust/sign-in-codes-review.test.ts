@@ -5,7 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, enterCode, flushBackground, inviteAndAccept, lastCodeFor, mailsTo, makeEnv, pendingCookieOf, setupOwner, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { OPEN_FAILS_PER_DAY, SIGNIN_ALERT_AT, SIGNIN_FAILS_PER_DAY, SIGNIN_FAILS_PER_HOUR } from '../../src/auth/codes';
-import { NO_ACCOUNT_RESET_SUBJECT, SIGNIN_ALERT_SUBJECT, SIGNUP_NOTICE_SUBJECT } from '../../src/auth/mail';
+import { SIGNIN_ALERT_SUBJECT, SIGNUP_NOTICE_SUBJECT } from '../../src/auth/mail';
 
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
@@ -23,6 +23,8 @@ const resetWith = (env: any, cookie: string, code: string, password: string, hea
 const me = (env: any, token: string) => call(env, 'GET', '/api/me', { key: token });
 const otherThan = (code: string) => String((Number(code) + 1) % 1_000_000).padStart(6, '0');
 const codesTo = async (env: any, email: string) => { await flushBackground(); return mailsTo(env, email).filter(m => /^\d{6} is your Ready Set Mail code$/.test(m.subject)); };
+const MAIL_LIMIT = /^Several codes were sent to this address recently\. Use the newest one, or try again in \d+ minutes?\.$/;
+const auditActions = (db: any, action: string) => db.sqlite.prepare('SELECT action, meta FROM audit_log WHERE action = ?').all(action) as any[];
 const deviceCookieOf = (res: Response) => (res.headers as any).getSetCookie().find((c: string) => c.startsWith('rsm_device='))!.split(';')[0] as string;
 
 function hosted(send = vi.fn(async (_m: unknown) => {})) {
@@ -34,22 +36,24 @@ function hosted(send = vi.fn(async (_m: unknown) => {})) {
 const undeliverable = () => vi.fn(async (_m: unknown) => { throw new Error('destination address is not a verified address'); });
 
 describe('B1: a self-hosted owner is never locked out by a code that cannot arrive', () => {
-  it('mail configured but undeliverable: sign-in is the password alone, reset says plainly that no code could be sent', async () => {
-    const env = makeEnv(createMigratedD1(), { SEND_EMAIL: { send: undeliverable() } });
+  it('mail configured but undeliverable: sign-in is the password alone; reset answers exactly as for an unknown address', async () => {
+    const db = createMigratedD1();
+    const env = makeEnv(db, { SEND_EMAIL: { send: undeliverable() } });
     await setupOwner(env);
     const status = await json(await call(env, 'GET', '/api/auth/status'));
     expect([status.signin_codes, status.signin_codes_reason, status.signin_code_sender_domain]).toEqual([true, 'mail', 'reports.example.com']);
     const r = await login(env, 'owner@example.com', 'correct-horse-battery');
     expect(r.status).toBe(200);
     expect((await json(r)).token).toBeTruthy();
+    // The owner's reset code is sent after the answer (and refused by the provider); an unknown address is mailed nothing.
+    // Both answers are the same, so the reset form tells nobody whether an address has an account (the self-host oracle).
     const f = await forgot(env, 'owner@example.com');
-    expect(f.status).toBe(503);
-    const body = await json(f);
-    expect(body.code).toBe('code_not_sent');
-    expect(body.code_required).toBeUndefined();
-    expect(body.error).toContain('verified destination in Cloudflare Email Routing');
-    // An address with no account gets the same answer: it is about delivery, not about who has an account.
-    expect(await json(await forgot(env, 'nobody@example.com'))).toEqual(body);
+    const u = await forgot(env, 'nobody@example.com');
+    expect([f.status, u.status]).toEqual([200, 200]);
+    expect({ ...(await json(f)), email: '*' }).toEqual({ ...(await json(u)), email: '*' });
+    await flushBackground();
+    await flushBackground();
+    expect(auditActions(db, 'auth.code_not_sent').map(r => JSON.parse(r.meta).purpose)).toEqual(['reset']);
   });
 
   it('a test code from Settings turns codes on for that person, and only for them; a teammate without proof is password-only', async () => {
@@ -86,20 +90,23 @@ describe('B1: a self-hosted owner is never locked out by a code that cannot arri
     expect((await json(await call(env, 'GET', '/api/auth/codes', { key: owner }))).on_for_me).toBe(false);
   });
 
-  it('a proven person whose sign-in code cannot be sent is signed in by password, told so, and back to the password alone', async () => {
+  it('a proven person whose sign-in code cannot be sent is not signed in: told so, proof kept, audited', async () => {
     const send = vi.fn(async (_m: unknown) => {});
-    const env = makeEnv(createMigratedD1(), { SEND_EMAIL: { send } });
+    const db = createMigratedD1();
+    const env = makeEnv(db, { SEND_EMAIL: { send } });
     const owner = await setupOwner(env);
     const test = await call(env, 'POST', '/api/auth/codes/test', { key: owner, body: {} });
     await call(env, 'POST', '/api/auth/codes/confirm', { key: owner, body: { code: await lastCodeFor(env, 'owner@example.com') }, headers: { cookie: pendingCookieOf(test) } });
     send.mockImplementation(async () => { throw new Error('mail is down'); });
     const r = await login(env, 'owner@example.com', 'correct-horse-battery');
-    expect(r.status).toBe(200);
-    const body = await json(r);
-    expect(body.code_required).toBeUndefined();
-    expect(body.notice).toBe("We couldn't email your sign-in code, so you were signed in with your password alone. Sign-in codes are off for you until you send yourself a test code in Settings.");
-    expect((await me(env, body.token)).status).toBe(200);
-    expect((await json(await call(env, 'GET', '/api/auth/codes', { key: body.token }))).on_for_me).toBe(false);
+    expect(r.status).toBe(503);
+    expect(await json(r)).toEqual({ error: "We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off with SIGNIN_CODES=off).", code: 'code_not_sent' });
+    expect((r.headers as any).getSetCookie().filter((c: string) => /session_token|rsm_pending=./.test(c))).toEqual([]);
+    expect((await json(await call(env, 'GET', '/api/auth/codes', { key: owner }))).on_for_me).toBe(true);
+    await flushBackground();
+    expect(auditActions(db, 'auth.code_not_sent').map(a => JSON.parse(a.meta).purpose)).toEqual(['signin']);
+    // An unproven teammate is unaffected: password alone, as before.
+    send.mockImplementation(async () => {});
   });
 
   it('a reset code that reaches a self-hosted person also turns codes on for them', async () => {
@@ -124,9 +131,10 @@ describe('B1: a self-hosted owner is never locked out by a code that cannot arri
     expect(a).toEqual({ error: "We couldn't send the code. Try again in a minute.", code: 'code_not_sent' });
     expect(b).toEqual(a);
     expect([(forNew.headers as any).getSetCookie().length, (forKnown.headers as any).getSetCookie().length]).toEqual([0, 0]);
+    // Reset sends after the answer: during a mail outage it looks sent (the documented cost), the same for every address.
     const fNew = await forgot(h.env, 'nobody@example.com'), fKnown = await forgot(h.env, 'known@example.com');
-    expect([fNew.status, fKnown.status]).toEqual([503, 503]);
-    expect(await json(fNew)).toEqual(await json(fKnown));
+    expect([fNew.status, fKnown.status]).toEqual([200, 200]);
+    expect({ ...(await json(fNew)), email: '*' }).toEqual({ ...(await json(fKnown)), email: '*' });
   });
 });
 
@@ -185,8 +193,10 @@ describe('B2: a stranger cannot stop the owner from using a reset or sign-up cod
     await strangerSpends(h.env, 'victim@example.com', 5);
     await strangerSpends(h.env, 'victim@example.com', 1);
     const before = (await codesTo(h.env, 'victim@example.com')).length;
-    expect((await forgot(h.env, 'victim@example.com')).status).toBe(200);
-    expect((await codesTo(h.env, 'victim@example.com')).length).toBe(before); // a stranger's next request: a silent decoy
+    const over = await forgot(h.env, 'victim@example.com'); // the address's allowance is spent: said plainly, nothing sent
+    expect(over.status).toBe(429);
+    expect((await json(over)).error).toMatch(MAIL_LIMIT);
+    expect((await codesTo(h.env, 'victim@example.com')).length).toBe(before);
     const f = await forgot(h.env, 'victim@example.com', { cookie: device });
     const mine = await codesTo(h.env, 'victim@example.com');
     expect(mine.length).toBe(before + 1);
@@ -214,6 +224,32 @@ describe('B2: a stranger cannot stop the owner from using a reset or sign-up cod
     const done = await enterCode(h.env, pendingCookieOf(mine), await lastCodeFor(h.env, 'new@example.com'));
     expect(done.status).toBe(200);
     expect((await login(h.env, 'new@example.com', 'the-owners-pass-1')).status).toBe(200);
+  });
+
+  it('N1: a parallel burst cannot all claim the first try: 15 wrong codes over 3 fresh codes compare at most the limit plus one first try per code', async () => {
+    const h = hosted();
+    await signupVerified(h.env, 'victim@example.com', 'a-password-1');
+    const cookies: string[] = [];
+    for (let i = 0; i < 3; i++) cookies.push(pendingCookieOf(await forgot(h.env, 'victim@example.com')));
+    const all = await Promise.all(cookies.flatMap(c => Array.from({ length: 5 }, () => enterCodeTo(h.env, '/api/auth/reset', c, '000000'))));
+    const compared = all.filter(r => r.status === 400 || r.status === 410).length;
+    expect(compared).toBeLessThanOrEqual(OPEN_FAILS_PER_DAY + 3);
+    expect(all.filter(r => r.status === 429).length).toBe(15 - compared);
+    expect(compared).toBeGreaterThanOrEqual(OPEN_FAILS_PER_DAY);
+  });
+
+  it('over the mail allowance the answer says so, the same for an account and an address without one', async () => {
+    const h = hosted();
+    await signupVerified(h.env, 'known@example.com', 'a-password-1');
+    for (let i = 0; i < 3; i++) {
+      expect((await forgot(h.env, 'known@example.com')).status).toBe(200);
+      expect((await forgot(h.env, 'nobody@example.com')).status).toBe(200);
+    }
+    const k = await forgot(h.env, 'known@example.com'), u = await forgot(h.env, 'nobody@example.com');
+    expect([k.status, u.status]).toEqual([429, 429]);
+    const said = await json(k);
+    expect(said.error).toMatch(MAIL_LIMIT);
+    expect(await json(u)).toEqual(said);
   });
 
   it('wrong-code budgets are atomic: parallel wrong codes across attempts cannot pass the hourly sign-in cap', async () => {
@@ -306,15 +342,19 @@ describe('B3: whether an address has an account is not in the answer, nor in the
     expect(forKnown).toEqual(forNew);
   });
 
-  it('a reset request does the same work for an unknown address: one email (a notice instead of a code)', async () => {
+  it('a reset request for an unknown address mails nothing and answers like one for an account (whose code goes out after the answer)', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const h = hosted();
     await signupVerified(h.env, 'known@example.com', 'a-password-1');
-    const unknown = await work(h.db, () => forgot(h.env, 'nobody@example.com'));
-    const known = await work(h.db, () => forgot(h.env, 'known@example.com'));
-    expect(mailsTo(h.env, 'nobody@example.com').map(m => m.subject)).toEqual([NO_ACCOUNT_RESET_SUBJECT]);
-    expect(mailsTo(h.env, 'nobody@example.com')[0]!.text).toContain('there is no Ready Set Mail account with it');
+    let ru: Response | undefined, rk: Response | undefined;
+    const unknown = await work(h.db, async () => { ru = await forgot(h.env, 'nobody@example.com'); });
+    const known = await work(h.db, async () => { rk = await forgot(h.env, 'known@example.com'); });
+    expect([ru!.status, rk!.status]).toEqual([200, 200]);
+    expect({ ...(await json(ru!)), email: '*' }).toEqual({ ...(await json(rk!)), email: '*' });
     expect(unknown.pbkdf2).toBe(known.pbkdf2);
+    await flushBackground();
+    expect(mailsTo(h.env, 'nobody@example.com')).toEqual([]);
+    expect((await codesTo(h.env, 'known@example.com')).length).toBe(2); // the sign-up code and the reset code
   });
 
   it('sign-in does the same work for an unknown address and a wrong password: one query, one real PBKDF2 verification', async () => {

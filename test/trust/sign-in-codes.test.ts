@@ -207,13 +207,15 @@ describe('threat 2: guessing a code', () => {
     expect((await enterCode(v.env, pendingCookieOf(last), zCode, { ip: attacker })).status).toBe(429);
   }, 30000);
 
-  it('over the mail allowance an attempt is a decoy: no unsent code can be guessed at', async () => {
+  it('over the mail allowance nothing is stored or sent, and the answer says so: only mailed codes can be guessed at', async () => {
     const w = hosted();
     await signupVerified(w.env, 'a@example.com', 'a-password-1');
-    for (let i = 0; i < CODE_MAIL_CAPS.reset.hour + 2; i++) await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'a@example.com' }, ip: ip() });
+    const statuses: number[] = [];
+    for (let i = 0; i < CODE_MAIL_CAPS.reset.hour + 2; i++) statuses.push((await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'a@example.com' }, ip: ip() })).status);
+    expect(statuses).toEqual([...Array(CODE_MAIL_CAPS.reset.hour).fill(200), 429, 429]);
     const owners = w.rows("SELECT json_extract(value, '$.u') AS u FROM verifications WHERE identifier LIKE 'signin-code:%' ORDER BY created_at, rowid").map(r => r.u);
     expect(owners.filter(u => u !== null)).toHaveLength(CODE_MAIL_CAPS.reset.hour);
-    expect(owners.slice(-2)).toEqual([null, null]);
+    expect(owners.filter(u => u === null)).toEqual([]);
     await flushBackground();
     expect(mailsTo(w.env, 'a@example.com').filter(m => /code$/.test(m.subject))).toHaveLength(1 + CODE_MAIL_CAPS.reset.hour); // the sign-up's, then the allowance
   });
@@ -263,10 +265,13 @@ describe('threat 3: mail flooding and denial', () => {
   it('sign-up codes need the bot check and stop at the allowance, with the same answer', async () => {
     const w = hosted();
     expect((await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123', cf_turnstile_token: '' } })).status).toBe(403);
-    const bodies = new Set<string>();
-    for (let i = 0; i < 5; i++) bodies.add(JSON.stringify(await json(await signup(w.env, 'v@example.com', 'pass-word-123'))));
+    const answers: Array<[number, string]> = [];
+    for (let i = 0; i < 5; i++) { const r = await signup(w.env, 'v@example.com', 'pass-word-123'); answers.push([r.status, JSON.stringify(await json(r))]); }
     await flushBackground();
-    expect(bodies.size).toBe(1);
+    // Within the allowance one answer; past it, one plainly worded refusal (the allowance is spent alike for every address).
+    expect(answers.map(a => a[0])).toEqual([200, 200, 429, 429, 429]);
+    expect(new Set(answers.slice(0, 2).map(a => a[1])).size).toBe(1);
+    expect(JSON.parse(answers[2]![1]).error).toMatch(/^Several codes were sent to this address recently\. Use the newest one, or try again in \d+ minutes?\.$/);
     expect(mailsTo(w.env, 'v@example.com')).toHaveLength(CODE_MAIL_CAPS.signup.hour);
   });
 
@@ -288,7 +293,7 @@ describe('threat 3: mail flooding and denial', () => {
     expect(r.status).toBe(429);
     const body = await json(r);
     expect(body.code).toBe('code_mail_limit');
-    expect(body.error).toMatch(/^We have sent this address several sign-in codes recently\. Use the newest one you received, or try again in \d+ minutes?\.$/);
+    expect(body.error).toMatch(/^Several codes were sent to this address recently\. Use the newest one, or try again in \d+ minutes?\.$/);
   });
 });
 
@@ -299,6 +304,7 @@ describe('threat 4: lockout', () => {
     for (let k = 0; k < 3; k++) {
       const res = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'a@example.com' }, ip: ip() });
       for (let i = 0; i < CODE_MAX_TRIES; i++) await enterCode(w.env, pendingCookieOf(res), '000000', { ip: ip() });
+      if (k >= CODE_MAIL_CAPS.signup.hour - 1) continue; // the owner's sign-up used one; past the allowance a stranger gets no attempt
       const s = await signup(w.env, 'a@example.com', 'attacker-pass-1');
       for (let i = 0; i < CODE_MAX_TRIES; i++) await enterCode(w.env, pendingCookieOf(s), '000000', { ip: ip() });
     }

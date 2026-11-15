@@ -40,10 +40,8 @@ describe('password reset (by code)', () => {
 
     // background work (the mail) completes via ctx.waitUntil; await what was scheduled
     await Promise.all((ctxCalls()).map(p => p));
-    // One email for each: the code to the account, and to the unknown address a notice that it has no account here.
-    expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1][0].to).toEqual(['ghost@example.com']);
-    expect(send.mock.calls[1][0].subject).toBe('Ready Set Mail password reset');
+    // The code to the account, after the answer; the unknown address is mailed nothing.
+    expect(send).toHaveBeenCalledTimes(1);
     const mail = send.mock.calls[0][0];
     expect(mail.to).toEqual(['owner@example.com']);
     expect(mail.from).toEqual({ name: 'Ready Set Mail', email: 'noreply@reports.example.com' });
@@ -99,18 +97,20 @@ describe('password reset (by code)', () => {
     other.mockRestore();
   });
 
-  it('a mail failure is said plainly (no code is pretended), the same for an unknown address, and the provider error is not logged', async () => {
+  it('a mail failure after the answer is not surfaced (no enumeration: the same answer as an unknown address), and the provider error is not logged', async () => {
     const { env, send } = envWithMail();
     await setupOwner(env, 'owner@example.com');
     send.mockRejectedValue(new Error('destination address not verified'));
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await call(env, 'POST', '/api/auth/forgot', { body: { email: 'owner@example.com' } });
     await Promise.all(ctxCalls());
-    expect(res.status).toBe(503);
-    const said = await res.json();
-    expect(said).toMatchObject({ code: 'code_not_sent' });
+    expect(res.status).toBe(200);
+    const said = await res.json() as Record<string, unknown>;
+    expect(said).toMatchObject({ code_required: true, purpose: 'reset' });
     const ghost = await call(env, 'POST', '/api/auth/forgot', { body: { email: 'ghost@example.com' } });
-    expect([ghost.status, await ghost.json()]).toEqual([503, said]);
+    expect(ghost.status).toBe(200);
+    expect({ ...(await ghost.json() as object), email: '*' }).toEqual({ ...said, email: '*' });
+    await Promise.all(ctxCalls());
     expect(JSON.stringify(err.mock.calls)).not.toContain('destination address');
     err.mockRestore();
   });

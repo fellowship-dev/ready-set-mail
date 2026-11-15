@@ -57,7 +57,7 @@ describe('hosted sign-up requires a verified email', () => {
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: 'cfo-own-password-1' } })).status).toBe(200);
   });
 
-  it('a reset request emails a code only to a real account (an unknown address gets a no-account notice), with the same answer', async () => {
+  it('a reset request emails a code only to a real account (an unknown address is mailed nothing), with the same answer', async () => {
     const w = saas();
     await signupVerified(w.env, 'a@example.com');
     w.send.mockClear();
@@ -65,8 +65,8 @@ describe('hosted sign-up requires a verified email', () => {
     const ghost = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'nobody@example.com' } });
     expect([real.status, ghost.status]).toEqual([200, 200]);
     await lastCodeFor(w.env, 'a@example.com');
-    expect(w.send).toHaveBeenCalledTimes(2);
-    expect((w.send.mock.calls as any[]).map(c => [c[0].to[0], /is your Ready Set Mail code$/.test(c[0].subject)])).toEqual([['a@example.com', true], ['nobody@example.com', false]]);
+    expect(w.send).toHaveBeenCalledTimes(1);
+    expect((w.send.mock.calls as any[]).map(c => c[0].to[0])).toEqual(['a@example.com']);
   });
 
   it('signing up again with an existing address looks the same and creates nothing', async () => {

@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, FieldError, Input, Label, toast } from '@ready-set-mail/ui';
+import { Alert, Button, Checkbox, FieldError, Input, Label } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
@@ -61,7 +61,7 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	async function request(token: string | null) {
 		const turnstile = token ? { cf_turnstile_token: token } : {};
 		const body = mode === 'setup' ? { name, email, password, telemetry, ...turnstile } : { email, password, ...turnstile };
-		return api<CodeRequired | { has_domain?: boolean; notice?: string }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
+		return api<CodeRequired | { has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
 	}
 
 	async function finish(hasDomain?: boolean) {
@@ -85,9 +85,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 			const res = await request(check.token);
 			setBootstrapProof('');
 			if (needsCode(res)) return setPending(res);
-			// Self-host: the sign-in code could not be sent, so the server signed this person in with the password alone.
-			const notice = (res as { notice?: string }).notice;
-			if (notice) toast({ title: 'Signed in with your password alone', description: notice });
 			await finish((res as { has_domain?: boolean }).has_domain);
 		} catch (err) {
 			if (mode === 'setup' && err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');

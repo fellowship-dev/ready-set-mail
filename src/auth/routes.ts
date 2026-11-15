@@ -27,11 +27,11 @@ import { cleanName } from './names';
 import { deviceCookie, knownDevice, rotateDeviceEpoch } from './device';
 import { d1RateLimitStorage } from './rate-limit';
 import {
-  CODE_MAX_TRIES, CODE_SECONDS, SIGNIN_ALERT_AT, checkCode, clearCodeProven, clearPendingCookie, clearSigninCodeBudgets, codeMailWait,
-  codeProven, decoyOf, dropAttempt, dropAttemptsOf, giveBack, markCodeProven, peekAttempt, pendingCookie, pendingHandle, poolFor,
-  reserveWrongCode, signinAlertAllowed, startAttempt, type Attempt, type BudgetKind, type CodePurpose, type MailPool,
+  CODE_MAX_TRIES, CODE_SECONDS, SIGNIN_ALERT_AT, clearPendingCookie, clearSigninCodeBudgets, codeMailWait, codeProven, compareCode,
+  countTry, decoyOf, dropAttempt, dropAttemptsOf, giveBack, markCodeProven, peekAttempt, pendingCookie, pendingHandle, poolFor,
+  reserveWrongCode, signinAlertAllowed, startAttempt, uncountTry, type Attempt, type BudgetKind, type CodePurpose, type MailPool,
 } from './codes';
-import { mailReady, requestedFrom, sendCodeEmail, senderAddress, sendNoAccountResetNotice, sendSigninAlert, sendSignupNotice } from './mail';
+import { mailReady, requestedFrom, sendCodeEmail, senderAddress, sendSigninAlert, sendSignupNotice } from './mail';
 import { legal, legalStatus } from './legal';
 import { helpUrl } from '../funnel/config';
 import { emailCheckAvailable } from '../hosted/config';
@@ -239,41 +239,66 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  * match, so the number of codes that can be guessed at is the number actually mailed.
  */
 async function answerWithCode(
-  env: Env, request: Request, attempt: Attempt, opts: { pool?: MailPool; notice?: 'signup' | 'reset' } = {},
+  env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
+  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
-  // The allowance is spent for every address, account or not, so every request does the same work.
-  const allowed = !(await codeMailWait(env, attempt.email, opts.pool ?? poolFor(attempt.purpose)));
-  const mailing = allowed && (!!attempt.userId || !!attempt.create);
-  if (!allowed) console.warn('[auth] code email not sent: per-address limit reached');
+  // The allowance is spent for every address, account or not, so every request does the same work, and over it the answer can
+  // say so plainly: it depends only on how often this address was asked for, which says nothing about who has an account.
+  const wait = await codeMailWait(env, attempt.email, opts.pool ?? poolFor(attempt.purpose));
+  if (wait) return mailLimit(wait);
+  const mailing = !!attempt.userId || !!attempt.create;
   const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : decoyOf(attempt));
-  // One email whenever the allowance has room: the code, or, for an address that cannot use this step, the notice that stands
-  // in for it. It is sent before answering, so a send the provider refused is never answered as "code sent".
-  let sent = true;
-  if (mailing) sent = await sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request));
-  else if (allowed && opts.notice === 'signup') sent = await sendSignupNotice(env, attempt.email, origin);
-  else if (allowed && opts.notice === 'reset') sent = await sendNoAccountResetNotice(env, attempt.email, origin);
-  if (!sent) {
-    await dropAttempt(env, handle);
-    return notSent(env);
+  if (opts.afterAnswer) {
+    // Reset: the code goes out after the answer, and an address with no account is mailed nothing, so both answers follow the
+    // same database work and return the same body at the same time. The cost: during a mail outage a reset looks sent.
+    if (mailing) ctx.waitUntil((async () => {
+      if (!(await sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request))) && attempt.userId) {
+        auditCodeNotSent(env, ctx, request, { id: attempt.userId, email: attempt.email }, attempt.purpose);
+      }
+    })().catch(() => {}));
+  } else {
+    // Sign-up and invite: sent before answering, so a send the provider refused is never answered as "code sent". A sign-up
+    // for an address that already has an account mails its owner a notice in place of the code (a real user, about their own
+    // account, within the same allowance).
+    let sent = true;
+    if (mailing) sent = await sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request));
+    else if (opts.notice === 'signup') sent = await sendSignupNotice(env, attempt.email, origin);
+    if (!sent) {
+      await dropAttempt(env, handle);
+      if (attempt.userId) auditCodeNotSent(env, ctx, request, { id: attempt.userId, email: attempt.email }, attempt.purpose);
+      return notSent();
+    }
   }
   const out = json({ code_required: true, purpose: attempt.purpose, email: attempt.email, expires_in: CODE_SECONDS });
   out.headers.append('set-cookie', pendingCookie(handle, secure));
   return out;
 }
 
-/**
- * The answer when a code (or the notice standing in for one) could not be handed to the mail provider. Hosted: the same words
- * for every address (a send failure is about the service, not the address). Self-host: what the operator can do.
- */
-const SELF_HOST_NOT_SENT = "We couldn't email a code to that address: this instance may not be able to deliver mail to it. If you can't sign in, ask whoever runs this instance to add the address as a verified destination in Cloudflare Email Routing (self-hosting guide, \"Sign-in codes\").";
-function notSent(env: Env): Response {
-  return isSaas(env) ? err("We couldn't send the code. Try again in a minute.", 503, 'code_not_sent') : err(SELF_HOST_NOT_SENT, 503, 'code_not_sent');
+/** The answer when a code (or the notice standing in for one) could not be handed to the mail provider: the same for every address. */
+function notSent(): Response {
+  return err("We couldn't send the code. Try again in a minute.", 503, 'code_not_sent');
 }
 
-/** Self-host: the sign-in code could not be sent, so this sign-in used the password alone (the rule before proof). */
-const SIGNIN_CODE_NOT_SENT = "We couldn't email your sign-in code, so you were signed in with your password alone. Sign-in codes are off for you until you send yourself a test code in Settings.";
+/** Self-host, someone codes have reached: a sign-in code that could not be sent does not let the password alone in. */
+const SELF_HOST_SIGNIN_NOT_SENT = "We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off with SIGNIN_CODES=off).";
+
+/** Over an address's code mail allowance. Spent the same for every address, so saying so reveals nothing about accounts. */
+function mailLimit(wait: number): Response {
+  const out = err(`Several codes were sent to this address recently. Use the newest one, or try again in ${minutesText(wait)}.`, 429, 'code_mail_limit');
+  out.headers.set('retry-after', String(wait));
+  return out;
+}
+
+/** The audit trail of a code the mail provider refused (never the code). */
+function auditCodeNotSent(env: Env, ctx: ExecutionContext, request: Request, user: { id: string; email: string }, purpose: CodePurpose): void {
+  auditUser(env, ctx, user.id, {
+    actor_id: user.id, actor_email: user.email, actor_type: 'user',
+    action: 'auth.code_not_sent', resource_type: 'user', resource_id: user.id, resource_name: user.email,
+    meta: { purpose, ip: clientIp(request) },
+  });
+}
 
 /** Opens a session for a user whose code step is done; the response carries the session cookie (and token for scripts). */
 async function openSession(env: Env, request: Request, ctx: ExecutionContext, userId: string, body: Record<string, unknown>): Promise<Response> {
@@ -362,9 +387,16 @@ async function confirmCode(env: Env, request: Request, ctx: ExecutionContext, co
   const ip = clientIp(request);
   // A browser holding this account's device cookie has its own sign-up/invite/reset budget, which a stranger cannot spend.
   const device = pending.purpose !== 'signin' && pending.purpose !== 'confirm' && !!pending.userId && (await knownDevice(env, request, pending.userId));
-  const reservation = await reserveWrongCode(env, pending, ip, { device, firstTry: pending.tries === 0 });
-  if ('refused' in reservation) return { response: codeThrottled(reservation.refused, reservation.wait) };
-  const result = await checkCode(env, handle, typeof code === 'string' ? code.replace(/\s+/g, '') : '');
+  // The try is counted first, atomically: only the request that moved this attempt's count from 0 to 1 is its first try, so a
+  // parallel burst cannot all claim the first-try exception.
+  const counted = await countTry(env, handle);
+  if ('refused' in counted) return { response: codeRefusal(counted.refused) };
+  const reservation = await reserveWrongCode(env, pending, ip, { device, firstTry: counted.firstTry });
+  if ('refused' in reservation) {
+    await uncountTry(env, counted); // refused before any comparison: the try is not spent
+    return { response: codeThrottled(reservation.refused, reservation.wait) };
+  }
+  const result = await compareCode(env, counted, typeof code === 'string' ? code.replace(/\s+/g, '') : '');
   if (!('refused' in result) || !result.compared) await giveBack(env, reservation.reserved);
   if ('refused' in result) {
     // The SIGNIN_ALERT_AT-th wrong sign-in code today: whoever typed it knew the password. Told once a day at most.
@@ -510,9 +542,9 @@ export async function handleAuthRoute(
     const passwordHash = await hashPassword(body.password);
     const user = await globalQueries(env.DB).users.byEmail(email);
     const terms = legal(env).termsVersion ?? undefined;
-    if (user?.email_verified) return answerWithCode(env, request, { purpose: 'signup', userId: null, email }, { notice: 'signup' });
+    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup' });
     // No account yet, or one still waiting for its code from before codes: the code sets this attempt's password.
-    return answerWithCode(env, request, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms });
+    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms });
   }
 
   // ── POST /api/auth/login — password; then, when codes are on, the emailed code ──
@@ -543,21 +575,16 @@ export async function handleAuthRoute(
     await clearSigninFailures(env, email);
     if (!(await codesFor(env, user.id))) return passwordSession(env, request, ctx, user, {});
 
-    // The right password proves who is asking, so the mail allowance can be stated plainly (nobody else learns anything).
     const mailWait = await codeMailWait(env, email, 'signin');
-    if (mailWait) {
-      const out = err(`We have sent this address several sign-in codes recently. Use the newest one you received, or try again in ${minutesText(mailWait)}.`, 429, 'code_mail_limit');
-      out.headers.set('retry-after', String(mailWait));
-      return out;
-    }
+    if (mailWait) return mailLimit(mailWait);
     const secure = secureOrigin(env, request);
     const { handle, code } = await startAttempt(env, pendingHandle(request, secure), { purpose: 'signin', userId: user.id, email });
     if (!(await sendCodeEmail(env, email, code, 'signin', baseUrl(env, url.origin), requestedFrom(request)))) {
+      // The sign-in does not complete: codes have reached this person before, so a mail fault must not let the password alone
+      // in. Their proof is kept; the operator's way out is SIGNIN_CODES=off.
       await dropAttempt(env, handle);
-      if (isSaas(env)) return notSent(env);
-      // Self-host: the code did not go out, so this person is back to the rule before proof (the password alone).
-      await clearCodeProven(env, user.id);
-      return passwordSession(env, request, ctx, user, { notice: SIGNIN_CODE_NOT_SENT });
+      auditCodeNotSent(env, ctx, request, user, 'signin');
+      return isSaas(env) ? notSent() : err(SELF_HOST_SIGNIN_NOT_SENT, 503, 'code_not_sent');
     }
     const out = json({ code_required: true, purpose: 'signin', email, expires_in: CODE_SECONDS });
     out.headers.append('set-cookie', pendingCookie(handle, secure));
@@ -646,15 +673,12 @@ export async function handleAuthRoute(
     if (!instance.on) return err(instance.reason === 'turned_off' ? 'Sign-in codes are turned off on this instance (SIGNIN_CODES=off).' : "This instance can't send email, so sign-in codes are off.", 409, 'codes_unavailable');
     const email = me.email.toLowerCase();
     const mailWait = await codeMailWait(env, email, 'signin');
-    if (mailWait) {
-      const out = err(`We have sent this address several codes recently. Use the newest one you received, or try again in ${minutesText(mailWait)}.`, 429, 'code_mail_limit');
-      out.headers.set('retry-after', String(mailWait));
-      return out;
-    }
+    if (mailWait) return mailLimit(mailWait);
     const secure = secureOrigin(env, request);
     const { handle, code } = await startAttempt(env, pendingHandle(request, secure), { purpose: 'confirm', userId: me.id, email });
     if (!(await sendCodeEmail(env, email, code, 'confirm', baseUrl(env, url.origin), requestedFrom(request)))) {
       await dropAttempt(env, handle);
+      auditCodeNotSent(env, ctx, request, me, 'confirm');
       return err(`We couldn't send a code to ${email}. This instance may not be able to deliver mail to that address, so sign-in codes stay off for you.`, 503, 'code_not_sent');
     }
     const out = json({ code_required: true, purpose: 'confirm', email, expires_in: CODE_SECONDS });
@@ -720,9 +744,9 @@ export async function handleAuthRoute(
       meta: { phase: 'requested' },
     });
     // A browser that signed in to this account before has its own reset allowance: a stranger who spends the address's cannot
-    // spend it. An address with no account gets a notice instead of a code, so every request sends the same one email.
+    // spend it. An address with no account is mailed nothing; the code to a real account goes out after the answer.
     const device = !!user && (await knownDevice(env, request, user.id));
-    return answerWithCode(env, request, { purpose: 'reset', userId: user?.id ?? null, email }, { pool: device ? 'reset-device' : 'reset', notice: 'reset' });
+    return answerWithCode(env, request, ctx, { purpose: 'reset', userId: user?.id ?? null, email }, { pool: device ? 'reset-device' : 'reset', afterAnswer: true });
   }
 
   // ── POST /api/auth/reset — the emailed reset code and a new password, in the browser that asked ──
@@ -812,7 +836,7 @@ export async function handleAuthRoute(
     // address creates the login (for a new address), sets the password typed here, verifies it and accepts the invite.
     if (isSaas(env)) {
       const passwordHash = await hashPassword(body.password!);
-      return answerWithCode(env, request, { purpose: 'invite', userId: existingUser?.id ?? null, create: !existingUser, email: invite.email, passwordHash, invite: invite.token, terms: legal(env).termsVersion ?? undefined });
+      return answerWithCode(env, request, ctx, { purpose: 'invite', userId: existingUser?.id ?? null, create: !existingUser, email: invite.email, passwordHash, invite: invite.token, terms: legal(env).termsVersion ?? undefined });
     }
 
     const { res, user } = await signUp(env, request, ctx, { kind: 'invite', token: invite.token }, {
