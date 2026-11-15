@@ -5,7 +5,7 @@
 // of e2e/support/fake-cloudflare.mjs which also answers DNS-over-HTTPS), so api.cloudflare.com is never contacted. The fake has no OAuth
 // screen, so the connection is made with a pasted token: everything after it is the same code as after the OAuth return.
 // Hosted sign-up asks Cloudflare's Turnstile test endpoint (challenges.cloudflare.com) to check a dummy token: this spec needs that network access.
-// Ports 8815-8819. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/cloudflare-first-run.spec.ts
+// Ports 8815-8820. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/cloudflare-first-run.spec.ts
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -139,6 +139,37 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
 		expect(inst.d1('SELECT domain, verified_via FROM domains WHERE domain = \'harbor-lane.org\'')).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare' }]);
 		expect(inst.d1('SELECT settled_at IS NOT NULL AS settled FROM domain_claims')).toEqual([{ settled: 1 }]);
+	} finally {
+		await inst.stop();
+	}
+});
+
+test('hosted, a claim and a Cloudflare connection both made before the release (no import ran): the next overview verifies and links it, and Apply via Cloudflare works', async ({ page }) => {
+	const inst = await startInstance({ mode: 'hosted', port: 8820, tokenKey: true });
+	try {
+		await signUp(page, inst, 'owner@harbor-lane.org');
+		// The state an earlier release left: the claim pending, a connection whose zone list nobody imported or allowed.
+		const made = await page.evaluate(async () => {
+			const post = (path: string, body: unknown) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.status);
+			return [await post('/api/domains', { domain: 'harbor-lane.org' }), await post('/api/cloudflare/connections', { token: 'e2e-fake-token-not-a-real-secret-0000' })];
+		});
+		expect(made).toEqual([202, 201]);
+		expect(inst.d1('SELECT domain FROM domains')).toEqual([]);
+
+		await page.goto(`${inst.url}/#/`);
+		await page.reload();
+
+		await expect(page.getByRole('link', { name: 'harbor-lane.org', exact: true })).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
+		await expect(page.getByText('2 new domains in your Cloudflare account')).toBeVisible(); // the other two zones; the claimed name is not offered as new
+		expect(inst.d1("SELECT domain, verified_via, cf_connection_id IS NOT NULL AS linked FROM domains")).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare', linked: 1 }]);
+		expect(inst.d1('SELECT settled_at IS NOT NULL AS settled FROM domain_claims')).toEqual([{ settled: 1 }]);
+
+		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
+		const applied = await page.evaluate(async (domainId) => (await fetch(`/api/domains/${domainId}/apply-dmarc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ record: 'v=DMARC1; p=none' }) })).status, id);
+		expect(applied).toBe(200);
+		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
+		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
 	} finally {
 		await inst.stop();
 	}

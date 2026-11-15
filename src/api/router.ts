@@ -113,6 +113,7 @@ import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
+import { autoVerifyClaims } from '../connections/import';
 import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
@@ -832,6 +833,12 @@ async function _handleApi(
 
     // GET /api/domains
     if (path === '/api/domains' && method === 'GET') {
+      // Hosted: a pending claim inside a zone of a stored allow-list is checked through that connection, at most once an hour, and verified when it
+      // holds (src/connections/import.ts autoVerifyClaims). Owners and admins only: a member cannot verify a claim, so a member's page load does not either.
+      if (isAdmin && userBySession) {
+        await autoVerifyClaims(tenant, { id: userBySession.id, email: userBySession.email }, ctx)
+          .catch((e) => console.warn('[claims] automatic verification failed:', e instanceof Error ? e.message : e));
+      }
       return await getDomainsHandler(tenant);
     }
     // POST /api/domains/claims/:id/verify — the "Verify" button: re-check the proofs of a pending claim

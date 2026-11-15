@@ -364,12 +364,16 @@ function keepProof(tenant: TenantContext, domain: string, proof: CloudflareProof
  * The zone proof the insert of `domain` must carry when it is verified through Cloudflare, written WITH the row (domains.cf_account_id, cf_zone_id,
  * verified_at, cf_zone_name, cf_name_servers). A zone proof without its name servers cannot be re-checked, so none is ever written: the proof is missing
  * or has no servers and the add fails (ProofIncompleteError, 409 `proof_incomplete`; the TXT record is the way). Release 2.0.0 could write such a row.
+ *
+ * The one place that decides a zone-proven row's connection: the connection whose zone made the proof (cf_connection_id), on an insert and on a
+ * restore alike, for every path that admits a domain (claim Verify, Prove again, Add domain, bulk add, the wizard, the import, a claim settled
+ * without a click). Apply via Cloudflare then finds it (TenantContext.cfFor). A TXT or parent proof links nothing.
  */
 export function proofColumns(tenant: TenantContext, domain: string, via: VerifiedVia | string | undefined): ZoneProofColumns | undefined {
   if (via !== 'cloudflare') return undefined;
   const proof = tenant.cloudflareProofs.get(domain);
   if (!proof || proof.name_servers.length === 0) throw new ProofIncompleteError(domain);
-  return { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at, cf_zone_name: proof.zone_name, cf_name_servers: proof.name_servers };
+  return { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at, cf_zone_name: proof.zone_name, cf_name_servers: proof.name_servers, cf_connection_id: proof.connection_id };
 }
 
 /**
