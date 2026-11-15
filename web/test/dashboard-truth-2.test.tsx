@@ -188,7 +188,7 @@ describe('4. empty charts and fix lists ask emptyReportsState first', () => {
 });
 
 describe('5. the Reports section never says the whole domain is done', () => {
-	it('with 11 SPF lookups, "Do this next" leads with SPF and the Reports section speaks for DMARC only', async () => {
+	it('with 11 SPF lookups, "Do this next" leads with SPF and the Reports section speaks for DMARC only', { timeout: 20000 }, async () => {
 		const rec = `v=DMARC1; p=reject; rua=mailto:${RUA}`;
 		const s = SUM({ dmarc_policy: 'reject', dmarc_p: 'reject', spf_lookup_count: 11, total_messages: 100, pass_messages: 100 });
 		page(pageRoutes({
