@@ -19,6 +19,14 @@ describe('stored facts for a record that is not applied as written', () => {
   it('an invalid sp= without rua=: receivers apply no DMARC', async () => {
     expect(await factsFor('v=DMARC1; p=reject; sp=bogus')).toMatchObject({ policy: null, issue: 'invalid_sp', p: null, sp: 'bogus' });
   });
+  it('an invalid sp= is stored as written, and named as written', async () => {
+    const f = (await factsFor(`v=DMARC1; p=reject; sp=Rejectt; rua=${RUA}`))!;
+    expect(f).toMatchObject({ issue: 'invalid_sp', sp: 'Rejectt' });
+    const s = { dmarc_policy: f.policy, dmarc_issue: f.issue, dmarc_inherited_from: f.inherited_from, dmarc_pct: f.pct, dmarc_p: f.p, dmarc_sp: f.sp, dmarc_rua: 1 };
+    const [step] = dmarcSteps('example.com', policyInForce('example.com', s), { reportsAddress: true, ruaAddress: null, reports: { total: 0, passed: 0, days: 30 } });
+    expect(step!.why).toContain('sp=Rejectt is not a valid policy');
+    expect(step!.why).toBe(receiverProblem(`v=DMARC1; p=reject; sp=Rejectt; rua=${RUA}`, '_dmarc.example.com'));
+  });
   it('an invalid p= with a valid rua=: issue invalid, receivers apply p=none', async () => {
     expect(await factsFor(`v=DMARC1; p=rejected; rua=${RUA}`)).toMatchObject({ policy: null, issue: 'invalid', p: 'none', sp: null });
   });
