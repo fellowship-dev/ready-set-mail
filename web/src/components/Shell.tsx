@@ -15,6 +15,7 @@ import {
 import { BarChart3, Bot, Globe, History, LogOut, Mail, Megaphone, Moon, Settings, Sun, UserCircle, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
+import { cleanName } from '../lib/names';
 import { switchToWorkspace, useWorkspaces } from '../lib/workspaces';
 import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
 import { useTheme } from '../lib/theme';
@@ -85,11 +86,21 @@ export function Shell() {
 								<UserCircle aria-hidden />
 							</IconButton>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							<DropdownMenuLabel className="space-y-1">
-								<span className="block max-w-56 truncate text-sm font-medium text-ink-1">{me?.user?.email ?? 'Instance key'}</span>
+						<DropdownMenuContent align="end" className="w-64 max-w-[calc(100vw-2rem)]">
+							<DropdownMenuLabel className="space-y-1.5 font-normal">
+								{me?.user?.name ? <span className="block truncate text-sm font-semibold text-ink-1">{cleanName(me.user.name)}</span> : null}
+								<span className="block truncate text-sm text-ink-2" title={me?.user?.email}>
+									{me?.user?.email ?? 'Instance key'}
+								</span>
 								{role ? <Badge variant="brand">{role}</Badge> : null}
 							</DropdownMenuLabel>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem asChild>
+								<Link to="/settings">
+									<Settings aria-hidden />
+									Settings
+								</Link>
+							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={() => void signOut()}>
 								<LogOut aria-hidden />

@@ -1,12 +1,13 @@
 import { Button, Card, CardContent, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, FieldError, Input, toast } from '@ready-set-mail/ui';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Section } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { downloadFile } from '../../lib/download';
 import { useSession } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
+import { DeleteButton, LeaveButton, useCurrentWorkspace } from './WorkspaceSection';
 
 interface Blocking {
 	id: string;
@@ -14,25 +15,44 @@ interface Blocking {
 	members: number;
 }
 
-/** Export the workspace's data (owners); delete your own account (everyone signed in as a user). */
+/** One danger-zone action: what it does on the left, its button (which asks for confirmation) on the right. */
+function DangerRow({ title, children, action }: { title: string; children: ReactNode; action: ReactNode }) {
+	return (
+		<Card>
+			<CardContent className="flex flex-wrap items-center justify-between gap-4">
+				<div className="min-w-0 max-w-xl space-y-1">
+					<h3 className="font-semibold">{title}</h3>
+					<p className="text-sm text-ink-2">{children}</p>
+				</div>
+				{action}
+			</CardContent>
+		</Card>
+	);
+}
+
+/** Export the workspace's data (owners); leave or delete the open workspace; delete your own account (everyone signed in as a user). */
 export function DangerZone() {
 	const { me, role } = useSession();
+	const { current, others, goElsewhere } = useCurrentWorkspace();
 	if (!me?.user) return null;
+	const canLeave = others.length > 0;
 	return (
-		<Section title="Danger zone" description="Take your data with you, or delete your account.">
+		<Section title="Danger zone" description="Take your data with you, leave or delete this workspace, or delete your account.">
 			{role === 'owner' && me.workspace_id ? <ExportCard workspaceId={me.workspace_id} /> : null}
-			<Card>
-				<CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
-					<div className="min-w-0 max-w-xl">
-						<h3 className="font-semibold">Delete my account</h3>
-						<p className="text-sm text-ink-2">
-							Removes your login, sessions, API keys and memberships, and any workspace only you belong to (with its domains, reports and Cloudflare access). If you are the only owner of a workspace that
-							has other members, transfer ownership first.
-						</p>
-					</div>
-					<DeleteAccount email={me.user.email} />
-				</CardContent>
-			</Card>
+			{current && canLeave ? (
+				<DangerRow title="Leave this workspace" action={<LeaveButton id={current.id} name={current.name} then={goElsewhere} />}>
+					You lose access to its domains and reports. An owner can invite you back.
+				</DangerRow>
+			) : null}
+			{current && canLeave && role === 'owner' ? (
+				<DangerRow title="Delete this workspace" action={<DeleteButton id={current.id} name={current.name} then={goElsewhere} />}>
+					Removes its domains, reports, members&apos; access and Cloudflare connections for everyone. This cannot be undone.
+				</DangerRow>
+			) : null}
+			<DangerRow title="Delete my account" action={<DeleteAccount email={me.user.email} />}>
+				Removes your login, sessions, API keys and memberships, and any workspace only you belong to (with its domains, reports and Cloudflare access). If you are the only owner of a workspace that has
+				other members, transfer ownership first.
+			</DangerRow>
 		</Section>
 	);
 }
@@ -43,18 +63,17 @@ function ExportCard({ workspaceId }: { workspaceId: string }) {
 		onError: (e) => toast({ variant: 'danger', title: 'Could not export', description: errorMessage(e) }),
 	});
 	return (
-		<Card>
-			<CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
-				<div className="min-w-0 max-w-xl">
-					<h3 className="font-semibold">Export this workspace's data</h3>
-					<p className="text-sm text-ink-2">Everything it holds, as one JSON file: members, domains, reports, settings and the audit log. Secrets and raw report payloads are left out.</p>
-				</div>
+		<DangerRow
+			title="Export this workspace's data"
+			action={
 				<Button variant="secondary" loading={download.isPending} onClick={() => download.mutate()}>
 					<Download aria-hidden />
 					Download JSON
 				</Button>
-			</CardContent>
-		</Card>
+			}
+		>
+			Everything it holds, as one JSON file: members, domains, reports, settings and the audit log. Secrets and raw report payloads are left out.
+		</DangerRow>
 	);
 }
 
