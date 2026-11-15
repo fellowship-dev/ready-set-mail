@@ -85,6 +85,15 @@ export function createFakeCloudflare() {
 
     // Test helpers.
     if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses });
+    // POST /__zones {name, account?: {id, name}, status?, type?}: add a zone (another Cloudflare account, a pending or partial zone) to the state.
+    if (url.pathname === '/__zones' && method === 'POST') {
+      const name = String(body?.name ?? '').toLowerCase();
+      const z = { id: hex(`zone:${name}`), name, status: body?.status ?? 'active', type: body?.type ?? 'full', account: body?.account ?? { id: ACCOUNT.id, name: ACCOUNT.name } };
+      st.zones = st.zones.filter(x => x.name !== name).concat(z);
+      st.records.set(z.id, []);
+      st.routing.set(z.id, { enabled: false, catchAll: null, rules: [] });
+      return send(200, { ok: true, id: z.id });
+    }
     if (url.pathname === '/__ns' && method === 'POST') {
       const n = String(body?.name ?? '').toLowerCase().replace(/\.$/, '');
       if (Array.isArray(body?.ns) && body.ns.length) st.nsOverrides.set(n, body.ns); else st.nsOverrides.delete(n);
@@ -130,7 +139,7 @@ export function createFakeCloudflare() {
 
     if (method === 'GET' && path === '/user/tokens/verify') return ok({ id: hex(`token:${bearer}`), status: 'active' });
 
-    if (method === 'GET' && path === '/accounts') { const [slice, result_info] = paged(url, [{ id: ACCOUNT.id, name: ACCOUNT.name }]); return ok(slice, { result_info }); }
+    if (method === 'GET' && path === '/accounts') { const [slice, result_info] = paged(url, [...new Map(st.zones.map(z => [z.account.id, { id: z.account.id, name: z.account.name }])).values()]); return ok(slice, { result_info }); }
 
     if (method === 'GET' && path === '/zones') {
       let list = st.zones;
@@ -143,7 +152,7 @@ export function createFakeCloudflare() {
     }
 
     let m = path.match(/^\/zones\/([^/]+)$/);
-    if (m && method === 'GET') { const z = zoneById(m[1]); return z ? ok({ ...z, name_servers: st.nsOverrides.get(z.name) ?? ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'] }) : notFound('Zone not found'); }
+    if (m && method === 'GET') { const z = zoneById(m[1]); return z ? ok({ ...z, name_servers: st.nsOverrides.get(z.name) ?? ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'], permissions: ['#zone:read', '#dns_records:edit'] }) : notFound('Zone not found'); }
 
     // Account level: email routing destination addresses, Workers subdomain.
     m = path.match(/^\/accounts\/([^/]+)(\/.*)?$/);

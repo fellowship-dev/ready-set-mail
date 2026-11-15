@@ -6,6 +6,17 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 
 ## [Unreleased]
 
+### Added
+
+- **Connecting Cloudflare adds your domains.** On the hosted service, connecting Cloudflare adds every active zone the connection can see as a verified domain, with nothing written to DNS, and lands on the dashboard with a plain status line. If your plan covers fewer domains than there are zones, a list lets you choose which to add. A domain you removed is not added back by a later import; it is offered under Add domain, where zones that appear in Cloudflare later are suggested too (never added by themselves). Pending claims for the zones you connect are verified without a click.
+- **Cloudflare accounts in Settings.** Each account is listed once with its name, its domains, whether it works, who connected it and when (and "2 connections" when two sign-ins reach it). One sign-in can cover several accounts; disconnecting it names the other accounts and says your domains stay verified and watched. With more than one account, domains carry a small account label.
+- **A record of the proof.** A domain verified through a Cloudflare zone records the account, zone and time (migration `0015`: run `npm run migrate` first; see [packages/db/UPGRADING.md](packages/db/UPGRADING.md#cloudflare-import-0015)) and a `domain.proof` audit entry; it stays verified if the token is revoked later.
+
+### Changed
+
+- **Cloudflare proves ownership only when it really can.** The zone must be in the connection's own Cloudflare account, the token must be able to edit its DNS, and a zone that is itself a public suffix (such as `co.uk`) proves nothing. Everything else falls back to the DNS record, as before.
+- **Connecting Cloudflare from the dashboard or the first screen continues in the setup wizard** instead of returning to a "verify your domain" prompt. A waiting domain no longer hides the Cloudflare card on the first screen, and on the overview what blocks progress (a domain waiting for proof, a Cloudflare connection that stopped working) comes before "Get to your first answer".
+
 ## [2.0.0] - YYYY-MM-DD
 
 2.0 rebuilds Ready Set Mail (formerly Inbox Angel) around workspaces, a new dashboard, a one-command installer and agent access. <!-- @legacy-name: the product's earlier name -->

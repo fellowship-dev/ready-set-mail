@@ -19,7 +19,7 @@ import { ConnectionInputError } from './service';
 import { getMode } from '../tenancy/mode';
 
 /** Domains added by one request: each one costs Cloudflare and DNS reads, and a request has a budget. The caller asks again while `more` > 0. */
-export const IMPORT_PER_REQUEST = 20;
+export const IMPORT_PER_REQUEST = 10;
 
 export interface ZoneChoice { id: string; name: string; account_id: string | null; account_name: string | null }
 export interface ImportResult {

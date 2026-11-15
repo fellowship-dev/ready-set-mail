@@ -7,10 +7,12 @@ Cloudflare accounts**. Each connection is either
 * **token**: the user pastes a Cloudflare API token (fallback, and what self-hosters already use).
 
 Each **domain is linked to the connection that manages its zone**; every DNS/Email-Routing call for that domain uses that
-connection's token. Cloudflare consent is per Cloudflare *account*, not per zone, so after connecting the owner **picks the
-zones** Ready Set Mail may manage, and every call outside that list is refused, whatever the token could do.
+connection's token. Cloudflare consent is per Cloudflare *account*, not per zone, so Ready Set Mail keeps its own **allow-list of
+zones** it may manage, and every call outside that list is refused, whatever the token could do. On the hosted service the allow-list is
+filled for the owner: every active zone the connection can see is added as a verified domain ([First run](#first-run-import-proof-and-accounts));
+elsewhere the owner ticks zones.
 
-Contents: [Operator setup](#operator-setup) · [Configuration](#configuration) · [How it works](#how-it-works) · [API](#api) ·
+Contents: [First run](#first-run-import-proof-and-accounts) · [Operator setup](#operator-setup) · [Configuration](#configuration) · [How it works](#how-it-works) · [API](#api) ·
 [Self-host and the relay](#self-host-and-the-relay) · [Rotating TOKEN_ENCRYPTION_KEY](#rotating-token_encryption_key)
 
 ## Operator setup
@@ -121,6 +123,54 @@ The current baseline includes the Cloudflare connection tables; apply all curren
 * **Disconnect.** OAuth: the refresh and access tokens are revoked at `CF_OAUTH_REVOKE_URL`, then the row is deleted and
   linked domains are unlinked. Pasted tokens cannot be revoked from here; the owner revokes them in Cloudflare's dashboard.
 
+## First run: import, proof and accounts
+
+**Where the OAuth return lands.** `return_to` is the route the person was on when they pressed *Continue to Cloudflare*. Connecting from the
+dashboard (the claim card), the first screen or any setup screen goes into the setup wizard (`#/setup/cloudflare`), so the return
+continues there; `#/cloudflare/connect?back=/` and `back=/setup…` are redirected into it. Settings keeps returning to Settings, and a
+connect started from a domain's own page (`back=/domains/<id>…`) still lists zones, links that domain and returns to it.
+
+**Import (hosted).** Once a connection exists, the wizard calls `POST /api/cloudflare/connections/:id/import`. The server reads the zone list
+through the stored connection (a browser can only name zone ids from that list), and adds every **active** zone as a domain of the workspace,
+verified through the connection under the [rule below](#how-a-zone-proves-ownership). Importing writes nothing to DNS; it reads public DNS once per
+domain, as adding a domain by hand does. The allow-list becomes the zones that were imported (plus those of domains the workspace already has).
+A zone that is not active, not a full setup, not delegated to Cloudflare's name servers or not editable by the token is skipped: no domain, no
+claim. Pending claims for imported names, or for names inside an allowed zone, are verified in the same request (and when the allow-list is saved with
+`PUT …/zones`: `verified_claims` lists them). It adds at most 10 domains per request and answers `more` > 0 when the caller should ask again.
+
+* **Plan.** On the hosted service a workspace holds at most `MAX_DOMAINS_PER_WORKSPACE` domains (default 10; enforced in the domain insert, `src/domains/service.ts`
+  `domainCap`). When the zones would not all fit, nothing is imported and the answer carries `needs_selection: { room, cap, zones }`; the dashboard shows
+  the list with "Your plan covers N domains. Choose which to add." and calls import again with `{ "zone_ids": [...] }`. More ids than the room
+  is refused (`403 plan_limit`). Self-host has no cap and keeps the zone list, domain step and DNS plan.
+* **Idempotent.** A domain the workspace already has is left alone; a second grant for the same account adds nothing twice. A domain a person removes is remembered
+  (`removed_domains`) and is not imported again; it is offered under Add domain, and asking for it by id adds it back.
+* **Suggestions.** `GET /api/cloudflare/suggestions` lists zones of the working connections that are not domains yet (removed ones marked). Zones that appear in Cloudflare
+  later are suggested, never added by themselves.
+
+### How a zone proves ownership
+
+A pending claim, or a name typed into Add domain, is verified through Cloudflare (`src/domains/ownership.ts`, `cloudflareProof`) only when **all** of these hold:
+
+1. the name is the zone's name or below it on a label boundary (`notexample.co.uk` is not inside `example.co.uk`), and the zone is not itself a public suffix such as `co.uk` (`isPublicSuffix`, the Public Suffix List the repository already ships through `tldts`);
+2. the zone is on the allow-list of an **active** connection of this workspace, and no allowed-off child zone serves the name;
+3. Cloudflare says now, through that connection, that the zone is `active`, a `full` setup (not `partial`/CNAME, not `secondary`) and has the same name;
+4. the zone belongs to the connection's own Cloudflare account (the account recorded on the connection and, for a grant that covers several accounts, the account recorded for that zone);
+5. the token can edit its DNS: an OAuth grant whose scopes include a DNS write scope, or Cloudflare's zone read lists `#dns_records:edit` for the token. If neither can be established there is no Cloudflare proof;
+6. the public name servers of the zone are all among the zone's Cloudflare name servers;
+7. hosted: no other workspace has verified the name, a parent of it or a child of it.
+
+Anything else falls back to the DNS record (`_readysetmail.<domain>`). The proof is recorded on the domain (`cf_account_id`, `cf_zone_id`, `verified_at`) and in
+the audit log as `domain.proof` (`method: cloudflare_zone`, account, zone id and name, connection, time). It stays when the token is revoked or the connection is removed;
+the domain is then still verified and watched, and changing its DNS needs a reconnect.
+
+### Several Cloudflare accounts
+
+One grant can cover several Cloudflare accounts, and one account can be reached through several grants. A connection stores one account id only when the token sees exactly one
+account; otherwise the account is a property of each allowed zone (`cloudflare_connection_zones.cf_account_id`, with the name Cloudflare returned). Settings lists each
+**account** once (`accounts` in `GET /api/cloudflare/connections`): name, domains verified through it, working or needs reconnecting, who connected it and when, and
+"2 connections" when more than one grant reaches it. Account names come from `GET /accounts`, which a token with Account Settings Read can call
+([API reference](https://developers.cloudflare.com/api/resources/accounts/methods/list/)); the zone list also names each zone's account. Disconnect stays per grant and the dialog names the other accounts of the same sign-in.
+
 ## API
 
 All endpoints need a signed-in **owner or admin** (members get `403`, including for reads), act on the caller's workspace
@@ -208,10 +258,14 @@ connection that manages its zone. The connection must be `active` (`409` otherwi
 | 403 | `cf_zone_not_allowed` | the zone is not on the connection's allow-list |
 | 400 | | the domain is not linked to a connection (saas), or has no zone in it |
 
+### `POST /api/cloudflare/connections/:id/import` · `GET /api/cloudflare/suggestions`
+
+See [First run](#first-run-import-proof-and-accounts). Import takes `{ "zone_ids"?: [...] }` and answers `{ imported, already, skipped, removed, more, accounts, verified_claims, needs_selection? }`.
+
 ### Suggested UI flow
 
 1. Settings → Cloudflare: list connections; *Connect Cloudflare* (if `oauth.available`) and *Paste an API token*.
-2. After `?cf_connection=<id>` (or a pasted token): `GET …/zones`, let the owner tick zones, `PUT …/zones`.
+2. After `?cf_connection=<id>` (or a pasted token): hosted: `POST …/import`, then the dashboard. Self-host: `GET …/zones`, let the owner tick zones, `PUT …/zones`.
 3. For each domain: `PUT /api/domains/:id/connection`. Domains whose zone is on exactly one connection can be linked in one click.
 4. Show `status: "broken"` connections with a *Reconnect* action.
 
