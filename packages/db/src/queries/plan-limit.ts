@@ -8,8 +8,11 @@ export class PlanLimitError extends Error {
 	}
 }
 
-/** What a Cloudflare zone proof stores on the domain row. */
-export interface ZoneProofColumns { cf_account_id: string | null; cf_zone_id: string; verified_at: number; cf_zone_name: string; cf_name_servers: string[] }
+/**
+ * What a Cloudflare zone proof stores on the domain row. `cf_connection_id`: the connection whose zone proved it, written with the row so that
+ * Apply via Cloudflare and every later DNS change go through that connection (a domain verified through a zone and left unlinked could not be changed).
+ */
+export interface ZoneProofColumns { cf_account_id: string | null; cf_zone_id: string; verified_at: number; cf_zone_name: string; cf_name_servers: string[]; cf_connection_id?: string | null }
 
 /** A row verified through a Cloudflare zone was about to be written without the zone and the name servers that proof rests on. Nothing is written. */
 export class ProofIncompleteError extends Error {
@@ -19,15 +22,21 @@ export class ProofIncompleteError extends Error {
 	}
 }
 
+/** The columns a zone proof writes (all absent for any other proof). */
+export interface ProofValues { cf_account_id?: string | null; cf_zone_id?: string; verified_at?: number; cf_zone_name?: string; cf_name_servers?: string; cf_connection_id?: string }
+
 /**
  * The one rule behind "a zone proof always has its name servers": a row whose `verified_via` is 'cloudflare' is written only together with the
  * zone, its name and a non-empty set of name servers (what the daily re-check and every rival claim compare public DNS with). Returns the
  * columns to write, JSON-encoded for the row. Release 2.0.0 could write such a row without them; nothing since can.
  */
-export function proofValues(domain: string, verifiedVia: string | undefined, proof: ZoneProofColumns | undefined) {
+export function proofValues(domain: string, verifiedVia: string | undefined, proof: ZoneProofColumns | undefined): ProofValues {
 	if (verifiedVia !== 'cloudflare') return {};
 	if (!proof || !proof.cf_zone_id || !proof.cf_zone_name || proof.cf_name_servers.length === 0) throw new ProofIncompleteError(domain);
-	return { cf_account_id: proof.cf_account_id, cf_zone_id: proof.cf_zone_id, verified_at: proof.verified_at, cf_zone_name: proof.cf_zone_name, cf_name_servers: JSON.stringify([...proof.cf_name_servers].sort()) };
+	return {
+		cf_account_id: proof.cf_account_id, cf_zone_id: proof.cf_zone_id, verified_at: proof.verified_at, cf_zone_name: proof.cf_zone_name, cf_name_servers: JSON.stringify([...proof.cf_name_servers].sort()),
+		...(proof.cf_connection_id ? { cf_connection_id: proof.cf_connection_id } : {}),
+	};
 }
 
 /**

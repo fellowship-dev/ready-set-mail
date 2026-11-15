@@ -14,7 +14,7 @@
 // Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
 // harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
 //
-// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?, failAfterWrite?, failPosts?: [DNS types]} (replace a zone's routing rules; failPage answers that page 500), GET /__state, POST /__reset, POST /__ns {name, ns:[...]} (that name and
+// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?, failAfterWrite?, failPosts?: [DNS types]} (replace a zone's routing rules; failPage answers that page 500), GET /__state (with zoneReads: GET /zones/:id per zone name), POST /__reset, POST /__ns {name, ns:[...]} (that name and
 // everything under it answers NS queries with those hosts, zone or not; ns:[] removes it).
 import http from 'node:http';
 import { createHash } from 'node:crypto';
@@ -45,6 +45,7 @@ function freshState() {
     nsOverrides: new Map(), // name -> NS hosts (DoH only)
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
+    zoneReads: {}, // zone name -> number of GET /zones/:id (a live check of a zone)
   };
 }
 
@@ -84,7 +85,7 @@ export function createFakeCloudflare() {
     }
 
     // Test helpers.
-    if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses });
+    if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses, zoneReads: st.zoneReads });
     // POST /__zones {name, account?: {id, name}, status?, type?}: add a zone (another Cloudflare account, a pending or partial zone) to the state.
     if (url.pathname === '/__zones' && method === 'POST') {
       const name = String(body?.name ?? '').toLowerCase();
@@ -152,7 +153,7 @@ export function createFakeCloudflare() {
     }
 
     let m = path.match(/^\/zones\/([^/]+)$/);
-    if (m && method === 'GET') { const z = zoneById(m[1]); return z ? ok({ ...z, name_servers: st.nsOverrides.get(z.name) ?? ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'], permissions: ['#zone:read', '#dns_records:edit'] }) : notFound('Zone not found'); }
+    if (m && method === 'GET') { const z = zoneById(m[1]); if (z) st.zoneReads[z.name] = (st.zoneReads[z.name] ?? 0) + 1; return z ? ok({ ...z, name_servers: st.nsOverrides.get(z.name) ?? ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'], permissions: ['#zone:read', '#dns_records:edit'] }) : notFound('Zone not found'); }
 
     // Account level: email routing destination addresses, Workers subdomain.
     m = path.match(/^\/accounts\/([^/]+)(\/.*)?$/);
