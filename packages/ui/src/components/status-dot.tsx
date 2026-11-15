@@ -10,7 +10,7 @@ const meta: Record<StatusDotStatus, { Icon: LucideIcon; tone: string }> = {
 	warn: { Icon: AlertTriangle, tone: "text-warning" },
 	fail: { Icon: XCircle, tone: "text-danger" },
 	unknown: { Icon: CircleDashed, tone: "text-ink-3" },
-	info: { Icon: Info, tone: "text-brand-ink" },
+	info: { Icon: Info, tone: "text-info" },
 };
 
 export interface StatusDotProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, "children"> {

@@ -56,7 +56,7 @@ export function DoThisNext({ actions, pending, canWrite, onRetry, stale = false,
 					{actions.map((a, i) => (
 						<li key={a.key} data-status={a.status} className="flex gap-3 px-4 py-4 sm:px-5">
 							{actions.length > 1 ? (
-								<span aria-hidden className={i === 0 ? 'mt-0.5 flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-accent px-1.5 font-mono text-xs font-semibold text-accent-fg' : 'mt-0.5 flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full border border-line-strong px-1.5 font-mono text-xs font-semibold text-ink-2'}>
+								<span aria-hidden className={i === 0 ? 'mt-0.5 flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full border border-brand-ink bg-brand-subtle px-1.5 font-mono text-xs font-semibold text-brand-ink' : 'mt-0.5 flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full border border-line-strong px-1.5 font-mono text-xs font-semibold text-ink-2'}>
 									{i + 1}
 								</span>
 							) : null}

@@ -1,6 +1,7 @@
 // Server-rendered agent pages: OAuth consent, signed out, and form errors. No scripts and no external
 // requests apart from the dashboard's own Geist font file; every interpolated value goes through `escape`.
 // Colours come from the design-system tokens, so these pages match the dashboard in light and dark mode.
+import { lockupSvg } from '../../packages/ui/src/components/logo-svg';
 import { darkOverrides, fonts, lightColors, shadows } from '../../packages/ui/src/tokens/tokens';
 import type { AccessAction } from '../access/grant';
 
@@ -42,7 +43,7 @@ const css = (() => {
 body{margin:0;background:var(--surface-0);color:var(--ink-1);font:400 1rem/1.6 ${fonts.sans};-webkit-font-smoothing:antialiased}
 .wrap{max-width:40rem;margin:0 auto;padding:40px 16px 64px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-0.01em;margin-bottom:24px;color:var(--ink-1)}
-.brand svg{width:32px;height:32px;border-radius:6px;flex:none}
+.brand svg{height:40px;width:auto;flex:none}
 .card{background:var(--surface-1);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;overflow-wrap:anywhere}
 h1{font-size:1.5rem;line-height:1.25;font-weight:600;letter-spacing:-0.025em;margin:0 0 8px}
 h2{font-size:1rem;font-weight:600;margin:0}
@@ -87,8 +88,9 @@ a{color:var(--brand-ink);text-underline-offset:4px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}`;
 })();
 
-// LogoMark from packages/ui/src/components/logo.tsx (same geometry); decorative beside the product name.
-const LOGO = '<svg viewBox="0 0 100 100" aria-hidden="true" focusable="false"><rect width="100" height="100" fill="#0b1f3a"/><ellipse cx="50" cy="23" rx="19" ry="5.5" fill="none" stroke="#fad172" stroke-width="4.5"/><rect x="20" y="38" width="60" height="40" rx="5" fill="#fad172"/><path d="M24 42 50 61 76 42" fill="none" stroke="#0b1f3a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// The logo lockup (web/public/brand/svg/lockup.svg and lockup-dark.svg, the same paths as LogoLockup): its wordmark follows
+// the page's theme through --logo-wordmark. It is the product name, so it is named for assistive tech.
+const LOGO = lockupSvg('light', ' role="img" aria-label="Ready Set Mail" focusable="false"', 'var(--logo-wordmark)');
 
 /** Security headers for every page rendered here: no scripts, no framing, styles and the font from this origin only, no Referer to other sites. */
 export const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'";
@@ -108,7 +110,7 @@ export function pageHeaders(base?: HeadersInit): Headers {
 
 /** The page shell. `title` and `body` are trusted markup built by this module; escape anything else before passing it. */
 export function agentPage(title: string, body: string): string {
- return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${title} · Ready Set Mail</title><style>${css}</style></head><body><div class="wrap"><div class="brand">${LOGO}<span>Ready Set Mail</span></div><main class="card">${body}</main></div></body></html>`;
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${title} · Ready Set Mail</title><style>${css}</style></head><body><div class="wrap"><div class="brand">${LOGO}</div><main class="card">${body}</main></div></body></html>`;
 }
 
 const expiryDate = (now: number, days: number) => new Date((now + days * 86400) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });

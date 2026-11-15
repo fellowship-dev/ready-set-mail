@@ -1,7 +1,7 @@
 # @ready-set-mail/ui
 
 Design system for Ready Set Mail (dashboard and website): tokens, a Tailwind 4 theme and React 19 components.
-Token values come from `docs/design/site-globals.css`; `test/tokens.test.ts` fails if they drift.
+Token values are shared with the website (parity snapshot `docs/design/site-globals.css`); `test/tokens.test.ts` fails if they drift.
 
 ## Use
 
@@ -23,11 +23,12 @@ import { colors } from "@ready-set-mail/ui/tokens"; // JS consumers
 
 ## Rules baked in
 
-- Brand is sober: navy `#0b1f3a` in light mode, halo gold `#fad172` in dark mode. `brand` is a FILL with `brand-fg` labels (white on navy, navy on gold); brand-coloured text and links use `brand-ink`. No sky blue, gradients or mascot faces.
+- Brand blue `#0647FF` is the action colour (primary buttons, links, focus, selected states, progress); navy `#06194B` is the ink. `brand` is a FILL with white `brand-fg` labels; brand-coloured text and links use `brand-ink` (lighter in dark mode). The logo's red `#FF252B` is not a token: it appears only inside the logo. No gold, gradients or mascot faces.
+- Status colours keep their meaning and never borrow the brand: notes and information use `info` (teal), not the brand blue.
 - Status never relies on colour: icon + word (CheckResult, LevelCard findings, StatusDot label, Alert).
 - "Lookup failed" (`error`) is distinct from "Not found" (`missing`) in CheckResult.
-- Pairs that fail AA with the website tokens are listed in `forbiddenPairs` (tokens.ts) and avoided:
-  `accent-fg` on `accent-subtle` (dark). Form controls use the added
+- Pairs that fail AA are listed in `forbiddenPairs` (tokens.ts) and avoided: the dark-mode brand fill and its hover as
+  text on dark surfaces (use `brand-ink`). Form controls use the added
   `--control-border` token because `--line-strong` is ~1.5:1 on white (WCAG 1.4.11 needs 3:1).
 
 ## Foundations
@@ -36,17 +37,21 @@ import { colors } from "@ready-set-mail/ui/tokens"; // JS consumers
 
 | Token | Light | Dark |
 | --- | --- | --- |
-| surface-0 / 1 / 2 / 3 | #F7F8FA / #FFFFFF / #EFF2F6 / #E3E9F0 | #0B1220 / #142238 / #1C2E47 / #293D58 |
-| ink-1 / 2 / 3 | #0B1F3A / #526175 / #5D6D82 | #F4F7FB / #A8B5C7 / #8A9BB1 |
-| brand = brand-ink | #0B1F3A | #FAD172 |
-| brand-hover / brand-fg / brand-subtle | #173A63 / #FFFFFF / #E8EEF5 | #FFE09A / #0B1F3A / #332C1D |
-| line / line-strong | #D7DFE8 / #B8C5D4 | #33465F / #50647E |
-| control-border (form edges, 3:1) | #617185 | #8A9BB1 |
-| focus (ring) | #0B1F3A | #FAD172 |
-| accent / accent-fg | #FAD172 / #0B1F3A | #FAD172 / #0B1F3A |
-| blush | #FCA0A4 | #FCA0A4 (decorative only: never text, never the sole signal) |
+| surface-0 / 1 / 2 / 3 | #F7F8FA / #FFFFFF / #EFF1F6 / #E3E7F0 | #0B1120 / #141E38 / #1C2847 / #293658 |
+| ink-1 / 2 / 3 | #06194B / #525C75 / #5D6782 | #F4F6FB / #A8B1C7 / #8A95B1 |
+| brand (fill) | #0647FF | #2E64FF |
+| brand-hover / brand-active | #063EDB / #0635B7 | #0647FF / #063EDB |
+| brand-fg (label on the fill) | #FFFFFF | #FFFFFF |
+| brand-ink (links, brand text) | #0647FF | #82A3FF |
+| brand-subtle (selected rows, focus tint) | #EBF0FF | #112660 |
+| line / line-strong | #D7DCE8 / #B8C0D4 | #333F5F / #505D7E |
+| control-border (form edges, 3:1) | #616B85 | #8A95B1 |
+| focus (ring) | #0647FF | #82A3FF |
+| logo-wordmark (lockup wordmark only) | #06194B | #FFFFFF |
 
-Contrast evidence lives in `contrastPairs` (checked per mode in `test/tokens.test.ts`): body/secondary text ≥ 4.5:1 on every surface, brand-fg on brand ≥ 7:1, focus and control edges ≥ 3:1. No value was adjusted away from the specified palette.
+How they are derived: the neutrals (surfaces, ink-2/3, lines, control-border) keep the lightness and saturation of the previous set, re-hued to the navy's hue (223.5°). Hover and pressed step 20% and 40% toward the navy; in dark mode the fill is the brand blue lifted 16% toward white (the least that keeps a 3:1 edge on surface-0/1/2 with a 4.5:1 white label), hover and pressed step back down to #0647FF and #063EDB, and `brand-ink` is the brand blue mixed 50% with white (4.5:1 on every dark surface). `brand-subtle` is 8% brand on white (light) and 20% brand on surface-1 (dark).
+
+Contrast evidence lives in `contrastPairs` (checked per mode in `test/tokens.test.ts`): text ≥ 4.5:1 on every surface and tint it is used on, UI fills, focus and control edges ≥ 3:1. White on #0647FF is 6.26:1 (AA, not AAA): the earlier "brand label ≥ 7:1" pair was dropped because the brand blue is fixed.
 
 ### Semantic status
 
@@ -57,7 +62,7 @@ Status always pairs colour with an icon and a word (Alert, CheckResult, StatusDo
 | success | #147A3A / #4ADE80 | #ECFDF3 / #0F2A1A | check passed, verified |
 | warning | #AA4F08 / #FBBF24 | #FFF7E6 / #2A2110 | works but needs attention (e.g. DMARC `p=none`) |
 | danger | #B91C1C / #F87171 | #FEF2F2 / #2C1416 | failed, blocked, destructive |
-| info | brand-ink | brand-subtle | neutral notice, sample data |
+| info | #076A7E / #3CC2DD | #E9F8FB / #0E2A31 | notes, neutral notices, sample data (teal: never the brand blue) |
 
 Light success/warning were darkened from #15803D/#B45309 so status text meets 4.5:1 on every surface including `surface-2` (4.82:1 / 4.90:1); dark values are unchanged.
 
@@ -71,7 +76,11 @@ Light success/warning were darkened from #15803D/#B45309 so status text meets 4.
 
 ### Logo
 
-`LogoMark` is the website's halo-envelope: `viewBox="0 0 100 100"`, navy square, gold halo ellipse (cx50 cy23 rx19 ry5.5, stroke 4.5), gold envelope rect (x20 y38 60×40 rx5) with a navy flap path. Square: size with `size-8`; add `rounded-md` for a softer tile. It is self-coloured and identical in both themes.
+The files are the brand asset pack, byte-identical, in `web/public/brand/` (README there). `components/logo-svg.ts` holds their paths as data (plain TS, also used by the Worker's pages); `test/brand.test.ts` rebuilds the SVG files from it and fails on any difference.
+
+- `LogoLockup`: mark plus the "readysetmail" wordmark, viewBox 1526×347 (about 4.4:1, clear space included). Use it wherever the name and mark appear together and there is width (sign-in, setup, the shell header). Size by height (`h-8 w-auto`). `surface="auto"` (default) switches the wordmark between navy and white with the theme (`--logo-wordmark`), exactly lockup.svg and lockup-dark.svg; it is named "Ready Set Mail" unless `aria-hidden`.
+- `LogoMark`: the icon alone, viewBox 414×414, transparent, for places where only a mark fits (collapsed sidebar, avatar size). At 16 px use the favicon set.
+- Never recolour parts of the mark, add a tile or effects, or set the wordmark in a font.
 
 ### Shared screens
 

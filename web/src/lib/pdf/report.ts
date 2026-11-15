@@ -1,14 +1,24 @@
+import { lightColors as c } from '@ready-set-mail/ui';
 import { jsPDF } from 'jspdf';
 import type { DomainCheckSummary, DailyStat } from '../types';
 import { getAllRecommendations, type PdfDomainContext, type Recommendation } from './recommendations';
 
 // ── Colours & layout constants ────────────────────────────────
 
-const PASS_COLOR: [number, number, number] = [34, 197, 94];   // green-500
-const FAIL_COLOR: [number, number, number] = [239, 68, 68];   // red-500
-const WARN_COLOR: [number, number, number] = [234, 179, 8];   // yellow-500
-const DARK_COLOR: [number, number, number] = [30, 30, 46];    // near-black
-const MUTED_COLOR: [number, number, number] = [100, 100, 120];
+// The design-system tokens (light: the PDF is printed on white). Status colours keep their meaning; every text colour
+// here is at least 4.5:1 on white.
+type Rgb = [number, number, number];
+const rgb = (hex: string): Rgb => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as Rgb;
+const PASS_COLOR = rgb(c.success);
+const FAIL_COLOR = rgb(c.danger);
+const WARN_COLOR = rgb(c.warning);
+const INFO_COLOR = rgb(c.info);
+const DARK_COLOR = rgb(c['ink-1']);
+const MUTED_COLOR = rgb(c['ink-2']);
+/** The Ready Set Mail lockup (web/public/brand/png/lockup/lockup-light-640.png, 640 x 146) on the cover. */
+export const PDF_LOCKUP_PATH = '/brand/png/lockup/lockup-light-640.png';
+const LOCKUP_W = 44; // mm
+const LOCKUP_H = (LOCKUP_W * 146) / 640;
 const PAGE_W = 210; // A4 mm
 const MARGIN = 14;
 const COL_W = PAGE_W - MARGIN * 2;
@@ -20,7 +30,7 @@ function passRate(pass: number, total: number): string {
 	return `${Math.round((pass / total) * 100)}%`;
 }
 
-function statusLabel(pass: number, total: number): { label: string; color: [number, number, number] } {
+function statusLabel(pass: number, total: number): { label: string; color: Rgb } {
 	if (total === 0) return { label: 'Pending', color: MUTED_COLOR };
 	const rate = pass / total;
 	if (rate >= 0.95) return { label: 'Pass', color: PASS_COLOR };
@@ -32,7 +42,7 @@ function statusLabel(pass: number, total: number): { label: string; color: [numb
  * The policy column from the stored check: pct= below 100 and inheritance are named, and a missing policy says why
  * (no record, an invalid record, several records, or not checked yet), in the overview's words.
  */
-export function dmarcPolicyLabel(s: Pick<DomainCheckSummary, 'dmarc_policy' | 'dmarc_issue' | 'dns_checked_at'> & { dmarc_pct?: number | null; dmarc_inherited_from?: string | null }): { label: string; color: [number, number, number] } {
+export function dmarcPolicyLabel(s: Pick<DomainCheckSummary, 'dmarc_policy' | 'dmarc_issue' | 'dns_checked_at'> & { dmarc_pct?: number | null; dmarc_inherited_from?: string | null }): { label: string; color: Rgb } {
 	const policy = s.dmarc_policy;
 	const from = s.dmarc_inherited_from ? ' (inherited)' : '';
 	const partial = (policy === 'reject' || policy === 'quarantine') && typeof s.dmarc_pct === 'number' && s.dmarc_pct < 100;
@@ -88,6 +98,8 @@ export interface PdfReportData {
 	contexts: PdfDomainContext[];
 	// 90 days of daily stats per domain, for the weekly trend
 	trends?: Record<number, DailyStat[]>;
+	/** The lockup PNG's bytes for the cover; the cover is drawn without it when absent. */
+	lockup?: Uint8Array | null;
 }
 
 export function buildPdfReport(data: PdfReportData): jsPDF {
@@ -96,16 +108,19 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 	const now = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
 	// ── Cover ──────────────────────────────────────────────────
-	doc.setFillColor(...DARK_COLOR);
+	// A light brand tint, so the lockup (navy wordmark) sits on the surface it was drawn for.
+	doc.setFillColor(...rgb(c['brand-subtle']));
 	doc.rect(0, 0, PAGE_W, 50, 'F');
+	if (data.lockup) doc.addImage(data.lockup, 'PNG', PAGE_W - MARGIN - LOCKUP_W, 8, LOCKUP_W, LOCKUP_H);
 
-	doc.setTextColor(255, 255, 255);
+	doc.setTextColor(...DARK_COLOR);
 	doc.setFontSize(20);
 	doc.setFont('helvetica', 'bold');
 	doc.text('Email Authentication Health Report', MARGIN, 22);
 
 	doc.setFontSize(10);
 	doc.setFont('helvetica', 'normal');
+	doc.setTextColor(...MUTED_COLOR);
 	doc.text(`Generated ${now} - Last 30 days of data`, MARGIN, 32);
 	doc.text(`${summaries.length} domain${summaries.length !== 1 ? 's' : ''} monitored`, MARGIN, 40);
 
@@ -143,7 +158,7 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 	const cols = [52, 28, 28, 28, 28, 28];
 	const headers = ['Domain', 'DMARC Policy', 'DMARC Rate', 'SPF Rate', 'DKIM Rate', 'MTA-STS'];
 	let x = MARGIN;
-	doc.setFillColor(240, 240, 248);
+	doc.setFillColor(...rgb(c['surface-2']));
 	doc.rect(MARGIN, y, COL_W, 7, 'F');
 	doc.setFontSize(8);
 	doc.setFont('helvetica', 'bold');
@@ -164,12 +179,12 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 		const spfStatus   = statusLabel(d.spf_pass,       d.spf_total);
 		const dkimStatus  = statusLabel(d.dkim_pass,       d.dkim_total);
 		const mtaLabel    = d.mta_sts_enabled ? (d.mta_sts_mode ?? 'on') : 'Off';
-		const mtaColor: [number, number, number] = d.mta_sts_enabled ? PASS_COLOR : MUTED_COLOR;
+		const mtaColor: Rgb = d.mta_sts_enabled ? PASS_COLOR : MUTED_COLOR;
 
 		// Alternate row background
 		const rowIdx = summaries.indexOf(d);
 		if (rowIdx % 2 === 0) {
-			doc.setFillColor(250, 250, 255);
+			doc.setFillColor(...rgb(c['surface-0']));
 			doc.rect(MARGIN, y, COL_W, 8, 'F');
 		}
 
@@ -215,10 +230,10 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 		doc.text('Recommendations', MARGIN, y);
 		y += 6;
 
-		const SEVERITY_COLOR: Record<Recommendation['severity'], [number, number, number]> = {
+		const SEVERITY_COLOR: Record<Recommendation['severity'], Rgb> = {
 			critical: FAIL_COLOR,
 			warning:  WARN_COLOR,
-			info:     [59, 130, 246], // blue-500
+			info:     INFO_COLOR,
 		};
 
 		for (const rec of recs) {
@@ -280,7 +295,7 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 			// Week rows
 			for (const w of weeks) {
 				const rate = w.total > 0 ? Math.round((w.passed / w.total) * 100) : null;
-				const color: [number, number, number] = rate === null ? MUTED_COLOR : rate >= 95 ? PASS_COLOR : rate >= 70 ? WARN_COLOR : FAIL_COLOR;
+				const color: Rgb = rate === null ? MUTED_COLOR : rate >= 95 ? PASS_COLOR : rate >= 70 ? WARN_COLOR : FAIL_COLOR;
 
 				doc.setFontSize(7.5);
 				doc.setFont('helvetica', 'normal');
@@ -297,7 +312,17 @@ export function buildPdfReport(data: PdfReportData): jsPDF {
 	return doc;
 }
 
-export function downloadPdfReport(data: PdfReportData, filename = 'email-auth-report.pdf'): void {
-	const doc = buildPdfReport(data);
+/** The cover lockup from the dashboard's own assets; null (cover without the logo) when it cannot be read. */
+export async function loadPdfLockup(fetcher: typeof fetch = fetch): Promise<Uint8Array | null> {
+	try {
+		const r = await fetcher(PDF_LOCKUP_PATH);
+		return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+	} catch {
+		return null;
+	}
+}
+
+export async function downloadPdfReport(data: PdfReportData, filename = 'email-auth-report.pdf'): Promise<void> {
+	const doc = buildPdfReport({ ...data, lockup: data.lockup ?? (await loadPdfLockup()) });
 	doc.save(filename);
 }

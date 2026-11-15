@@ -55,13 +55,14 @@ describe("LevelLadder", () => {
 		[0, "Delivering", 1],
 		[1, "Authenticated", 2],
 		[2, "Protected", 3],
-	] as const)("level %i: %s is the current rung, on the gold accent", async (level, name, filled) => {
+	] as const)("level %i: %s is the current rung, outlined and bold, never a filled brand pill", async (level, name, filled) => {
 		const { container } = render(<LevelLadder level={level} />);
 		const bar = screen.getByRole("progressbar", { name: "Protection level" });
 		expect(bar).toHaveAttribute("aria-valuenow", String(filled));
 		expect(bar).toHaveAttribute("aria-valuetext", `Level ${level} of 2: ${name}`);
-		expect(container.querySelectorAll(".bg-brand-ink")).toHaveLength(filled);
-		expect(screen.getByText(name).closest("p")).toHaveClass("bg-accent", "text-accent-fg");
+		expect(container.querySelectorAll(".bg-ink-3")).toHaveLength(filled);
+		expect(screen.getByText(name).closest("p")).toHaveClass("border-ink-3", "font-semibold", "text-ink-1");
+		expect(container.querySelector(".bg-brand, .bg-brand-ink")).toBeNull();
 		await expectNoViolations(container);
 	});
 
@@ -70,7 +71,7 @@ describe("LevelLadder", () => {
 		const bar = screen.getByRole("progressbar");
 		expect(bar).not.toHaveAttribute("aria-valuenow");
 		expect(bar).toHaveAttribute("aria-valuetext", "Level not known yet");
-		expect(container.querySelectorAll(".bg-brand-ink, .bg-accent")).toHaveLength(0);
+		expect(container.querySelectorAll(".bg-ink-3, .bg-brand-ink, .bg-brand")).toHaveLength(0);
 		expect(screen.getByText("Level not known yet")).toBeInTheDocument();
 		await expectNoViolations(container);
 	});

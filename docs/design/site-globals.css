@@ -2,34 +2,28 @@
 
 /* ─────────────────────────────────────────────────────────
    DESIGN TOKENS — Light Mode (Ready Set Mail; see DESIGN.md)
-   --brand is a FILL (navy in light mode, gold in dark mode): text on it uses --brand-fg,
-   brand-coloured text on surfaces uses --brand-ink.
+   --brand is a FILL (brand blue #0647FF; a lighter blue in dark mode): text on it uses --brand-fg (white),
+   brand-coloured text on surfaces uses --brand-ink. Navy #06194B is the ink. The logo's red is never a token.
    ───────────────────────────────────────────────────────── */
 :root {
   /* Surfaces */
   --surface-0: #f7f8fa;
   --surface-1: #ffffff;
-  --surface-2: #eff2f6;
-  --surface-3: #e3e9f0;
+  --surface-2: #eff1f6;
+  --surface-3: #e3e7f0;
 
   /* Text */
-  --ink-1: #0b1f3a;
-  --ink-2: #526175;
-  --ink-3: #5d6d82;
+  --ink-1: #06194b;
+  --ink-2: #525c75;
+  --ink-3: #5d6782;
 
-  /* Brand — navy (light) / gold (dark) */
-  --brand: #0b1f3a;
-  --brand-hover: #173a63;
-  --brand-ink: #0b1f3a;
-  --brand-subtle: #e8eef5;
+  /* Brand — blue #0647FF (fills, links, focus, selection, progress) */
+  --brand: #0647ff;
+  --brand-hover: #063edb;
+  --brand-active: #0635b7;
+  --brand-ink: #0647ff;
+  --brand-subtle: #ebf0ff;
   --brand-fg: #ffffff;
-
-  /* Accent — halo gold and blush from the logo */
-  --accent: #fad172;
-  --accent-hover: #f5c04a;
-  --accent-fg: #0b1f3a;
-  --accent-subtle: #fef7e3;
-  --blush: #fca0a4;
 
   /* Semantic */
   --success: #147a3a;
@@ -38,10 +32,15 @@
   --warning-subtle: #fff7e6;
   --danger: #b91c1c;
   --danger-subtle: #fef2f2;
+  --info: #076a7e;
+  --info-subtle: #e9f8fb;
 
   /* Borders */
-  --line: #d7dfe8;
-  --line-strong: #b8c5d4;
+  --line: #d7dce8;
+  --line-strong: #b8c0d4;
+
+  /* Logo */
+  --logo-wordmark: #06194b;
 
   /* Shadow */
   --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05);
@@ -63,24 +62,21 @@
    ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --surface-0: #0b1220;
-    --surface-1: #142238;
-    --surface-2: #1c2e47;
-    --surface-3: #293d58;
+    --surface-0: #0b1120;
+    --surface-1: #141e38;
+    --surface-2: #1c2847;
+    --surface-3: #293658;
 
-    --ink-1: #f4f7fb;
-    --ink-2: #a8b5c7;
-    --ink-3: #8a9bb1;
+    --ink-1: #f4f6fb;
+    --ink-2: #a8b1c7;
+    --ink-3: #8a95b1;
 
-    --brand: #fad172;
-    --brand-hover: #ffe09a;
-    --brand-ink: #fad172;
-    --brand-subtle: #332c1d;
-    --brand-fg: #0b1f3a;
-
-    --accent-fg: #0b1f3a;
-
-    --accent-subtle: #2a2210;
+    --brand: #2e64ff;
+    --brand-hover: #0647ff;
+    --brand-active: #063edb;
+    --brand-ink: #82a3ff;
+    --brand-subtle: #112660;
+    --brand-fg: #ffffff;
 
     --success: #4ade80;
     --success-subtle: #0f2a1a;
@@ -88,9 +84,13 @@
     --warning-subtle: #2a2110;
     --danger: #f87171;
     --danger-subtle: #2c1416;
+    --info: #3cc2dd;
+    --info-subtle: #0e2a31;
 
-    --line: #33465f;
-    --line-strong: #50647e;
+    --line: #333f5f;
+    --line-strong: #505d7e;
+
+    --logo-wordmark: #ffffff;
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
@@ -113,12 +113,15 @@
   --color-ink-3: var(--ink-3);
 
   --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
   --color-brand-ink: var(--brand-ink);
   --color-brand-subtle: var(--brand-subtle);
   --color-brand-fg: var(--brand-fg);
 
-  --color-accent: var(--accent);
-  --color-blush: var(--blush);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-logo-wordmark: var(--logo-wordmark);
 
   --color-success: var(--success);
   --color-warning: var(--warning);
@@ -409,6 +412,6 @@ body {
 .section-rule {
   width: 3rem;
   height: 3px;
-  background: linear-gradient(90deg, var(--brand) 0%, var(--accent) 100%);
+  background: var(--brand);
   border-radius: var(--r-full);
 }

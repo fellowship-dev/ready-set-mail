@@ -4,7 +4,13 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>Ready Set Mail</title>
-		<link rel="icon" href="data:," />
+		<!-- Brand asset pack (public/brand/README.md): ICO (16/32/48) for every browser, SVG where supported, Apple home screen. -->
+		<link rel="icon" href="/brand/favicon/favicon.ico" sizes="any" />
+		<link rel="icon" href="/brand/favicon/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="/brand/favicon/apple-touch-icon.png" />
+		<!-- Browser UI colour: the shell header surface (surface-1) in each theme. -->
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#141e38" media="(prefers-color-scheme: dark)" />
 		<!-- Classic blocking script from public/: applies the saved theme before first paint, CSP-safe (no inline code). -->
 		<script src="/theme-init.js"></script>
 	</head>
