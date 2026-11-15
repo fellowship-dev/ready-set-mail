@@ -2,6 +2,8 @@
 // rules (src/hosted/report-address.ts), and writing it connects the domain's reports. HOSTED_CONNECT_REPORTS keeps its meaning:
 // where it does not admit the workspace, the record is written without the address and the plan says so.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { intakeLookups } from '@ready-set-mail/db';
+import { fixedReportAddress } from '../../src/hosted/fixed-address';
 import { Z, world, type World } from '../connections/world';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
@@ -162,12 +164,55 @@ describe('the apply-dmarc route (the per-domain Apply) on hosted', () => {
     expect(row(w)).toMatchObject({ rua_address: '' });
   });
 
-  it('the setup status offers the address before it is connected, so the record shown is the record written; refused workspaces see none', async () => {
+  it('the setup status leaves the stored address alone and offers the connectable one apart, for Apply via Cloudflare only; refused workspaces are offered none', async () => {
     const w = await setup();
     const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
-    expect(s.rua_address).toBe(ADDRESS);
+    expect(s.rua_address).toBe(''); // not connected: no hand-made record with it would be accepted at intake
+    expect(s.offered_rua_address).toBe(ADDRESS);
     const blocked = await setup({ HOSTED_CONNECT_REPORTS: 'owner', OWNER_EMAIL: 'someone-else@example.com' });
-    expect((await json(await blocked.api(blocked.A.token, 'GET', '/api/domains/1/onboarding-status'))).rua_address).toBe('');
+    const b = await json(await blocked.api(blocked.A.token, 'GET', '/api/domains/1/onboarding-status'));
+    expect(b.rua_address).toBe('');
+    expect(b.offered_rua_address).toBeNull();
+  });
+
+  it('without Cloudflare nothing is offered, even when the record already lists our address: the domain was never connected', async () => {
+    const w = await world({ INTAKE_DOMAIN: INTAKE, HOSTED_CONNECT_REPORTS: 'all' });
+    w.db.sqlite.prepare("UPDATE domains SET verified_via = 'txt', rua_address = '' WHERE id = 3").run(); // B's domain: proven, no Cloudflare, not connected
+    w.cf.doh['_dmarc.b-corp.org'] = [`v=DMARC1; p=none; rua=mailto:${ADDRESS}`];
+    const s = await json(await w.api(w.B.token, 'GET', '/api/domains/3/onboarding-status'));
+    expect(s).toMatchObject({ rua_address: '', offered_rua_address: null, cf_available: false });
+    expect(s.dmarc.has_our_rua).toBe(false);
+    expect(await intakeLookups(w.env.DB).connectedForReport(['b-corp.org'], fixedReportAddress(INTAKE))).toBeNull(); // so a pasted record's reports would be refused
+  });
+
+  it('invariant: an address the status offers is accepted at intake once the Apply it is offered for has run, and is connected before the record carrying it is written', async () => {
+    const w = await setup();
+    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
+    expect(s.offered_rua_address).toBe(ADDRESS);
+    expect(await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE))).toBeNull(); // before: refused
+    const connectedAtWrite: string[] = [];
+    const prev = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      if (/dns_records/.test(String(input.url ?? input)) && ['POST', 'PUT', 'PATCH'].includes((init?.method ?? 'GET').toUpperCase()) && /_dmarc/.test(String(init?.body))) connectedAtWrite.push(row(w).rua_address);
+      return prev(input, init);
+    });
+    const res = await json(await w.api(w.A.token, 'POST', '/api/domains/1/apply-dmarc', { record: `v=DMARC1; p=none; rua=mailto:${s.offered_rua_address}` }));
+    expect(res.reports).toMatchObject({ state: 'connected' });
+    expect(connectedAtWrite).toEqual([ADDRESS]);
+    expect((await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE)))?.workspace_id).toBe(w.A.ws);
+  });
+
+  it('invariant, the plan apply: the domain is connected before the record is written', async () => {
+    const w = await setup();
+    const p = await plan(w);
+    const connectedAtWrite: string[] = [];
+    const prev = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      if (/dns_records/.test(String(input.url ?? input)) && ['POST', 'PUT', 'PATCH'].includes((init?.method ?? 'GET').toUpperCase()) && /_dmarc/.test(String(init?.body))) connectedAtWrite.push(row(w).rua_address);
+      return prev(input, init);
+    });
+    expect((await apply(w, p)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: true, reports: 'connected' }]);
+    expect(connectedAtWrite).toEqual([ADDRESS]);
   });
 });
 

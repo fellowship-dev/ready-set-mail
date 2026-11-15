@@ -18,7 +18,13 @@ const done = (over: Record<string, unknown> = {}) => ({ imported: [], already: 0
 const KEY = 'rsm_cf_wizard:ws_default';
 
 function Where() {
-	return <p data-testid="where">{useLocation().pathname}</p>;
+	const loc = useLocation();
+	return (
+		<>
+			<p data-testid="where">{loc.pathname}</p>
+			<p data-testid="note">{(loc.state as { imported?: { text: string } } | null)?.imported?.text ?? ''}</p>
+		</>
+	);
 }
 const Wizard = () => (
 	<>
@@ -50,7 +56,9 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		const imp = calls.filter((c) => c.path.endsWith('/import'));
 		expect(imp).toHaveLength(1);
 		expect(imp[0]!.body).toEqual({}); // no zone ids: everything, as the server decides
-		expect((await screen.findAllByText('Added 2 domains from Example Co. Nothing in DNS was changed.')).length).toBeGreaterThan(0);
+		// said on the dashboard, in the page, never as a toast over it
+		expect(screen.getByTestId('note')).toHaveTextContent('Added 2 domains from Example Co. Nothing in your DNS was changed.');
+		expect(within(screen.getByRole('region', { name: /Notifications/ })).queryByText(/Added 2 domains/)).toBeNull(); // no toast
 		expect(calls.some((c) => c.path.includes('/zones'))).toBe(false); // no zone list to tick, no DNS plan
 		expect(calls.some((c) => c.path.includes('/onboarding/dns-plan'))).toBe(false);
 		expect(sessionStorage.getItem(KEY)).toBeNull();
@@ -68,7 +76,7 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		});
 		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
 		expect(calls.filter((c) => c.path.endsWith('/import'))).toHaveLength(2);
-		expect((await screen.findAllByText('Added 2 domains from Example Co. Nothing in DNS was changed.')).length).toBeGreaterThan(0);
+		expect(screen.getByTestId('note')).toHaveTextContent('Added 2 domains from Example Co. Nothing in your DNS was changed.');
 	});
 
 	it('when the plan covers fewer domains than there are zones, shows the list with the plan\'s number and imports the chosen ones', async () => {
@@ -130,10 +138,12 @@ describe('hosted wizard: connected, then every zone is added', () => {
 describe('the status line and the entry points', () => {
 	it('importSummary is plain: counts, accounts, and that DNS was not touched', () => {
 		const t = { imported: ['a.com'], skipped: [], already: 0, accounts: ['Example Co'], verifiedClaims: [] };
-		expect(importSummary(t)).toBe('Added 1 domain from Example Co. Nothing in DNS was changed.');
-		expect(importSummary({ ...t, imported: ['a.com', 'b.com'], accounts: ['One', 'Two'] })).toBe('Added 2 domains from One and Two. Nothing in DNS was changed.');
-		expect(importSummary({ ...t, imported: [], already: 3 })).toBe('Your Cloudflare domains were already added. Nothing in DNS was changed.');
-		expect(importSummary({ ...t, skipped: [{ domain: 'x.com', reason: 'r' }] })).toBe('Added 1 domain from Example Co. Nothing in DNS was changed. 1 zone was not added: Cloudflare is not answering for its DNS yet.');
+		expect(importSummary(t)).toBe('Added 1 domain from Example Co. Nothing in your DNS was changed.');
+		expect(importSummary({ ...t, imported: ['a.com', 'b.com'], accounts: ['One', 'Two'] })).toBe('Added 2 domains from One and Two. Nothing in your DNS was changed.');
+		expect(importSummary({ ...t, imported: [], already: 3 })).toBe('Your Cloudflare domains were already added. Nothing in your DNS was changed.');
+		// each zone's own reason, as the server gave it: never one guess for all of them
+		expect(importSummary({ ...t, skipped: [{ domain: 'x.com', reason: 'A parent or a subdomain of this name is already verified in another workspace.' }] })).toBe('Added 1 domain from Example Co. Nothing in your DNS was changed. 1 zone was not added: x.com. A parent or a subdomain of this name is already verified in another workspace.');
+		expect(importSummary({ ...t, skipped: [{ domain: 'x.com', reason: 'r1' }, { domain: 'y.com', reason: 'r2' }] })).toBe('Added 1 domain from Example Co. Nothing in your DNS was changed. 2 zones were not added. x.com: r1 y.com: r2');
 	});
 
 	it('connect goes into the wizard from the dashboard and setup, and to the connect page (with a way back) elsewhere', () => {
@@ -215,7 +225,10 @@ describe('suggestions and attention on the dashboard', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Add new.io' }));
 		await waitFor(() => expect(added).toBe(true));
 		expect(calls.find((c) => c.path.endsWith('/import'))!.body).toEqual({ zone_ids: ['z9'] });
-		expect((await screen.findAllByText('Added 1 domain from Example Co. Nothing in DNS was changed.')).length).toBeGreaterThan(0);
+		// in the page, next to the list it is about: a toast would float over whatever is under it
+		const note = await screen.findByText('Added 1 domain from Example Co. Nothing in your DNS was changed.');
+		expect(note.closest('section')).not.toBeNull();
+		expect(within(screen.getByRole('region', { name: /Notifications/ })).queryByText(/Added 1 domain/)).toBeNull();
 	});
 
 	it('shows nothing when there is nothing to suggest', async () => {

@@ -117,6 +117,12 @@ export const domains = sqliteTable(
 		cf_account_id: text('cf_account_id'),
 		cf_zone_id: text('cf_zone_id'),
 		verified_at: integer('verified_at'),
+		/** What the proof rests on besides the zone read: the zone's name, and the name servers Cloudflare assigned it (JSON array, sorted, lowercase) that public DNS delegated it to. Null: proof from before they were kept. */
+		cf_zone_name: text('cf_zone_name'),
+		cf_name_servers: text('cf_name_servers'),
+		/** Unix seconds public DNS last confirmed the delegation (daily job), and when it stopped matching (the row became unproven, 'legacy'). */
+		proof_checked_at: integer('proof_checked_at'),
+		proof_lost_at: integer('proof_lost_at'),
 		/** Set when a legacy holder lost the name to a proven claim: the row is detached (renamed, hidden) and purged after 30 days (0005). */
 		evicted_at: integer('evicted_at'),
 		evicted_name: text('evicted_name'),

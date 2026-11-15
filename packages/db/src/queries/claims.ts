@@ -2,7 +2,7 @@
  * Domain ownership claims. A claim is a workspace saying "this domain is ours" before proving it; `domains` only ever
  * holds verified domains, so several workspaces can have a pending claim on the same name while at most one can own it.
  */
-import { and, asc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { getDb, type Db, type DbLike } from '../client';
 import { domainClaims, domains, intakeTokens } from '../schema';
 
@@ -50,7 +50,10 @@ export function claimQueries(db: Db, workspaceId: string) {
 	};
 }
 
-/** The two claim queries that deliberately span workspaces: "who verified this name first". They return no tenant data beyond that. */
+export interface ZoneHolder { id: number; workspace_id: string; domain: string; cf_zone_id: string | null; cf_zone_name: string | null; cf_name_servers: string | null; cf_account_id: string | null; cf_connection_id: string | null; proof_checked_at: number | null }
+const zoneHolderColumns = { id: domains.id, workspace_id: domains.workspace_id, domain: domains.domain, cf_zone_id: domains.cf_zone_id, cf_zone_name: domains.cf_zone_name, cf_name_servers: domains.cf_name_servers, cf_account_id: domains.cf_account_id, cf_connection_id: domains.cf_connection_id, proof_checked_at: domains.proof_checked_at };
+
+/** The claim queries that deliberately span workspaces: "who verified this name first". They return no tenant data beyond that. */
 export function claimLookups(dbLike: DbLike) {
 	const db = getDb(dbLike);
 	return {
@@ -69,6 +72,41 @@ export function claimLookups(dbLike: DbLike) {
 					ne(domains.workspace_id, workspaceId), ne(domains.verified_via, 'legacy'), isNull(domains.evicted_at),
 					sql`(substr(${domain}, -(length(${domains.domain}) + 1)) = '.' || ${domains.domain} OR substr(${domains.domain}, -(length(${domain}) + 1)) = '.' || ${domain})`,
 				)).get().then((r) => !!r);
+		},
+		/**
+		 * The Cloudflare-zone-verified rows of other workspaces that this name collides with: the name itself, a parent of it or a child of it.
+		 * What a proof of the name makes them show: that their zone is still theirs (src/domains/ownership.ts, reassessHolders).
+		 */
+		zoneVerifiedNear(domain: string, workspaceId: string): Promise<ZoneHolder[]> {
+			return db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: other workspaces' zone proofs on a name someone else is proving */)
+				.where(and(
+					ne(domains.workspace_id, workspaceId), eq(domains.verified_via, 'cloudflare'), isNull(domains.evicted_at),
+					sql`(${domains.domain} = ${domain} OR substr(${domain}, -(length(${domains.domain}) + 1)) = '.' || ${domains.domain} OR substr(${domains.domain}, -(length(${domain}) + 1)) = '.' || ${domain})`,
+				)).all();
+		},
+		/** Zone-verified live rows due for the daily re-check: never checked first, then the longest ago. */
+		zoneVerifiedDue(limit: number): Promise<ZoneHolder[]> {
+			return db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: the daily job runs across workspaces */)
+				.where(and(eq(domains.verified_via, 'cloudflare'), isNull(domains.evicted_at), isNotNull(domains.cf_zone_id)))
+				.orderBy(sql`${domains.proof_checked_at} IS NOT NULL`, asc(domains.proof_checked_at), asc(domains.id)).limit(limit).all();
+		},
+		/** The delegation was seen to match: remember when (and, for a proof made before servers were kept, which servers and zone). */
+		markProofChecked(ids: number[], nowSeconds: number): Promise<void> {
+			if (ids.length === 0) return Promise.resolve();
+			return db.update(domains /* workspace-scope-exempt: same rows, by id */).set({ proof_checked_at: nowSeconds }).where(and(inArray(domains.id, ids), eq(domains.verified_via, 'cloudflare'))).run().then(() => undefined);
+		},
+		recordNameServers(id: number, zoneName: string, servers: string[], nowSeconds: number): Promise<void> {
+			return db.update(domains /* workspace-scope-exempt: same row, by id */).set({ cf_zone_name: zoneName, cf_name_servers: JSON.stringify([...servers].sort()), proof_checked_at: nowSeconds })
+				.where(and(eq(domains.id, id), eq(domains.verified_via, 'cloudflare'), isNull(domains.cf_name_servers))).run().then(() => undefined);
+		},
+		/**
+		 * The proof lapsed: the row becomes unproven ('legacy', exactly what an unproven row is everywhere: intake stops accepting its reports, any proof of
+		 * the name by another workspace evicts it) and the time is kept. True only for the call that changed it, so the workspace is told once.
+		 */
+		async markProofLost(id: number, nowSeconds: number): Promise<boolean> {
+			const r = await db.update(domains /* workspace-scope-exempt: same row, by id */).set({ verified_via: 'legacy', proof_lost_at: nowSeconds })
+				.where(and(eq(domains.id, id), eq(domains.verified_via, 'cloudflare'), isNull(domains.evicted_at))).run();
+			return (r.meta.changes ?? 0) > 0;
 		},
 		/**
 		 * The unproven (`legacy`) holder of `domain` in another workspace, if any: what a proven claim evicts.

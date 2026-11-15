@@ -156,12 +156,38 @@ A pending claim, or a name typed into Add domain, is verified through Cloudflare
 3. Cloudflare says now, through that connection, that the zone is `active`, a `full` setup (not `partial`/CNAME, not `secondary`) and has the same name;
 4. the zone belongs to the connection's own Cloudflare account (the account recorded on the connection and, for a grant that covers several accounts, the account recorded for that zone);
 5. the token can edit its DNS: an OAuth grant whose scopes include a DNS write scope, or Cloudflare's zone read lists `#dns_records:edit` for the token. If neither can be established there is no Cloudflare proof;
-6. the public name servers of the zone are all among the zone's Cloudflare name servers;
-7. hosted: no other workspace has verified the name, a parent of it or a child of it.
+6. public DNS delegates the zone name to **exactly** the zone's Cloudflare name servers: every NS answer is owned by the zone name itself (a name that is a CNAME to another domain answers with that domain's servers under that domain's name, and proves nothing about who runs the zone here), and the two sets are **equal**, not a subset. Cloudflare assigns a zone exactly its set; a domain delegated to only some of them is half-moved to another provider or to another account's zone, and no legitimate setup publishes a part of the set, so a subset is refused;
+7. hosted: no other workspace has verified the name, a parent of it or a child of it (an import says so in its own words, not as "Cloudflare does not answer", and without saying who).
 
 Anything else falls back to the DNS record (`_readysetmail.<domain>`). The proof is recorded on the domain (`cf_account_id`, `cf_zone_id`, `verified_at`) and in
-the audit log as `domain.proof` (`method: cloudflare_zone`, account, zone id and name, connection, time). It stays when the token is revoked or the connection is removed;
-the domain is then still verified and watched, and changing its DNS needs a reconnect.
+the audit log as `domain.proof` (`method: cloudflare_zone`, account, zone id and name, the zone's name servers, connection, time). A revoked token or a removed connection does **not**
+undo it: the domain is still verified and watched, and changing its DNS needs a reconnect. What does end it is the zone leaving: see the next section.
+
+### A zone proof is re-checked
+
+A proof says who controlled the zone when it was made; domains are sold and zones move. `domains.cf_zone_name` and `domains.cf_name_servers` keep the zone's name and the name
+servers public DNS delegated it to at the proof (`src/domains/proof-recheck.ts`).
+
+* **When another workspace proves the name** (TXT, or a zone of its own), the zone-verified holder of that name, of a parent or of a child first shows it still holds it: public DNS must
+  still delegate the zone to the stored servers (same rule as above: zone-owned answers, equal sets) and, where one of its tokens still works, Cloudflare must still serve the zone,
+  `active` and `full`, in the account that proved it (a zone that is gone or in another account fails). A holder that fails becomes **unproven** (`verified_via` `legacy`, `proof_lost_at`), which is
+  what the existing eviction rule keys on: the new proof then wins, the holder's row is detached and its owners are emailed and audited. A revoked token alone changes nothing, and a lookup that
+  fails or a Cloudflare that cannot be reached is not an answer: the holder keeps the name and the new owner tries again. A holder that has just shown it holds the name (10 minutes) is not asked again.
+* **Daily** (the hosted cron, 11:00 UTC, `zone proof re-check`): every zone-verified domain's zone is asked of public DNS. A delegation that no longer matches (different servers, NXDOMAIN, no NS)
+  makes the domain unproven: **intake stops accepting its reports** (the fixed address and its token addresses), the workspace's owners are emailed plainly (`domain.proof_lost` in their audit log), and
+  its subdomains admitted through it follow it down. To get it back the owner removes the domain and adds it again, through Cloudflare or the TXT record. Proofs made before the servers were kept are not
+  downgraded for the missing record; the job records their servers when Cloudflare and public DNS agree.
+* **Cost.** One D1 read for the batch, then one DNS-over-HTTPS query per distinct zone among at most `RECHECK_PER_RUN` (200) domains, 5 at a time: at most 200 subrequests a run, one query shared by all domains of a zone
+  (plus one Cloudflare read for each proof that has no stored servers yet). Oldest check first, never-checked first, so a larger fleet is covered over several days. The hosted service needs Workers Paid (10,000 subrequests).
+
+### What an eviction does
+
+When a proof evicts an **unproven** holder of the name, it happens in this order so that nobody loses a domain unless somebody gets it: the new domain is only added when the plan has room, and the holder's row is detached in the
+same transaction as that insert (a full plan or a failed insert changes nothing); only then are the holder's hosted records and its report-authorisation record removed, the holder's report history kept for 30 days for export, its owners emailed and the
+eviction audited. Those removals delete records through the **evicted** workspace's own connection, so an import can change DNS of the party that lost the name (never the importing user's): the import's status line says
+"Nothing in your DNS was changed."
+
+An import reads public DNS and writes nothing to the importing user's DNS.
 
 ### Several Cloudflare accounts
 

@@ -23,7 +23,7 @@ import { teamQueries } from './team';
 
 export * from './reports';
 export { counted, type CountingMode } from './counting';
-export type { DomainClaimRow } from './claims';
+export type { DomainClaimRow, ZoneHolder } from './claims';
 export { claimLookups } from './claims';
 export type { SenderRow, TrendRow } from './analytics';
 export { FIRST_SEEN_HORIZON_DAYS } from './analytics';

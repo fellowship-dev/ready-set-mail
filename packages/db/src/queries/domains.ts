@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { cloudflareConnections, domains, productDomains } from '../schema';
-import { PlanLimitError, changesOf } from './plan-limit';
+import { PlanLimitError, changesOf, freeNameStatements } from './plan-limit';
 
 export type DomainRow = typeof domains.$inferSelect;
 
@@ -56,7 +56,7 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * transaction. D1 serialises writes, so concurrent inserts cannot exceed the cap: the margin is exactly 0. A refusal
 		 * throws PlanLimitError and writes nothing (the product mapping, if any, selects the new row and so inserts nothing either).
 		 */
-		async insert(d: { domain: string; rua_address: string; verified_via?: string }, productId?: string, opts: { maxDomains?: number } = {}) {
+		async insert(d: { domain: string; rua_address: string; verified_via?: string }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
 			// Auto-detect parent: strip the leftmost label and check if the apex exists
 			const parts = d.domain.split('.');
 			let parentId: number | null = null;
@@ -70,14 +70,16 @@ export function domainQueries(db: Db, workspaceId: string) {
 			}
 			try {
 				const max = opts.maxDomains;
+				// `freeing`: an unproven holder of this very name in another workspace, detached in the same transaction (see freeNameStatements).
+				const free = opts.freeing === undefined ? [] : freeNameStatements(opts.freeing, workspaceId, max);
 				// One conditional statement: the row is selected (so inserted) only while the workspace is under its cap.
 				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via)
 					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}
 					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`;
 				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via });
 				if (!productId) {
-					if (!capped) return await insert.run();
-					const [res] = await batchStatements(db, [capped]);
+					if (!capped) return free.length ? (await batchStatements(db, [...free, insert]))[free.length] : await insert.run();
+					const res = (await batchStatements(db, [...free, capped]))[free.length];
 					if (changesOf(res) === 0) throw new PlanLimitError('domains_per_workspace', max!);
 					return res;
 				}
@@ -88,9 +90,9 @@ export function domainQueries(db: Db, workspaceId: string) {
 					product_id: sql<string>`${productId}`.as('product_id'),
 					domain_id: domains.id,
 				}).from(domains).where(and(mine, eq(domains.domain, d.domain), eq(domains.id, sql`last_insert_rowid()`))));
-				const result = capped ? await batchStatements(db, [capped, mapping]) : await db.batch([insert, mapping]);
-				if (capped && changesOf(result[0]) === 0) throw new PlanLimitError('domains_per_workspace', max!);
-				return result[0];
+				const result = capped || free.length ? await batchStatements(db, [...free, capped ?? insert, mapping]) : await db.batch([insert, mapping]);
+				if (capped && changesOf(result[free.length]) === 0) throw new PlanLimitError('domains_per_workspace', max!);
+				return result[free.length];
 			} catch (e) {
 				if (e instanceof PlanLimitError) throw e;
 				throw unwrapDriverError(e); // callers match on 'UNIQUE'
@@ -180,8 +182,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 		},
 
 		/** How a domain was proven through a Cloudflare zone: the account and zone Cloudflare named, and when (unix seconds). */
-		setCloudflareProof(id: number, p: { cf_account_id: string | null; cf_zone_id: string; verified_at: number }) {
-			return db.update(domains).set({ cf_account_id: p.cf_account_id, cf_zone_id: p.cf_zone_id, verified_at: p.verified_at }).where(and(mine, eq(domains.id, id))).run();
+		setCloudflareProof(id: number, p: { cf_account_id: string | null; cf_zone_id: string; verified_at: number; cf_zone_name: string; cf_name_servers: string[] }) {
+			return db.update(domains).set({ cf_account_id: p.cf_account_id, cf_zone_id: p.cf_zone_id, verified_at: p.verified_at, cf_zone_name: p.cf_zone_name, cf_name_servers: JSON.stringify([...p.cf_name_servers].sort()), proof_checked_at: null, proof_lost_at: null }).where(and(mine, eq(domains.id, id))).run();
 		},
 
 		/** Link a domain to one of this workspace's Cloudflare connections (null unlinks). False: no such domain or connection. */

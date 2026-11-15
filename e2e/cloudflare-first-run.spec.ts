@@ -73,7 +73,7 @@ test('hosted: connect, every zone is added and verified, nothing is written to D
 
 		// No zone list to tick and no DNS plan: the dashboard, with the domains and the status line.
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByText('Added 3 domains from Example Co. Nothing in DNS was changed.').first()).toBeVisible();
+		await expect(page.getByText('Added 3 domains from Example Co. Nothing in your DNS was changed.').first()).toBeVisible();
 		for (const z of ZONES) await expect(page.getByRole('link', { name: z, exact: true })).toBeVisible();
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
 

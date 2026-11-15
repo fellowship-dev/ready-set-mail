@@ -4,6 +4,7 @@ import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
+import type { ImportedNote } from '../../lib/cloudflare';
 import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
@@ -86,6 +87,7 @@ export function OverviewPage() {
 	const qc = useQueryClient();
 	const { canWrite } = useSession();
 	const removed = (useLocation().state as RemovedState | null)?.removed;
+	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
@@ -180,6 +182,10 @@ export function OverviewPage() {
 	}
 
 	const empty = domains.length === 0 && claims.length === 0;
+	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
+	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
+	const needsAttention = verdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
+	const stepper = canWrite ? <GetStarted steps={steps} /> : null;
 
 	return (
 		<div className="space-y-6">
@@ -198,6 +204,7 @@ export function OverviewPage() {
 				}
 			/>
 			<ReadOnlyNotice />
+			{imported ? <Alert variant={imported.ok ? 'success' : 'warning'} title="Cloudflare import">{imported.text}</Alert> : null}
 			{removed && removed.kept.length > 0 ? (
 				<Alert variant="warning" title="Domain removed, some DNS records kept">
 					{removalNotice(removed.domain, removed.kept)}
@@ -225,7 +232,7 @@ export function OverviewPage() {
 					{canWrite ? <CloudflareAttention /> : null}
 					<WaitingClaims claims={claims} canWrite={canWrite} />
 
-					{canWrite ? <GetStarted steps={steps} /> : null}
+					{!needsAttention && stepper}
 
 					{empty && !canWrite ? (
 						<EmptyState
@@ -249,6 +256,7 @@ export function OverviewPage() {
 						</section>
 					) : null}
 
+					{needsAttention && stepper}
 				</>
 			)}
 		</div>

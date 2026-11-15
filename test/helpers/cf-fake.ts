@@ -46,6 +46,8 @@ export class FakeCloudflare {
   validTokens?: Set<string>;
   /** Cloudflare accounts the token can see (GET /accounts). */
   accounts: { id: string; name: string }[] = [];
+  /** Names that are a CNAME to another name: an NS question about them is answered with the target's NS records, as a recursive resolver does. */
+  nsViaCname: Record<string, string> = {};
   /** NS answers for DNS-over-HTTPS lookups: name -> hosts. A zone name not listed answers with its zone's own name servers. */
   readonly ns: Record<string, string[]> = {};
   #nextId = 1;
@@ -80,8 +82,15 @@ export class FakeCloudflare {
       const qtype = (url.searchParams.get('type') ?? '').toUpperCase();
       const isMx = qtype === 'MX';
       if (qtype === 'NS') {
+        // Real DoH answers carry the owner name of each record. A CNAME at the queried name is followed by a recursive resolver: the NS records
+        // that come back are the target's, owned by the target (`nsViaCname`).
+        const target = this.nsViaCname[name];
+        if (target) {
+          const hosts = this.ns[target] ?? (this.zones[target] ? (this.zones[target].nameServers ?? CF_NS) : []);
+          return new Response(JSON.stringify({ Status: 0, Answer: [{ name: `${name}.`, type: 5, data: `${target}.` }, ...hosts.map(h => ({ name: `${target}.`, type: 2, data: `${h}.` }))] }), { status: 200 });
+        }
         const hosts = this.ns[name] ?? (this.zones[name] ? (this.zones[name].nameServers ?? CF_NS) : undefined);
-        return new Response(JSON.stringify(hosts ? { Status: 0, Answer: hosts.map(h => ({ type: 2, data: `${h}.` })) } : { Status: 3 }), { status: 200 });
+        return new Response(JSON.stringify(hosts ? { Status: 0, Answer: hosts.map(h => ({ name: `${name}.`, type: 2, data: `${h}.` })) } : { Status: 3 }), { status: 200 });
       }
       const answers = qtype === 'CNAME' ? (this.cname[name] ? [this.cname[name]] : undefined) : isMx ? this.mx[name] : this.doh[name];
       const payload = answers

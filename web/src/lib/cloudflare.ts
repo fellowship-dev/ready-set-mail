@@ -107,13 +107,21 @@ export async function importAll(connectionId: string, zoneIds?: string[]): Promi
 	return { totals };
 }
 
+/** What the dashboard says about an import that just ran (router state of the navigation to it): the summary, and whether anything was added. */
+export interface ImportedNote { text: string; ok: boolean }
+
 /** The status line after an import. Plain, and true: importing reads public DNS and writes nothing to it. */
 export function importSummary(t: ImportTotals): string {
 	const n = t.imported.length + t.verifiedClaims.length;
 	const from = t.accounts.length ? ` from ${t.accounts.join(' and ')}` : '';
-	const head = n > 0 ? `Added ${n} ${n === 1 ? 'domain' : 'domains'}${from}. Nothing in DNS was changed.` : t.already > 0 ? 'Your Cloudflare domains were already added. Nothing in DNS was changed.' : 'Nothing was added.';
+	const head = n > 0 ? `Added ${n} ${n === 1 ? 'domain' : 'domains'}${from}. Nothing in your DNS was changed.` : t.already > 0 ? 'Your Cloudflare domains were already added. Nothing in your DNS was changed.' : 'Nothing was added.';
 	const k = t.skipped.length;
-	return k > 0 ? `${head} ${k} ${k === 1 ? 'zone was' : 'zones were'} not added: Cloudflare is not answering for ${k === 1 ? 'its' : 'their'} DNS yet.` : head;
+	if (k === 0) return head;
+	// Each zone was refused for its own reason (the server says which, in plain words): say that one, not a guess that fits them all.
+	const reasons = [...new Set(t.skipped.map((s) => s.reason))];
+	const names = `${t.skipped.slice(0, 3).map((s) => s.domain).join(', ')}${k > 3 ? ` and ${k - 3} more` : ''}`;
+	const why = reasons.length === 1 ? reasons[0] : t.skipped.slice(0, 3).map((s) => `${s.domain}: ${s.reason}`).join(' ');
+	return `${head} ${k} ${k === 1 ? 'zone was' : 'zones were'} not added${reasons.length === 1 ? `: ${names}. ${why}` : `. ${why}`}`;
 }
 
 export interface CfSuggestion { connection_id: string; account_id: string | null; account_name: string | null; zone_id: string; name: string; removed: boolean }

@@ -5,7 +5,9 @@
 //  - A zone is imported only when ownership is proven under the rule of src/domains/ownership.ts (cloudflareProof): active, a full setup, in the
 //    connection's account, DNS edit for the token, public name servers are Cloudflare's, not a public suffix, no other workspace has the name or
 //    something next to it. A zone that fails is skipped: no domain, no claim, and it leaves the allow-list again.
-//  - Nothing is written to DNS. Adding a domain reads public DNS once (its first check), as adding one by hand does.
+//  - Nothing is written to the importing user's DNS. Adding a domain reads public DNS once (its first check), as adding one by hand does. The one
+//    exception is not theirs: when the proof evicts another workspace's UNPROVEN holder of the name, the removal path deletes that workspace's own hosted
+//    records and report-authorisation record through its own connection (the existing eviction rule, src/domains/ownership.ts finishEviction).
 //  - Hosted plan: the cap on domains per workspace is the one adding a domain already enforces (domainCap, enforced in domains.insert). When the
 //    zones would not all fit, nothing is imported and the person chooses; asking for more than fits is refused.
 //  - Idempotent: a domain the workspace already has is left alone; a name the person removed stays removed (removed_domains) unless they ask for it
@@ -42,6 +44,9 @@ export interface ImportResult {
 
 export const NOT_PROVEN = 'Cloudflare does not answer for this domain\'s DNS yet, or the connection cannot edit it, so ownership could not be confirmed through it. Add it with the DNS record instead.';
 
+/** A zone refused because a parent or a subdomain of the name is verified by another workspace: said apart from "not proven", and without saying who. */
+export const RELATED_VERIFIED = 'A parent or a subdomain of this name is already verified in another workspace, so a Cloudflare zone cannot prove it here. Add it with the DNS record instead.';
+
 interface Caller { id?: string | null; email?: string | null }
 
 const choice = (z: { id: string; name: string; cfAccountId?: string; cfAccountName?: string }): ZoneChoice => ({ id: z.id, name: z.name, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null });
@@ -50,14 +55,18 @@ const choice = (z: { id: string; name: string; cfAccountId?: string; cfAccountNa
 export async function verifyPendingClaims(tenant: TenantContext, caller: Caller, ctx?: ExecutionContext): Promise<string[]> {
   if (getMode(tenant.env) !== 'saas') return [];
   const done: string[] = [];
+  const cap = domainCap(tenant);
+  let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
   for (const claim of await tenant.scope.claims.list()) {
     if (claim.status !== 'pending' || claim.settled_at !== null) continue;
+    if (cap !== undefined && held >= cap) break; // a full plan: nothing is verified, and nobody's domain is taken, for a domain that cannot be added
     const r = await admitByZone(tenant, claim.domain);
     if (r.kind !== 'verified') continue;
     try {
       const added = await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined);
       await linkToConnection(tenant, added.domain.id, claim.domain, caller);
       done.push(claim.domain);
+      held++;
     } catch (e) {
       if (!(e instanceof DomainServiceError)) throw e; // a full plan leaves the claim as it was
     }
@@ -131,6 +140,7 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   for (const z of batch) {
     const admitted = saas ? await admitByZone(tenant, z.name) : { kind: 'verified' as const, via: 'selfhost' as const };
     if (admitted.kind === 'taken') { failed.add(z.id); result.skipped.push({ domain: z.name, reason: 'Another workspace has already verified this domain.' }); continue; }
+    if (admitted.kind === 'related') { failed.add(z.id); result.skipped.push({ domain: z.name, reason: RELATED_VERIFIED }); continue; }
     if (admitted.kind === 'unproven') { failed.add(z.id); result.skipped.push({ domain: z.name, reason: NOT_PROVEN }); continue; }
     try {
       const added = await commitVerifiedDomain(tenant, z.name, admitted.via, caller.email ?? undefined, ctx, caller.id ?? undefined);

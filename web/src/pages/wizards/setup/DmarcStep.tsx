@@ -39,8 +39,10 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const [written, setWritten] = useState<ApplyDmarcResponse | null>(null);
 	const [authProvisioned, setAuthProvisioned] = useState(false);
 
-	// The report address is top-level in the status, and empty when the domain was added without a reports domain.
-	const rua = hasReportAddress(status.rua_address) ? status.rua_address : null;
+	// The report address is top-level in the status, and empty when the domain was added without a reports domain (or, hosted, is not connected yet).
+	// Hosted and not connected: the address Apply via Cloudflare would write and connect in one step is offered apart. A record to paste never gets
+	// it: reports sent for a domain that was never connected are refused.
+	const rua = hasReportAddress(status.rua_address) ? status.rua_address : cf_available && hasReportAddress(status.offered_rua_address) ? status.offered_rua_address! : null;
 	const lookupSeverity = dmarcSeverity(dmarc, dmarcFailed.length > 0);
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.

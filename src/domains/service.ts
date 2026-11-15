@@ -1,7 +1,7 @@
 import { PlanLimitError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
-import { admitDomain, claimView, settleClaims, type VerifiedVia } from './ownership';
+import { admitDomain, claimView, freeingFor, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
 import { track } from '../telemetry';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
@@ -123,7 +123,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   // Insert domain row — no DNS writes here; all DNS changes require explicit user action
   let domainId: number;
   try {
-    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via }, options.productId, { maxDomains: domainCap(tenant) });
+    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via }, options.productId, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
     domainId = result.meta.last_row_id as number;
   } catch (e: any) {
     if (e instanceof PlanLimitError) {

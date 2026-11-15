@@ -1,11 +1,11 @@
-import { Button, Checkbox, FieldError, Skeleton, toast } from '@ready-set-mail/ui';
+import { Button, Checkbox, FieldError, Skeleton } from '@ready-set-mail/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { LoadError, WriteButton } from '../../../components/states';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepFooter } from '../../../components/wizard/StepNav';
 import { ApiError, errorMessage } from '../../../lib/api';
-import { cfKeys, importAll, importSummary, type CfConnection, type ImportResult } from '../../../lib/cloudflare';
+import { cfKeys, importAll, importSummary, type CfConnection, type ImportedNote, type ImportResult } from '../../../lib/cloudflare';
 import { keys } from '../../../lib/queries';
 
 type Selection = NonNullable<ImportResult['needs_selection']>;
@@ -14,7 +14,7 @@ type Selection = NonNullable<ImportResult['needs_selection']>;
  * Hosted, right after connecting: every active zone the connection can see becomes a verified domain, with nothing written to DNS.
  * Only when they would not all fit the plan does the person choose which to add. `onDone` leaves for the dashboard.
  */
-export function ImportStep({ connection, onDone }: { connection: CfConnection; onDone: () => void }) {
+export function ImportStep({ connection, onDone }: { connection: CfConnection; onDone: (note?: ImportedNote) => void }) {
 	const qc = useQueryClient();
 	const started = useRef(false);
 	const [state, setState] = useState<{ kind: 'running' } | { kind: 'choose'; selection: Selection } | { kind: 'empty' } | { kind: 'error'; error: unknown }>({ kind: 'running' });
@@ -29,8 +29,8 @@ export function ImportStep({ connection, onDone }: { connection: CfConnection; o
 			void qc.invalidateQueries({ queryKey: cfKeys.suggestions });
 			if (selection) return setState({ kind: 'choose', selection });
 			if (totals.imported.length + totals.verifiedClaims.length + totals.already === 0 && totals.skipped.length === 0) return setState({ kind: 'empty' });
-			toast({ variant: 'success', title: importSummary(totals), duration: 12_000 });
-			onDone();
+			// Said on the dashboard, in the page itself: a toast floats over whatever the person needs to read next.
+			onDone({ text: importSummary(totals), ok: totals.imported.length + totals.verifiedClaims.length + totals.already > 0 });
 		} catch (e) {
 			setState({ kind: 'error', error: e });
 		}
@@ -47,7 +47,7 @@ export function ImportStep({ connection, onDone }: { connection: CfConnection; o
 		return (
 			<StepCard title="Adding your domains">
 				<div className="space-y-3">
-					<p className="text-sm text-ink-2">Reading the zones in your Cloudflare account and confirming you control them. Nothing in DNS is changed.</p>
+					<p className="text-sm text-ink-2">Reading the zones in your Cloudflare account and confirming you control them. Nothing in your DNS is changed.</p>
 					<Skeleton className="h-16 w-full" role="status" aria-label="Adding your Cloudflare domains" />
 				</div>
 			</StepCard>
@@ -59,12 +59,12 @@ export function ImportStep({ connection, onDone }: { connection: CfConnection; o
 			<StepCard title="No domains found">
 				<div className="space-y-4">
 					<p className="max-w-prose text-sm text-ink-2">This Cloudflare account has no active zones. Once a domain is active on Cloudflare it can be added here.</p>
-					<StepFooter end={<Button onClick={onDone}>Go to dashboard</Button>} />
+					<StepFooter end={<Button onClick={() => onDone()}>Go to dashboard</Button>} />
 				</div>
 			</StepCard>
 		);
 	}
-	return <Choose selection={state.selection} onChoose={(ids) => void run(ids)} onDismiss={onDone} />;
+	return <Choose selection={state.selection} onChoose={(ids) => void run(ids)} onDismiss={() => onDone()} />;
 }
 
 /** The plan covers fewer domains than the account has zones: the person picks which to add. */

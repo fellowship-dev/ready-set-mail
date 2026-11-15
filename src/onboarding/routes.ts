@@ -182,9 +182,11 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
         const x = exec.get(w.id);
         // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
         if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
+        // The domain is connected BEFORE the record carrying our address is written: that address never reaches DNS for a domain intake would refuse.
+        const reports = await connect(x);
+        if (reports === 'refused') { results.push({ id: w.id, ok: false, error: 'Reports could not be connected for this domain, so the record was not written. Try again, or connect reports from the domain page.', code: 'reports_refused', reports }); continue; }
         await applyWrite(tenant, w, x, ctx, caller);
         const v = await verifyWrite(tenant, w, x);
-        const reports = await connect(x);
         results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}), ...(reports ? { reports } : {}) });
       } catch (e) {
         const code = failureCode(e);

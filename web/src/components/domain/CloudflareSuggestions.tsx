@@ -1,5 +1,6 @@
-import { Button, toast } from '@ready-set-mail/ui';
+import { Alert, Button } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { PlanLimitNotice, planLimitOf } from '../PlanLimitNotice';
 import { errorMessage } from '../../lib/api';
 import { accountLabel, activeConnection, cfKeys, importAll, importSummary, useCfConnections, useCfSuggestions, type CfSuggestion } from '../../lib/cloudflare';
@@ -16,6 +17,8 @@ export function CloudflareSuggestions() {
 	const conns = useCfConnections(canWrite);
 	const working = !!conns.data && activeConnection(conns.data) !== null;
 	const q = useCfSuggestions(canWrite && working);
+	// Said where the person is looking, in the page: a toast would float over the list and whatever is under it.
+	const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null);
 	const add = useMutation({
 		mutationFn: (s: CfSuggestion) => importAll(s.connection_id, [s.zone_id]).then((r) => r.totals),
 		onSuccess: (totals) => {
@@ -23,18 +26,19 @@ export function CloudflareSuggestions() {
 			void qc.invalidateQueries({ queryKey: ['auth-status'] });
 			void qc.invalidateQueries({ queryKey: cfKeys.suggestions });
 			void qc.invalidateQueries({ queryKey: cfKeys.connections });
-			toast({ variant: totals.imported.length > 0 ? 'success' : 'warning', title: importSummary(totals), duration: 8000 });
+			setNote({ text: importSummary(totals), ok: totals.imported.length > 0 });
 		},
 	});
 	const list = q.data ?? [];
-	if (!canWrite || !working || list.length === 0) return null;
+	if (!canWrite || !working || (list.length === 0 && !note)) return null;
 	const limit = add.isError ? planLimitOf(add.error) : null;
 	return (
 		<section aria-labelledby="cf-suggestions" className="space-y-3 rounded-lg border border-line p-4">
 			<h2 id="cf-suggestions" className="text-base font-semibold tracking-tight">
 				In your Cloudflare account
 			</h2>
-			<p className="text-sm text-ink-2">These domains are not added yet. Adding one verifies it through Cloudflare and changes nothing in DNS.</p>
+			{note ? <Alert variant={note.ok ? 'success' : 'warning'} title="Cloudflare import">{note.text}</Alert> : null}
+			<p className="text-sm text-ink-2">These domains are not added yet. Adding one verifies it through Cloudflare and changes nothing in your DNS.</p>
 			<ul className="divide-y divide-line">
 				{list.map((s) => {
 					const account = accountLabel(conns.data, s.account_id);

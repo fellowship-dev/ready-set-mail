@@ -207,6 +207,8 @@ export interface OnboardingStatus {
   domain_id: number;
   domain: string;
   rua_address: string;
+  /** Hosted, reports not connected yet: the address Apply via Cloudflare would write AND connect. Never shown for a record to paste: pasted by hand, its reports would be refused. */
+  offered_rua_address?: string | null;
   cf_available: boolean;
   dmarc: {
     found: boolean;

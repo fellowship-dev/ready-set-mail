@@ -15,9 +15,11 @@ const SUM = {
 	domain_id: 1, domain: 'example.com', dmarc_policy: null, spf_record: 'v=spf1 -all', dns_checked_at: now - 60, dns_check_attempted_at: now - 60, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok',
 	total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 2, dmarc_pct: 100, dmarc_p: null, dmarc_sp: null, dmarc_rua: 0, report_connect: { can_connect: true, refusal: null, refusal_kind: null },
 } as never;
-const onboarding = (cf = true) => ({
-	domain_id: 1, domain: 'example.com', rua_address: ADDR, cf_available: cf,
-	dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } }, spf: { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false },
+// What the server sends for a hosted domain whose reports are not connected: the stored address is empty; the connectable one is offered apart,
+// and only where Apply via Cloudflare can write and connect it.
+const onboarding = (cf = true, found = false) => ({
+	domain_id: 1, domain: 'example.com', rua_address: '', offered_rua_address: cf ? ADDR : null, cf_available: cf,
+	dmarc: { found, has_our_rua: false, current_record: found ? RECORD : null, effective: { policy: found ? 'none' : null, inherited_from: null, issue: null, record: found ? RECORD : null } }, spf: { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false },
 	dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' }, routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 });
 const base = (over: Record<string, unknown> = {}) => ({
@@ -44,11 +46,26 @@ describe('setup step 4 on hosted', () => {
 		expect(screen.getByRole('button', { name: 'Apply via Cloudflare' })).toBeInTheDocument();
 	});
 
-	it('without a Cloudflare connection the same record is the one to paste, with Copy', async () => {
+	it('without a Cloudflare connection the record to paste has no report address: reports sent for a domain that was never connected are refused', async () => {
 		step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false) }));
 		expect(await screen.findByText('Recommended record')).toBeInTheDocument();
-		expect(copyButtons().length).toBeGreaterThan(0);
+		await screen.findByText('Reports not connected yet');
+		expect(text()).not.toContain(ADDR);
+		expect(text()).toContain('v=DMARC1; p=none');
+		expect(copyButtons().length).toBeGreaterThan(0); // the record to paste, without an address
 	});
+
+	for (const found of [false, true]) {
+		it(`without Cloudflare, ${found ? 'a record that already lists our address' : 'no record'}: the step says reports are not connected, offers no record with our address and no Copy of one`, async () => {
+			step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false, found) }));
+			await screen.findByText('Reports not connected yet');
+			await screen.findByText('DMARC policy');
+			expect(text()).not.toContain('Reports are configured');
+			expect(text()).not.toContain('does not send reports to Ready Set Mail');
+			// the only place the address can appear is the record the person already published, shown as theirs: never a record offered to paste
+			expect(text().split(`rua=mailto:${ADDR}`).length - 1).toBe(found ? 1 : 0);
+		});
+	}
 
 	it('after Apply: written and waiting to show; reports connected, nothing left to connect; "live" only after public DNS shows the record', async () => {
 		let publicDns: string | null = null;
@@ -70,7 +87,7 @@ describe('setup step 4 on hosted', () => {
 
 	it('where reports are not admitted the record is written without the address, and the reason is said plainly', async () => {
 		step4(base({
-			'GET /api/domains/1/onboarding-status': { ...onboarding(), rua_address: '' },
+			'GET /api/domains/1/onboarding-status': { ...onboarding(), offered_rua_address: null },
 			'POST /api/domains/1/apply-dmarc': { ok: true, record: 'v=DMARC1; p=none', created: true, reports: { state: 'refused', reason: "On this server, only the operator's workspaces can connect reports." } },
 			'GET /api/onboarding/dns-state?names=example.com': { states: [{ name: 'example.com', resolves: true, spf: 'found', dmarc: { state: 'missing' }, mx: true }] },
 			'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: false, refusal: "On this server, only the operator's workspaces can connect reports.", address: null, state: 'not_connected' },

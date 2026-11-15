@@ -103,7 +103,7 @@ export function CloudflareWizardPage() {
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
 		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
 	} else if (hosted && connection && progress.step !== 'done') {
-		body = <ImportStep key={connection.id} connection={connection} onDone={() => { clearProgress(workspace); navigate('/', { replace: true }); }} />;
+		body = <ImportStep key={connection.id} connection={connection} onDone={(note) => { clearProgress(workspace); navigate('/', { replace: true, state: note ? { imported: note } : undefined }); }} />;
 	} else if (progress.step === 'zones' && connection) {
 		body = <ZonesStep connection={connection} taken={(conns.data?.connections ?? []).filter((c) => c.id !== connection.id).flatMap((c) => c.zones.map((z) => z.id))} onNext={() => go('domains')} />;
 	} else if (progress.step === 'domains' && connection) {

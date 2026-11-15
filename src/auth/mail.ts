@@ -134,3 +134,26 @@ export async function sendEvictionNotice(env: AuthEnv, to: string[], domain: str
     console.log(`[auth] eviction notice for ${domain} to ${to.join(', ')}`);
   }
 }
+
+/** Tells a workspace's owners that a domain's Cloudflare proof no longer holds, so it is not accepted as theirs until proven again. */
+export async function sendProofLostNotice(env: AuthEnv, to: string[], domain: string, why: 'delegation' | 'cloudflare'): Promise<void> {
+  if (to.length === 0) return;
+  const reason = why === 'delegation'
+    ? `${domain} no longer points to the Cloudflare name servers it pointed to when you proved it (in Cloudflare, or by Cloudflare's own nameserver records). It may have moved to another DNS provider or another Cloudflare account.`
+    : `Cloudflare no longer serves the zone of ${domain} as an active, full zone in the account that proved it.`;
+  const body = `Hi,\n\n${reason}\n\nSo Ready Set Mail can no longer treat ${domain} as proven to be yours: DMARC reports sent to Ready Set Mail for it are not accepted, and if another workspace proves it controls ${domain}, ${domain} moves to that workspace.\n\nIf ${domain} is still yours, remove it and add it again, connecting the Cloudflare account that holds its zone or publishing the TXT record Ready Set Mail shows you at _readysetmail.${domain}. Your report history stays until then.`;
+  const footer = mailFooter(env);
+  const text = `${body}\n\nReady Set Mail${footer ? `\n${footer}` : ''}`;
+  const from = await senderAddress(env);
+  if (env.SEND_EMAIL && from) {
+    for (const address of to) {
+      try {
+        await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [address], subject: `${domain} is no longer proven in your Ready Set Mail workspace`, text });
+      } catch (e) {
+        console.error('[auth] proof-lost notice send failed:', e);
+      }
+    }
+  } else {
+    console.log(`[auth] proof-lost notice for ${domain} to ${to.join(', ')}`);
+  }
+}

@@ -1796,6 +1796,34 @@
           "notNull": false,
           "autoincrement": false
         },
+        "cf_zone_name": {
+          "name": "cf_zone_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cf_name_servers": {
+          "name": "cf_name_servers",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "proof_checked_at": {
+          "name": "proof_checked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "proof_lost_at": {
+          "name": "proof_lost_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "evicted_at": {
           "name": "evicted_at",
           "type": "integer",
