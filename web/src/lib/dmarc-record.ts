@@ -2,6 +2,7 @@
 
 import { parseDmarcTags, readDmarcTag } from '@ready-set-mail/dns-checks/dmarc-tags';
 import { isReportAddress } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcRecordProblem } from '@ready-set-mail/dns-checks/dmarc-problem';
 
 /**
  * True when `rua` is a usable report address. A domain added before a reports domain was configured has an
@@ -67,21 +68,11 @@ export function sameDmarcRecord(a: string | null | undefined, b: string | null |
 }
 
 /**
- * What is wrong with a DMARC record as receivers apply it, in one plain sentence, or null when nothing is: several records
- * at the name (`issue` 'multiple' from the stored read), a TXT that is not DMARC, an invalid p= or an invalid sp=.
- * RFC 7489 section 6.6.3: a record with an invalid p= or sp= is not applied as written; with a valid rua= receivers act
- * as if it said p=none, without one they apply no DMARC.
+ * What is wrong with a DMARC record as receivers apply it, in one plain sentence, or null when nothing is: the one shared
+ * rule (packages/dns-checks/src/dmarc-problem.ts, RFC 7489 section 6.6.3), so this page, the stored facts and the agent
+ * tools say the same thing.
  */
-export function dmarcRecordProblem(record: string | null | undefined, at: string, issue?: string | null): string | null {
-	if (issue === 'multiple') return `There are several DMARC records at ${at}, so receivers ignore all of them. Keep one and delete the others.`;
-	if (!record) return null;
-	if (!isDmarcTxt(record)) return `The TXT record at ${at} is not a DMARC record (it does not start with v=DMARC1), so receivers ignore it.`;
-	const p = parseDmarcPolicy(record);
-	if (p !== 'none' && p !== 'quarantine' && p !== 'reject') return `The DMARC record at ${at} has no valid p= policy (none, quarantine or reject), so receivers do not apply it as written: with a valid rua= they treat it as p=none, without one they ignore it. Set p= to none, quarantine or reject.`;
-	const sp = invalidDmarcSp(record);
-	if (sp) return `The DMARC record at ${at} has sp=${sp}, which is not a valid policy, so receivers do not apply it as written: with a valid rua= they treat the whole record as p=none, for the domain and its subdomains; without one they ignore it. Fix sp= or remove it.`;
-	return null;
-}
+export { dmarcRecordProblem };
 
 /** The `p=` value of a record, lower-cased, or null. */
 export function parseDmarcPolicy(record: string | null): string | null {

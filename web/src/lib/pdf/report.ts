@@ -42,6 +42,7 @@ export function dmarcPolicyLabel(s: Pick<DomainCheckSummary, 'dmarc_policy' | 'd
 	if (policy === 'none')       return { label: `none (monitor only)${from}`, color: FAIL_COLOR };
 	if (s.dmarc_issue === 'multiple') return { label: 'Multiple records', color: FAIL_COLOR };
 	if (s.dmarc_issue === 'invalid') return { label: 'Invalid record', color: FAIL_COLOR };
+	if (s.dmarc_issue === 'invalid_sp') return { label: 'Invalid sp=', color: FAIL_COLOR };
 	if (s.dns_checked_at) return { label: 'No record found', color: FAIL_COLOR };
 	return { label: 'Not checked yet', color: MUTED_COLOR };
 }

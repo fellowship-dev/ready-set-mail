@@ -9,6 +9,8 @@
 // policy (`sp=` at _dmarc.<parent> when the parent has or needs one), says what else that change affects, mentions pct= while
 // it is below 100, and offers the alternative of the name's own record, which affects only this name.
 
+import { dmarcBreakFix, dmarcBreakSentence, storedDmarcBreak, type DmarcIssue } from './dmarc-problem';
+
 export type Policy = 'none' | 'quarantine' | 'reject';
 export type StepStatus = 'attention' | 'approval' | 'improve' | 'unknown' | 'gathering' | 'verified' | 'note';
 /** Who acts: your DNS manager, an owner or admin, your email providers, you, or nobody. */
@@ -71,7 +73,8 @@ export interface InForce {
 export type PolicyInForce =
   | { kind: 'unread' }
   | { kind: 'none' }
-  | { kind: 'broken'; inherited: boolean; at: string; issue: 'multiple' | 'invalid' }
+  /** A record receivers do not apply as written: `appliedAs` what they apply instead (RFC 7489 6.6.3), `sp` an invalid sp= as written. */
+  | { kind: 'broken'; inherited: boolean; at: string; issue: DmarcIssue; appliedAs: 'none' | null; sp: string | null }
   /** A policy is known, but not the record's tags (pct=, sp=, rua=): read before any step is offered. */
   | { kind: 'partial-read'; inherited: boolean; at: string; policy: Policy }
   | InForce;
@@ -91,7 +94,8 @@ export function policyInForce(name: string, s: StoredDmarc, read = true): Policy
   const parent = s.dmarc_inherited_from || null;
   const policy = asPolicy(s.dmarc_policy);
   if (!policy) {
-    if (s.dmarc_issue === 'multiple' || s.dmarc_issue === 'invalid') return { kind: 'broken', inherited: !!parent, at: parent ?? name, issue: s.dmarc_issue };
+    const broken = storedDmarcBreak(s);
+    if (broken) return { kind: 'broken', inherited: !!parent, at: parent ?? name, ...broken };
     return read ? { kind: 'none' } : { kind: 'unread' };
   }
   const p = asPolicy(s.dmarc_p);
@@ -241,12 +245,13 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   }
   if (f.kind === 'broken') {
     const at = `_dmarc.${f.at}`;
-    const what = f.issue === 'multiple' ? `There are several DMARC records at ${at}, so receivers ignore all of them` : `The DMARC record at ${at} has no valid p= policy, so receivers ignore it`;
+    // The one sentence every surface uses for this record (packages/dns-checks/src/dmarc-problem.ts).
+    const what = dmarcBreakSentence(at, f);
     const alt = f.inherited ? ` Fixing it there also affects ${f.at} itself and its other subdomains. Or publish a DMARC record at _dmarc.${name}, which affects only ${name}.` : '';
     return [{
-      key: f.issue === 'multiple' ? 'dmarc-multiple' : 'dmarc-invalid', status: 'attention',
-      do: f.issue === 'multiple' ? `Keep one DMARC record at ${at} and delete the others` : `Fix the DMARC record at ${at} so it has a valid p= policy`,
-      why: `${what}.${alt}`, who: 'dns', where: f.inherited ? 'parent' : 'dmarc-setup', at: f.at,
+      key: f.issue === 'multiple' ? 'dmarc-multiple' : f.issue === 'invalid_sp' ? 'dmarc-invalid-sp' : 'dmarc-invalid', status: 'attention',
+      do: dmarcBreakFix(at, f.issue),
+      why: `${what}${alt}`, who: 'dns', where: f.inherited ? 'parent' : 'dmarc-setup', at: f.at,
     }];
   }
 

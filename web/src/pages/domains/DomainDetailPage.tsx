@@ -36,6 +36,7 @@ import { useHosted, useSession } from '../../lib/session';
 import type { Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
 import { inForceSentence, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcBreakLabel, dmarcBreakOf, isDmarcIssue } from '@ready-set-mail/dns-checks/dmarc-problem';
 
 const WINDOWS = [7, 30, 60] as const;
 /** The shared rule's step as an alert, in the status words' tones. */
@@ -57,8 +58,7 @@ function ChildPolicyBadge({ summary }: { summary: DomainCheckSummary | null | un
 	if (summary === undefined) return <Badge variant="outline">Checking DMARC…</Badge>;
 	const policy = asPolicy(summary?.dmarc_policy);
 	if (policy) return <PolicyBadge policy={policy} />;
-	if (summary?.dmarc_issue === 'multiple') return <Badge variant="outline">Multiple DMARC records</Badge>;
-	if (summary?.dmarc_issue === 'invalid') return <Badge variant="outline">DMARC record is invalid</Badge>;
+	if (isDmarcIssue(summary?.dmarc_issue)) return <Badge variant="outline">{dmarcBreakLabel(summary.dmarc_issue)}</Badge>;
 	if (!summary?.dns_checked_at) return <Badge variant="outline">DMARC not checked yet</Badge>;
 	return <Badge variant="outline">No DMARC record found</Badge>;
 }
@@ -87,6 +87,9 @@ function LivePolicyBadge({ domain }: { domain: Domain }) {
 		return <Badge variant="outline">No record of its own: inherits {tag}={inherited.policy}{pct < 100 ? ` at pct=${pct}` : ''} from {inherited.inherited_from}</Badge>;
 	}
 	if (!dns.data.found || !dns.data.current_record) return <Badge variant="outline">No DMARC record found{lastKnown}</Badge>;
+	// A record receivers do not apply as written (no valid p=, an invalid sp=) is that problem, never the p= it shows.
+	const broken = dmarcBreakOf(dns.data.current_record);
+	if (broken || dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`)) return <Badge variant="outline">{broken ? dmarcBreakLabel(broken.issue) : 'DMARC record is invalid'}</Badge>;
 	// The shared tag parser: any letter case, spaces around `=`.
 	const live = asPolicy(parseDmarcPolicy(dns.data.current_record));
 	return live ? <PolicyBadge policy={live} /> : <Badge variant="outline">DMARC record has no valid p= policy</Badge>;
@@ -105,6 +108,8 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 	const livePolicy = asPolicy(parseDmarcPolicy(record));
 	const sp = spTag(record);
 	const badSp = invalidDmarcSp(record);
+	// The record as receivers apply it (the shared sentence), when it is broken as published.
+	const recordProblem = dmarcRecordProblem(record, `_dmarc.${domain.domain}`);
 	const ownRecord = !!dns.data && !dns.data.error && dns.data.found;
 	const lookupFailed = dns.isError || !!dns.data?.error;
 	// What the parent's record does for this name, in the one rule's words (sp= or p=, pct=).
@@ -116,7 +121,7 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 				<Alert variant="info" title={ownRecord ? 'Has its own DMARC record' : lookupFailed || suffixParent || !inherited ? 'Parent domain' : 'Inherits DMARC from its parent'}>
 					{ownRecord ? (
 						<>
-							{livePolicy ? `p=${livePolicy}` : 'Its record, which has no valid p= policy,'} overrides the parent <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>.
+							{livePolicy && !recordProblem ? `p=${livePolicy}` : 'Its record, which receivers do not apply as written,'} overrides the parent <Link to={`/domains/${parent.id}`}>{parent.domain}</Link>.
 						</>
 					) : lookupFailed ? (
 						<>
@@ -153,7 +158,7 @@ function Context({ domain, all, summary, suffixParent = null }: { domain: Domain
 					) : badSp ? (
 						<Alert variant="warning" title="sp= is not a valid policy">
 							{/* RFC 7489 section 6.6.3: an invalid sp= makes receivers treat the whole record as p=none (or apply no DMARC without a valid rua=). */}
-							The record has sp={badSp}, which is not none, quarantine or reject, so receivers do not apply the record as written: with a valid rua= they treat it as p=none, for {domain.domain} and its subdomains; without one they ignore it. Fix sp= or remove it.
+							{recordProblem}
 						</Alert>
 					) : sp ? (
 						<Alert variant="warning" title={`sp=${sp}: not enforced`}>
@@ -326,7 +331,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 
 	const children = all.filter((d) => parentOf(d)?.id === domain.id);
 	const selectors = onboarding.data?.dkim.selectors.length;
-	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject');
+	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
+	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
 	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
 	const failing = sources.data?.length ?? 0;
 

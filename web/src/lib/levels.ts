@@ -1,5 +1,6 @@
 import type { Finding, Level } from '@ready-set-mail/ui';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { dmarcBreakLabel, dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
 import { formatPercent, timeAgo } from './format';
 import type { DomainCheckSummary } from './types';
 
@@ -37,7 +38,7 @@ const DKIM_HEALTHY = 0.95;
 
 const NOT_CHECKED_DETAIL = 'The overview has no stored result for this yet. The domain page reads it live from DNS.';
 
-type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from'>> & {
+type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dmarc_p' | 'dmarc_sp' | 'domain'>> & {
 	/** SPF DNS lookups at the last read (RFC 7208 allows 10). */
 	spf_lookup_count?: number | null;
 	/** pct= of the DMARC record that applies at the last read (100 when the record has none). */
@@ -67,6 +68,7 @@ export function assessDomain(
 	const enforcedOnAll = enforcing && !partial;
 	const spfUnknown = !hasSpf && nullMeans === 'unknown';
 	const issue = policy ? null : (s.dmarc_issue ?? null); // a stored policy always wins over a stale issue
+	const broken = issue ? storedDmarcBreak(s) : null;
 	const dmarcUnknown = !policy && !issue && nullMeans === 'unknown';
 	const from = s.dmarc_inherited_from ? `, inherited from ${s.dmarc_inherited_from}` : '';
 
@@ -81,7 +83,7 @@ export function assessDomain(
 
 	if (dmarcUnknown) findings.push({ status: 'unknown', label: 'DMARC not checked yet', detail: NOT_CHECKED_DETAIL });
 	else if (issue === 'multiple') findings.push({ status: 'warn', label: 'Multiple DMARC records: receivers ignore them', detail: `Keep one DMARC record at _dmarc.${s.dmarc_inherited_from ?? 'your domain'} and delete the others.` });
-	else if (issue === 'invalid') findings.push({ status: 'warn', label: 'DMARC record is invalid', detail: `It has no valid p= policy, so receivers ignore it. Fix the record at _dmarc.${s.dmarc_inherited_from ?? 'your domain'}.` });
+	else if (broken) findings.push({ status: 'warn', label: dmarcBreakLabel(broken.issue), detail: dmarcBreakSentence(`_dmarc.${s.dmarc_inherited_from ?? s.domain ?? 'your domain'}`, broken) });
 	else if (!policy) findings.push({ status: 'missing', label: 'DMARC record', detail: 'No DMARC record found.' });
 	else if (partial)
 		findings.push({
@@ -121,6 +123,7 @@ export function assessDomain(
 	else if (spf?.broken) next = 'Bring SPF to 10 DNS lookups or fewer: remove includes you no longer use, or flatten the record.';
 	else if (issue === 'multiple') next = 'Remove the extra DMARC records so only one remains.';
 	else if (issue === 'invalid') next = 'Fix the DMARC record so it has a valid p= policy.';
+	else if (issue === 'invalid_sp') next = 'Fix sp= in the DMARC record, or remove it.';
 	else if (!policy) next = reports ? 'Publish a DMARC record with p=none to start receiving reports.' : 'Publish a DMARC record with p=none.';
 	else if (!enforcing) next = reports ? 'Review your reports, then move DMARC to quarantine.' : 'Confirm every service that sends as this domain passes SPF or DKIM, then move DMARC to quarantine.';
 	else if (partial) next = 'Raise pct= to 100 to enforce DMARC on all mail.';

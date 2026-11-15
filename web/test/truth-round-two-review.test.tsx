@@ -116,11 +116,12 @@ describe('review item 3: the wizard does not say "fully enforced" or "nothing mo
 		await screen.findByRole('heading', { name: 'Fully enforced' });
 		expect(screen.getByText('Reject').closest('li')).toHaveTextContent('(complete)');
 	});
-	it('sp=bogus is not echoed as a policy: it is said to be invalid, and the card stays "Fully enforced"', async () => {
+	it('sp=bogus is not echoed as a policy: the record is not applied as written, so the wizard asks for the fix and offers nothing', async () => {
 		wizard('v=DMARC1; p=reject; sp=bogus');
-		expect(await screen.findByRole('heading', { name: 'Fully enforced' })).toBeInTheDocument();
-		expect(screen.getByText(/sp=bogus, which is not a valid policy, so it is ignored and subdomains inherit p=reject/)).toBeInTheDocument();
-		expect(screen.queryByText(/Subdomains follow/)).toBeNull();
+		expect(await screen.findByRole('heading', { name: 'Fix the DMARC record first' })).toBeInTheDocument();
+		expect(screen.getByText('At _dmarc.gov.uk, sp=bogus is not a valid policy and the record has no valid rua=, so receivers ignore the whole record. Fix sp= or remove it.')).toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'Fully enforced' })).toBeNull();
+		expect(screen.queryByText(/Nothing more to do here/)).toBeNull();
 	});
 });
 
@@ -145,7 +146,7 @@ describe('review item 7: the domain page says an invalid sp= is not valid', () =
 		);
 		expect(await screen.findByText('sp= is not a valid policy')).toBeInTheDocument();
 		// RFC 7489 section 6.6.3: the whole record is not applied as written (p=none with a valid rua=, else no DMARC).
-		expect(screen.getByText(/which is not none, quarantine or reject, so receivers do not apply the record as written: with a valid rua= they treat it as p=none/)).toBeInTheDocument();
+		expect(screen.getAllByText('At _dmarc.example.com, sp=bogus is not a valid policy and the record has no valid rua=, so receivers ignore the whole record. Fix sp= or remove it.').length).toBeGreaterThan(0);
 		expect(screen.queryByText(/not enforced/)).toBeNull();
 	});
 });

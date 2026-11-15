@@ -1,5 +1,5 @@
 import { dmarcRecordFor, type Alignment, type Enforcement } from '@ready-set-mail/dns-checks/dmarc-next-step';
-import { buildRecommendedRecord, enforcementLevel, invalidDmarcSp, isDmarcTxt, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
+import { buildRecommendedRecord, dmarcRecordProblem, enforcementLevel, invalidDmarcSp, isDmarcTxt, parseDmarcPolicy, parseDmarcSp, parseDmarcTags } from './dmarc-record';
 import type { OnboardingStatus } from './types';
 
 /**
@@ -18,7 +18,7 @@ export type DmarcCoverage =
 	| { kind: 'own' }
 	| { kind: 'unknown' }
 	| { kind: 'none' }
-	| { kind: 'inherited'; parent: string; policy: string | null; issue: string | null; pct: number; sp: string | null; parentPolicy: string | null; adkim: Alignment | null; aspf: Alignment | null };
+	| { kind: 'inherited'; parent: string; policy: string | null; issue: string | null; pct: number; sp: string | null; parentPolicy: string | null; adkim: Alignment | null; aspf: Alignment | null; /** The parent's live record, when read. */ record?: string | null };
 
 const alignment = (v: string | undefined): Alignment | null => (v?.toLowerCase() === 's' ? 's' : v?.toLowerCase() === 'r' ? 'r' : null);
 
@@ -43,6 +43,7 @@ export function inheritedCoverage(parent: string, record: string | null, policy:
 		parentPolicy: parseDmarcPolicy(record),
 		adkim: alignment(tags.adkim),
 		aspf: alignment(tags.aspf),
+		record,
 	};
 }
 
@@ -102,7 +103,10 @@ export function keptEnforcement(c: DmarcCoverage, e: Enforcement): string {
 /** One plain sentence on an inherited policy: where it comes from and what it means for mail from this name. */
 export function inheritedSentence(domain: string, c: Extract<DmarcCoverage, { kind: 'inherited' }>): string {
 	if (!c.policy) {
-		return `${domain} has no DMARC record of its own, and the record it would inherit from ${c.parent} gives receivers no policy (${c.issue === 'multiple' ? 'there are several' : 'it has no valid p='}). Fix the record at _dmarc.${c.parent}.`;
+		// The parent's record as receivers apply it, in the one sentence every surface uses.
+		const problem = dmarcRecordProblem(c.record, `_dmarc.${c.parent}`, c.issue);
+		if (problem) return `${domain} has no DMARC record of its own. ${problem}`;
+		return `${domain} has no DMARC record of its own, and the record it would inherit from ${c.parent} gives receivers no policy (${c.issue === 'multiple' ? 'there are several' : 'it is not valid as published'}). Fix the record at _dmarc.${c.parent}.`;
 	}
 	// Where the policy comes from: the parent's sp= for its subdomains, or its p=.
 	const source = c.sp

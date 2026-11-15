@@ -11,7 +11,7 @@ import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { api, errorMessage } from '../../lib/api';
-import { buildRecommendedRecord, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, weakerSubdomainPolicy } from '../../lib/dmarc-record';
+import { buildRecommendedRecord, dmarcRecordProblem, enforcementLevel, parseDmarcPolicy, weakerSubdomainPolicy } from '../../lib/dmarc-record';
 import { keys, useDomain } from '../../lib/queries';
 import { useCheckSummary, useOnboardingStatus } from '../../lib/domain-queries';
 import { useHostedLevelInput } from '../../lib/hosted';
@@ -119,6 +119,22 @@ export function DmarcWizardPage() {
 				<p className="text-sm text-ink-2">We need to read your current record before suggesting the next policy, so nothing is offered until the lookup works.</p>
 			</StepCard>
 		);
+	} else if (dns.data.found && dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`)) {
+		// A record receivers do not apply as written (no valid p=, an invalid sp=): it is fixed first, and no policy is offered.
+		body = (
+			<StepCard title="Fix the DMARC record first">
+				<p className="text-sm text-ink-2">{dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`)}</p>
+				{dns.data.current_record ? <TxtRecord title="Current record" name="_dmarc" value={dns.data.current_record} /> : null}
+				<TalkToMax priority={HELP_PRIORITY.tightening} lead="Not sure how to fix it?" about={`about ${domain.domain}`} />
+				<StepFooter
+					end={
+						<Button asChild>
+							<Link to={back}>Back to domain</Link>
+						</Button>
+					}
+				/>
+			</StepCard>
+		);
 	} else if (notReady) {
 		const spf = onboarding.data?.spf.record;
 		body = (
@@ -171,17 +187,12 @@ export function DmarcWizardPage() {
 		const partialPct = partial?.level === 'partial' ? partial.pct : null;
 		// sp= weaker than p= leaves subdomains without their own record less enforced than the domain itself.
 		const spWeaker = enforced ? weakerSubdomainPolicy(currentRecord) : null;
-		const spInvalid = enforced ? invalidDmarcSp(currentRecord) : null;
+		// An invalid sp= never reaches here: the record is not applied as written, and the branch above says so.
 		const spNotes = (
 			<>
 				{spWeaker ? (
 					<Alert variant="warning">
 						Subdomains follow <strong>sp={spWeaker}</strong>, not p=reject, so mail from a subdomain without its own record is not rejected. Set sp=reject to enforce it there too.
-					</Alert>
-				) : null}
-				{spInvalid ? (
-					<Alert variant="warning">
-						The record has sp={spInvalid}, which is not a valid policy, so it is ignored and subdomains inherit p=reject.
 					</Alert>
 				) : null}
 			</>

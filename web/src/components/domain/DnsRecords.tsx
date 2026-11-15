@@ -104,7 +104,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 					summary={
 						enforcing
 							? 'Published, read from public DNS. Reports are not connected yet, so it sends no reports to Ready Set Mail.'
-							: `Published, read from public DNS. ${p === 'none' ? 'p=none only monitors: mail that fails SPF and DKIM is still delivered.' : 'It has no valid p= policy, so receivers ignore it.'} Reports are not connected yet, so it sends no reports to Ready Set Mail.`
+							: `Published, read from public DNS. p=none only monitors: mail that fails SPF and DKIM is still delivered. Reports are not connected yet, so it sends no reports to Ready Set Mail.`
 					}
 				>
 					<RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} />
@@ -149,10 +149,10 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			return <CheckResult status="error" title="DMARC record" summary={dns.isError ? errorMessage(dns.error) : 'The DNS lookup did not complete.'} onRetry={() => void dns.refetch()} />;
 		}
 		const { found } = dns.data;
-		if (hostedNoReports) return hostedDmarcRow();
-		if (!found && ruaReady && onboarding.isPending) return <RowSkeleton label="DMARC" />;
-		// Several records, a TXT that is not DMARC, an invalid p= or sp=: the problem it is, never "Published".
+		// Several records, a TXT that is not DMARC, an invalid p= or sp=: the problem it is, never "Published", in every mode.
 		const problem = found ? dmarcRecordProblem(current, dmarcName, ownIssue) : null;
+		if (hostedNoReports && !problem) return hostedDmarcRow();
+		if (!found && ruaReady && onboarding.isPending) return <RowSkeleton label="DMARC" />;
 		if (problem) {
 			return (
 				<CheckResult status="fail" title="DMARC record" summary={problem}>

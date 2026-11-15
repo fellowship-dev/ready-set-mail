@@ -241,7 +241,7 @@ describe('the DMARC records row says what receivers do with a broken record', ()
 	});
 	it('p=rejected is not a policy: no "Pass", and nothing offered', async () => {
 		await row(`v=DMARC1; p=rejected; rua=mailto:${RUA}`);
-		expect(await screen.findByText(/has no valid p= policy \(none, quarantine or reject\), so receivers do not apply it as written/)).toBeInTheDocument();
+		expect(await screen.findByText('At _dmarc.example.com, the DMARC record has no valid p= policy (none, quarantine or reject), so receivers treat the whole record as p=none. Set p= to none, quarantine or reject.')).toBeInTheDocument();
 		expect(screen.queryByText('Recommended record')).toBeNull();
 	});
 	it('a record that differs only in letter case needs no change', async () => {

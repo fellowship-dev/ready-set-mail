@@ -9,7 +9,7 @@ export interface ClaimPreviewData {
 	nxdomain: boolean;
 	spf: { status: 'found' | 'missing' | 'error'; record: string | null; lookup_count: number | null; over_limit: boolean };
 	/** `pct`: pct= of the record that applies (100 when absent), null without a usable record; absent from older servers. */
-	dmarc: { status: 'found' | 'missing' | 'error'; policy: string | null; issue: 'multiple' | 'invalid' | null; inherited_from: string | null; record: string | null; pct?: number | null };
+	dmarc: { status: 'found' | 'missing' | 'error'; policy: string | null; issue: 'multiple' | 'invalid' | 'invalid_sp' | null; inherited_from: string | null; record: string | null; pct?: number | null };
 	dkim: { status: 'found' | 'not_found' | 'wildcard' | 'error'; selectors: string[]; scanned: number; failed: number };
 	mx: { status: 'found' | 'none' | 'error' };
 	lookup_failed: string[];

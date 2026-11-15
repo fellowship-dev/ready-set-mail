@@ -263,7 +263,7 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   /** Unix seconds of the last attempt, and its result: 'ok' | 'failed' | 'nxdomain'. Null: never attempted. */
   dns_check_attempted_at: number | null;
   dns_check_status: string | null;
-  /** Why DMARC gave no usable policy: 'multiple' | 'invalid'. */
+  /** Why DMARC gave no usable policy: 'multiple' | 'invalid' (no valid p=) | 'invalid_sp' (an invalid sp=). */
   dmarc_issue: string | null;
   /** The organizational domain dmarc_policy was inherited from (the domain has no record of its own). */
   dmarc_inherited_from: string | null;

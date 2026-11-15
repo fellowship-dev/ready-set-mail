@@ -1,5 +1,6 @@
 import { STATUS_RANK, statusRank, type Level, type StatusKind } from '@ready-set-mail/ui';
 import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
 import { hasReportAddress } from './dmarc-record';
 import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
@@ -191,8 +192,8 @@ function coreVerdict(
 		const known = [hasSpf ? 'SPF is published' : null, policy ? `DMARC is at p=${policy}` : null].filter(Boolean).join(' and ');
 		const rest = failed ? (known ? 'The last DNS check failed, so the rest is not confirmed.' : 'The last DNS check failed, so nothing is confirmed yet.') : known ? 'The rest has not been read from DNS yet.' : 'Nothing has been read from DNS for this domain yet.';
 		// A known problem (an ignored DMARC record) is still a problem; everything else waits for a read.
-		if (issue === 'invalid') return { ...dmarcNext(), level, sentence: `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.`, evidence: null, checked };
-		if (issue === 'multiple') return { ...dmarcNext(), level, sentence: `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.`, evidence: null, checked };
+		const broken = issue ? storedDmarcBreak(sum) : null;
+		if (broken) return { ...dmarcNext(), level, sentence: dmarcBreakSentence(at, broken), evidence: null, checked };
 		return { status: 'unknown', level, sentence: known ? `${known}. ${rest}` : rest, evidence: null, checked, next: { label: failed ? 'Open the domain to check it again' : 'Open the domain to read its records from DNS', who: WHO.you, to: page } };
 	}
 
@@ -220,7 +221,9 @@ function coreVerdict(
 		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF and no DMARC record, so receivers cannot verify mail from ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
 		if (!hasSpf) return { status: 'attention', level, sentence: `Public DNS shows no SPF record, so receivers cannot tell which servers may send for ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
 		if (!policy) {
-			const sentence = issue === 'multiple' ? `Public DNS shows several DMARC records at ${at}, so receivers ignore all of them.` : issue === 'invalid' ? `The DMARC record at ${at} has no valid p= policy, so receivers ignore it.` : 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.';
+			// A broken record: the one sentence every surface uses (packages/dns-checks/src/dmarc-problem.ts).
+			const broken = issue ? storedDmarcBreak(sum) : null;
+			const sentence = broken ? dmarcBreakSentence(at, broken) : 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.';
 			return { ...dmarcNext(), level, sentence, evidence: null, checked };
 		}
 		const lookups = s.spf_lookup_count ?? null;
