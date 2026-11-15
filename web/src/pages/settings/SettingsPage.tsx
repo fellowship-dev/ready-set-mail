@@ -1,7 +1,7 @@
 import { cleanName } from '../../lib/names';
-import { Badge, Button, Card, CardContent, FieldError, Input, PageHeader, Skeleton, toast } from '@ready-set-mail/ui';
+import { Badge, Button, Card, CardContent, CardFooter, FieldError, Input, PageHeader, Skeleton, toast } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Moon, Sun } from 'lucide-react';
+import { LogOut, Moon, Sun } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { api, errorMessage } from '../../lib/api';
@@ -75,7 +75,7 @@ export function SettingsPage() {
 	});
 
 	return (
-		<div className="space-y-10">
+		<div className="space-y-8">
 			<PageHeader title="Settings" description={hosted ? 'Your account and workspace.' : 'Your account and this Ready Set Mail instance.'} />
 			<ReadOnlyNotice />
 
@@ -88,13 +88,14 @@ export function SettingsPage() {
 							<Row label="Role">{role ? <Badge variant="brand">{role}</Badge> : null}</Row>
 						</dl>
 					</CardContent>
+					<CardFooter className="justify-end">
+						<Button variant="secondary" onClick={() => void signOut()}>
+							<LogOut aria-hidden />
+							Sign out
+						</Button>
+					</CardFooter>
 				</Card>
 				{me?.user ? <ChangePassword /> : null}
-				<div>
-					<Button variant="secondary" onClick={() => void signOut()}>
-						Sign out
-					</Button>
-				</div>
 			</Section>
 
 			<WorkspaceSection />
@@ -104,16 +105,21 @@ export function SettingsPage() {
 			<MetricConnectionsSection />
 
 			<Section title="Appearance" description="Follows your system until you choose.">
-				<div className="flex flex-wrap gap-2" role="group" aria-label="Theme">
-					<Button variant={theme === 'light' ? 'primary' : 'secondary'} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}>
-						<Sun aria-hidden />
-						Light
-					</Button>
-					<Button variant={theme === 'dark' ? 'primary' : 'secondary'} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>
-						<Moon aria-hidden />
-						Dark
-					</Button>
-				</div>
+				<Card>
+					<CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+						<p className="text-sm text-ink-2">Theme</p>
+						<div className="flex flex-wrap gap-2" role="group" aria-label="Theme">
+							<Button variant={theme === 'light' ? 'primary' : 'secondary'} aria-pressed={theme === 'light'} onClick={() => setTheme('light')}>
+								<Sun aria-hidden />
+								Light
+							</Button>
+							<Button variant={theme === 'dark' ? 'primary' : 'secondary'} aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>
+								<Moon aria-hidden />
+								Dark
+							</Button>
+						</div>
+					</CardContent>
+				</Card>
 			</Section>
 
 			{hosted ? null : (
@@ -144,7 +150,7 @@ export function SettingsPage() {
 									<span className="flex flex-wrap items-center gap-3">
 										<span className="text-ink-2">Using the default workers.dev address.</span>
 										{status?.base_domain ? (
-											<WriteButton size="sm" variant="secondary" loading={customDomain.isPending} onClick={() => customDomain.mutate()}>
+											<WriteButton size="sm" variant="secondary" className="h-auto min-h-8 max-w-full whitespace-normal py-1.5 text-left [overflow-wrap:anywhere]" loading={customDomain.isPending} onClick={() => customDomain.mutate()}>
 												Use ready-set-mail.{status.base_domain}
 											</WriteButton>
 										) : null}
@@ -156,9 +162,6 @@ export function SettingsPage() {
 					</CardContent>
 				</Card>
 				{customDomain.isError ? <FieldError>{errorMessage(customDomain.error)}</FieldError> : null}
-				<p className="text-sm text-ink-2">
-					Unattended products use the scoped service credentials above.
-				</p>
 			</Section>
 			)}
 
@@ -192,7 +195,7 @@ function ChangePassword() {
 
 	return (
 		<Card>
-			<CardContent className="space-y-4 p-5">
+			<CardContent className="space-y-4">
 				<h3 className="font-semibold">Change password</h3>
 				<form onSubmit={submit} className="grid max-w-md gap-4">
 					<Field id="current-password" label="Current password">
