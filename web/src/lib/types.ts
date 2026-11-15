@@ -15,6 +15,11 @@ export interface Domain {
   created_at: number; // unix timestamp
   alerts_enabled: number; // 1 = on, 0 = off
   is_default: number; // 1 = this domain is the reports infrastructure hub
+  /** The Cloudflare account its zone belongs to, when it was verified through one. */
+  cf_account_id?: string | null;
+  /** How it was proven; 'legacy' is unproven. `proof_lost_at` is set when a proof that was made lapsed (unix seconds). */
+  verified_via?: string;
+  proof_lost_at?: number | null;
 }
 
 export interface DailyStat {
@@ -205,6 +210,8 @@ export interface OnboardingStatus {
   domain_id: number;
   domain: string;
   rua_address: string;
+  /** Hosted, reports not connected yet: the address Apply via Cloudflare would write AND connect. Never shown for a record to paste: pasted by hand, its reports would be refused. */
+  offered_rua_address?: string | null;
   cf_available: boolean;
   dmarc: {
     found: boolean;

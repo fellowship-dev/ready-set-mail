@@ -4,7 +4,10 @@ import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
-import { ClaimCard } from '../../components/domain/ClaimCard';
+import type { ImportedNote } from '../../lib/cloudflare';
+import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
+import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
+import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
 import { GetStarted } from '../../components/GetStarted';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
@@ -85,9 +88,15 @@ export function OverviewPage() {
 	const qc = useQueryClient();
 	const { canWrite } = useSession();
 	const removed = (useLocation().state as RemovedState | null)?.removed;
+	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
+	// Waiting for proof: pending claims, and domains held but unproven (a name with both counts once).
+	const claimed = new Set(claims.map((c) => c.domain));
+	const waiting = new Set([...claimed, ...domains.filter(isUnproven).map((d) => d.domain)]).size;
+	// Held but unproven with no claim open: no DNS record is shown for it until Prove again runs.
+	const lostProof = domains.filter((d) => isUnproven(d) && !claimed.has(d.domain)).length;
 	const [exporting, setExporting] = useState(false);
 	const listId = useId();
 	const hostedMode = useHosted();
@@ -136,13 +145,14 @@ export function OverviewPage() {
 	// Every domain has a row at any depth (a sub-subdomain under its nearest listed ancestor).
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
-	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), claims.length);
+	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), waiting);
 	// In the rows' order, so the first-answer list's "Fix …" opens the first row that needs it.
 	const at = ordered.map((r) => domains.indexOf(r.d));
 	const steps = getStartedSteps({
 		hosted: hostedMode,
 		domains: at.map((k) => domains[k]!),
-		claims: claims.length,
+		claims: waiting - lostProof,
+		lostProof,
 		summaries: at.map((k) => summaryOf(domains[k]!)),
 		verdicts: at.map((k) => verdicts[k] ?? null),
 		reports: at.map((k) => totals[k]),
@@ -179,6 +189,10 @@ export function OverviewPage() {
 	}
 
 	const empty = domains.length === 0 && claims.length === 0;
+	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
+	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
+	const needsAttention = verdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
+	const stepper = canWrite ? <GetStarted steps={steps} /> : null;
 
 	return (
 		<div className="space-y-6">
@@ -197,6 +211,7 @@ export function OverviewPage() {
 				}
 			/>
 			<ReadOnlyNotice />
+			{imported ? <Alert variant={imported.ok ? 'success' : 'warning'} title="Cloudflare import">{imported.text}</Alert> : null}
 			{removed && removed.kept.length > 0 ? (
 				<Alert variant="warning" title="Domain removed, some DNS records kept">
 					{removalNotice(removed.domain, removed.kept)}
@@ -220,7 +235,12 @@ export function OverviewPage() {
 						) : null}
 					</div>
 
-					{canWrite ? <GetStarted steps={steps} /> : null}
+					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
+					<ProofLostList domains={domains} canWrite={canWrite} />
+					{canWrite ? <CloudflareAttention /> : null}
+					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain))} canWrite={canWrite} />
+
+					{!needsAttention && stepper}
 
 					{empty && !canWrite ? (
 						<EmptyState
@@ -244,22 +264,7 @@ export function OverviewPage() {
 						</section>
 					) : null}
 
-					{claims.length > 0 ? (
-						<section aria-labelledby="waiting-heading" className="space-y-4">
-							<div className="space-y-1">
-								<h2 id="waiting-heading" className="text-lg font-semibold tracking-tight">
-									Waiting for verification
-								</h2>
-								<p className="text-sm text-ink-2">
-									{/* Both modes show a live DNS preview on these cards, so "not monitored" must not read as "nothing to see". */}
-									Prove you own each one with a DNS record. Until then a domain is not monitored: there are no stored checks, stats or alerts, only a live look at its DNS.
-								</p>
-							</div>
-							{claims.map((c) => (
-								<ClaimCard key={c.id} claim={c} canWrite={canWrite} preview="lazy" />
-							))}
-						</section>
-					) : null}
+					{needsAttention && stepper}
 				</>
 			)}
 		</div>

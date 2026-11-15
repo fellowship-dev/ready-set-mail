@@ -448,13 +448,13 @@ export class CfClient {
     return hit;
   }
 
-  getZone(zoneId: string): Promise<{ id: string; name: string; status?: string; type?: string; name_servers?: string[]; account?: { id: string } }> {
+  getZone(zoneId: string): Promise<{ id: string; name: string; status?: string; type?: string; name_servers?: string[]; account?: { id: string }; permissions?: string[] }> {
     return this.request('GET', `/zones/${zoneId}`);
   }
 
   /** Every active zone the token can see (50 a page, following result_info; an unreadable or oversized list throws rather than return part of it). */
-  listZones(): Promise<{ id: string; name: string; status: string; account?: { id: string } }[]> {
-    return readAllPages<{ id: string; name: string; status: string; account?: { id: string } }>(
+  listZones(): Promise<{ id: string; name: string; status: string; account?: { id: string; name?: string } }[]> {
+    return readAllPages<{ id: string; name: string; status: string; account?: { id: string; name?: string } }>(
       '/zones',
       (page, perPage) => this.requestPage('GET', '/zones', { query: { per_page: perPage, page, status: 'active' } }),
       { maxPages: 100, maxItems: 5000 },

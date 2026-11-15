@@ -292,6 +292,38 @@ describe('OverviewPage: get to a first answer', () => {
 		expect(within(step).getByText('Waiting')).toBeInTheDocument();
 	});
 
+	// One rule for the order: what blocks progress or needs the person comes before "Get to your first answer".
+	const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+	it('a domain that needs attention is listed before the stepper', async () => {
+		renderOverview({
+			routes: {
+				'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: null })] },
+				'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: null, spf_record: null, ...checked }),
+				'GET /api/domains/1/stats': noReports,
+			},
+		});
+		const r = await row('example.com');
+		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
+		const stepper = await screen.findByRole('region', { name: 'Get to your first answer' });
+		expect(before(screen.getByRole('region', { name: 'Your domains' }), stepper)).toBe(true);
+	});
+
+	it('a domain waiting for proof comes before the stepper, and the stepper stays first while nothing needs anyone', async () => {
+		const claim = { id: 5, domain: 'acme.io', status: 'pending', txt_name: '_readysetmail.acme.io', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null };
+		const routes = {
+			'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none' })], pending_claims: [claim] },
+			'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: 'none' }),
+			'GET /api/domains/1/stats': noReports,
+			'GET /api/domains/claims/5/preview': fail(502),
+		};
+		renderOverview({ routes });
+		const stepper = await screen.findByRole('region', { name: 'Get to your first answer' });
+		expect(before(screen.getByRole('region', { name: 'Waiting for verification' }), stepper)).toBe(true);
+		// the row is gathering evidence: nobody has to act, so the stepper leads the list
+		expect(before(stepper, screen.getByRole('region', { name: 'Your domains' }))).toBe(true);
+	});
+
 	it('a member in an empty workspace is told who adds domains, with no action', async () => {
 		renderOverview({ role: 'member', routes: { 'GET /api/domains': { domains: [] } } });
 		expect(await screen.findByText('This workspace has no domains yet')).toBeInTheDocument();
@@ -341,11 +373,13 @@ describe('OverviewPage: every counted domain has a row, at any depth', () => {
 });
 
 describe('OverviewPage: verified domains first, then the ones waiting', () => {
-	it('lists the domains section above "Waiting for verification"', async () => {
+	it('puts "Waiting for verification" first, above the first-answer list and the domains', async () => {
 		const claim = { id: 5, domain: 'acme.com', status: 'pending', txt_name: '_readysetmail.acme.com', txt_value: 'v=1', created_at: 1700000000, last_checked_at: null, last_error: null };
 		renderOverview({ routes: { 'GET /api/domains': { domains: [domain(1, 'example.com')], pending_claims: [claim] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com'), 'GET /api/domains/1/stats': stats(99) } });
 		const verified = await screen.findByRole('region', { name: 'Your domains' });
 		const waiting = await screen.findByRole('region', { name: 'Waiting for verification' });
-		expect(verified.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(waiting.compareDocumentPosition(verified) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		const ladder = screen.queryByRole('region', { name: 'Get to your first answer' });
+		if (ladder) expect(waiting.compareDocumentPosition(ladder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

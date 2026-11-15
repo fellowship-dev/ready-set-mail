@@ -313,7 +313,7 @@ describe('zone allow-list', () => {
     expect((await w.api(w.A.token, 'PUT', `/api/cloudflare/connections/${id}/zones`, { zone_ids: Z.a1 })).status).toBe(400);
 
     const ok = await w.api(w.A.token, 'PUT', `/api/cloudflare/connections/${id}/zones`, { zone_ids: [Z.a1, Z.a2] });
-    expect(await json(ok)).toEqual({ zones: [{ id: Z.a1, name: 'a-corp.com' }, { id: Z.a2, name: 'a-two.org' }] });
+    expect(await json(ok)).toEqual({ zones: [{ id: Z.a1, name: 'a-corp.com' }, { id: Z.a2, name: 'a-two.org' }], verified_claims: [] });
     const zones = (await json(await w.api(w.A.token, 'GET', `/api/cloudflare/connections/${id}/zones`))).zones;
     expect(zones.filter((z: any) => z.allowed).map((z: any) => z.id).sort()).toEqual([Z.a1, Z.a2]);
     // replacing shrinks it

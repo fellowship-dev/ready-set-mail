@@ -20,7 +20,7 @@ const FIXED = `rua@${RUA}`;
 const ID = 'mx.cloudflare.net';
 
 beforeEach(() => { quiet(); nxdomain(); resetSchemaReadyCache(); });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 /** A report mail whose From is `from` (the helper's default is Google's address). */
 const mime = (domain: string, id: string, from?: string) => {
@@ -61,6 +61,9 @@ describe('1. a stranger cannot use up the unattributed budget for everyone', () 
   });
 
   it('pure volume: past the per-minute peek ceiling non-registry mail is held back (unauthenticated refused, see final-points.test.ts), registry mail still goes through', async () => {
+    // The ceiling counts per clock minute: four sends that straddle a minute boundary would land in two buckets (it failed once in CI that way). Mid-minute, always.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-15T12:00:10Z'));
     const w = await world({ INTAKE_MAX_FIXED_PEEKS_PER_MINUTE: '3' });
     for (let i = 0; i < 3; i++) await w.send(`victim${i}.example`, `p${i}`);
     expect((await w.send('a-corp.com', 'held')).setReject).toHaveBeenCalledWith('The service is not accepting reports from unauthenticated senders right now');

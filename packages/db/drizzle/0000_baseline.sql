@@ -186,6 +186,7 @@ CREATE TABLE `cloudflare_connection_zones` (
 	`zone_id` text NOT NULL,
 	`zone_name` text NOT NULL,
 	`cf_account_id` text,
+	`cf_account_name` text,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	PRIMARY KEY(`connection_id`, `zone_id`),
 	FOREIGN KEY (`connection_id`) REFERENCES `cloudflare_connections`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -250,6 +251,16 @@ CREATE TABLE `domains` (
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
 	`cf_connection_id` text,
 	`verified_via` text DEFAULT 'legacy' NOT NULL,
+	`cf_account_id` text,
+	`cf_zone_id` text,
+	`verified_at` integer,
+	`cf_zone_name` text,
+	`cf_name_servers` text,
+	`proof_checked_at` integer,
+	`proof_lost_at` integer,
+	`proof_attempted_at` integer,
+	`proof_suspected_at` integer,
+	`proof_answered_at` integer,
 	`evicted_at` integer,
 	`evicted_name` text,
 	`dns_checked_at` integer,
@@ -540,6 +551,14 @@ CREATE TABLE `public_reports` (
 --> statement-breakpoint
 CREATE INDEX `idx_public_reports_created` ON `public_reports` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_public_reports_dedupe` ON `public_reports` (`dedupe_key`);--> statement-breakpoint
+CREATE TABLE `removed_domains` (
+	`workspace_id` text NOT NULL,
+	`domain` text NOT NULL,
+	`removed_at` integer DEFAULT (unixepoch()) NOT NULL,
+	PRIMARY KEY(`workspace_id`, `domain`),
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
 CREATE TABLE `report_records` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`report_id` integer NOT NULL,

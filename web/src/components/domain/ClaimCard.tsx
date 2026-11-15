@@ -6,7 +6,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import type { Domain, DomainClaim } from '../../lib/types';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { PlanLimitNotice, planLimitOf, type PlanLimit } from '../PlanLimitNotice';
-import { useCfConnections } from '../../lib/cloudflare';
+import { clearProgress, connectCloudflarePath, useCfConnections } from '../../lib/cloudflare';
 import { hostOf, isCloudflareHost, safeHelpUrl, useDnsHost, type DnsHostProvider } from '../../lib/dns-host';
 import { useSession } from '../../lib/session';
 import { ClaimPreview } from './ClaimPreview';
@@ -100,7 +100,12 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const connectPrimary = cloudflareFirst && !covering && !manual;
 	const helpUrl = onCloudflare ? null : safeHelpUrl(provider);
 	const unknownHost = !dnsHost.isPending && !provider;
-	const connect = () => navigate(`/cloudflare/connect?back=${encodeURIComponent(pathname + search)}`);
+	const connect = () => {
+		const to = connectCloudflarePath(pathname, search);
+		// The first-run wizard starts at its first step, not where a person once left it.
+		if (to === '/setup/cloudflare') clearProgress(session.me?.workspace_id ?? null);
+		navigate(to);
+	};
 
 	return (
 		<div className="space-y-4 rounded-lg border border-line p-4 max-sm:space-y-2 max-sm:border-0 max-sm:p-0" data-testid={`claim-${claim.id}`}>

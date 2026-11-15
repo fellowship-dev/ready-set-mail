@@ -85,7 +85,7 @@ import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
-import { reportConnectFor, reportConnectForPage } from '../hosted/report-address';
+import { ReportAddressError, connectReports, mergeReportAddress, reportAddressForWrite, reportConnectFor, reportConnectForPage, type ReportMerge } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
@@ -113,10 +113,10 @@ import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
-import { admitDomain, claimView, demoteOrphanedSubdomains, listClaims, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
-import { DomainServiceError, assertDomainRoom, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
-import { PlanLimitError } from '@ready-set-mail/db';
+import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
+import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
 import { planLimitResponse } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
@@ -297,6 +297,8 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   }
 
   await tenant.scope.domains.delete(id);
+  // Cloudflare auto-import does not add a removed name back; it is offered as a suggestion instead (src/connections/import.ts).
+  await tenant.scope.removals.remember(domain.domain);
   // Subdomains admitted only through this domain are no longer proven by anything (src/domains/ownership.ts).
   const orphaned = await demoteOrphanedSubdomains(tenant);
   if (orphaned.length) console.warn(`[domains] ${orphaned.length} subdomain(s) of ${domain.domain} lost their proof and are now unproven`);
@@ -757,10 +759,14 @@ async function _handleApi(
       try {
         const settings: Record<string, string> = rd && fe ? { base_domain: domain, reports_domain: rd, from_email: fe, ...forgetZone } : {};
         // Hosted with the domain already in the workspace: there is nothing to write (no settings, no row).
-        created = hostedMode && (await tenant.scope.domains.getByName(domain))
+        const own = hostedMode ? await tenant.scope.domains.getByName(domain) : null;
+        // Hosted, the domain is ours but unproven and was just proven again: restored in place, its history intact.
+        if (own?.verified_via === 'legacy' && admission.via !== 'existing') await restoreInPlace(tenant, own, admission.via, { id: userBySession?.id, email: userBySession?.email });
+        created = own
           ? null
-          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, settings }, { maxDomains: domainCap(tenant) });
+          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
       } catch (e: any) {
+        if (e instanceof ProofIncompleteError) return json(proofIncomplete(domain).body, 409);
         if (e instanceof PlanLimitError) return planLimitResponse(env, 'domains_per_workspace', e.max);
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
@@ -840,12 +846,27 @@ async function _handleApi(
         return json(added, 200);
       }
       if (claim.settled_at !== null) return err('claim not found', 404); // it became a domain that has since been removed
-      await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending
+      if (!(await tenant.scope.domains.getByName(claim.domain))) await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A row the workspace has (unproven) takes no new place.
       const outcome = await verifyClaim(tenant, claim);
       if (outcome.kind === 'taken') return json({ error: 'another workspace has already verified this domain', code: 'domain_taken', claim: claimView({ ...claim, status: 'lost' }) }, 409);
       if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, ...(outcome.code ? { code: outcome.code } : {}), claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);
       const result = await commitVerifiedDomain(tenant, claim.domain, outcome.via, userBySession?.email, ctx, userBySession?.id);
       return json(result, result.resumed ? 200 : 201);
+    }
+    // POST /api/domains/:id/prove — "prove again": the proof of an existing, unproven domain re-run on the SAME row (zone through any current connection of
+    // the workspace, or the TXT record). When it holds the row is restored in place, report history intact. Otherwise a claim shows the TXT record.
+    const proveMatch = path.match(/^\/api\/domains\/(\d+)\/prove$/);
+    if (proveMatch && method === 'POST') {
+      const id = parseInt(proveMatch[1], 10);
+      const row = await tenant.scope.domains.getById(id);
+      if (!row) {
+        const gone = await tenant.scope.domains.getEvictedById(id);
+        if (gone) return json({ error: EVICTED_NOTICE(gone.evicted_name ?? gone.domain, gone.evicted_at ?? 0), code: 'domain_taken' }, 409);
+        return err('domain not found', 404);
+      }
+      if (row.verified_via !== 'legacy') return json({ ...(await resumeExistingDomain(tenant, row.domain)), restored: false });
+      const result = await enrollDomain(tenant, row.domain, userBySession?.email, ctx, userBySession?.id);
+      return json(result, 'pending' in result ? 202 : 200);
     }
     // GET /api/domains/summaries — check-summary for every domain of the workspace in one request (?after=<id>&limit=<n>, by id)
     if (path === '/api/domains/summaries' && method === 'GET') {
@@ -1170,10 +1191,18 @@ async function _handleApi(
       }
 
       const spfFlatConfig = await tenant.scope.spf.get(domain.id);
+      // Hosted, reports not connected yet but connectable, and Apply via Cloudflare is there: the address that write would carry, so the record shown is
+      // the record written. It is NOT the domain's report address: `rua_address` stays what is stored (empty until the reports are connected), because
+      // a record pasted by hand with that address would be refused at intake, the domain never having been connected. Only the apply connects it.
+      // Only when that Apply can actually run for THIS domain: a connection exists AND it manages the domain's zone (the domain is linked to it). With Cloudflare
+      // connected for other zones only, Apply cannot write the record or connect the reports, so no report address is named anywhere.
+      const applyReaches = tenant.hasCloudflare() && await tenant.cfFor(domain.domain).then(() => true, () => false);
+      const reportWrite = domain.rua_address?.trim() || !applyReaches ? null : await reportAddressForWrite(tenant, domain);
       return json({
         domain_id: domain.id,
         domain: domain.domain,
         rua_address: domain.rua_address,
+        offered_rua_address: reportWrite?.kind === 'ready' ? reportWrite.address : null,
         cf_available: tenant.hasCloudflare(),
         // `effective`: the policy that applies (RFC 7489), own or inherited from the organizational domain; null when DNS
         // could not say. The dashboard never offers a record weaker than this.
@@ -1233,7 +1262,7 @@ async function _handleApi(
       const body = await parseBody<{ record?: unknown }>(request);
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
-      const record = body.record.trim();
+      let record = body.record.trim();
       const problem = dmarcRecordProblem(record);
       if (problem) return err(`Not a valid DMARC record: ${problem}`, 400);
       // A later policy change (PATCH) rewrites p= and adds our rua= when missing: what that can grow to must fit the cap too, so a
@@ -1243,6 +1272,10 @@ async function _handleApi(
       }
 
       const recordName = `_dmarc.${domain.domain}`;
+
+      // Hosted: whether reports can be connected for this domain decides whether our address is written (src/hosted/report-address.ts).
+      let reportPlan = await reportAddressForWrite(tenant, domain);
+      let reportMerge: ReportMerge | null = null;
 
       // The write goes to the zone this domain lives in, through the connection it is linked to.
       let written;
@@ -1255,6 +1288,20 @@ async function _handleApi(
           return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
         }
         existing = live.kind === 'one' ? live : null;
+        // Hosted: the report address goes into the record being written, by the existing report-address rules.
+        if (reportPlan.kind === 'ready') {
+          const merged = mergeReportAddress(domain.domain, record, reportPlan.address, existing?.content ?? null);
+          // The domain is connected BEFORE the record that carries our address is written: that address never reaches DNS for a domain whose reports
+          // intake would refuse. (Two foreign addresses already there: ours is not added, so there is nothing to connect.) A refusal now, between the
+          // plan and the connect, is the plan's refusal: the record goes out without our address.
+          let connectRefused: string | null = null;
+          if (merged.outcome !== 'limit') {
+            try { await connectReports(tenant, domain, {}, { id: userBySession?.id, email: userBySession?.email }, ctx); } catch (e) { if (!(e instanceof ReportAddressError)) throw e; connectRefused = e.message; }
+          }
+          if (connectRefused !== null) reportPlan = { kind: 'refused', reason: connectRefused };
+          else { record = merged.record; reportMerge = merged.outcome; }
+        }
+        if (dmarcRecordProblem(record) || withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) return err(`Not a valid DMARC record: with the report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
         written = await writeDmarcRecord(cf, zoneId, domain.domain, existing?.record ?? null, record);
       } catch (e) {
         return cfFailure(e);
@@ -1288,7 +1335,15 @@ async function _handleApi(
         }
       }
 
-      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id });
+      // What the write did about reports: the domain was connected before the write, so a record carrying our address is already accepted at intake.
+      type ReportsOutcome = { state: 'connected' | 'limit' | 'refused' | 'unavailable'; address?: string; reason?: string };
+      let reports: ReportsOutcome = reportPlan.kind === 'refused' ? { state: 'refused', reason: reportPlan.reason } : { state: 'unavailable' };
+      if (reportPlan.kind === 'ready') {
+        reports = reportMerge === 'limit'
+          ? { state: 'limit', address: reportPlan.address, reason: 'The record already lists two report addresses, so ours was not added. Choose which to replace under DMARC reports on the domain page.' }
+          : { state: 'connected', address: reportPlan.address };
+      }
+      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id, reports });
     }
 
     // POST /api/spf-lookup-count — count real DNS lookups for an arbitrary SPF record

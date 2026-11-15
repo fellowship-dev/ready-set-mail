@@ -10,6 +10,8 @@ import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError, rulesReadFailure } from './errors';
 import { writableDomains } from './domains';
 import { listEmailRules, type EmailRule } from './rules';
+import { reportAddressForWrite, workspaceMayConnect } from '../hosted/report-address';
+import { hostedEnabled } from '../hosted/config';
 
 export interface PlanWrite {
   id: string;
@@ -28,7 +30,7 @@ export interface NotWritten { domain?: string; what: string; reason: string; lin
 export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotWritten[] }
 
 /** What apply needs beyond the public write: the zone and record to touch. */
-export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string }
+export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string; /** dmarc, hosted: the report address the record carries; applying connects the domain's reports. */ reportAddress?: string }
 
 export type { EmailRule };
 
@@ -82,6 +84,9 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
   // Nothing verified in this workspace to act on (pending claims, other workspaces' ids, unknown ids): no writes of any kind.
   if (rows.length === 0) return { plan: { plan_id: await sha256Hex('[]'), steps: [{ key: 'dmarc', writes: [], satisfied: true }], not_written: [] }, exec };
   let selectedBase = false;
+  // Hosted: the report address a domain's record carries comes from the existing connect rules; one asked-once sentence when they refuse.
+  const mayConnect = hostedEnabled(tenant.env) ? await workspaceMayConnect(tenant).catch(() => false) : false;
+  let reportsRefused = false;
 
   let reportsCf: { cf: CfClient; zoneId: string; zoneName: string } | null = null;
   let reportsError: string | null = null;
@@ -113,7 +118,13 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     }
     const hasOwn = own.some(c => /^\s*v\s*=\s*DMARC1/i.test(unquote(c)));
     const inherited: InheritedRead = hasOwn ? { kind: 'none' } : await inheritedFor(resolver, d.domain);
-    const decision = planDmarc({ ownRecords: own, inherited, rua });
+    const hostedReports = await reportAddressForWrite(tenant, d, mayConnect);
+    if (hostedReports.kind === 'refused' && !reportsRefused) {
+      reportsRefused = true;
+      notWritten.push({ what: 'Report address', step: 'dmarc', reason: `Reports are not connected for this workspace. ${hostedReports.reason} The records below are written without a report address.` });
+    }
+    const hostedAddress = hostedReports.kind === 'ready' ? hostedReports.address : null;
+    const decision = planDmarc({ ownRecords: own, inherited, rua: hostedAddress ?? rua, ruaLimit: hostedAddress !== null });
     if (decision.action === 'skip') {
       notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: decision.reason, link: setupLink(d.id) });
     } else {
@@ -125,7 +136,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         id, domain: d.domain, zone: zone.name, type: 'TXT', name: dmarcName, content: decision.record, action: decision.action,
         before: decision.action === 'update' ? decision.before : null, reason: decision.reason,
       });
-      exec.set(id, { cf, zoneId: zone.id, recordId: existing?.id, domainId: d.id, kind: 'dmarc' });
+      exec.set(id, { cf, zoneId: zone.id, recordId: existing?.id, domainId: d.id, kind: 'dmarc', ...(hostedAddress && decision.record.toLowerCase().includes(hostedAddress.toLowerCase()) ? { reportAddress: hostedAddress } : {}) });
     }
 
     // Report authorisation: <d>._report._dmarc.<reports domain> (self-host). Not needed when both names share an organisational

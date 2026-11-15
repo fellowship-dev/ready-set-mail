@@ -7,7 +7,7 @@
 //    domain, pct and alignment included; p=none when nothing applies): never weaker, never stricter;
 //  - several records, an invalid p= or a failed lookup mean no write at all.
 
-import { isDmarcRecord, parseDmarcRecord, parseDmarcTags, recordHasAddress, withReportAddress } from '@ready-set-mail/dns-checks';
+import { isDmarcRecord, parseDmarcRecord, parseDmarcTags, recordHasAddress, ruaEntries, withReportAddress } from '@ready-set-mail/dns-checks';
 
 /** What the public DNS says applies to a name that has no DMARC record of its own. */
 export type InheritedRead =
@@ -22,6 +22,8 @@ export interface DmarcPlanInput {
   inherited: InheritedRead;
   /** Our report address (`rua@<reports domain>`); null when the instance has none (hosted). */
   rua: string | null;
+  /** Hosted: a record that already lists two addresses never gets a third (the two receivers must honour); the person chooses what to replace. */
+  ruaLimit?: boolean;
 }
 
 export type DmarcDecision =
@@ -72,6 +74,7 @@ export function planDmarc(input: DmarcPlanInput): DmarcDecision {
     const record = own[0].trim();
     if (!parseDmarcRecord(record).valid) return { action: 'skip', reason: 'The DMARC record has no valid p= policy. Fix it first.' };
     if (!rua || recordHasAddress(record, rua)) return { action: 'none', record, reason: rua ? 'Already sends reports to Ready Set Mail.' : 'Already has a DMARC record.' };
+    if (input.ruaLimit && ruaEntries(record).length >= 2) return { action: 'none', record, reason: 'Already lists two report addresses, so ours is not added. Choose which one to replace under DMARC reports on the domain page.' };
     return { action: 'update', before: record, record: withReportAddress(record, rua), reason: 'Adds the Ready Set Mail report address. Every other tag stays as it is.' };
   }
   if (input.inherited.kind === 'unknown') return { action: 'skip', reason: `Couldn't read the DMARC policy that applies (${input.inherited.reason}). Nothing is written until it can be read.` };

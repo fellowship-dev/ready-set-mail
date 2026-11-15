@@ -39,6 +39,8 @@ export interface ApplyWriteResult {
 	ok: boolean;
 	/** Read back from Cloudflare after the write and found as written. */
 	verified?: boolean;
+	/** Hosted: the record carries our report address and the domain's reports are now connected (or could not be). */
+	reports?: 'connected' | 'refused';
 	/** Why a write that succeeded could not be checked (set whenever `verified` is not true). */
 	verify_note?: string;
 	error?: string;

@@ -36,7 +36,7 @@ export type CfConnectionInfo = {
 	last_used_at: number | null;
 };
 
-export interface CfConnectionZone { zone_id: string; zone_name: string; cf_account_id?: string | null }
+export interface CfConnectionZone { zone_id: string; zone_name: string; cf_account_id?: string | null; cf_account_name?: string | null }
 
 export function connectionQueries(db: Db, workspaceId: string) {
 	const mine = eq(cloudflareConnections.workspace_id, workspaceId);
@@ -139,7 +139,7 @@ export function connectionQueries(db: Db, workspaceId: string) {
 
 		zones(connectionId: string): Promise<CfConnectionZone[]> {
 			return db
-				.select({ zone_id: cloudflareConnectionZones.zone_id, zone_name: cloudflareConnectionZones.zone_name, cf_account_id: cloudflareConnectionZones.cf_account_id })
+				.select({ zone_id: cloudflareConnectionZones.zone_id, zone_name: cloudflareConnectionZones.zone_name, cf_account_id: cloudflareConnectionZones.cf_account_id, cf_account_name: cloudflareConnectionZones.cf_account_name })
 				.from(cloudflareConnectionZones)
 				.where(and(myZones, eq(cloudflareConnectionZones.connection_id, connectionId)))
 				.orderBy(asc(cloudflareConnectionZones.zone_name))
@@ -163,7 +163,7 @@ export function connectionQueries(db: Db, workspaceId: string) {
 				db.delete(cloudflareConnectionZones).where(and(myZones, eq(cloudflareConnectionZones.connection_id, connectionId))),
 				db.delete(cloudflareConnectionBlockedZones).where(and(eq(cloudflareConnectionBlockedZones.workspace_id, workspaceId), eq(cloudflareConnectionBlockedZones.connection_id, connectionId))),
 				...(zones.length
-					? [db.insert(cloudflareConnectionZones).values(zones.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase(), cf_account_id: z.cf_account_id ?? null })))]
+					? [db.insert(cloudflareConnectionZones).values(zones.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase(), cf_account_id: z.cf_account_id ?? null, cf_account_name: z.cf_account_name ?? null })))]
 					: []),
 				...(blocked.length
 					? [db.insert(cloudflareConnectionBlockedZones).values(blocked.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase() })))]

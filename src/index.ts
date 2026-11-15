@@ -66,6 +66,7 @@ export interface Env {
   UPDATE_CHECK?: string;         // "off" (or 0/false/no): no GitHub release check for GET /api/version and the digest (src/update-check.ts)
   // Hosted service (MODE=saas + SAAS_ENABLED=1), see docs/hosted.md
   INTAKE_DOMAIN?: string;        // central report address domain, e.g. rua.readysetmail.com
+  PROOF_CONFIRM_DELAY_MS?: string; // wait between the two reads that confirm a lapsed zone proof for a rival claim (default 2000; tests set 0)
   HOSTED_CONNECT_REPORTS?: string; // who may connect reports to the fixed address: owner (default: OWNER_EMAIL's workspaces) | all
   CANARY_DOMAIN?: string;        // anonymous free-check address domain, e.g. canary.readysetmail.com
   HOSTED_RECORDS_ZONE?: string;  // zone holding the hosted records, e.g. readysetmail.com

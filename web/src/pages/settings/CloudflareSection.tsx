@@ -15,6 +15,7 @@ import {
 	useCfZones,
 	useSetZones,
 	useStartOAuth,
+	type CfAccount,
 	type CfConnection,
 } from '../../lib/cloudflare';
 import { useSession } from '../../lib/session';
@@ -61,6 +62,8 @@ export function CloudflareSection() {
 			) : (
 				<>
 					{list.length === 0 ? <p className="text-sm text-ink-2">No Cloudflare connection yet. Without one you copy each DNS record to your DNS provider yourself.</p> : null}
+					{(conns.data.accounts ?? []).length > 0 ? <AccountList accounts={conns.data.accounts!} /> : null}
+					{list.length > 0 ? <h3 className="text-sm font-semibold text-ink-1">Connections</h3> : null}
 					<ul className="space-y-3">
 						{list.map((c) => (
 							<li key={c.id}>
@@ -83,6 +86,41 @@ export function CloudflareSection() {
 			)}
 			{removing ? <DisconnectDialog c={removing} onClose={() => setRemoving(null)} /> : null}
 		</Section>
+	);
+}
+
+const when = (t: number | null) => (t ? new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null);
+
+/** Each Cloudflare account once, however many connections reach it: its name as Cloudflare gave it, its domains and whether it works. */
+function AccountList({ accounts }: { accounts: CfAccount[] }) {
+	return (
+		<ul className="space-y-3" aria-label="Cloudflare accounts">
+			{accounts.map((a) => {
+				const date = when(a.connected_at);
+				return (
+					<li key={a.id}>
+						<Card>
+							<CardContent className="space-y-1 p-4">
+								<p className="flex flex-wrap items-center gap-2 font-medium">
+									<span className="[overflow-wrap:anywhere]">{a.name ?? 'Cloudflare account'}</span>
+									<Badge variant={a.state === 'working' ? 'success' : 'warning'}>{a.state === 'working' ? 'Working' : 'Needs reconnecting'}</Badge>
+								</p>
+								<p className="text-sm text-ink-2">
+									{a.domains} {a.domains === 1 ? 'domain' : 'domains'}
+									{a.connections.length > 1 ? ` · ${a.connections.length} connections` : ''}
+								</p>
+								{a.connected_by || date ? (
+									<p className="text-sm text-ink-2 [overflow-wrap:anywhere]">
+										Connected{a.connected_by ? ` by ${a.connected_by}` : ''}
+										{date ? ` on ${date}` : ''}
+									</p>
+								) : null}
+							</CardContent>
+						</Card>
+					</li>
+				);
+			})}
+		</ul>
 	);
 }
 
@@ -217,6 +255,10 @@ function TokenForm({ c, onDone }: { c: CfConnection; onDone: () => void }) {
 }
 
 function DisconnectDialog({ c, onClose }: { c: CfConnection; onClose: () => void }) {
+	// The account this connection is named for; any others came with the same sign-in.
+	const all = c.accounts ?? [];
+	const first = all.find((a) => a.id === c.cf_account_id || a.name === c.label) ?? all[0];
+	const reached = all.length > 1 ? all.filter((a) => a !== first) : [];
 	const qc = useQueryClient();
 	const remove = useMutation({
 		mutationFn: () => api(`/api/cloudflare/connections/${encodeURIComponent(c.id)}`, { method: 'DELETE' }),
@@ -241,6 +283,16 @@ function DisconnectDialog({ c, onClose }: { c: CfConnection; onClose: () => void
 			error={remove.isError ? errorMessage(remove.error) : null}
 			onConfirm={() => remove.mutate()}
 		>
+			{reached.length > 0 ? (
+				<ul className="mb-3 list-disc space-y-1 pl-5 text-sm text-ink-1">
+					{reached.map((a) => (
+						<li key={a.id}>
+							This also disconnects {a.name ?? 'another Cloudflare account'}, which was connected in the same sign-in.
+						</li>
+					))}
+				</ul>
+			) : null}
+			<p className="mb-3 text-sm text-ink-2">Your domains stay in Ready Set Mail, verified and watched. Changing their DNS needs a reconnect.</p>
 			<p className="text-sm text-ink-2">
 				{c.auth_type === 'token'
 					? 'You pasted this token, so removing it here does not cancel it at Cloudflare. Revoke the token in your Cloudflare profile too.'
