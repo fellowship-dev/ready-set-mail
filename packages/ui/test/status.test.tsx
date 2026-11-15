@@ -23,7 +23,8 @@ describe("shared status vocabulary", () => {
 	it("a whole result takes its most urgent state; notes alone read as verified", () => {
 		expect(worstStatus(["verified", "improve", "unknown"])).toBe("improve");
 		expect(worstStatus(["note"])).toBe("verified");
-		expect(worstStatus([])).toBe("verified");
+		// Nothing checked is not verified.
+		expect(worstStatus([])).toBe("unknown");
 	});
 
 	it("maps the existing per-check states without folding unknown into missing", () => {

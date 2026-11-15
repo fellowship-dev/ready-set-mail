@@ -492,6 +492,18 @@ describe('review blockers (fixed address)', () => {
     expect(await w.status(1)).toMatchObject({ state: 'receiving', reports_since_connect: 2, counted_since_connect: 1, reports_before_connect: 1 });
   });
 
+  it('the overview batch carries the same per-domain answer, with the refusal and its kind', async () => {
+    const w = await world({ HOSTED_CONNECT_REPORTS: '' });
+    const batch = async (key: string) => ((await (await call(w.env, 'GET', '/api/domains/summaries', { key })).json()) as any).summaries as any[];
+    const a = await batch(w.A.token);
+    expect(a.find((s) => s.domain === 'a-corp.com').report_connect).toEqual({ can_connect: true, refusal: null, refusal_kind: null });
+    expect(a.find((s) => s.domain === 'legacy-a.com').report_connect).toMatchObject({ can_connect: false, refusal_kind: 'ownership', refusal: expect.stringMatching(/^Ownership of legacy-a.com is not proven/) });
+    const b = await batch(w.B.token);
+    expect(b.find((s) => s.domain === 'b-corp.org').report_connect).toEqual({ can_connect: false, refusal: "On this server, only the operator's workspaces can connect reports.", refusal_kind: 'operator_only' });
+    // The same words as the connect panel.
+    expect((await w.status(2, w.B.token)).refusal).toBe(b.find((s) => s.domain === 'b-corp.org').report_connect.refusal);
+  });
+
   it('6. HOSTED_CONNECT_REPORTS=owner (the default): only the instance owner’s workspaces connect or receive', async () => {
     const w = await world({ HOSTED_CONNECT_REPORTS: '' });
     expect((await w.connect(1)).res.status).toBe(201); // A is OWNER_EMAIL's workspace

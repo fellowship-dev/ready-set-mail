@@ -1,6 +1,7 @@
 import type { Step } from '../components/GetStarted';
 import { hasReportAddress } from './dmarc-record';
 import { timeAgo } from './format';
+import { emptyReportsMessage, emptyReportsState } from './uncounted';
 import type { Domain, DomainCheckSummary } from './types';
 import type { DomainVerdict, ReportTotals } from './verdict';
 
@@ -71,12 +72,16 @@ export function getStartedSteps(i: GetStartedInput): Step[] {
 	if (i.domains.some((d) => hasReportAddress(d.rua_address))) {
 		const any = i.reports.some((r) => r && r.total > 0);
 		const reportsLoading = i.reports.some((r) => r === undefined);
+		// Nothing counted is not "none yet" when reports reached the address but were left out, limited or dropped.
+		const notCounted = any ? null : (i.summaries.map((s) => (s && emptyReportsState(0, s) !== 'none' ? emptyReportsMessage(0, s) : null)).find(Boolean) ?? null);
 		steps.push(
 			any
 				? { key: 'reports', title: 'Receive DMARC reports', state: 'done', detail: 'Reports are arriving, so pass rates are measured, not assumed.' }
 				: reportsLoading
 					? { key: 'reports', title: 'Receive DMARC reports', state: 'unknown', detail: 'Loading report totals.' }
-					: { key: 'reports', title: 'Receive DMARC reports', state: 'waiting', detail: 'None yet. Receivers send them about once a day after a DMARC record names the reports address.' },
+					: notCounted
+						? { key: 'reports', title: 'Receive DMARC reports', state: 'waiting', detail: notCounted }
+						: { key: 'reports', title: 'Receive DMARC reports', state: 'waiting', detail: 'None yet. Receivers send them about once a day after a DMARC record names the reports address.' },
 		);
 	}
 	return steps;

@@ -1,7 +1,7 @@
 // checkDomain(): run every check and grade the result on Levels 0–3.
 
 import { createResolver, type Resolver, type ResolverOptions } from './doh';
-import { analyzeSpf, type SpfAnalysis } from './spf';
+import { analyzeSpf, SPF_LOOKUP_LIMIT, type SpfAnalysis } from './spf';
 import { lookupDmarc, gradeDmarcPolicy, type DmarcLookup } from './dmarc';
 import { scanDkimSelectors, COMMON_DKIM_SELECTORS, type DkimScan } from './dkim';
 import { lookupMx, type MxLookup } from './mx';
@@ -82,7 +82,7 @@ export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'provider
   else if (r.spf.status === 'temperror') { /* handled above */ }
   else if (r.spf.record?.verdict === 'open') { reasons.push('SPF allows any sender (+all / ?all)'); nextSteps.push('End SPF with -all or ~all.'); }
   else if (r.spf.record?.verdict === 'missing') { reasons.push('SPF has no terminating "all" mechanism'); nextSteps.push('End SPF with -all or ~all.'); }
-  else reasons.push(`SPF valid (${r.spf.lookupCount}/10 lookups)`);
+  else reasons.push(`SPF valid (${r.spf.lookupCount}/${SPF_LOOKUP_LIMIT} lookups)`);
 
   // DMARC reasoning
   if (r.dmarc.status === 'none') { reasons.push('No DMARC record'); nextSteps.push('Publish _dmarc TXT "v=DMARC1; p=none; rua=mailto:…" to start monitoring.'); }

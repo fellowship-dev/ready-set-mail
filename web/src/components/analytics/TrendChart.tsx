@@ -4,6 +4,7 @@ import { bucketTrend, fmtPct, type TrendDay } from '../../lib/analytics';
 import { formatNumber } from '../../lib/format';
 import { useElementWidth } from '../../lib/layout';
 import { Segmented } from '../reports';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
 
 /** Fallback width before the chart is measured; afterwards the SVG is drawn at its rendered width, 1 unit = 1 CSS px. */
 const W_FALLBACK = 720;
@@ -24,7 +25,7 @@ const niceMax = (n: number): number => {
  * Stacked daily columns: passed (solid) under failed (hatched), so the split reads without colour.
  * "View as table" swaps in the same numbers as a table. Weekly buckets past 30 days keep 90 days legible.
  */
-export function TrendChart({ trend, days }: { trend: TrendDay[]; days: number }) {
+export function TrendChart({ trend, days, visibility }: { trend: TrendDay[]; days: number; /** The window's report visibility (emptyReportsState): an empty trend may still have had reports. */ visibility?: ReportVisibilityFields | null }) {
 	const [view, setView] = useState<'chart' | 'table'>('chart');
 	const hatch = useId();
 	const [frameRef, measured] = useElementWidth<HTMLElement>();
@@ -34,6 +35,8 @@ export function TrendChart({ trend, days }: { trend: TrendDay[]; days: number })
 	const unit = days > 30 ? 'week' : 'day';
 
 	if (!has) {
+		const notCounted = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
+		if (notCounted) return <EmptyState title="No counted reports in this window" description={notCounted} />;
 		return <EmptyState title="No reports in this window" description="The trend appears once receivers send aggregate reports, usually within a day of publishing your DMARC record." />;
 	}
 
@@ -115,7 +118,7 @@ export function TrendChart({ trend, days }: { trend: TrendDay[]; days: number })
 									<TableCell className="text-right tabular-nums">{formatNumber(p.total)}</TableCell>
 									<TableCell className="text-right tabular-nums">{formatNumber(p.passed)}</TableCell>
 									<TableCell className="text-right tabular-nums">{formatNumber(p.failed)}</TableCell>
-									<TableCell className="text-right tabular-nums">{p.total > 0 ? fmtPct(Math.round((p.passed / p.total) * 1000) / 10) : 'no reports'}</TableCell>
+									<TableCell className="text-right tabular-nums">{p.total > 0 ? fmtPct(Math.round((p.passed / p.total) * 1000) / 10) : 'none counted'}</TableCell>
 								</TableRow>
 							))}
 						</TableBody>

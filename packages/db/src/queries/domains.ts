@@ -8,7 +8,8 @@ export type DomainRow = typeof domains.$inferSelect;
 /** What DMARC says for one domain, as stored: the effective policy, why there is none, and where it was inherited from. */
 export interface DmarcFacts {
 	policy: string | null;
-	issue: 'multiple' | 'invalid' | null;
+	/** 'multiple': several records; 'invalid': no valid p=; 'invalid_sp': an invalid sp= (then `p` is what receivers apply instead and `sp` the value as written). */
+	issue: 'multiple' | 'invalid' | 'invalid_sp' | null;
 	inherited_from: string | null;
 	/** pct= of the record that applies (100 when absent); null when there is no usable record. Optional for older callers. */
 	pct?: number | null;

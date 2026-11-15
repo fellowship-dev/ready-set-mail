@@ -85,8 +85,9 @@ import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
+import { reportConnectFor, reportConnectForPage } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
-import { reportVisibility, reporterMix } from '../reports/visibility';
+import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
 import { handleConnectionRoutes } from '../connections/routes';
 import { handleOnboardingRoutes } from '../onboarding/routes';
@@ -129,6 +130,7 @@ import { logAudit } from '../audit/log';
 import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/spf-flattener';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -143,7 +145,6 @@ import {
   buildPolicyFile,
 } from '../email/mta-sts';
 import { MAX_DMARC_RECORD_LENGTH, dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
-import { spfApplyProblem } from '../dns/spf-apply-check';
 
 /** Free-check sessions one IP may create per window. */
 export const CHECK_SESSIONS_PER_IP = 10;
@@ -402,13 +403,14 @@ async function getDomainCheckSummary(tenant: TenantContext, domainId: string, ct
   if (!domain) return err('domain not found', 404);
 
   const since = Math.floor(Date.now() / 1000) - 30 * 86400;
-  const [summary, visibility] = await Promise.all([tenant.scope.reports.checkSummary(id, since), reportVisibility(tenant, id, since)]);
+  // Per domain, as the connect panel decides it (the batch below gives each row the same answer): single-domain screens read it here.
+  const [summary, visibility, report_connect] = await Promise.all([tenant.scope.reports.checkSummary(id, since), reportVisibility(tenant, id, since), reportConnectFor(tenant, domain)]);
   if (!summary) return err('check summary not found', 404);
   // Stored before pct= was recorded: the level stands (marked not re-checked); this view starts the refresh that records it.
   // Several views at once: the first to reserve it runs the one refresh.
   if (ctx && needsPctRecheck(summary) && (await reservePctRecheck(tenant, id))) ctx.waitUntil(recheckStoredDns(tenant, id, domain.domain));
 
-  return json({ ...summary, ...visibility });
+  return json({ ...summary, ...visibility, report_connect });
 }
 
 /** Page size for /api/domains/summaries: the overview asks for all of a workspace's domains, a page at a time. */
@@ -425,7 +427,21 @@ async function getDomainCheckSummaries(tenant: TenantContext, url: URL): Promise
   // One row more than asked tells whether another page exists.
   const rows = await tenant.scope.reports.checkSummaries(since, { afterId, limit: limit + 1 });
   const page = rows.slice(0, limit);
-  return json({ summaries: page, next_after: rows.length > limit ? page[page.length - 1]!.domain_id : null, window_days: 30 });
+  // A constant number of queries for the page, whatever its size (D1 caps queries per request): the connect decision's facts are read
+  // once for the workspace, and the visibility of the page's id range is read grouped by domain.
+  const empty = page.filter((s) => s.total_messages === 0);
+  const [connectFor, visibilityOf] = await Promise.all([
+    reportConnectForPage(tenant),
+    empty.length ? reportVisibilityMany(tenant, { fromId: empty[0]!.domain_id, toId: empty[empty.length - 1]!.domain_id }, since) : null,
+  ]);
+  const summaries = page.map((s) => ({
+    ...s,
+    // Where nothing was counted, what the overview must say instead of "no reports" (dropped, limited, not counted).
+    ...(s.total_messages === 0 && visibilityOf ? visibilityOf(s.domain_id) : {}),
+    // Per domain, as the connect panel decides it: whether reports can be connected, and why not.
+    report_connect: connectFor(s.domain_id),
+  }));
+  return json({ summaries, next_after: rows.length > limit ? page[page.length - 1]!.domain_id : null, window_days: 30 });
 }
 
 async function getDomainReportByDate(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {
@@ -664,6 +680,8 @@ async function _handleApi(
 
   // GET /api/me — who the caller is in this workspace (the dashboard gates controls on `role`)
   const instanceOwner = isInstanceOwner(env, { kind: (workspace as AuthedWorkspace).kind, email: userBySession?.email, role: workspace.role, workspaceId: workspace.workspaceId });
+  // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
+  tenant.operatorView = instanceOwner;
   if (path === '/api/me' && method === 'GET') {
     return json({
       instance_owner: instanceOwner,
@@ -1298,8 +1316,17 @@ async function _handleApi(
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
       const record = body.record.trim(); // published exactly as validated: a leading space makes receivers discard the record
-      const spfProblem = spfApplyProblem(record);
+      // The one SPF record rule the setup wizard asks before it offers Apply (packages/dns-checks/src/spf-record.ts).
+      const spfProblem = validateSpfRecord(record);
       if (spfProblem) return err(spfProblem, 400);
+      // And the one lookup judgement: past SPF_LOOKUP_LIMIT receivers treat SPF as a permanent error.
+      let spfLookups: number;
+      try {
+        spfLookups = await countSpfLookupsFromRecord(record);
+      } catch (e) {
+        return err(`Could not count the DNS lookups this SPF record needs, so it was not applied: ${e instanceof Error ? e.message : 'DNS lookup failed'}. Try again.`, 502);
+      }
+      if (spfLookupJudgement(spfLookups).level === 'over') return err(`SPF record needs ${spfLookups} DNS lookups. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it was not applied. Remove includes you no longer use, or flatten the record.`, 400);
 
       const recordName = domain.domain;
 

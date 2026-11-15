@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildRecommendedRecord, enforcementLevel, invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp, weakerSubdomainPolicy } from '../src/lib/dmarc-record';
-import { getGuidance } from '../src/lib/dmarc';
+
 import { explain, failingMailFate } from '../src/lib/reports';
 import { AddDomainPage } from '../src/pages/domains/AddDomainPage';
 import { DomainDetailPage } from '../src/pages/domains/DomainDetailPage';
@@ -78,28 +78,7 @@ describe('review item 7: an sp= that is not a policy is absent, and said to be i
 	});
 });
 
-describe('review item 4: domain-page guidance agrees with the wizard (pct and sp)', () => {
-	const d = { dmarc_policy: 'reject' as const, domain: 'gov.uk', rua_address: 'r@x.test' };
-	it('p=reject, all mail, no sp: still "Fully protected"', () => {
-		expect(getGuidance(d, 99, true, 'v=DMARC1; p=reject').title).toBe('Fully protected');
-		expect(getGuidance(d, 99, true).title).toBe('Fully protected');
-	});
-	it('p=reject; pct=25 is partial, not "rejected by receiving servers"', () => {
-		const g = getGuidance(d, 99, true, 'v=DMARC1; p=reject; pct=25');
-		expect(g.title).toBe('Partially enforced: 25%');
-		expect(g.body).toContain('applies to only 25% of mail that fails');
-		expect(g.body).not.toContain('is rejected by receiving servers');
-		expect(g.tone).toBe('warning');
-	});
-	it('p=reject; sp=none: enforced on the domain, not on subdomains', () => {
-		const g = getGuidance(d, 99, true, 'v=DMARC1; p=reject; sp=none');
-		expect(g.title).toBe('Enforced on this domain; subdomains are not');
-		expect(g.body).toContain('follow sp=none');
-		expect(g.body).toContain('Set sp=reject');
-	});
-	it('sp=bogus does not count as a weaker sp=', () => {
-		expect(getGuidance(d, 99, true, 'v=DMARC1; p=reject; sp=bogus').title).toBe('Fully protected');
-	});
+describe('review item 4: the wizard and the shared rule read pct= the same way', () => {
 	it('the level comes from the same enforcementLevel the wizard uses', () => {
 		expect(enforcementLevel('v=DMARC1; p=reject; pct=25').level).toBe('partial');
 	});
@@ -137,11 +116,12 @@ describe('review item 3: the wizard does not say "fully enforced" or "nothing mo
 		await screen.findByRole('heading', { name: 'Fully enforced' });
 		expect(screen.getByText('Reject').closest('li')).toHaveTextContent('(complete)');
 	});
-	it('sp=bogus is not echoed as a policy: it is said to be invalid, and the card stays "Fully enforced"', async () => {
+	it('sp=bogus is not echoed as a policy: the record is not applied as written, so the wizard asks for the fix and offers nothing', async () => {
 		wizard('v=DMARC1; p=reject; sp=bogus');
-		expect(await screen.findByRole('heading', { name: 'Fully enforced' })).toBeInTheDocument();
-		expect(screen.getByText(/sp=bogus, which is not a valid policy, so it is ignored and subdomains inherit p=reject/)).toBeInTheDocument();
-		expect(screen.queryByText(/Subdomains follow/)).toBeNull();
+		expect(await screen.findByRole('heading', { name: 'Fix the DMARC record first' })).toBeInTheDocument();
+		expect(screen.getByText('At _dmarc.gov.uk, sp=bogus is not a valid policy and the record has no valid rua=, so receivers ignore the whole record. Fix sp= or remove it.')).toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'Fully enforced' })).toBeNull();
+		expect(screen.queryByText(/Nothing more to do here/)).toBeNull();
 	});
 });
 
@@ -165,7 +145,8 @@ describe('review item 7: the domain page says an invalid sp= is not valid', () =
 			},
 		);
 		expect(await screen.findByText('sp= is not a valid policy')).toBeInTheDocument();
-		expect(screen.getByText(/which is not none, quarantine or reject, so it is ignored: subdomains without their own record inherit p=reject/)).toBeInTheDocument();
+		// RFC 7489 section 6.6.3: the whole record is not applied as written (p=none with a valid rua=, else no DMARC).
+		expect(screen.getAllByText('At _dmarc.example.com, sp=bogus is not a valid policy and the record has no valid rua=, so receivers ignore the whole record. Fix sp= or remove it.').length).toBeGreaterThan(0);
 		expect(screen.queryByText(/not enforced/)).toBeNull();
 	});
 });

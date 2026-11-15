@@ -123,7 +123,11 @@ export const domains = sqliteTable(
 		dns_check_attempted_at: integer('dns_check_attempted_at'),
 		/** Last attempt: 'ok' | 'failed' (a lookup got no answer, stored values kept) | 'nxdomain' (the domain does not exist). */
 		dns_check_status: text('dns_check_status'),
-		/** Why the DMARC lookup gave no usable policy: 'multiple' | 'invalid'. Null with a null policy after a check: no DMARC record. */
+		/**
+		 * Why the DMARC lookup gave no usable policy: 'multiple' | 'invalid' (no valid p=) | 'invalid_sp' (an invalid sp=). Null with a null
+		 * policy after a check: no DMARC record. For 'invalid' and 'invalid_sp', dmarc_p holds what receivers apply instead (RFC 7489
+		 * section 6.6.3: 'none' with a valid rua=, null without) and dmarc_sp the invalid sp= as written.
+		 */
 		dmarc_issue: text('dmarc_issue'),
 		/** Organizational domain whose DMARC record covers this domain when it has none of its own (dmarc_policy is that record's sp=, or p=). */
 		dmarc_inherited_from: text('dmarc_inherited_from'),
