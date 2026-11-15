@@ -138,7 +138,7 @@ function Ready({ serverUrl }: { serverUrl: string }) {
 				<Card>
 					<CardContent className="space-y-3 p-5 sm:p-6">
 						<p className="text-sm">
-							Every agent you approve is listed in Settings, under Agents and product access, with when it was created, when it was last used and when it ends. Revoke one there and its next request is refused.
+							Every agent you approve is listed in Settings, under Agents, with when it was created, when it was last used and when it ends. Revoke one there and its next request is refused.
 						</p>
 						<Button asChild variant="secondary">
 							<Link to="/settings">Open your connections</Link>

@@ -2,7 +2,7 @@
 // the domain's mail it touches, and the concrete change (SPF include, DKIM setup with the provider's guide).
 // Provider facts (SPF include, DKIM selectors, guide URLs) come from the same registry the DNS checks use.
 
-import { extractIncludes, extractOtherMechanisms, existingQualifier, buildSpfRecord, spfLookupJudgement, SPF_LOOKUP_LIMIT } from '@ready-set-mail/dns-checks/spf-record';
+import { extractIncludes, extractOtherMechanisms, existingQualifier, buildSpfRecord, spfLookupJudgement, spfPtrWarning, SPF_LOOKUP_LIMIT } from '@ready-set-mail/dns-checks/spf-record';
 import { identifySender } from '@ready-set-mail/dns-checks/sender-providers';
 import { pct, underOrg, type Sender } from './senders';
 
@@ -132,6 +132,9 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
           else if (level === null) steps.push(`We do not know how many DNS lookups your SPF uses: check it stays at ${SPF_LOOKUP_LIMIT} or fewer after adding this.`);
           const next = spfWithInclude(domain.spf_record, include);
           if (next) records.push({ type: 'TXT', name: domain.domain, value: next });
+          // The record keeps the ptr it already has (the apply route accepts it); say what to do about it.
+          const ptr = next ? spfPtrWarning(next) : null;
+          if (ptr) steps.push(ptr);
         }
       } else if (include && spfCanAlign) {
         steps.push(`SPF already includes ${include}. If mail still fails, check the envelope sender: it must be on ${domain.domain}.`);

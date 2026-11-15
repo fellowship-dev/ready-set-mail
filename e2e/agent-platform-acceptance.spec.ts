@@ -32,18 +32,19 @@ test('operator enrollment, finite product access, revocation and responsive repo
   const result = await enrolled.json();
   const id = result.domain.id;
   await page.goto('/#/settings');
-  await expect(page.getByRole('heading', { name: 'Agents and product access' })).toBeVisible();
-  await page.getByLabel('New workspace product').fill('Acceptance product');
-  await page.getByRole('button', { name: 'Create product', exact: true }).click();
-  await expect(page.getByLabel('Product', { exact: true })).not.toHaveValue('');
-  const productId = await page.getByLabel('Product', { exact: true }).inputValue();
+  await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Access keys for scripts and services/ }).click();
+  await page.getByLabel('New group name').fill('Acceptance product');
+  await page.getByRole('button', { name: 'Create group', exact: true }).click();
+  await expect(page.getByLabel('Group', { exact: true })).not.toHaveValue('');
+  const productId = await page.getByLabel('Group', { exact: true }).inputValue();
   // Mapping is persisted before the controlled checkbox re-renders.
   await page.getByRole('checkbox', { name: /^agent-platform\.example\.com/ }).first().click();
-  await expect(page.getByRole('group', { name: 'Exact credential domains' }).getByLabel('agent-platform.example.com')).toBeVisible();
-  await page.getByRole('group', { name: 'Exact credential domains' }).getByLabel('agent-platform.example.com').check();
-  await page.getByLabel('Service principal and credential name').fill(serviceName);
-  await page.getByRole('button', { name: 'Issue restricted credential' }).click();
-  const secret = page.getByLabel('New credential secret');
+  await expect(page.getByRole('group', { name: 'Domains this key may see' }).getByLabel('agent-platform.example.com')).toBeVisible();
+  await page.getByRole('group', { name: 'Domains this key may see' }).getByLabel('agent-platform.example.com').check();
+  await page.getByLabel('Key name').fill(serviceName);
+  await page.getByRole('button', { name: 'Create key' }).click();
+  const secret = page.getByLabel('New key', { exact: true });
   await expect(secret).toBeVisible();
   await expect(secret).toHaveAttribute('type', 'password');
   const credential = await secret.inputValue();
@@ -51,7 +52,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
   const allowed = await machine.get(`/api/resources?product_id=${productId}`);
   expect(allowed.status()).toBe(200);
   expect((await allowed.json()).domains.map((d: { domain: string }) => d.domain)).toEqual(['agent-platform.example.com']);
-  await page.getByRole('button', { name: 'Credential stored — clear secret' }).click();
+  await page.getByRole('button', { name: 'I saved the key, hide it' }).click();
   await expect(secret).toHaveCount(0);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -59,6 +60,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
     await page.screenshot({ path: test.info().outputPath(`agent-settings-${width}.png`), fullPage: true });
   }
   await page.getByRole('button', { name: `Revoke ${serviceName}`, exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Revoke key' }).click();
   await expect.poll(async () => (await machine.get('/api/resources')).status()).toBe(401);
   await machine.dispose();
   // The app cached the domain list before the domain was enrolled through the API: reload so the domain page can find it.

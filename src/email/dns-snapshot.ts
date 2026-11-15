@@ -48,7 +48,8 @@ export function governingTags(raw: string): Required<Pick<DmarcFacts, 'pct' | 'p
     pct: rec.pct,
     // A broken record (no valid p=, or an invalid sp=): p is what receivers apply instead, sp the invalid value as written.
     p: broken ? broken.appliedAs : rec.policy,
-    sp: broken ? (broken.issue === 'invalid_sp' ? (broken.sp ?? '').toLowerCase() : null) : sp === 'none' || sp === 'quarantine' || sp === 'reject' ? sp : null,
+    // An invalid sp= is kept as written (`sp=Rejectt`), so every page names the same value the DNS records row shows.
+    sp: broken ? (broken.issue === 'invalid_sp' ? (broken.sp ?? '') : null) : sp === 'none' || sp === 'quarantine' || sp === 'reject' ? sp : null,
     rua: ruaEntries(raw).map(ruaEntryAddress).filter(Boolean),
   };
 }

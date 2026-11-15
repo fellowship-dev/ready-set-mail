@@ -86,9 +86,13 @@ function ipProblem(name: 'ip4' | 'ip6', value: string): boolean {
  * section 6.1: with an `all` present the redirect is ignored, so both together are refused). `+all` and `?all` are refused
  * (they let any server send), as are ptr (RFC 7208 section 5.5: do not use) and ip4:/ip6: values that are not addresses
  * with a prefix in range (a permanent error for every message). The lookup cost is judged apart (spfLookupJudgement).
+ *
+ * `live`: the record published now. A ptr term it already has may stay (a provider can still be added to a record that uses
+ * ptr; spfPtrWarning says to replace it); adding a ptr is always refused. Without `live`, every ptr is refused.
  */
-export function validateSpfRecord(input: string): string | null {
+export function validateSpfRecord(input: string, live?: string | null): string | null {
 	const record = input.trim();
+	const kept = new Set(live && isSpfRecord(live) ? ptrTerms(live) : []);
 	if (!isSpfRecord(record)) return 'SPF record must start with v=spf1';
 	if (record.length > MAX_SPF_RECORD_LENGTH || /[^\x20-\x7e]/.test(record) || /["\\]/.test(record)) return `SPF record must be printable text without quotes or backslashes, at most ${MAX_SPF_RECORD_LENGTH} characters`;
 	const terms = parseSpfTerms(record);
@@ -102,7 +106,7 @@ export function validateSpfRecord(input: string): string | null {
 		if (!MECHANISM_NAMES.has(t.name)) return `SPF record is not valid: "${t.raw}" is not an SPF mechanism`;
 		if (NEEDS_VALUE.has(t.name) && !t.value) return `SPF record is not valid: "${t.raw}" needs a value`;
 		if ((t.name === 'ip4' || t.name === 'ip6') && ipProblem(t.name, t.value!)) return `SPF record is not valid: "${t.raw}" is not a valid ${t.name === 'ip4' ? 'IPv4' : 'IPv6'} address or prefix`;
-		if (t.name === 'ptr') return 'SPF record must not use ptr: RFC 7208 says not to, and receivers may skip it. List the sending servers with ip4:, ip6: or include: instead.';
+		if (t.name === 'ptr' && !kept.has(t.raw.toLowerCase())) return 'SPF record must not use ptr: RFC 7208 says not to, and receivers may skip it. List the sending servers with ip4:, ip6: or include: instead.';
 	}
 	for (const m of ['redirect', 'exp']) if ((seen.get(m) ?? 0) > 1) return `SPF record is not valid: ${m}= appears more than once`;
 	const mechanisms = terms.filter((t) => t.kind === 'mechanism');
@@ -118,6 +122,18 @@ export function validateSpfRecord(input: string): string | null {
 		return null;
 	}
 	return redirect ? null : 'SPF record must end with an all mechanism or a redirect= modifier';
+}
+
+/** The record's ptr terms as written, lower-cased (`ptr`, `ptr:example.com`, `-ptr`). */
+function ptrTerms(record: string): string[] {
+	return parseSpfTerms(record.trim()).filter((t) => t.kind === 'mechanism' && t.name === 'ptr').map((t) => t.raw.toLowerCase());
+}
+
+export const SPF_PTR_WARNING = 'Your record uses ptr, which receivers may skip. Replace it with ip4:, ip6: or include: when you can.';
+
+/** The plain warning for a record that keeps a ptr it already had, or null when it has none. */
+export function spfPtrWarning(record: string | null | undefined): string | null {
+	return record && isSpfRecord(record) && ptrTerms(record).length > 0 ? SPF_PTR_WARNING : null;
 }
 
 /**

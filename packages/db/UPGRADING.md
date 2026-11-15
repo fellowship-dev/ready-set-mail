@@ -15,6 +15,20 @@ Local dev database: `npm run migrate:local`.
 
 Migration `0014_public_reports.sql` is additive: two new tables, `public_reports` (dated free-check reports at a private link, `src/public-reports/`) and `public_report_usage` (the running counters behind their storage budgets). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
 
+## Domains with an invalid sp=
+
+No migration. From 2.0 a DMARC record whose `sp=` is not `none`, `quarantine` or `reject` is read as RFC 7489 section 6.6.3 says: receivers treat the whole record as `p=none` (or ignore it without a valid `rua=`). Earlier builds stored such a record by its `p=` (`p=reject; sp=bogus` as `reject`), so the stored rows cannot tell these domains apart. To list them on a live instance before or after upgrading, read every record name the instance has checked and test each live record (read-only):
+
+```sh
+npm run wrangler -- d1 execute DB --remote --json --command "SELECT DISTINCT COALESCE(dmarc_inherited_from, domain) AS record_at FROM domains WHERE evicted_at IS NULL AND dns_checked_at IS NOT NULL" \
+  | jq -r '.[0].results[].record_at' \
+  | npx tsx scripts/find-invalid-sp.ts
+```
+
+`scripts/find-invalid-sp.ts` reads names on stdin and prints `<name>  <record>` for each whose live `_dmarc` record has an invalid `sp=`, using the dashboard's own rule; names it could not read are listed on stderr. A printed name is the record's own domain or the parent its subdomains inherit from. After the upgrade the same domains are `SELECT workspace_id, domain FROM domains WHERE dmarc_issue = 'invalid_sp'` once they have been read again.
+
+What the owner of such a domain sees: at the next daily DNS check (08:00 UTC), or as soon as the domain page is opened, the domain stops showing its `p=` (for `p=reject` it read as Verified) and shows "Needs attention" at Level 0, with "At _dmarc.<domain>, sp=<value> is not a valid policy, so receivers treat the whole record as p=none. Fix sp= or remove it." and the next step "Fix sp= at _dmarc.<domain>". The DMARC wizard asks for that fix and offers no policy change. No email is sent. Once `sp=` is fixed or removed, the next check shows the record's real policy.
+
 ## Reports connected at
 
 Migration `0011_reports_connected_at.sql` is additive: one nullable `domains.reports_connected_at` column, set when a hosted domain's reports are connected to the fixed report address and cleared when they are disconnected. Apply it before serving the new Worker (the schema guard requires it). Existing rows stay NULL.

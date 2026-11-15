@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, validateSpfRecord } from "../src/spf-record";
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, spfPtrWarning, validateSpfRecord } from "../src/spf-record";
 
 /** What the wizard proposes from a live record with `add` selected on top of its includes. */
 const propose = (record: string, add: string[] = []) => buildSpfRecord([...new Set([...extractIncludes(record), ...add])], existingQualifier(record), extractOtherMechanisms(record));
@@ -32,6 +32,25 @@ describe("validateSpfRecord: one all, or one redirect= and no all", () => {
   it("every record the builder proposes from a valid live record is valid", () => {
     for (const live of ["v=spf1 redirect=icann.org", "v=spf1 include:a.test -all", "v=spf1 include:a.test +all", "v=spf1 include:a.test", "v=spf1 mx redirect=x.test"]) expect(validateSpfRecord(propose(live, ["b.test"]))).toBeNull();
   });
+});
+
+describe("ptr: never added, kept when the live record has it", () => {
+  const live = "v=spf1 ptr include:a.test ~all";
+  it("a record that keeps the live ptr is valid, and gets the warning", () => {
+    expect(validateSpfRecord("v=spf1 include:a.test include:b.test ptr ~all", live)).toBeNull();
+    expect(spfPtrWarning("v=spf1 include:a.test include:b.test ptr ~all")).toBe("Your record uses ptr, which receivers may skip. Replace it with ip4:, ip6: or include: when you can.");
+  });
+  it("adding a ptr is refused, also next to a kept one", () => {
+    expect(validateSpfRecord("v=spf1 include:a.test ptr ~all", "v=spf1 include:a.test ~all")).toMatch(/must not use ptr/);
+    expect(validateSpfRecord("v=spf1 include:a.test ptr ptr:x.test ~all", live)).toMatch(/must not use ptr/);
+    expect(validateSpfRecord("v=spf1 include:a.test ptr ~all")).toMatch(/must not use ptr/);
+  });
+  it("the builder keeps the live ptr when a provider is added, and the result is accepted against the live record", () => {
+    const next = buildSpfRecord([...extractIncludes(live), "b.test"], existingQualifier(live), extractOtherMechanisms(live));
+    expect(next).toBe("v=spf1 include:a.test include:b.test ptr ~all");
+    expect(validateSpfRecord(next, live)).toBeNull();
+  });
+  it("no warning without ptr", () => expect(spfPtrWarning("v=spf1 include:a.test ~all")).toBeNull());
 });
 
 describe("buildSpfRecord: never voids a redirect, never weakens -all (RFC 7208 section 6.1)", () => {
