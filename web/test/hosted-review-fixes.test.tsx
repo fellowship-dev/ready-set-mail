@@ -241,10 +241,12 @@ describe('hosted DMARC graduation wizard', () => {
 					'GET /api/domains': { domains: [domain] },
 					'GET /api/domains/7/dns-check': { found: true, has_rua: false, current_record: 'v=DMARC1; p=none', cf_managed: false },
 					'GET /api/domains/7/onboarding-status': onboarding({ dmarc: { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none' } }),
-					// Report intake is not offered to this domain on this server (the per-domain answer in the overview's batch).
+					// Report intake is not offered to this domain on this server: the per-domain answer on the domain's own summary (a
+					// single-domain screen does not load the overview's batch, so the batch here says nothing).
 					'GET /api/hosted/config': { enabled: true, reports: false, records: false },
-					'GET /api/domains/summaries': { summaries: [{ domain_id: 7, domain: 'example.com', report_connect: { can_connect: false, refusal: 'This server does not receive DMARC reports.', refusal_kind: 'unavailable' } }], next_after: null, window_days: 30 },
+					'GET /api/domains/summaries': { summaries: [], next_after: null, window_days: 30 },
 					'GET /api/domains/7/check-summary': {
+						report_connect: { can_connect: false, refusal: 'This server does not receive DMARC reports.', refusal_kind: 'unavailable' },
 						domain_id: 7, domain: 'example.com', dmarc_policy: 'none', spf_record: 'v=spf1 -all', dns_checked_at: Math.floor(Date.now() / 1000), dns_check_attempted_at: null, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok',
 						total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: null,
 					},

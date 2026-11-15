@@ -4,7 +4,7 @@ import { domainKeys, invalidateDomain } from './domain-queries';
 import { HOSTED_CONFIG_KEY } from './hosted';
 import { reportsRefusalOf, type ReportsRefusal } from './dmarc-step';
 import { useHosted } from './session';
-import { useDomainSummaries } from './domain-queries';
+import { useCheckSummary } from './domain-queries';
 import type { ReportVisibilityFields } from './uncounted';
 
 /**
@@ -66,17 +66,18 @@ export function useReportIntakeEnabled(): boolean {
 }
 
 /**
- * Why reports cannot be connected for `domainId`, per domain, from the same batch the overview reads
- * (`report_connect` on GET /api/domains/summaries), so the overview and the domain page decide each domain the same way.
- * `pending` while it loads. No refusal on a self-hosted instance, or when the batch could not be loaded.
+ * Why reports cannot be connected for `domainId`, from the domain's own summary (`report_connect` on
+ * GET /api/domains/:id/check-summary), the same server decision the overview's batch gives each row, so the overview and the
+ * domain page decide each domain the same way without a single-domain screen loading the whole batch.
+ * `pending` while it loads. No refusal on a self-hosted instance, or when the summary could not be loaded.
  */
 export function useReportsRefusal(domainId: number): { pending: boolean; refusal: ReportsRefusal | null } {
 	// Self-hosted: no hosted report intake, so nothing is refused (the server sends report_connect null there).
 	const hosted = useHosted();
-	const batch = useDomainSummaries(hosted);
+	const summary = useCheckSummary(domainId, hosted);
 	if (!hosted) return { pending: false, refusal: null };
-	if (batch.isPending) return { pending: true, refusal: null };
-	return { pending: false, refusal: reportsRefusalOf(batch.data?.get(domainId)) };
+	if (summary.isPending) return { pending: true, refusal: null };
+	return { pending: false, refusal: reportsRefusalOf(summary.data) };
 }
 
 export function useReportAddress(domainId: number, enabled = true) {

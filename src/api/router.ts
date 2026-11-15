@@ -84,9 +84,9 @@ import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
-import { reportConnectFor, workspaceMayConnect } from '../hosted/report-address';
+import { reportConnectFor, reportConnectForPage } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
-import { reportVisibility, reporterMix } from '../reports/visibility';
+import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
 import { handleConnectionRoutes } from '../connections/routes';
 import { handleOnboardingRoutes } from '../onboarding/routes';
@@ -398,13 +398,14 @@ async function getDomainCheckSummary(tenant: TenantContext, domainId: string, ct
   if (!domain) return err('domain not found', 404);
 
   const since = Math.floor(Date.now() / 1000) - 30 * 86400;
-  const [summary, visibility] = await Promise.all([tenant.scope.reports.checkSummary(id, since), reportVisibility(tenant, id, since)]);
+  // Per domain, as the connect panel decides it (the batch below gives each row the same answer): single-domain screens read it here.
+  const [summary, visibility, report_connect] = await Promise.all([tenant.scope.reports.checkSummary(id, since), reportVisibility(tenant, id, since), reportConnectFor(tenant, domain)]);
   if (!summary) return err('check summary not found', 404);
   // Stored before pct= was recorded: the level stands (marked not re-checked); this view starts the refresh that records it.
   // Several views at once: the first to reserve it runs the one refresh.
   if (ctx && needsPctRecheck(summary) && (await reservePctRecheck(tenant, id))) ctx.waitUntil(recheckStoredDns(tenant, id, domain.domain));
 
-  return json({ ...summary, ...visibility });
+  return json({ ...summary, ...visibility, report_connect });
 }
 
 /** Page size for /api/domains/summaries: the overview asks for all of a workspace's domains, a page at a time. */
@@ -421,14 +422,19 @@ async function getDomainCheckSummaries(tenant: TenantContext, url: URL): Promise
   // One row more than asked tells whether another page exists.
   const rows = await tenant.scope.reports.checkSummaries(since, { afterId, limit: limit + 1 });
   const page = rows.slice(0, limit);
-  const may = await workspaceMayConnect(tenant);
-  const summaries = await Promise.all(page.map(async (s) => {
-    const domain = await tenant.scope.domains.getById(s.domain_id);
-    // Per domain, as the connect panel decides it: whether reports can be connected, and why not.
-    const report_connect = domain ? await reportConnectFor(tenant, domain, may) : null;
+  // A constant number of queries for the page, whatever its size (D1 caps queries per request): the connect decision's facts are read
+  // once for the workspace, and the visibility of the page's id range is read grouped by domain.
+  const empty = page.filter((s) => s.total_messages === 0);
+  const [connectFor, visibilityOf] = await Promise.all([
+    reportConnectForPage(tenant),
+    empty.length ? reportVisibilityMany(tenant, { fromId: empty[0]!.domain_id, toId: empty[empty.length - 1]!.domain_id }, since) : null,
+  ]);
+  const summaries = page.map((s) => ({
+    ...s,
     // Where nothing was counted, what the overview must say instead of "no reports" (dropped, limited, not counted).
-    const visibility = s.total_messages === 0 ? await reportVisibility(tenant, s.domain_id, since) : {};
-    return { ...s, ...visibility, report_connect };
+    ...(s.total_messages === 0 && visibilityOf ? visibilityOf(s.domain_id) : {}),
+    // Per domain, as the connect panel decides it: whether reports can be connected, and why not.
+    report_connect: connectFor(s.domain_id),
   }));
   return json({ summaries, next_after: rows.length > limit ? page[page.length - 1]!.domain_id : null, window_days: 30 });
 }
@@ -690,6 +696,8 @@ async function _handleApi(
 
   // GET /api/me — who the caller is in this workspace (the dashboard gates controls on `role`)
   const instanceOwner = isInstanceOwner(env, { kind: (workspace as AuthedWorkspace).kind, email: userBySession?.email, role: workspace.role, workspaceId: workspace.workspaceId });
+  // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
+  tenant.operatorView = instanceOwner;
   if (path === '/api/me' && method === 'GET') {
     return json({
       instance_owner: instanceOwner,
