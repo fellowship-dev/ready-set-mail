@@ -12,7 +12,8 @@ import {
 	WorkspaceSwitcher,
 	type RenderNavLink,
 } from '@ready-set-mail/ui';
-import { BarChart3, Bot, Globe, History, LogOut, Mail, Megaphone, Moon, Settings, Sun, UserCircle, Users } from 'lucide-react';
+import { useBilling } from '../lib/billing';
+import { BarChart3, Bot, Globe, History, LogOut, Mail, Megaphone, Moon, Receipt, Settings, Sun, UserCircle, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { cleanName } from '../lib/names';
@@ -33,6 +34,7 @@ function isCurrent(path: string, item: string): boolean {
 export function Shell() {
 	const { pathname } = useLocation();
 	const { me, role, signOut, status } = useSession();
+	const billing = useBilling(!!me?.instance_owner);
 	const { theme, toggle } = useTheme();
 	const [creating, setCreating] = useState(false);
 	// The instance API key belongs to no user and so to no list of workspaces.
@@ -50,6 +52,8 @@ export function Shell() {
 		{ label: 'Members', href: '/members', icon: <Users /> },
 		{ label: 'Audit log', href: '/audit', icon: <History /> },
 		...(me?.instance_owner ? [{ label: 'Leads', href: '/leads', icon: <Megaphone /> }] : []),
+		// Hosted orders: only the instance owner, and only where billing is on (the server answers 404 otherwise).
+		...(me?.instance_owner && billing.data ? [{ label: 'Orders', href: '/orders', icon: <Receipt /> }] : []),
 		{ label: 'Settings', href: '/settings', icon: <Settings /> },
 	].map((i) => ({ ...i, current: isCurrent(pathname, i.href) }));
 

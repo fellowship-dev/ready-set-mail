@@ -89,6 +89,7 @@ function WizardFor({ render }: { render: (domainId: number) => ReactNode }) {
 const AnalyticsPage = lazy(() => import('./pages/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
 const DomainAnalyticsPage = lazy(() => import('./pages/analytics/AnalyticsPage').then((m) => ({ default: m.DomainAnalyticsPage })));
 const AnomaliesPage = lazy(() => import('./pages/reports/AnomaliesPage').then((m) => ({ default: m.AnomaliesPage })));
+const OrdersPage = lazy(() => import('./pages/operator/OrdersPage').then((m) => ({ default: m.OrdersPage })));
 const LeadsPage = lazy(() => import('./pages/leads/LeadsPage').then((m) => ({ default: m.LeadsPage })));
 const AgentSetupPage = lazy(() => import('./pages/agent/AgentSetupPage').then((m) => ({ default: m.AgentSetupPage })));
 const AuditLogPage = lazy(() => import('./pages/audit/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
@@ -145,6 +146,7 @@ function AppRoutes() {
 				<Route path="keys" element={<ApiKeysPage />} />
 				<Route path="audit" element={<AuditLogPage />} />
 				<Route path="leads" element={<LeadsPage />} />
+				<Route path="orders" element={<OrdersPage />} />
 				<Route path="settings" element={<SettingsPage />} />
 				<Route path="domains/:id" element={<DomainDetailPage />} />
 				<Route path="domains/:id/settings" element={<DomainSettingsPage />} />
