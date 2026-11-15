@@ -61,6 +61,8 @@ export interface ZoneHolder { id: number; workspace_id: string; domain: string; 
  */
 export const unprovenRow = sql`(${domains.verified_via} = 'legacy' OR (${domains.verified_via} = 'cloudflare' AND ${domains.cf_name_servers} IS NULL))`;
 const provenRow = sql`NOT ${unprovenRow}`;
+/** The same rule for a row already in hand (provenByParent): keep it in step with `unprovenRow`. */
+export const isUnprovenRow = (r: { verified_via: string; cf_name_servers: string | null }): boolean => r.verified_via === 'legacy' || (r.verified_via === 'cloudflare' && r.cf_name_servers === null);
 const zoneHolderColumns = { id: domains.id, workspace_id: domains.workspace_id, domain: domains.domain, cf_zone_id: domains.cf_zone_id, cf_zone_name: domains.cf_zone_name, cf_name_servers: domains.cf_name_servers, cf_account_id: domains.cf_account_id, cf_connection_id: domains.cf_connection_id, proof_checked_at: domains.proof_checked_at, proof_suspected_at: domains.proof_suspected_at };
 
 /** The claim queries that deliberately span workspaces: "who verified this name first". They return no tenant data beyond that. */
@@ -79,7 +81,7 @@ export function claimLookups(dbLike: DbLike) {
 		relatedOwnedByOther(domain: string, workspaceId: string): Promise<boolean> {
 			return db.select({ id: domains.id }).from(domains /* workspace-scope-exempt: ownership of related names is global */)
 				.where(and(
-					ne(domains.workspace_id, workspaceId), ne(domains.verified_via, 'legacy'), isNull(domains.evicted_at),
+					ne(domains.workspace_id, workspaceId), provenRow, isNull(domains.evicted_at),
 					sql`(substr(${domain}, -(length(${domains.domain}) + 1)) = '.' || ${domains.domain} OR substr(${domains.domain}, -(length(${domain}) + 1)) = '.' || ${domain})`,
 				)).get().then((r) => !!r);
 		},
@@ -95,13 +97,27 @@ export function claimLookups(dbLike: DbLike) {
 				)).all();
 		},
 		/**
-		 * Zone-verified live rows due for the daily re-check: never attempted first, then the longest ago. Ordered by when the job last LOOKED at a row,
-		 * not by when it last got a verdict, so rows whose lookups never answer rotate to the back like any other and cannot hold the head of the queue.
+		 * Zone-verified live rows due for the daily re-check, in two queues so rows that never answer cannot delay the ones that do:
+		 *  - answered: got a real answer (proof_answered_at) within `answeredWithinSeconds` of now; at most `limit - reserved` of them, oldest LOOKED-AT first;
+		 *  - the rest (never answered, or silent for longer than that, or new): the remaining slots, at least `reserved` of them whenever the first queue
+		 *    is full, never-attempted first, then oldest looked-at. A queue that cannot use its slots lends them to the other.
+		 * Both are ordered by when the job last LOOKED at a row, not by when it got a verdict, so a row whose lookups never answer rotates to the back like any other.
 		 */
-		zoneVerifiedDue(limit: number): Promise<ZoneHolder[]> {
-			return db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: the daily job runs across workspaces */)
-				.where(and(eq(domains.verified_via, 'cloudflare'), isNull(domains.evicted_at)))
-				.orderBy(sql`${domains.proof_attempted_at} IS NOT NULL`, asc(domains.proof_attempted_at), asc(domains.id)).limit(limit).all();
+		async zoneVerifiedDue(limit: number, nowSeconds: number, opts: { reserved: number; answeredWithinSeconds: number }): Promise<ZoneHolder[]> {
+			const live = and(eq(domains.verified_via, 'cloudflare'), isNull(domains.evicted_at));
+			const answered = sql`${domains.proof_answered_at} >= ${nowSeconds - opts.answeredWithinSeconds}`;
+			const first = await db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: the daily job runs across workspaces */)
+				.where(and(live, answered)).orderBy(sql`${domains.proof_attempted_at} IS NOT NULL`, asc(domains.proof_attempted_at), asc(domains.id)).limit(Math.max(0, limit - opts.reserved)).all();
+			const rest = await db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: the daily job runs across workspaces */)
+				.where(and(live, sql`NOT COALESCE(${answered}, 0)`)).orderBy(sql`${domains.proof_attempted_at} IS NOT NULL`, asc(domains.proof_attempted_at), asc(domains.id)).limit(limit - first.length).all();
+			const spare = limit - first.length - rest.length; // the reserved slots found nobody to use them: more answering rows
+			const more = spare > 0 ? await db.select(zoneHolderColumns).from(domains /* workspace-scope-exempt: the daily job runs across workspaces */)
+				.where(and(live, answered)).orderBy(sql`${domains.proof_attempted_at} IS NOT NULL`, asc(domains.proof_attempted_at), asc(domains.id)).limit(spare).offset(first.length).all() : [];
+			return [...first, ...more, ...rest];
+		},
+		/** The job got a real answer for these rows (public DNS said match or differs, or their servers were recorded). */
+		async markProofAnswered(ids: number[], nowSeconds: number): Promise<void> {
+			for (const part of chunks(ids)) await db.update(domains /* workspace-scope-exempt: same rows, by id */).set({ proof_answered_at: nowSeconds }).where(inArray(domains.id, part)).run();
 		},
 		/** The job looked at these rows (whatever came of it): they go to the back of the queue. */
 		async markProofAttempted(ids: number[], nowSeconds: number): Promise<void> {

@@ -32,7 +32,7 @@ import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dn
 import { logAudit } from '../audit/log';
 import { sendProofLostNotice } from '../auth/mail';
 import { mapLimit } from '../cron';
-import { resolverFor } from '../dns/resolver';
+import { confirmResolverFor, resolverFor } from '../dns/resolver';
 import type { BoundEnv } from '../index';
 import { CfNotFoundError } from '../tenancy/cf-client';
 import type { TenantContext } from '../tenancy/context';
@@ -43,13 +43,25 @@ import { EVICTED_KEEP_DAYS, demoteOrphanedSubdomains, within } from './ownership
 export const RECHECK_PER_RUN = 200;
 /** A holder that has shown it holds the name is not asked again for this long, so repeated claims on its name cannot make us hammer its Cloudflare account. */
 export const RECHECK_COOLDOWN_SECONDS = 600;
+/** Of those, the slots kept for rows with no recent real answer (never answered, new, or silent for ANSWERED_WINDOW_SECONDS) whenever answering rows would fill the run. */
+export const RECHECK_RESERVED_UNANSWERED = 40;
+/** A row counts as answering while its last real answer is this recent. */
+export const ANSWERED_WINDOW_SECONDS = 30 * 24 * 60 * 60;
 const CONCURRENCY = 5;
 /** The daily job withdraws a proof only when a read at least this long after the first differing one differs again. */
 export const CONFIRM_AFTER_SECONDS = 24 * 60 * 60;
-/** For a rival claim: the second read comes this long after the first, in the same request (env PROOF_CONFIRM_DELAY_MS overrides; tests set 0). */
+/** For a rival claim: the second read comes this long after the first, in the same request. */
 export const CONFIRM_DELAY_MS = 2000;
+/** Outside tests the wait is never shorter than this, whatever PROOF_CONFIRM_DELAY_MS says: two back-to-back reads are one read. */
+export const MIN_CONFIRM_DELAY_MS = 1000;
 const sleep = (ms: number): Promise<void> => (ms > 0 ? new Promise(r => setTimeout(r, ms)) : Promise.resolve());
-const confirmDelayMs = (env: BoundEnv): number => { const n = Number(env.PROOF_CONFIRM_DELAY_MS ?? CONFIRM_DELAY_MS); return Number.isFinite(n) && n >= 0 ? n : CONFIRM_DELAY_MS; };
+const underTest = (): boolean => typeof process !== 'undefined' && !!process.env?.VITEST;
+/** PROOF_CONFIRM_DELAY_MS overrides the wait; below MIN_CONFIRM_DELAY_MS (0 included) it is honoured only under test (vitest sets VITEST), else clamped up to it. */
+export const confirmDelayMs = (env: { PROOF_CONFIRM_DELAY_MS?: string }, testing = underTest()): number => {
+  const n = Number(env.PROOF_CONFIRM_DELAY_MS ?? CONFIRM_DELAY_MS);
+  if (!Number.isFinite(n) || n < 0) return CONFIRM_DELAY_MS;
+  return testing ? n : Math.max(n, MIN_CONFIRM_DELAY_MS);
+};
 
 export type Delegation = 'match' | 'differs' | 'unknown';
 
@@ -126,14 +138,14 @@ async function readLapse(env: BoundEnv, holder: ZoneHolder, resolver: Resolver):
 }
 
 /**
- * A lapse for a rival claim, confirmed (see the header): two reads CONFIRM_DELAY_MS apart that both show it, and, where a token of the
+ * A lapse for a rival claim, confirmed (see the header): two reads CONFIRM_DELAY_MS apart, the second through a different resolver (confirmResolverFor), that both show it, and, where a token of the
  * holder still works, Cloudflare's own answer agreeing (a delegation that differs while Cloudflare still serves the zone is not enough).
  */
-async function confirmedLapse(env: BoundEnv, holder: ZoneHolder, resolver: Resolver): Promise<Lapse | null> {
+async function confirmedLapse(env: BoundEnv, holder: ZoneHolder, resolver: Resolver, secondResolver: Resolver): Promise<Lapse | null> {
   const first = await readLapse(env, holder, resolver);
   if (!first.lapse) return null;
   await sleep(confirmDelayMs(env));
-  const second = await readLapse(env, holder, resolver);
+  const second = await readLapse(env, holder, secondResolver);
   if (second.lapse !== first.lapse) return null;
   if (second.lapse === 'delegation' && second.cloudflareStillServes) return null;
   return second.lapse;
@@ -170,14 +182,16 @@ async function recordServersIfAgreed(env: BoundEnv, holder: ZoneHolder, resolver
  * cannot lose their proof (and so the name, once the new proof is committed): only on a confirmed lapse (confirmedLapse). A holder checked within
  * RECHECK_COOLDOWN_SECONDS is not asked again. A holder whose proof has no recorded servers gets them recorded when Cloudflare and public DNS agree.
  */
-export async function reassessZoneHolders(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<void> {
+export async function reassessZoneHolders(tenant: TenantContext, domain: string, injected?: Resolver): Promise<void> {
+  const resolver = injected ?? resolverFor(tenant.env);
+  const second = injected ?? confirmResolverFor(tenant.env); // a resolver handed in (tests) is used for both reads
   const lookups = claimLookups(tenant.db);
   const now = Math.floor(Date.now() / 1000);
   for (const holder of await lookups.zoneVerifiedNear(domain, tenant.workspaceId)) {
     if (holder.proof_checked_at !== null && now - holder.proof_checked_at < RECHECK_COOLDOWN_SECONDS) continue;
     try {
       if (!parseServers(holder.cf_name_servers) && (await recordServersIfAgreed(tenant.env, holder, resolver, now))) continue; // it holds, and can be checked from now on
-      const lapse = await confirmedLapse(tenant.env, holder, resolver);
+      const lapse = await confirmedLapse(tenant.env, holder, resolver, second);
       if (lapse) await withdrawProof(tenant.env, holder, lapse);
       else if (parseServers(holder.cf_name_servers)) await lookups.markProofChecked([holder.id], now);
     } catch (e) {
@@ -193,8 +207,8 @@ export interface RecheckResult { checked: number; downgraded: number; inconclusi
  *
  * Cost per run: one D1 read for the batch and one UPDATE marking it attempted, then for each zone among the (at most `limit`, default RECHECK_PER_RUN)
  * domains one DNS-over-HTTPS NS query, shared by every domain of that zone: at most RECHECK_PER_RUN subrequests, 5 at a time. A proof from before the
- * servers were kept costs one Cloudflare read as well, only when one of the holder's connections still works, to record them. The queue is ordered by
- * when a row was last ATTEMPTED (never first), and every row taken is marked attempted whatever comes of it, so a fleet larger than one run is covered
+ * servers were kept costs one Cloudflare read as well, only when one of the holder's connections still works, to record them. Two queues, each ordered by
+ * when a row was last ATTEMPTED (never first): rows with a real answer in the last 30 days (160 slots), then the rest (40 slots, plus any the first leaves unused). Every row taken is marked attempted whatever comes of it, so a fleet larger than one run is covered
  * over several days and rows that never answer rotate to the back. Writes: one UPDATE for the confirmed ones, a few statements and one email per downgrade.
  * A differing read starts a suspicion; the proof is withdrawn only by a differing read CONFIRM_AFTER_SECONDS after it (see the header).
  */
@@ -203,15 +217,17 @@ export async function recheckZoneProofs(env: BoundEnv, opts: { limit?: number; r
   const resolver = opts.resolver ?? resolverFor(env);
   const now = Math.floor((opts.now?.() ?? Date.now()) / 1000);
   const out: RecheckResult = { checked: 0, downgraded: 0, inconclusive: 0, recorded: 0, suspected: 0 };
-  const rows = await lookups.zoneVerifiedDue(opts.limit ?? RECHECK_PER_RUN);
+  const limit = opts.limit ?? RECHECK_PER_RUN;
+  const rows = await lookups.zoneVerifiedDue(limit, now, { reserved: Math.min(RECHECK_RESERVED_UNANSWERED, Math.ceil(limit / 5)), answeredWithinSeconds: ANSWERED_WINDOW_SECONDS });
   await lookups.markProofAttempted(rows.map(r => r.id), now);
   const held: number[] = [];
+  const answered: number[] = []; // rows that got a real answer: they move to (or stay in) the first queue
   const asked = new Map<string, Promise<Delegation>>(); // one query per zone and server set
   await mapLimit(rows, CONCURRENCY, async holder => {
     try {
       const stored = parseServers(holder.cf_name_servers);
       if (!stored || !holder.cf_zone_name) { // from before the servers were kept: record them when Cloudflare and public DNS agree, never downgrade for the missing record
-        if (await recordServersIfAgreed(env, holder, resolver, now)) out.recorded++;
+        if (await recordServersIfAgreed(env, holder, resolver, now)) { out.recorded++; answered.push(holder.id); }
         out.checked++;
         return;
       }
@@ -220,6 +236,7 @@ export async function recheckZoneProofs(env: BoundEnv, opts: { limit?: number; r
       const verdict = await asked.get(key)!;
       if (verdict === 'unknown') { out.inconclusive++; return; }
       out.checked++;
+      answered.push(holder.id);
       if (verdict === 'match') { held.push(holder.id); return; }
       // The delegation differs. One read is a suspicion; a differing read a day after it is a lapse.
       const first = holder.proof_suspected_at ?? ((await lookups.markProofSuspected(holder.id, now)) ? now : null);
@@ -230,6 +247,7 @@ export async function recheckZoneProofs(env: BoundEnv, opts: { limit?: number; r
       console.error(`[proof] re-check of domain ${holder.id} failed:`, e instanceof Error ? e.message : e);
     }
   });
+  await lookups.markProofAnswered(answered, now);
   await lookups.markProofChecked(held, now);
   return out;
 }

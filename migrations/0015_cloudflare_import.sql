@@ -10,6 +10,9 @@
 -- domains.proof_checked_at  unix seconds the daily job last saw the delegation still matching.
 -- domains.proof_attempted_at  unix seconds the daily job last LOOKED at the row, whatever came of it (a verdict, a failed lookup, nothing to compare).
 --                        The job's queue is ordered by it, oldest first, so rows that never give a verdict cannot hold the head of the queue.
+-- domains.proof_answered_at  unix seconds the daily job last got a REAL answer for the row (public DNS said match or differs; or its servers were recorded).
+--                        Rows answered in the last 30 days are the job's first queue; rows that never answer (or stopped) share a reserved slice of each run,
+--                        so junk rows cannot delay healthy ones.
 -- domains.proof_suspected_at  unix seconds a re-check first saw the proof NOT hold. One read is never enough to withdraw a proof: the daily job
 --                        withdraws it only when a second read, at least 24 hours later, differs again. Cleared when a read matches.
 -- domains.proof_lost_at  unix seconds the proof was withdrawn (verified_via became 'legacy', so intake stops accepting the domain's reports).
@@ -26,6 +29,7 @@ ALTER TABLE domains ADD COLUMN proof_checked_at INTEGER;
 ALTER TABLE domains ADD COLUMN proof_lost_at INTEGER;
 ALTER TABLE domains ADD COLUMN proof_attempted_at INTEGER;
 ALTER TABLE domains ADD COLUMN proof_suspected_at INTEGER;
+ALTER TABLE domains ADD COLUMN proof_answered_at INTEGER;
 ALTER TABLE cloudflare_connection_zones ADD COLUMN cf_account_name TEXT;
 CREATE TABLE removed_domains (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

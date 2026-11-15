@@ -10,7 +10,7 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
+import { claimLookups, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
@@ -175,13 +175,22 @@ export async function demoteOrphanedSubdomains(tenant: TenantContext): Promise<n
   return orphans;
 }
 
+/**
+ * Does a parent in this workspace let it hold `domain`? A proven parent always does. A parent that proves nothing against another workspace
+ * (unprovenRow: 'legacy', or the 2.0.0 Cloudflare row with no servers) never does when another workspace holds the name, since it would then evict
+ * that holder on a proof nobody can check; with no rival it may still admit its own subdomain (nothing is evicted, nothing conflicts). A 'legacy'
+ * parent never does at all.
+ */
 async function provenByParent(tenant: TenantContext, domain: string): Promise<boolean> {
   const labels = domain.split('.');
+  let stale = false;
   for (let i = 1; i <= labels.length - 2; i++) {
     const parent = await tenant.scope.domains.getByName(labels.slice(i).join('.'));
-    if (parent && parent.verified_via !== 'legacy') return true; // a legacy row was never proven, so it proves nothing about its subdomains
+    if (!parent || parent.verified_via === 'legacy') continue; // a legacy row was never proven, so it proves nothing about its subdomains
+    if (!isUnprovenRow(parent)) return true;
+    stale = true;
   }
-  return false;
+  return stale && !(await claimLookups(tenant.db).findLegacyHolder(domain, tenant.workspaceId));
 }
 
 /** Is the claim's token published at `_readysetmail.<domain>`? Throws nothing: a lookup failure is reported as the reason. */
@@ -316,8 +325,9 @@ export type VerifyOutcome =
   | { kind: 'unproven'; reason: string; code?: UnprovenCode };
 
 /** The "Verify" button: re-check every kind of proof for a pending claim. */
-export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, resolver: Resolver = resolverFor(tenant.env)): Promise<VerifyOutcome> {
-  await reassessZoneHolders(tenant, claim.domain, resolver);
+export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, injected?: Resolver): Promise<VerifyOutcome> {
+  const resolver = injected ?? resolverFor(tenant.env);
+  await reassessZoneHolders(tenant, claim.domain, injected);
   if (await claimLookups(tenant.db).ownedByOther(claim.domain, tenant.workspaceId)) {
     await tenant.scope.claims.markLost(claim.id);
     return { kind: 'taken' };

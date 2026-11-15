@@ -167,7 +167,7 @@ describe('0015 cloudflare_import', () => {
 		d.sqlite.prepare("INSERT INTO cloudflare_connections (id, workspace_id, label, auth_type, token_envelope) VALUES ('c1', 'ws_x', 'x', 'token', 'e')").run();
 		d.sqlite.prepare("INSERT INTO cloudflare_connection_zones (connection_id, workspace_id, zone_id, zone_name, cf_account_id) VALUES ('c1', 'ws_x', 'z1', 'acme.com', 'acct')").run();
 		expect(applyMigrations(d.sqlite, { through: MINE })).toEqual([MINE]);
-		expect(d.sqlite.prepare('SELECT domain, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, proof_checked_at, proof_lost_at, proof_attempted_at, proof_suspected_at FROM domains').all()).toEqual([{ domain: 'acme.com', verified_via: 'cloudflare', cf_account_id: null, cf_zone_id: null, verified_at: null, cf_zone_name: null, cf_name_servers: null, proof_checked_at: null, proof_lost_at: null, proof_attempted_at: null, proof_suspected_at: null }]);
+		expect(d.sqlite.prepare('SELECT domain, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, proof_checked_at, proof_lost_at, proof_attempted_at, proof_suspected_at, proof_answered_at FROM domains').all()).toEqual([{ domain: 'acme.com', verified_via: 'cloudflare', cf_account_id: null, cf_zone_id: null, verified_at: null, cf_zone_name: null, cf_name_servers: null, proof_checked_at: null, proof_lost_at: null, proof_attempted_at: null, proof_suspected_at: null, proof_answered_at: null }]);
 		expect(d.sqlite.prepare('SELECT zone_name, cf_account_id, cf_account_name FROM cloudflare_connection_zones').all()).toEqual([{ zone_name: 'acme.com', cf_account_id: 'acct', cf_account_name: null }]);
 	});
 

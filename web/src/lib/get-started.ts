@@ -9,8 +9,10 @@ export interface GetStartedInput {
 	/** Hosted sign-ups prove ownership before a domain is watched; self-host adds it straight away. */
 	hosted: boolean;
 	domains: Array<Pick<Domain, 'id' | 'domain' | 'rua_address'>>;
-	/** Domains waiting for an ownership proof. */
+	/** Domains waiting for an ownership proof whose DNS record is shown (an open claim). */
 	claims: number;
+	/** Domains that lost their proof and have no claim open: no record is shown until Prove again runs. */
+	lostProof?: number;
 	/** Per domain, in the same order. Undefined while loading, null when it failed. */
 	summaries: Array<DomainCheckSummary | null | undefined>;
 	verdicts: Array<DomainVerdict | null>;
@@ -19,14 +21,24 @@ export interface GetStartedInput {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** Step 2 while proofs are outstanding: a domain with a claim shows its record, one that lost its proof must be proven again first. */
+function proveDetail(claims: number, lost: number): string {
+	const parts: string[] = [];
+	if (claims > 0) parts.push(`${plural(claims, 'domain is', 'domains are')} waiting for the DNS record shown below. Its live level from public DNS is visible before proof: press Check public DNS on its card.`);
+	if (lost > 0) parts.push(`${plural(lost, 'domain')} lost ${lost === 1 ? 'its' : 'their'} proof. Press Prove again on ${lost === 1 ? 'its' : 'their'} card.`);
+	return parts.join(' ');
+}
+
 /** The steps to a first answer, each from data. See GetStarted for what the states mean. */
 export function getStartedSteps(i: GetStartedInput): Step[] {
 	const n = i.domains.length;
+	const lost = i.lostProof ?? 0;
+	const waiting = i.claims + lost;
 	const steps: Step[] = [];
 
 	steps.push(
-		n + i.claims > 0
-			? { key: 'add', title: 'Add the domain you send email from', state: 'done', detail: i.claims > 0 ? `${plural(n, 'domain')} added, and ${i.claims} waiting for proof of ownership.` : `${plural(n, 'domain')} added.` }
+		n + waiting > 0
+			? { key: 'add', title: 'Add the domain you send email from', state: 'done', detail: waiting > 0 ? `${plural(n, 'domain')} added, and ${waiting} waiting for proof of ownership.` : `${plural(n, 'domain')} added.` }
 			: {
 					key: 'add',
 					title: 'Add the domain you send email from',
@@ -36,11 +48,11 @@ export function getStartedSteps(i: GetStartedInput): Step[] {
 				},
 	);
 
-	if (i.hosted || i.claims > 0) {
+	if (i.hosted || waiting > 0) {
 		steps.push(
-			i.claims === 0 && n > 0
+			waiting === 0 && n > 0
 				? { key: 'prove', title: 'Prove it is yours', state: 'done', detail: 'Ownership is proven for every domain you added.' }
-				: { key: 'prove', title: 'Prove it is yours', state: 'todo', detail: i.claims > 0 ? `${plural(i.claims, 'domain is', 'domains are')} waiting for the DNS record shown below. Its live level from public DNS is visible before proof: press Check public DNS on its card.` : 'Once a domain is added, a DNS record proves you own it. Its live level from public DNS is visible before that.' },
+				: { key: 'prove', title: 'Prove it is yours', state: 'todo', detail: waiting > 0 ? proveDetail(i.claims, lost) : 'Once a domain is added, a DNS record proves you own it. Its live level from public DNS is visible before that.' },
 		);
 	}
 

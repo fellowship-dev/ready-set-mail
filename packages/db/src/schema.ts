@@ -126,6 +126,8 @@ export const domains = sqliteTable(
 		/** Unix seconds the daily job last looked at the row whatever came of it (its queue is oldest-first by this), and when a re-check first saw the proof not hold (withdrawn only when a read 24 hours later agrees). */
 		proof_attempted_at: integer('proof_attempted_at'),
 		proof_suspected_at: integer('proof_suspected_at'),
+		/** Unix seconds the daily job last got a real answer for the row (a verdict from public DNS, or its servers recorded). Rows answered recently are the job's first queue (see zoneVerifiedDue). */
+		proof_answered_at: integer('proof_answered_at'),
 		/** Set when a legacy holder lost the name to a proven claim: the row is detached (renamed, hidden) and purged after 30 days (0005). */
 		evicted_at: integer('evicted_at'),
 		evicted_name: text('evicted_name'),

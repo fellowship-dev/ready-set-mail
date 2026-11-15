@@ -62,6 +62,9 @@ export class FakeCloudflare {
     public doh: Record<string, string[]> = {},
   ) {}
 
+  /** Hostname of every DNS-over-HTTPS lookup, in order (cloudflare-dns.com, dns.google). */
+  readonly dohHosts: string[] = [];
+
   seed(zoneId: string, rec: Omit<FakeRecord, 'id'> & { id?: string }): FakeRecord {
     const r = { id: rec.id ?? `seed-${this.#nextId++}`, ...rec };
     this.records.set(zoneId, [...(this.records.get(zoneId) ?? []), r]);
@@ -77,7 +80,8 @@ export class FakeCloudflare {
     const method = (init?.method ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     const headers = new Headers(init?.headers as HeadersInit | undefined);
-    if (url.hostname === 'cloudflare-dns.com') {
+    if (url.hostname === 'cloudflare-dns.com' || url.hostname === 'dns.google') {
+      this.dohHosts.push(url.hostname);
       const name = url.searchParams.get('name') ?? '';
       const qtype = (url.searchParams.get('type') ?? '').toUpperCase();
       const isMx = qtype === 'MX';

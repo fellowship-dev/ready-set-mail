@@ -174,7 +174,7 @@ servers (the add fails with `proof_incomplete` and the TXT record is the way).
 * a **truncated** (TC) answer is unknown, never "different";
 * the **daily job** stores the first differing read as `proof_suspected_at` and withdraws the proof only when a read at least **24 hours** after it differs again; a read that matches clears the suspicion. NXDOMAIN for the
   zone name twice, a day apart, is a real lapse. A lookup that fails is no read at all;
-* for a **rival claim**, where waiting a day would lock out a legitimate new owner, the same request reads twice, `PROOF_CONFIRM_DELAY_MS` (2000 ms) apart, and both reads must show the lapse. Where one of the
+* for a **rival claim**, where waiting a day would lock out a legitimate new owner, the same request reads twice, 2000 ms apart, the second time through a different resolver (dns.google, where the first read used cloudflare-dns.com: the same resolver asked again 2 s later usually returns the same cached answer), and both reads must show the lapse. `PROOF_CONFIRM_DELAY_MS` can lengthen the wait; outside tests it is never below 1000 ms (0 is read only under test), and a local `DOH_BASE_URL` (testing) serves both reads. Where one of the
   holder's tokens still works, Cloudflare's own answer must agree: public DNS alone differing while Cloudflare still serves the zone active and full in that account withdraws nothing (the daily job decides then).
   Cloudflare saying the zone is gone, not active, or in another account counts as the holder's lapse, also on two reads.
 
@@ -187,7 +187,7 @@ servers (the add fails with `proof_incomplete` and the TXT record is the way).
   makes the domain unproven: **intake stops accepting its reports** (the fixed address and its token addresses), the workspace's owners are emailed plainly (`domain.proof_lost` in their audit log), and
   its subdomains admitted through it follow it down.
 * **Cost.** One D1 read for the batch and one UPDATE marking it attempted, then one DNS-over-HTTPS query per distinct zone among at most `RECHECK_PER_RUN` (200) domains, 5 at a time: at most 200 subrequests a run, one query shared by all domains of a zone
-  (plus one Cloudflare read for each proof that has no stored servers yet). The queue is ordered by `proof_attempted_at`, oldest first, never-attempted first, and **every row the job takes is marked attempted whatever came of it**
+  (plus one Cloudflare read for each proof that has no stored servers yet). There are two queues, each ordered by `proof_attempted_at` (oldest first, never-attempted first). Rows that returned a **real answer** (`proof_answered_at`: public DNS said match or differs, or their servers were recorded) in the last 30 days come first, 160 of the 200 slots; rows that never answered, are new, or have been silent for 30 days share the other 40 (and any slots the first queue does not fill; the first queue borrows theirs likewise). Worst cases: a healthy row is read at least every ⌈H/160⌉ days (H healthy rows: every day up to 160), and a moved-away one is withdrawn within 2·⌈H/160⌉ days (the first differing read, then the confirming read a day or more later); a never-answered row is read every ⌈N/40⌉ days while 160 healthy rows fill the run (N = 2,000 junk rows: every 50 days), faster when there are fewer healthy ones. **Every row the job takes is marked attempted whatever came of it**
   (a verdict, a failed lookup, nothing to compare with), so a larger fleet is covered over several days and rows whose lookups never answer rotate to the back instead of holding the head of the queue. The hosted service needs Workers Paid (10,000 subrequests).
 
 ### The way back: Prove again
@@ -202,7 +202,7 @@ If another workspace proves the name first, that workspace keeps it: the old row
 ### Proofs from release 2.0.0
 
 The 2.0.0 claim Verify button (`provenByCloudflare`, `POST /api/domains` and `POST /api/domains/claims/:id/verify`) stored `verified_via = 'cloudflare'` and nothing else: no zone, no servers, so there is nothing to compare with public DNS. Such a row
-counts as **unproven against another workspace**: a claim alone moves nothing, but a completed proof of the name by that workspace (TXT, or a zone with the exact delegation) takes it, and the holder keeps its history read-only. When
+counts as **unproven against another workspace**, by the one rule (`unprovenRow`) that decides it everywhere: it neither wins a name nor blocks a related one (`relatedOwnedByOther`), and as a parent it does not admit a subdomain that another workspace holds (`provenByParent`); with no rival holding the name, the workspace's own stale parent still lets it add its subdomain, evicting nobody. A claim alone moves nothing, but a completed proof of the name by that workspace (TXT, or a zone with the exact delegation) takes it, and the holder keeps its history read-only. When
 one of the holder's connections still works, a rival claim or the daily job records the zone, account and servers if Cloudflare and public DNS agree, and from then on it is an ordinary row. With no working token nothing is recorded: today's DNS could be the new owner's.
 
 ### What an eviction does

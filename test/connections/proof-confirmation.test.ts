@@ -5,12 +5,14 @@ import { ProofIncompleteError } from '@ready-set-mail/db';
 import { call, signupVerified } from '../auth/helpers';
 import { CF_NS } from '../helpers/cf-fake';
 import { world } from './world';
-import { CONFIRM_AFTER_SECONDS, checkDelegation, recheckZoneProofs } from '../../src/domains/proof-recheck';
+import { ANSWERED_WINDOW_SECONDS, CONFIRM_AFTER_SECONDS, checkDelegation, confirmDelayMs, recheckZoneProofs } from '../../src/domains/proof-recheck';
 import { commitVerifiedDomain, DomainServiceError } from '../../src/domains/service';
 import { loadTenant } from '../../src/tenancy/load';
 import { intakeLookups } from '@ready-set-mail/db';
 import { fixedReportAddress } from '../../src/hosted/fixed-address';
 import { createResolver } from '@ready-set-mail/dns-checks';
+import { claimLookups } from '@ready-set-mail/db';
+import { confirmResolverFor, dohEndpoint } from '../../src/dns/resolver';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
@@ -95,7 +97,8 @@ describe('finding 1: the daily queue rotates whatever the lookups answer', () =>
       if (day === 1) expect(asked).not.toContain('moved.com'); // 200 never-attempted rows come first, in id order
       if (day === 2) expect(asked).toContain('moved.com'); // ... and are then behind everything that was attempted since
     }
-    expect(verdicts).toEqual(['cloudflare', 'cloudflare', 'cloudflare', 'legacy']);
+    // day 2: first answer (suspected), and from then on it is in the answered queue, read every day: confirmed on day 3
+    expect(verdicts).toEqual(['cloudflare', 'cloudflare', 'legacy', 'legacy']);
   });
 
   it('proofs with no name servers and no working token do not hold the head of the queue either', async () => {
@@ -370,5 +373,137 @@ describe('finding 4: a lapse is confirmed before a proof is withdrawn', () => {
     const resolver = resolverOf(name => ({ status: 'ok', truncated: true, answers: [{ name, type: 2, ttl: 1, data: 'a.ns.cloudflare.com' }] }));
     expect(await recheckZoneProofs(s.w.env, { resolver })).toMatchObject({ inconclusive: 1, downgraded: 0, suspected: 0 });
     expect(s.rows(s.w.A.ws).find(r => r.domain === 'big.com')).toMatchObject({ verified_via: 'cloudflare', proof_suspected_at: null });
+  });
+});
+
+describe('round 5, finding 1: one rule decides what counts as proof against another workspace', () => {
+  const release2Row = (s: S, ws: string, name: string) => s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES (?, ?, '', 'cloudflare')").run(ws, name).lastInsertRowid;
+  const live = (s: S, name: string) => s.w.rows('SELECT workspace_id, verified_via, evicted_at FROM domains WHERE domain = ?', name);
+
+  it('a stale 2.0.0 parent does not prove a subdomain that another workspace holds: no 201 via parent, no eviction', async () => {
+    const s = await setup({});
+    release2Row(s, s.w.B.ws, 'parent.com');
+    release2Row(s, s.w.A.ws, 'mail.parent.com');
+    s.w.send.mockClear();
+    const r = await s.claim(s.w.B.token, 'mail.parent.com');
+    expect(r.status).toBe(202); // a claim to prove by TXT, not an admission
+    expect(s.w.rows("SELECT workspace_id, evicted_at FROM domains WHERE domain = 'mail.parent.com' OR evicted_name = 'mail.parent.com'")).toEqual([{ workspace_id: s.w.A.ws, evicted_at: null }]);
+    expect(s.mailed()).toEqual([]);
+  });
+
+  it('with no rival, a stale 2.0.0 parent still lets its own workspace add a subdomain (nothing evicted, no conflict)', async () => {
+    const s = await setup({});
+    release2Row(s, s.w.B.ws, 'parent.com');
+    const r = await s.claim(s.w.B.token, 'mail.parent.com');
+    expect(r.status).toBe(201);
+    expect(live(s, 'mail.parent.com')).toEqual([{ workspace_id: s.w.B.ws, verified_via: 'parent', evicted_at: null }]);
+  });
+
+  it('a proven parent (TXT) in the workspace still proves a subdomain another workspace holds unproven', async () => {
+    const s = await setup({});
+    s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES (?, 'parent.com', '', 'txt')").run(s.w.B.ws);
+    release2Row(s, s.w.A.ws, 'mail.parent.com');
+    expect((await s.claim(s.w.B.token, 'mail.parent.com')).status).toBe(201);
+    expect(s.w.rows("SELECT workspace_id = ? AS b, verified_via, evicted_at IS NOT NULL AS ev FROM domains WHERE domain = 'mail.parent.com' OR evicted_name = 'mail.parent.com'", s.w.B.ws).map(r => [!!r.b, r.verified_via, !!r.ev]).sort()).toEqual([[false, 'cloudflare', true], [true, 'parent', false]].sort());
+  });
+
+  it('relatedOwnedByOther uses the same rule: a 2.0.0 or legacy row in another workspace is no related owner, a proven one is', async () => {
+    const s = await setup({});
+    const related = (name: string) => claimLookups(s.w.env.DB).relatedOwnedByOther(name, s.w.B.ws);
+    release2Row(s, s.w.A.ws, 'parent.com');
+    expect(await related('mail.parent.com')).toBe(false);
+    s.w.db.sqlite.prepare("UPDATE domains SET verified_via = 'txt' WHERE domain = 'parent.com'").run();
+    expect(await related('mail.parent.com')).toBe(true);
+    expect(await related('parent.com.evil.net')).toBe(false);
+  });
+});
+
+describe('round 5, finding 3: the confirming second read', () => {
+  it('PROOF_CONFIRM_DELAY_MS is clamped to 1000 ms outside tests (0 included), honoured under test, default 2000', () => {
+    expect(confirmDelayMs({ PROOF_CONFIRM_DELAY_MS: '0' }, false)).toBe(1000);
+    expect(confirmDelayMs({ PROOF_CONFIRM_DELAY_MS: '10' }, false)).toBe(1000);
+    expect(confirmDelayMs({ PROOF_CONFIRM_DELAY_MS: '5000' }, false)).toBe(5000);
+    expect(confirmDelayMs({}, false)).toBe(2000);
+    expect(confirmDelayMs({ PROOF_CONFIRM_DELAY_MS: 'abc' }, false)).toBe(2000);
+    expect(confirmDelayMs({ PROOF_CONFIRM_DELAY_MS: '0' }, true)).toBe(0);
+  });
+
+  it('the two reads of a rival claim go to different resolvers (cloudflare-dns.com, then dns.google)', async () => {
+    const { s } = await held();
+    s.w.cf.validTokens!.delete(TOKEN_C);
+    const hosts: string[] = [];
+    const prev = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      const u = new URL(String(input.url ?? input));
+      if (u.searchParams.get('type') === 'NS' && u.searchParams.get('name') === 'sold.com') { hosts.push(u.hostname); return new Response(JSON.stringify({ Status: 3 }), { status: 200 }); }
+      return prev(input, init);
+    });
+    expect((await s.claim(s.w.B.token, 'sold.com')).status).toBe(202);
+    expect(hosts).toEqual(['cloudflare-dns.com', 'dns.google']);
+  });
+
+  it('a local DOH_BASE_URL (testing) stays in force for both reads', () => {
+    expect(confirmResolverFor({ DOH_BASE_URL: 'http://127.0.0.1:8787' })).toBeDefined();
+    expect(dohEndpoint('http://127.0.0.1:8787')).toBe('http://127.0.0.1:8787/dns-query');
+  });
+});
+
+describe('round 5, finding 4: junk rows cannot delay healthy ones', () => {
+  const DAY = 86_400_000;
+  it('2,000 never-answering rows and one moved-away healthy row: the healthy one is withdrawn on day 2 (first read, then the confirming read a day later)', async () => {
+    const s = await setup({});
+    const ins = s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, cf_zone_id, cf_zone_name, cf_name_servers) VALUES (?, ?, '', 'cloudflare', ?, ?, ?)");
+    for (let i = 0; i < 2000; i++) ins.run(s.w.B.ws, `stall${i}.com`, zid(`stall${i}`), `stall${i}.com`, JSON.stringify(CF_NS));
+    ins.run(s.w.A.ws, 'moved.com', zid('moved'), 'moved.com', JSON.stringify(CF_NS));
+    s.w.db.sqlite.prepare("UPDATE domains SET proof_answered_at = ? WHERE domain = 'moved.com'").run(1_800_000_000 - 3600); // it has answered before: a healthy row
+    const resolver = resolverOf(name => (name.startsWith('stall') ? { status: 'error', answers: [], error: 'SERVFAIL' } : { status: 'ok', answers: [{ name, type: 2, ttl: 1, data: 'other.provider.net' }] }));
+    const t0 = 1_800_000_000_000;
+    const asked: string[][] = [];
+    const wrapped = { ...resolver, resolve: async (n: string, t: string) => { (asked.at(-1) ?? []).push(n); return resolver.resolve(n); } };
+    const verdicts: string[] = [];
+    for (let day = 1; day <= 4; day++) {
+      asked.push([]);
+      await recheckZoneProofs(s.w.env, { resolver: wrapped, now: () => t0 + day * DAY });
+      verdicts.push(s.w.rows("SELECT verified_via FROM domains WHERE domain = 'moved.com'")[0].verified_via);
+    }
+    // It is in the answered queue: read on day 1 (suspected) and day 2 (confirmed a day later), whatever the 2,000 junk rows do (they take the 40 reserved slots).
+    expect(verdicts).toEqual(['cloudflare', 'legacy', 'legacy', 'legacy']);
+    expect(asked[0]).toContain('moved.com');
+    expect(asked[0].filter(n => n.startsWith('stall'))).toHaveLength(199); // 200 slots: the healthy row, and the rest shared by the junk (which is lent the answered queue's unused slots)
+  });
+
+  it('answering rows are served first; never-answering rows keep a reserved share (40 of 200) and rotate through it', async () => {
+    const s = await setup({});
+    const ins = s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, cf_zone_id, cf_zone_name, cf_name_servers, proof_answered_at) VALUES (?, ?, '', 'cloudflare', ?, ?, ?, ?)");
+    const t0 = 1_800_000_000_000;
+    for (let i = 0; i < 400; i++) ins.run(s.w.B.ws, `good${i}.com`, zid(`good${i}`), `good${i}.com`, JSON.stringify(CF_NS), t0 / 1000 - 3600);
+    for (let i = 0; i < 400; i++) ins.run(s.w.B.ws, `junk${i}.com`, zid(`junk${i}`), `junk${i}.com`, JSON.stringify(CF_NS), null);
+    const seen = { good: new Set<string>(), junk: new Set<string>() };
+    const perDay: Array<[number, number]> = [];
+    const resolver = resolverOf(name => ({ status: name.startsWith('junk') ? 'error' : 'ok', answers: name.startsWith('junk') ? [] : CF_NS.map(d => ({ name, type: 2, ttl: 1, data: d })) }));
+    const day = { n: 0, good: 0, junk: 0 };
+    const counting = { ...resolver, resolve: async (n: string) => { if (n.startsWith('good')) { day.good++; seen.good.add(n); } else { day.junk++; seen.junk.add(n); } return resolver.resolve(n); } };
+    for (let d = 1; d <= 10; d++) {
+      day.good = 0; day.junk = 0;
+      await recheckZoneProofs(s.w.env, { resolver: counting, now: () => t0 + d * DAY });
+      perDay.push([day.good, day.junk]);
+    }
+    expect(perDay.slice(0, 2)).toEqual([[160, 40], [160, 40]]);
+    expect(seen.good.size).toBe(400); // 400 / 160 = 3 days to cover every healthy row
+    expect(seen.junk.size).toBe(400); // 400 / 40 = 10 days for the never-answered ones
+  });
+
+  it('a row that answered long ago and went silent falls back to the shared queue', async () => {
+    const s = await setup({});
+    const t0 = 1_800_000_000_000;
+    s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, cf_zone_id, cf_zone_name, cf_name_servers, proof_answered_at) VALUES (?, 'old.com', '', 'cloudflare', ?, 'old.com', ?, ?)").run(s.w.B.ws, zid('old'), JSON.stringify(CF_NS), t0 / 1000 - ANSWERED_WINDOW_SECONDS - 10);
+    const due = await claimLookups(s.w.env.DB).zoneVerifiedDue(200, t0 / 1000, { reserved: 40, answeredWithinSeconds: ANSWERED_WINDOW_SECONDS });
+    expect(due.map(r => r.domain)).toEqual(['old.com']);
+    const ins = s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, cf_zone_id, cf_zone_name, cf_name_servers, proof_answered_at) VALUES (?, ?, '', 'cloudflare', ?, ?, ?, ?)");
+    for (let i = 0; i < 200; i++) ins.run(s.w.B.ws, `good${i}.com`, zid(`good${i}`), `good${i}.com`, JSON.stringify(CF_NS), t0 / 1000 - 5);
+    const full = await claimLookups(s.w.env.DB).zoneVerifiedDue(200, t0 / 1000, { reserved: 40, answeredWithinSeconds: ANSWERED_WINDOW_SECONDS });
+    expect(full).toHaveLength(200);
+    expect(full.filter(r => r.domain === 'old.com')).toHaveLength(1); // got one of the 40 reserved slots
+    expect(full.filter(r => r.domain.startsWith('good'))).toHaveLength(199); // the reserved slots nobody else wants go to answering rows
   });
 });

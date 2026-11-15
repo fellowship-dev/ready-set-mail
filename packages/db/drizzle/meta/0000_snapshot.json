@@ -1838,6 +1838,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "proof_answered_at": {
+          "name": "proof_answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "evicted_at": {
           "name": "evicted_at",
           "type": "integer",

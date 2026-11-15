@@ -260,6 +260,7 @@ CREATE TABLE `domains` (
 	`proof_lost_at` integer,
 	`proof_attempted_at` integer,
 	`proof_suspected_at` integer,
+	`proof_answered_at` integer,
 	`evicted_at` integer,
 	`evicted_name` text,
 	`dns_checked_at` integer,

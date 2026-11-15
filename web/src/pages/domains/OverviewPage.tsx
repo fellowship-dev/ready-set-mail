@@ -93,7 +93,10 @@ export function OverviewPage() {
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
 	// Waiting for proof: pending claims, and domains held but unproven (a name with both counts once).
-	const waiting = new Set([...claims.map((c) => c.domain), ...domains.filter(isUnproven).map((d) => d.domain)]).size;
+	const claimed = new Set(claims.map((c) => c.domain));
+	const waiting = new Set([...claimed, ...domains.filter(isUnproven).map((d) => d.domain)]).size;
+	// Held but unproven with no claim open: no DNS record is shown for it until Prove again runs.
+	const lostProof = domains.filter((d) => isUnproven(d) && !claimed.has(d.domain)).length;
 	const [exporting, setExporting] = useState(false);
 	const listId = useId();
 	const hostedMode = useHosted();
@@ -148,7 +151,8 @@ export function OverviewPage() {
 	const steps = getStartedSteps({
 		hosted: hostedMode,
 		domains: at.map((k) => domains[k]!),
-		claims: waiting,
+		claims: waiting - lostProof,
+		lostProof,
 		summaries: at.map((k) => summaryOf(domains[k]!)),
 		verdicts: at.map((k) => verdicts[k] ?? null),
 		reports: at.map((k) => totals[k]),
