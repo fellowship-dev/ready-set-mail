@@ -24,8 +24,9 @@ describe('spf.ts', () => {
 
 	it('round-trips: re-building an existing record preserves what it said', () => {
 		const rebuilt = buildSpfRecord(extractIncludes(record), existingQualifier(record), extractOtherMechanisms(record));
-		// The redirect= is written last; with an all present it was (and stays) ignored by receivers.
-		expect(rebuilt).toBe('v=spf1 include:_spf.google.com include:custom.example.net mx ip4:203.0.113.0/24 -all redirect=other.example');
+		// With an all present receivers ignore the redirect=, so the rebuilt record leaves it out: it means the same, and the
+		// apply route accepts it (the one SPF rule refuses an all and a redirect= together).
+		expect(rebuilt).toBe('v=spf1 include:_spf.google.com include:custom.example.net mx ip4:203.0.113.0/24 -all');
 	});
 
 	it('defaults to softfail unless the record already hardfails', () => {

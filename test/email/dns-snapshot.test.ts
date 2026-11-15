@@ -108,10 +108,10 @@ describe('stored effective policy from raw TXT: whitespace, case, invalid sp=', 
 
   // RFC 7489 section 6.6.3: a record with an invalid sp= is not applied as written: p=none with a valid rua=, else no DMARC.
   it('inherited with sp=bogus and no rua=: no DMARC applies (an invalid record), never the parent\'s p=reject', async () => {
-    expect(await inherited('v=DMARC1; p=reject; sp=bogus')).toMatchObject({ policy: null, issue: 'invalid', inherited_from: 'acme.com' });
+    expect(await inherited('v=DMARC1; p=reject; sp=bogus')).toMatchObject({ policy: null, issue: 'invalid_sp', inherited_from: 'acme.com', p: null, sp: 'bogus' });
   });
-  it('inherited with sp=bogus and a valid rua=: receivers act as if it said p=none', async () => {
-    expect(await inherited('v=DMARC1; p=reject; sp=bogus; rua=mailto:r@acme.com')).toMatchObject({ policy: 'none', issue: null, inherited_from: 'acme.com' });
+  it('inherited with sp=bogus and a valid rua=: receivers act as if it said p=none, stored as the invalid sp= it is', async () => {
+    expect(await inherited('v=DMARC1; p=reject; sp=bogus; rua=mailto:r@acme.com')).toMatchObject({ policy: null, issue: 'invalid_sp', inherited_from: 'acme.com', p: 'none', sp: 'bogus' });
   });
   it('inherited with sp = none: none', async () => {
     expect(await inherited('v=DMARC1; p=reject; sp = none')).toMatchObject({ policy: 'none', issue: null, inherited_from: 'acme.com' });

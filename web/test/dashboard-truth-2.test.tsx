@@ -217,7 +217,7 @@ describe('6. the SPF step offers only a record the shared rule accepts', () => {
 			},
 		);
 		expect(await screen.findByText('This record cannot be published')).toBeInTheDocument();
-		expect(text()).toContain('The record has more than one redirect=, so receivers treat it as an error.');
+		expect(text()).toContain('SPF record is not valid: redirect= appears more than once');
 		expect(screen.queryByRole('button', { name: 'Apply via Cloudflare' })).toBeNull();
 	});
 });
