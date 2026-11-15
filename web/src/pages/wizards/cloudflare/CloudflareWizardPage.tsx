@@ -2,7 +2,7 @@ import { Button } from '@ready-set-mail/ui';
 import { Check } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { LoadError, PageSkeleton, ReadOnlyNotice } from '../../../components/states';
 import { WizardProgress } from '../../../components/wizard/WizardProgress';
 import { ApiError } from '../../../lib/api';
@@ -11,6 +11,7 @@ import {
 	activeConnection,
 	consumeOAuthReturn,
 	oauthErrorMessage,
+	clearProgress,
 	readProgress,
 	useCfConnections,
 	writeProgress,
@@ -21,6 +22,7 @@ import {
 import { fetchPlan, markWizardState, pendingWrites } from '../../../lib/dns-plan';
 import { useHosted, useSession } from '../../../lib/session';
 import { ConnectStep } from './ConnectStep';
+import { ImportStep } from './ImportStep';
 import { DomainsStep } from './DomainsStep';
 import { DoneStep } from './DoneStep';
 import { PlanStep } from './PlanStep';
@@ -33,6 +35,7 @@ export function CloudflareWizardPage() {
 	const { me } = useSession();
 	const hosted = useHosted();
 	const workspace = me?.workspace_id ?? null;
+	const navigate = useNavigate();
 	const conns = useCfConnections();
 	const [progress, setProgress] = useState<CfWizardProgress>(() => readProgress(workspace) ?? { step: 'connect', domainIds: [], written: { domains: 0, records: 0 } });
 	const [returnError, setReturnError] = useState<string | null>(null);
@@ -56,7 +59,8 @@ export function CloudflareWizardPage() {
 
 	const go = useCallback((step: CfStepKey, extra: Partial<CfWizardProgress> = {}) => setProgress((p) => ({ ...p, ...extra, step })), []);
 
-	const steps = CF_STEP_KEYS.filter((k) => !(hosted && k === 'reports_mailbox'));
+	// Hosted: connect, then every zone is added and verified in one go (ImportStep) and the person lands on the dashboard.
+	const steps = hosted ? (['connect', 'domains'] as CfStepKey[]) : CF_STEP_KEYS;
 	const connection: CfConnection | null = conns.data ? (conns.data.connections.find((c) => c.id === progress.connectionId && c.status === 'active') ?? activeConnection(conns.data) ?? (fresh?.id === progress.connectionId ? fresh : null)) : null;
 
 	// An existing connection makes step 1 unnecessary; the server token has no zone list to choose from.
@@ -74,14 +78,14 @@ export function CloudflareWizardPage() {
 		markAll(progress.domainIds, { routing: 'complete' });
 		go('done');
 	};
-	const addRecords = (from: CfStepKey, w: { ids: string[]; verified: number; rules: number }) => {
+	const addRecords = (from: CfStepKey, w: { ids: string[]; verified: number; rules: number; dmarc: { domain: string; content: string }[] }) => {
 		const n = w.ids.length;
-		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n } }));
+		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n }, dmarc: [...(p.dmarc ?? []).filter((d) => !w.dmarc.some((x) => x.domain === d.domain)), ...w.dmarc] }));
 		const noun = w.rules > 0 ? (n === 1 ? 'change' : 'changes') : n === 1 ? 'record' : 'records';
-		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? ' and checked' : `, ${n - w.verified} not checked`}`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
+		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? '' : `, ${n - w.verified} not confirmed there`}. Waiting to show in public DNS.`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
 	};
 
-	const index = Math.max(0, steps.indexOf(progress.step));
+	const index = hosted ? (progress.step === 'connect' || !connection ? 0 : 1) : Math.max(0, steps.indexOf(progress.step));
 	let body;
 	if (conns.isPending) body = <PageSkeleton label="Checking Cloudflare" />;
 	else if (conns.isError) {
@@ -98,6 +102,8 @@ export function CloudflareWizardPage() {
 		);
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
 		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
+	} else if (hosted && connection && progress.step !== 'done') {
+		body = <ImportStep key={connection.id} connection={connection} onDone={(note) => { clearProgress(workspace); navigate('/', { replace: true, state: note ? { imported: note } : undefined }); }} />;
 	} else if (progress.step === 'zones' && connection) {
 		body = <ZonesStep connection={connection} taken={(conns.data?.connections ?? []).filter((c) => c.id !== connection.id).flatMap((c) => c.zones.map((z) => z.id))} onNext={() => go('domains')} />;
 	} else if (progress.step === 'domains' && connection) {
@@ -131,5 +137,5 @@ export function CloudflareWizardPage() {
 function Done({ progress, onBack }: { progress: CfWizardProgress; onBack: (step: CfStepKey) => void }) {
 	const plan = useQuery({ queryKey: ['dns-plan-not-written', ...progress.domainIds], queryFn: () => fetchPlan(progress.domainIds), enabled: progress.domainIds.length > 0, retry: false });
 	const pending = (plan.data?.steps ?? []).flatMap((s) => pendingWrites(s.writes).map((write) => ({ step: s.key, write })));
-	return <DoneStep domainIds={progress.domainIds} written={progress.written} notWritten={plan.data?.not_written ?? []} pending={pending} onBack={onBack} />;
+	return <DoneStep domainIds={progress.domainIds} written={progress.written} dmarc={progress.dmarc ?? []} notWritten={plan.data?.not_written ?? []} pending={pending} onBack={onBack} />;
 }

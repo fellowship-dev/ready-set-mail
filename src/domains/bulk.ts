@@ -9,7 +9,7 @@ import { PlanLimitError } from '@ready-set-mail/db';
 import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import { domainCap, domainRefusal } from './service';
-import { admitDomain, claimView, settleClaims, type ClaimView } from './ownership';
+import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { recordFirstDnsCheck } from './first-check';
 
@@ -123,7 +123,7 @@ export async function bulkInsertDomains(
 
     let domainId: number;
     try {
-      const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: admission.via }, undefined, { maxDomains: cap });
+      const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via) }, undefined, { maxDomains: cap, freeing: freeingFor(tenant, domain) });
       domainId = result.meta.last_row_id as number;
       held++;
     } catch (e: unknown) {

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 interface TurnstileApi {
-	render(el: HTMLElement, opts: { sitekey: string; theme?: string; callback: (token: string) => void; 'expired-callback': () => void; 'error-callback': () => void }): string;
+	render(el: HTMLElement, opts: { sitekey: string; theme?: string; size?: string; appearance?: string; callback: (token: string) => void; 'expired-callback': () => void; 'error-callback': () => void }): string;
 	reset(id: string): void;
 	remove(id: string): void;
 }
@@ -58,10 +58,22 @@ export type HumanCheck = {
 };
 
 /**
- * One human check for one form. `siteKey` null: the instance has none, and the form needs nothing. The widget is its own
- * component, so it is rendered when the form mounts (also after in-app navigation back to it) and removed when it unmounts.
+ * How the widget shows. `interaction-only` (the default): nothing is drawn unless Cloudflare needs the person to interact, so
+ * the form reads fields → button and the check stays out of the way; `flexible` width when it does show.
  */
-export function useHumanCheck(siteKey: string | null | undefined): HumanCheck {
+export interface HumanCheckOptions {
+	appearance?: 'always' | 'interaction-only';
+	size?: 'normal' | 'compact' | 'flexible';
+}
+
+/**
+ * One human check for one form. `siteKey` null: the instance has none, and the form needs nothing. The widget is its own
+ * component, so it is rendered when the form mounts (also after in-app navigation back to it) and removed when it unmounts;
+ * a form that needs the check only for one action renders `widget` only once that action is used.
+ */
+export function useHumanCheck(siteKey: string | null | undefined, options: HumanCheckOptions = {}): HumanCheck {
+	const appearance = options.appearance ?? 'interaction-only';
+	const size = options.size ?? 'flexible';
 	const [token, setToken] = useState<string | null>(null);
 	const resetWidget = useRef<(() => void) | null>(null);
 	const reset = useCallback(() => {
@@ -69,10 +81,10 @@ export function useHumanCheck(siteKey: string | null | undefined): HumanCheck {
 		resetWidget.current?.();
 	}, []);
 	if (!siteKey) return { widget: null, token: null, ready: true, reset };
-	return { widget: <HumanCheckBox siteKey={siteKey} onToken={setToken} resetRef={resetWidget} hasToken={!!token} />, token, ready: !!token, reset };
+	return { widget: <HumanCheckBox siteKey={siteKey} appearance={appearance} size={size} onToken={setToken} resetRef={resetWidget} hasToken={!!token} />, token, ready: !!token, reset };
 }
 
-function HumanCheckBox({ siteKey, onToken, resetRef, hasToken }: { siteKey: string; onToken: (t: string | null) => void; resetRef: { current: (() => void) | null }; hasToken: boolean }) {
+function HumanCheckBox({ siteKey, appearance, size, onToken, resetRef, hasToken }: { siteKey: string; appearance: string; size: string; onToken: (t: string | null) => void; resetRef: { current: (() => void) | null }; hasToken: boolean }) {
 	const box = useRef<HTMLDivElement>(null);
 	const [state, setState] = useState<'loading' | 'ready' | 'failed' | 'rejected'>('loading');
 	const [attempt, setAttempt] = useState(0);
@@ -87,6 +99,8 @@ function HumanCheckBox({ siteKey, onToken, resetRef, hasToken }: { siteKey: stri
 				id = api.render(box.current, {
 					sitekey: siteKey,
 					theme: 'auto',
+					size,
+					appearance,
 					callback: (t) => {
 						setState('ready');
 						onToken(t);
@@ -116,7 +130,7 @@ function HumanCheckBox({ siteKey, onToken, resetRef, hasToken }: { siteKey: stri
 	}, [siteKey, attempt, onToken, resetRef]);
 
 	return (
-		<div className="space-y-2">
+		<div className="space-y-1">
 			<div ref={box} data-testid="human-check" />
 			{state === 'failed' ? (
 				<p className="text-sm text-danger" role="alert">
@@ -135,7 +149,7 @@ function HumanCheckBox({ siteKey, onToken, resetRef, hasToken }: { siteKey: stri
 					{' '}or reload the page.
 				</p>
 			) : !hasToken ? (
-				<p className="text-sm text-ink-2" aria-live="polite">
+				<p className="text-xs text-ink-2" aria-live="polite">
 					Waiting for the human check…
 				</p>
 			) : null}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { lookupDmarc, parseDmarcRecord } from '../src/dmarc';
-import { ownRecordFromInherited, planReportAddress, recordHasAddress, ruaEntries, ruaEntryAddress, withReportAddress } from '../src/dmarc-rua';
+import { ownRecordFromInherited, planReportAddress, recordHasAddress, ruaEntries, ruaEntryAddress, withReportAddress, withoutReportAddress } from '../src/dmarc-rua';
 import { fakeResolver } from './helpers';
 
 const OURS = 'rua+abcdefghijklmnopqrstuvwxyz234567@rua.example.net';
@@ -118,4 +118,15 @@ describe('planReportAddress', () => {
     const p = await plan({ 'TXT _dmarc.iana.test': ['v=DMARC1; p=reject'] }, 'mail.iana.test');
     expect(p).toMatchObject({ kind: 'inherited', policy: 'reject', policy_tag: 'p' });
   });
+});
+
+describe('withoutReportAddress', () => {
+	const ours = 'rua@intake.example.net';
+	it('removes only our entry, in any case and with a size limit, and keeps every other tag in place', () => {
+		expect(withoutReportAddress(`v=DMARC1; p=none; rua=mailto:a@x.example,mailto:RUA@Intake.example.net!10m,mailto:b@y.example; pct=50`, ours)).toBe('v=DMARC1; p=none; rua=mailto:a@x.example,mailto:b@y.example; pct=50');
+	});
+	it('drops the rua= tag when ours was the only entry, and leaves a record without it alone', () => {
+		expect(withoutReportAddress(`v=DMARC1; p=none; rua=mailto:${ours}`, ours)).toBe('v=DMARC1; p=none');
+		expect(withoutReportAddress('v=DMARC1; p=none', ours)).toBe('v=DMARC1; p=none');
+	});
 });

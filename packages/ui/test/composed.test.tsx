@@ -200,6 +200,12 @@ describe("StatusDot / Stat", () => {
 });
 
 describe("RecordBlock", () => {
+	it("has no copy buttons when the record is not meant to be copied (the product writes it itself)", () => {
+		render(<RecordBlock copyable={false} record={{ type: "TXT", name: "_dmarc", value: "v=DMARC1; p=none" }} />);
+		expect(screen.queryAllByRole("button")).toHaveLength(0);
+		expect(screen.getByText("v=DMARC1; p=none")).toBeInTheDocument();
+	});
+
 	const value = "v=DMARC1; p=none; rua=mailto:reports@example.test";
 	const setup = (shouldAdvanceTime = true) => {
 		vi.useFakeTimers({ shouldAdvanceTime });

@@ -156,3 +156,27 @@ describe('0014 public_reports', () => {
 		]);
 	});
 });
+
+describe('0015 cloudflare_import', () => {
+	const MINE = '0015_cloudflare_import.sql';
+	it('is additive: existing domains and zones keep their rows, the new columns are NULL', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: '0014_public_reports.sql' });
+		d.sqlite.prepare("INSERT INTO workspaces (id, name) VALUES ('ws_x', 'X')").run();
+		d.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES ('ws_x', 'acme.com', 'r@x', 'cloudflare')").run();
+		d.sqlite.prepare("INSERT INTO cloudflare_connections (id, workspace_id, label, auth_type, token_envelope) VALUES ('c1', 'ws_x', 'x', 'token', 'e')").run();
+		d.sqlite.prepare("INSERT INTO cloudflare_connection_zones (connection_id, workspace_id, zone_id, zone_name, cf_account_id) VALUES ('c1', 'ws_x', 'z1', 'acme.com', 'acct')").run();
+		expect(applyMigrations(d.sqlite, { through: MINE })).toEqual([MINE]);
+		expect(d.sqlite.prepare('SELECT domain, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, proof_checked_at, proof_lost_at, proof_attempted_at, proof_suspected_at, proof_answered_at FROM domains').all()).toEqual([{ domain: 'acme.com', verified_via: 'cloudflare', cf_account_id: null, cf_zone_id: null, verified_at: null, cf_zone_name: null, cf_name_servers: null, proof_checked_at: null, proof_lost_at: null, proof_attempted_at: null, proof_suspected_at: null, proof_answered_at: null }]);
+		expect(d.sqlite.prepare('SELECT zone_name, cf_account_id, cf_account_name FROM cloudflare_connection_zones').all()).toEqual([{ zone_name: 'acme.com', cf_account_id: 'acct', cf_account_name: null }]);
+	});
+
+	it('remembers a removed name once per workspace, and forgets it with the workspace', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: MINE });
+		d.sqlite.prepare("INSERT INTO workspaces (id, name) VALUES ('ws_x', 'X')").run();
+		d.sqlite.prepare("INSERT INTO removed_domains (workspace_id, domain) VALUES ('ws_x', 'acme.com')").run();
+		expect(() => d.sqlite.prepare("INSERT INTO removed_domains (workspace_id, domain) VALUES ('ws_x', 'acme.com')").run()).toThrow();
+		expect((d.sqlite.prepare('SELECT removed_at FROM removed_domains').get() as any).removed_at).toBeGreaterThan(0);
+	});
+});

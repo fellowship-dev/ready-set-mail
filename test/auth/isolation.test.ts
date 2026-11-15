@@ -116,6 +116,7 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/api/domains/2/wizard-state', kind: 'denied' },
   { method: 'PUT', path: '/api/domains/2/wizard-state', body: { step: 3 }, kind: 'denied' },
   { method: 'PATCH', path: '/api/domains/2/dmarc', body: { policy: 'reject' }, kind: 'denied' },
+  { method: 'POST', path: '/api/domains/2/prove', body: {}, kind: 'denied' },
   { method: 'POST', path: '/api/domains/2/apply-dmarc', body: { record: 'v=DMARC1; p=reject' }, kind: 'denied' },
   { method: 'POST', path: '/api/domains/2/apply-spf', body: { record: 'v=spf1 -all' }, kind: 'denied' },
   { method: 'PATCH', path: '/api/domains/2/alerts', body: { alerts_enabled: false }, kind: 'denied' },

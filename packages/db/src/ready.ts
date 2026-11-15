@@ -5,7 +5,7 @@
  */
 
 /** The newest migration this build of the code depends on. Bump with every new migration. */
-export const REQUIRED_MIGRATION = '0014_public_reports.sql';
+export const REQUIRED_MIGRATION = '0015_cloudflare_import.sql';
 
 export class SchemaNotReadyError extends Error {
 	constructor(detail: string) {

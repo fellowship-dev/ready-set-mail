@@ -28,46 +28,26 @@ describe('cookie-only session', () => {
 	});
 });
 
-describe('email verification', () => {
-	async function fillSignup() {
-		const user = userEvent.setup();
-		await user.click(await screen.findByRole('button', { name: 'Create an account' }));
-		await user.type(screen.getByLabelText('Email'), 'new@example.com');
-		// Hosted sign-up asks for the email only: the password is chosen once, on the page the emailed link opens.
-		expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
-		expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: 'Create account' }));
-		return user;
-	}
-
-	it('shows "Check your email" after sign-up and can resend', async () => {
+describe('the emailed code', () => {
+	it('after sign-up: the code screen; "Send a new code" repeats the sign-up (cookie-only, no token in storage)', async () => {
 		const { calls } = renderApp(<AuthPage />, {
 			role: null,
 			status: { mode: 'saas', signup_open: true },
-			routes: { 'POST /api/auth/signup': { __status: 201, body: { verification_required: true } }, 'POST /api/auth/resend-verification': { ok: true } },
-		});
-		const user = await fillSignup();
-		expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
-		expect(screen.getByLabelText('Verification email address')).toHaveTextContent('new@example.com');
-		await user.click(screen.getByRole('button', { name: 'Resend verification email' }));
-		expect(await screen.findByText('If this address is waiting to be confirmed, a new link is on its way. It can take a minute to arrive.')).toBeInTheDocument();
-		expect(calls.find((c) => c.path === '/api/auth/resend-verification')?.body).toEqual({ email: 'new@example.com' });
-	});
-
-	it('login of an unverified user shows the same screen', async () => {
-		renderApp(<AuthPage />, {
-			role: null,
-			status: { mode: 'saas' },
-			routes: { 'POST /api/auth/login': { __status: 403, body: { error: 'verify your email', code: 'email_not_verified' } } },
+			routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } },
 		});
 		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('Email'), 'a@example.com');
-		await user.type(screen.getByLabelText('Password'), 'correct-horse');
-		await user.click(screen.getByRole('button', { name: 'Sign in' }));
-		expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+		await user.click(await screen.findByRole('button', { name: 'Create an account' }));
+		await user.type(screen.getByLabelText('Email'), 'new@example.com');
+		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Create account' }));
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Send a new code' }));
+		expect(await screen.findByText('A new code is on its way to new@example.com. The previous code no longer works.')).toBeInTheDocument();
+		expect(calls.filter((c) => c.path === '/api/auth/signup')).toHaveLength(2);
+		expect(localStorage.getItem('ia_api_key')).toBeNull();
 	});
 
-	it('a new invitee is told to verify instead of being signed in', async () => {
+	it('a new invitee confirms with the code instead of being signed in at once', async () => {
 		renderApp(
 			<Routes>
 				<Route path="/invite/:token" element={<InvitePage />} />
@@ -77,7 +57,7 @@ describe('email verification', () => {
 				route: '/invite/t1',
 				routes: {
 					'GET /api/invites/t1': { email: 'new@example.com', invited_by: 'boss@example.com', role: 'member', workspace_name: 'Acme', user_exists: false },
-					'POST /api/invites/t1': { __status: 201, body: { verification_required: true } },
+					'POST /api/invites/t1': { code_required: true, purpose: 'invite', email: 'new@example.com', expires_in: 600 },
 				},
 			},
 		);
@@ -86,7 +66,7 @@ describe('email verification', () => {
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Accept invite' }));
-		expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
 	});
 
 	it('an unverified cookie session (403 on /api/me) lands on sign-in, not an error', async () => {

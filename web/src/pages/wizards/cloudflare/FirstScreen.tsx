@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { CopyField } from '../../../components/domain/CopyField';
 import { ENCRYPTION_COMMAND, ENCRYPTION_MESSAGE, clearProgress, usableConnection, useCfConnections, writeProgress, type CfConnections } from '../../../lib/cloudflare';
-import { useDomainClaims } from '../../../lib/queries';
 import { useHosted, useSession } from '../../../lib/session';
 import { DomainStep } from '../setup/DomainStep';
 
@@ -30,7 +29,6 @@ export function FirstScreen({ onDomainSet, onProgress }: { onDomainSet: (domainI
 	const navigate = useNavigate();
 	const manualRef = useRef<HTMLDivElement>(null);
 	const [revealed, setRevealed] = useState(false);
-	const claims = useDomainClaims();
 	// Members cannot connect anything; skip the request instead of waiting for its 403.
 	const conns = useCfConnections(canWrite);
 
@@ -38,9 +36,8 @@ export function FirstScreen({ onDomainSet, onProgress }: { onDomainSet: (domainI
 	const data = conns.data;
 	if (!canWrite) mode = { kind: 'plain' };
 	else if (conns.isPending) mode = { kind: 'pending' };
-	// Failing request, or hosted waiting for a DNS proof: exactly the form there always was.
+	// Failing request: exactly the form there always was. A pending claim does not hide the Cloudflare card: connecting verifies it.
 	else if (conns.isError || !data) mode = { kind: 'plain' };
-	else if (hosted && (claims.data ?? []).some((c) => c.status === 'pending')) mode = { kind: 'plain' };
 	// Hosted: a customer cannot set the encryption key, so without it there is no Cloudflare path to offer.
 	else if (hosted && !data.encryption_configured) mode = { kind: 'plain' };
 	else if (!usableConnection(data) && !data.oauth.available && !data.token_paste) mode = hosted || data.encryption_configured ? { kind: 'plain' } : { kind: 'blocked', data };

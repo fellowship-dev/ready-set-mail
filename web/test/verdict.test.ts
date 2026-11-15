@@ -279,6 +279,17 @@ describe('getStartedSteps', () => {
 		expect(getStartedSteps({ ...base, hosted: true }).map((s) => s.key)).toEqual(['add', 'prove', 'read', 'publish']);
 	});
 
+	it('a domain that lost its proof is not "waiting for the DNS record shown below" (none is shown until Prove again)', () => {
+		const base = { hosted: true, domains: [domain], summaries: [], verdicts: [], reports: [] };
+		const prove = (claims: number, lostProof: number) => getStartedSteps({ ...base, claims, lostProof }).find((x) => x.key === 'prove');
+		expect(prove(0, 1)).toMatchObject({ state: 'todo', detail: '1 domain lost its proof. Press Prove again on its card.' });
+		expect(prove(0, 2)!.detail).toBe('2 domains lost their proof. Press Prove again on their card.');
+		expect(prove(1, 0)!.detail).toMatch(/^1 domain is waiting for the DNS record shown below\./);
+		expect(prove(1, 1)!.detail).toMatch(/1 domain is waiting for the DNS record shown below\..*1 domain lost its proof\. Press Prove again on its card\.$/);
+		expect(prove(0, 0)).toMatchObject({ state: 'done' }); // domains added, nothing outstanding
+		expect(getStartedSteps({ ...base, claims: 0, lostProof: 1 }).find((x) => x.key === 'add')!.detail).toBe('1 domain added, and 1 waiting for proof of ownership.');
+	});
+
 	it('a step is done only when the data shows it', () => {
 		const s = summary({ dmarc_policy: 'none', dmarc_p: 'none' });
 		const v = domainVerdict(domain, s, reports(null));

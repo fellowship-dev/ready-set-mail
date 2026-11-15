@@ -7,10 +7,12 @@ Cloudflare accounts**. Each connection is either
 * **token**: the user pastes a Cloudflare API token (fallback, and what self-hosters already use).
 
 Each **domain is linked to the connection that manages its zone**; every DNS/Email-Routing call for that domain uses that
-connection's token. Cloudflare consent is per Cloudflare *account*, not per zone, so after connecting the owner **picks the
-zones** Ready Set Mail may manage, and every call outside that list is refused, whatever the token could do.
+connection's token. Cloudflare consent is per Cloudflare *account*, not per zone, so Ready Set Mail keeps its own **allow-list of
+zones** it may manage, and every call outside that list is refused, whatever the token could do. On the hosted service the allow-list is
+filled for the owner: every active zone the connection can see is added as a verified domain ([First run](#first-run-import-proof-and-accounts));
+elsewhere the owner ticks zones.
 
-Contents: [Operator setup](#operator-setup) · [Configuration](#configuration) · [How it works](#how-it-works) · [API](#api) ·
+Contents: [First run](#first-run-import-proof-and-accounts) · [Operator setup](#operator-setup) · [Configuration](#configuration) · [How it works](#how-it-works) · [API](#api) ·
 [Self-host and the relay](#self-host-and-the-relay) · [Rotating TOKEN_ENCRYPTION_KEY](#rotating-token_encryption_key)
 
 ## Operator setup
@@ -121,6 +123,105 @@ The current baseline includes the Cloudflare connection tables; apply all curren
 * **Disconnect.** OAuth: the refresh and access tokens are revoked at `CF_OAUTH_REVOKE_URL`, then the row is deleted and
   linked domains are unlinked. Pasted tokens cannot be revoked from here; the owner revokes them in Cloudflare's dashboard.
 
+## First run: import, proof and accounts
+
+**Where the OAuth return lands.** `return_to` is the route the person was on when they pressed *Continue to Cloudflare*. Connecting from the
+dashboard (the claim card), the first screen or any setup screen goes into the setup wizard (`#/setup/cloudflare`), so the return
+continues there; `#/cloudflare/connect?back=/` and `back=/setup…` are redirected into it. Settings keeps returning to Settings, and a
+connect started from a domain's own page (`back=/domains/<id>…`) still lists zones, links that domain and returns to it.
+
+**Import (hosted).** Once a connection exists, the wizard calls `POST /api/cloudflare/connections/:id/import`. The server reads the zone list
+through the stored connection (a browser can only name zone ids from that list), and adds every **active** zone as a domain of the workspace,
+verified through the connection under the [rule below](#how-a-zone-proves-ownership). Importing writes nothing to DNS; it reads public DNS once per
+domain, as adding a domain by hand does. The allow-list becomes the zones that were imported (plus those of domains the workspace already has).
+A zone that is not active, not a full setup, not delegated to Cloudflare's name servers or not editable by the token is skipped: no domain, no
+claim. Pending claims for imported names, or for names inside an allowed zone, are verified in the same request (and when the allow-list is saved with
+`PUT …/zones`: `verified_claims` lists them). It adds at most 10 domains per request and answers `more` > 0 when the caller should ask again.
+
+* **Plan.** On the hosted service a workspace holds at most `MAX_DOMAINS_PER_WORKSPACE` domains (default 10; enforced in the domain insert, `src/domains/service.ts`
+  `domainCap`). When the zones would not all fit, nothing is imported and the answer carries `needs_selection: { room, cap, zones }`; the dashboard shows
+  the list with "Your plan covers N domains. Choose which to add." and calls import again with `{ "zone_ids": [...] }`. More ids than the room
+  is refused (`403 plan_limit`). Self-host has no cap and keeps the zone list, domain step and DNS plan.
+* **Idempotent.** A domain the workspace already has is left alone; a second grant for the same account adds nothing twice. A domain a person removes is remembered
+  (`removed_domains`) and is not imported again; it is offered under Add domain, and asking for it by id adds it back.
+* **Suggestions.** `GET /api/cloudflare/suggestions` lists zones of the working connections that are not domains yet (removed ones marked). Zones that appear in Cloudflare
+  later are suggested, never added by themselves.
+
+### How a zone proves ownership
+
+A pending claim, or a name typed into Add domain, is verified through Cloudflare (`src/domains/ownership.ts`, `cloudflareProof`) only when **all** of these hold:
+
+1. the name is the zone's name or below it on a label boundary (`notexample.co.uk` is not inside `example.co.uk`), and the zone is not itself a public suffix such as `co.uk` (`isPublicSuffix`, the Public Suffix List the repository already ships through `tldts`);
+2. the zone is on the allow-list of an **active** connection of this workspace, and no allowed-off child zone serves the name;
+3. Cloudflare says now, through that connection, that the zone is `active`, a `full` setup (not `partial`/CNAME, not `secondary`) and has the same name;
+4. the zone belongs to the connection's own Cloudflare account (the account recorded on the connection and, for a grant that covers several accounts, the account recorded for that zone);
+5. the token can edit its DNS: an OAuth grant whose scopes include a DNS write scope, or Cloudflare's zone read lists `#dns_records:edit` for the token. If neither can be established there is no Cloudflare proof;
+6. public DNS delegates the zone name to **exactly** the zone's Cloudflare name servers: every NS answer is owned by the zone name itself (a name that is a CNAME to another domain answers with that domain's servers under that domain's name, and proves nothing about who runs the zone here), and the two sets are **equal**, not a subset. Cloudflare assigns a zone exactly its set; a domain delegated to only some of them is half-moved to another provider or to another account's zone, and no legitimate setup publishes a part of the set, so a subset is refused;
+7. hosted: no other workspace has verified the name, a parent of it or a child of it (an import says so in its own words, not as "Cloudflare does not answer", and without saying who).
+
+Anything else falls back to the DNS record (`_readysetmail.<domain>`). The proof is recorded on the domain (`cf_account_id`, `cf_zone_id`, `verified_at`) and in
+the audit log as `domain.proof` (`method: cloudflare_zone`, account, zone id and name, the zone's name servers, connection, time). A revoked token or a removed connection does **not**
+undo it: the domain is still verified and watched, and changing its DNS needs a reconnect. What does end it is the zone leaving: see the next section.
+
+### A zone proof is re-checked
+
+A proof says who controlled the zone when it was made; domains are sold and zones move. `domains.cf_zone_name` and `domains.cf_name_servers` keep the zone's name and the name
+servers public DNS delegated it to at the proof (`src/domains/proof-recheck.ts`). **A zone proof is never written without them**: the insert refuses a row verified through Cloudflare that has no zone and no
+servers (the add fails with `proof_incomplete` and the TXT record is the way).
+
+**A lapse is confirmed before the proof is withdrawn.** One empty answer, an NXDOMAIN or a subset of the name servers is a glitch until it is seen twice, so:
+
+* a **truncated** (TC) answer is unknown, never "different";
+* the **daily job** stores the first differing read as `proof_suspected_at` and withdraws the proof only when a read at least **24 hours** after it differs again; a read that matches clears the suspicion. NXDOMAIN for the
+  zone name twice, a day apart, is a real lapse. A lookup that fails is no read at all;
+* for a **rival claim**, where waiting a day would lock out a legitimate new owner, the same request reads twice, 2000 ms apart, the second time through a different resolver (dns.google, where the first read used cloudflare-dns.com: the same resolver asked again 2 s later usually returns the same cached answer), and both reads must show the lapse. `PROOF_CONFIRM_DELAY_MS` can lengthen the wait; outside tests it is never below 1000 ms (0 is read only under test), and a local `DOH_BASE_URL` (testing) serves both reads. Where one of the
+  holder's tokens still works, Cloudflare's own answer must agree: public DNS alone differing while Cloudflare still serves the zone active and full in that account withdraws nothing (the daily job decides then).
+  Cloudflare saying the zone is gone, not active, or in another account counts as the holder's lapse, also on two reads.
+
+* **When another workspace proves the name** (TXT, or a zone of its own), the zone-verified holder of that name, of a parent or of a child first shows it still holds it: public DNS must
+  still delegate the zone to the stored servers (same rule as above: zone-owned answers, equal sets) and, where one of its tokens still works, Cloudflare must still serve the zone,
+  `active` and `full`, in the account that proved it. A holder whose lapse is confirmed becomes **unproven** (`verified_via` `legacy`, `proof_lost_at`), which is
+  what the existing eviction rule keys on: the new proof then wins, the holder's row is detached and its owners are emailed and audited. A revoked token alone changes nothing, and a lookup that
+  fails or a Cloudflare that cannot be reached is not an answer: the holder keeps the name and the new owner tries again. A holder that has just shown it holds the name (10 minutes) is not asked again.
+* **Daily** (the hosted cron, 11:00 UTC, `zone proof re-check`): every zone-verified domain's zone is asked of public DNS. A delegation that no longer matches (different servers, NXDOMAIN, no NS), confirmed as above,
+  makes the domain unproven: **intake stops accepting its reports** (the fixed address and its token addresses), the workspace's owners are emailed plainly (`domain.proof_lost` in their audit log), and
+  its subdomains admitted through it follow it down.
+* **Cost.** One D1 read for the batch and one UPDATE marking it attempted, then one DNS-over-HTTPS query per distinct zone among at most `RECHECK_PER_RUN` (200) domains, 5 at a time: at most 200 subrequests a run, one query shared by all domains of a zone
+  (plus one Cloudflare read for each proof that has no stored servers yet). There are two queues, each ordered by `proof_attempted_at` (oldest first, never-attempted first). Rows that returned a **real answer** (`proof_answered_at`: public DNS said match or differs, or their servers were recorded) in the last 30 days come first, 160 of the 200 slots; rows that never answered, are new, or have been silent for 30 days share the other 40 (and any slots the first queue does not fill; the first queue borrows theirs likewise). Worst cases: a healthy row is read at least every ⌈H/160⌉ days (H healthy rows: every day up to 160), and a moved-away one is withdrawn within 2·⌈H/160⌉ days (the first differing read, then the confirming read a day or more later); a never-answered row is read every ⌈N/40⌉ days while 160 healthy rows fill the run (N = 2,000 junk rows: every 50 days), faster when there are fewer healthy ones. **Every row the job takes is marked attempted whatever came of it**
+  (a verdict, a failed lookup, nothing to compare with), so a larger fleet is covered over several days and rows whose lookups never answer rotate to the back instead of holding the head of the queue. The hosted service needs Workers Paid (10,000 subrequests).
+
+### The way back: Prove again
+
+A holder that lost its proof (a zone moved between its own Cloudflare accounts, a delegation that changed) keeps the **same domain row** and all its history. The overview and the domain page say
+**"Proof lost: prove it is still yours"** with a **Prove again** action (`POST /api/domains/:id/prove`; adding the same name again does the same). It re-runs the proof on the existing row: the zone through any current Cloudflare
+connection of the workspace, or the TXT record (a claim is opened and its Verify restores the row). When it holds the row is restored in place (`domain.proof_restored` in the audit log): same id, stored reports, settings and report address.
+Reports are refused while the domain is unproven; the ones stored stay. Nothing needs to be removed first (removing deletes the history).
+If another workspace proves the name first, that workspace keeps it: the old row is detached, its report history stays with its workspace, read-only, for 30 days (export), and Prove again on it answers that
+(`409 domain_taken`).
+
+### Proofs from release 2.0.0
+
+The 2.0.0 claim Verify button (`provenByCloudflare`, `POST /api/domains` and `POST /api/domains/claims/:id/verify`) stored `verified_via = 'cloudflare'` and nothing else: no zone, no servers, so there is nothing to compare with public DNS. Such a row
+counts as **unproven against another workspace**, by the one rule (`unprovenRow`) that decides it everywhere: it neither wins a name nor blocks a related one (`relatedOwnedByOther`), and as a parent it does not admit a subdomain that another workspace holds (`provenByParent`); with no rival holding the name, the workspace's own stale parent still lets it add its subdomain, evicting nobody. A claim alone moves nothing, but a completed proof of the name by that workspace (TXT, or a zone with the exact delegation) takes it, and the holder keeps its history read-only. When
+one of the holder's connections still works, a rival claim or the daily job records the zone, account and servers if Cloudflare and public DNS agree, and from then on it is an ordinary row. With no working token nothing is recorded: today's DNS could be the new owner's.
+
+### What an eviction does
+
+When a proof evicts an **unproven** holder of the name, it happens in this order so that nobody loses a domain unless somebody gets it: the new domain is only added when the plan has room, and the holder's row is detached in the
+same transaction as that insert (a full plan or a failed insert changes nothing); only then are the holder's hosted records and its report-authorisation record removed, the holder's report history kept for 30 days for export, its owners emailed and the
+eviction audited. Those removals delete records through the **evicted** workspace's own connection, so an import can change DNS of the party that lost the name (never the importing user's): the import's status line says
+"Nothing in your DNS was changed."
+
+An import reads public DNS and writes nothing to the importing user's DNS.
+
+### Several Cloudflare accounts
+
+One grant can cover several Cloudflare accounts, and one account can be reached through several grants. A connection stores one account id only when the token sees exactly one
+account; otherwise the account is a property of each allowed zone (`cloudflare_connection_zones.cf_account_id`, with the name Cloudflare returned). Settings lists each
+**account** once (`accounts` in `GET /api/cloudflare/connections`): name, domains verified through it, working or needs reconnecting, who connected it and when, and
+"2 connections" when more than one grant reaches it. Account names come from `GET /accounts`, which a token with Account Settings Read can call
+([API reference](https://developers.cloudflare.com/api/resources/accounts/methods/list/)); the zone list also names each zone's account. Disconnect stays per grant and the dialog names the other accounts of the same sign-in.
+
 ## API
 
 All endpoints need a signed-in **owner or admin** (members get `403`, including for reads), act on the caller's workspace
@@ -208,10 +309,14 @@ connection that manages its zone. The connection must be `active` (`409` otherwi
 | 403 | `cf_zone_not_allowed` | the zone is not on the connection's allow-list |
 | 400 | | the domain is not linked to a connection (saas), or has no zone in it |
 
+### `POST /api/cloudflare/connections/:id/import` · `GET /api/cloudflare/suggestions`
+
+See [First run](#first-run-import-proof-and-accounts). Import takes `{ "zone_ids"?: [...] }` and answers `{ imported, already, skipped, removed, more, accounts, verified_claims, needs_selection? }`.
+
 ### Suggested UI flow
 
 1. Settings → Cloudflare: list connections; *Connect Cloudflare* (if `oauth.available`) and *Paste an API token*.
-2. After `?cf_connection=<id>` (or a pasted token): `GET …/zones`, let the owner tick zones, `PUT …/zones`.
+2. After `?cf_connection=<id>` (or a pasted token): hosted: `POST …/import`, then the dashboard. Self-host: `GET …/zones`, let the owner tick zones, `PUT …/zones`.
 3. For each domain: `PUT /api/domains/:id/connection`. Domains whose zone is on exactly one connection can be linked in one click.
 4. Show `status: "broken"` connections with a *Reconnect* action.
 

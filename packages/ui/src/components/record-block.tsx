@@ -92,10 +92,12 @@ export interface RecordBlockProps extends Omit<React.HTMLAttributes<HTMLDivEleme
 	record: DnsRecord;
 	/** Caption above the block: "Add this TXT record at your DNS provider". */
 	title?: React.ReactNode;
+	/** Copy buttons on the name and value. Off for a record the product is about to write itself: there is nothing to paste. Default true. */
+	copyable?: boolean;
 }
 
 /** A DNS record as content: monospace, selectable, each field copyable. */
-export const RecordBlock = React.forwardRef<HTMLDivElement, RecordBlockProps>(({ className, record, title, ...props }, ref) => {
+export const RecordBlock = React.forwardRef<HTMLDivElement, RecordBlockProps>(({ className, record, title, copyable = true, ...props }, ref) => {
 	const rows: Array<{ key: string; label: string; value: string; copy: boolean }> = [
 		{ key: "type", label: "Type", value: record.type, copy: false },
 		{ key: "name", label: "Name", value: record.name, copy: true },
@@ -111,7 +113,7 @@ export const RecordBlock = React.forwardRef<HTMLDivElement, RecordBlockProps>(({
 						<dt className="pt-1.5 text-xs font-semibold uppercase tracking-wide text-ink-2">{r.label}</dt>
 						<dd className="flex min-w-0 items-start justify-between gap-2">
 							<span className="min-w-0 py-1 font-mono text-sm leading-relaxed text-ink-1 [overflow-wrap:anywhere]">{breakAfterSemicolons(r.value)}</span>
-							{r.copy ? <CopyButton text={r.value} label={`Copy ${r.label.toLowerCase()}`} /> : <span className="size-8 shrink-0" />}
+							{r.copy && copyable ? <CopyButton text={r.value} label={`Copy ${r.label.toLowerCase()}`} /> : <span className="size-8 shrink-0" />}
 						</dd>
 					</div>
 				))}

@@ -26,7 +26,7 @@ const onePrimary = (name: RegExp | string) => {
 const two = [w({ id: 'dmarc:1' }), w({ id: 'dmarc:2', domain: 'example.org', name: '_dmarc.example.org' })];
 
 describe('PlanStep', () => {
-	it('has one primary button in each state, and copy buttons on every value', async () => {
+	it('has one primary button in each state, and no copy button on a record the product is about to write', async () => {
 		const user = userEvent.setup();
 		const onNext = vi.fn();
 		const onWritten = vi.fn();
@@ -36,11 +36,13 @@ describe('PlanStep', () => {
 		await screen.findAllByRole('button');
 		await screen.findByRole('button', { name: 'Write 2 records and continue' });
 		onePrimary('Write 2 records and continue');
-		expect(screen.getAllByRole('button', { name: /^Copy value of/ })).toHaveLength(2);
+		expect(screen.queryAllByRole('button', { name: /^Copy/ })).toHaveLength(0); // Apply writes these itself: nothing to paste
 		await user.click(screen.getByRole('button', { name: 'Write 2 records and continue' }));
 		// A full success moves on at once, with what was written.
 		await waitFor(() => expect(onNext).toHaveBeenCalledTimes(1));
-		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 2, rules: 0 });
+		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 2, rules: 0, dmarc: expect.any(Array) });
+		// The DMARC records written are handed on, so the last screen can say whether public DNS shows them yet.
+		expect(onWritten.mock.calls[0]![0].dmarc.map((d: { domain: string }) => d.domain).sort()).toEqual(['example.com', 'example.org']);
 	});
 
 	it('is satisfied: "Already in place" and Next', async () => {
@@ -74,13 +76,13 @@ describe('PlanStep', () => {
 		await screen.findByText('This zone is not allowed.');
 		onePrimary('Try again');
 		expect(screen.getByRole('button', { name: 'Continue without them' })).toBeInTheDocument();
-		expect(screen.getByText('Written, not checked: Cloudflare did not confirm it.')).toBeInTheDocument();
+		expect(screen.getByText('Written, not confirmed in Cloudflare: Cloudflare did not confirm it.')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'example.com' })).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Try again' }));
 		await waitFor(() => expect(onNext).toHaveBeenCalledTimes(1));
 		const apply = calls.filter(c => c.path === '/api/onboarding/dns-apply');
 		expect(apply[1]!.body.plan_id).toBe('p2');
-		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 0, rules: 0 });
+		expect(onWritten).toHaveBeenCalledWith({ ids: ['dmarc:1', 'dmarc:2'], verified: 0, rules: 0, dmarc: expect.any(Array) });
 	});
 
 	it('shows the new plan when Cloudflare changed, and writes nothing', async () => {
@@ -127,7 +129,7 @@ describe('PlanStep', () => {
 });
 
 describe('PlanStep write results and layout', () => {
-	it('says "Written and checked in Cloudflare" when verified, else "Written, not checked: <reason>" (on a step that stays)', async () => {
+	it('says it was written and is waiting to show in public DNS when Cloudflare confirms it, else "Written, not confirmed in Cloudflare: <reason>" (on a step that stays)', async () => {
 		const user = userEvent.setup();
 		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2, 3]} onNext={() => {}} />, {
 			routes: {
@@ -136,8 +138,8 @@ describe('PlanStep write results and layout', () => {
 			},
 		});
 		await user.click(await screen.findByRole('button', { name: 'Write 3 records and continue' }));
-		expect(await screen.findByText('Written and checked in Cloudflare')).toBeInTheDocument();
-		expect(screen.getByText('Written, not checked: Could not read _dmarc.example.org back from Cloudflare to check it: Cloudflare returned an error (HTTP 500).')).toBeInTheDocument();
+		expect(await screen.findByText('Written to Cloudflare. Waiting to show in public DNS.')).toBeInTheDocument();
+		expect(screen.getByText('Written, not confirmed in Cloudflare: Could not read _dmarc.example.org back from Cloudflare to check it: Cloudflare returned an error (HTTP 500).')).toBeInTheDocument();
 		expect(screen.queryByText('Written')).toBeNull(); // never a bare "Written"
 	});
 
@@ -261,13 +263,13 @@ describe('DoneStep waits for the first check', () => {
 });
 
 describe('PlanStep: a write that was not checked says why', () => {
-	it('with no note from the server it still says "Written, not checked", never a bare "Written"', async () => {
+	it('with no note from the server it still says "Written, not confirmed", never a bare "Written"', async () => {
 		const user = userEvent.setup();
 		renderApp(<PlanStep stepKey="dmarc" domainIds={[1, 2]} onNext={() => {}} />, {
 			routes: { 'POST /api/onboarding/dns-plan': plan(two), 'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:1', ok: true, verified: false }, { id: 'dmarc:2', ok: false, error: 'nope' }] } },
 		});
 		await user.click(await screen.findByRole('button', { name: 'Write 2 records and continue' }));
-		expect(await screen.findByText(/^Written, not checked: /)).toBeInTheDocument();
+		expect(await screen.findByText(/^Written, not confirmed in Cloudflare: /)).toBeInTheDocument();
 		expect(screen.queryByText('Written')).toBeNull();
 	});
 });

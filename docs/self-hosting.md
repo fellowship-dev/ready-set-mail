@@ -100,6 +100,14 @@ This token stays on your machine or in your CI secrets. The Worker never sees it
 
 A self-hosted instance can also take this token as the Worker secret `CLOUDFLARE_API_TOKEN` (`npm run wrangler -- secret put CLOUDFLARE_API_TOKEN`); it then appears in the dashboard as the server's own connection and cannot be edited there.
 
+## Sign-in codes
+
+Creating the owner from the setup link (or with the installer proof) signs you in at once, with no code. Sign-in codes can be used once the instance can send mail: the `SEND_EMAIL` binding is set (`wrangler.jsonc` sets it) and there is a sender address, which the setup wizard stores, or `noreply@reports.<base domain>` once the wizard has stored a base domain. Even then, a person is asked for a code only after a code has reached them; until then their sign-in is the password alone, so a configured sender cannot lock anyone out. To turn codes on for yourself, open Settings → Account → Sign-in and choose **Send me a test code**: once you enter it, every sign-in ends with a 6-digit code emailed to you. A password reset by code turns them on too. Each person does this for themselves.
+
+The sign-in screen says that a code follows the password once you turned codes on, and from which domain it comes. Settings → Account → Sign-in says which mode is in force; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason` (`mail`, `no_mail`, `turned_off`), and `GET /api/auth/codes` (signed in) says whether codes are on for you.
+
+Cloudflare sends this mail only to addresses verified as Email Routing destinations in your account, from a domain with Email Routing on. When the mail provider refuses a test code, the page says so and codes stay off for you. Once codes have reached you, a sign-in whose code cannot be sent does not complete ("We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off with SIGNIN_CODES=off).") and the failure is in the audit log; your password alone does not get in while mail is broken. A reset code goes out after the answer, so the reset page looks the same whether or not it could be sent. To stop codes on the whole instance, set the variable `SIGNIN_CODES` to `off` (`vars` in your `wrangler.local.jsonc`, then `npm run deploy`). If you forgot your password and the reset code cannot reach you, add your address as a verified destination in Cloudflare (Email → Email Routing → Destination addresses) and ask for the code again.
+
 ## Scheduled jobs
 
 The Worker runs five cron triggers (times in UTC). They start when it is deployed, and do nothing until there are domains to work on.
@@ -193,4 +201,5 @@ Later upgrades are the same as for an installer-made instance: `git pull && npm 
 | `/health did not answer correctly (HTTP 503 …)` | Migrations are missing: run `npm run migrate`, or the installer again with `--resume`. |
 | `wrangler.local.jsonc … belongs to the instance "<other>"` | One checkout deploys one instance. Clone the repository again for a second instance. |
 | `npm run deploy` warns `"unsafe" fields are experimental` | Expected: the request rate limits are declared as Wrangler `unsafe` bindings. Nothing to do. |
+| Sign-in asks for a 6-digit code that never arrives | Mail that Cloudflare accepted did not reach you (spam folder, or forwarding). Set `SIGNIN_CODES` to `off` and redeploy to sign in with the password alone, then fix delivery: see [Sign-in codes](#sign-in-codes). |
 | `wrangler.jsonc still has the REPLACE_WITH_… placeholder ids` | `npm run deploy` found no `wrangler.local.jsonc`: run `npm run setup`, or follow [Manual install](#manual-install). |

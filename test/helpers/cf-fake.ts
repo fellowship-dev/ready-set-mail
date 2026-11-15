@@ -1,6 +1,19 @@
 import { vi } from 'vitest';
 
-export interface FakeZone { id: string; cfAccountId?: string }
+export interface FakeZone {
+  id: string;
+  cfAccountId?: string;
+  cfAccountName?: string;
+  /** Default 'active'. */
+  status?: string;
+  /** Default 'full'. */
+  type?: string;
+  /** What Cloudflare returns for the token on this zone (GET /zones/:id). Default: DNS edit. */
+  permissions?: string[];
+  /** The zone's own Cloudflare name servers (GET /zones/:id). Public DNS answers the same unless `ns` says otherwise. */
+  nameServers?: string[];
+}
+export const CF_NS = ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'];
 export interface FakeRecord { id: string; type: string; name: string; content: string }
 
 export interface FakeCall {
@@ -33,6 +46,10 @@ export class FakeCloudflare {
   validTokens?: Set<string>;
   /** Cloudflare accounts the token can see (GET /accounts). */
   accounts: { id: string; name: string }[] = [];
+  /** Names that are a CNAME to another name: an NS question about them is answered with the target's NS records, as a recursive resolver does. */
+  nsViaCname: Record<string, string> = {};
+  /** NS answers for DNS-over-HTTPS lookups: name -> hosts. A zone name not listed answers with its zone's own name servers. */
+  readonly ns: Record<string, string[]> = {};
   #nextId = 1;
 
   constructor(
@@ -44,6 +61,9 @@ export class FakeCloudflare {
     /** TXT answers for DNS-over-HTTPS lookups: name -> records. Unknown names are NXDOMAIN. */
     public doh: Record<string, string[]> = {},
   ) {}
+
+  /** Hostname of every DNS-over-HTTPS lookup, in order (cloudflare-dns.com, dns.google). */
+  readonly dohHosts: string[] = [];
 
   seed(zoneId: string, rec: Omit<FakeRecord, 'id'> & { id?: string }): FakeRecord {
     const r = { id: rec.id ?? `seed-${this.#nextId++}`, ...rec };
@@ -60,10 +80,22 @@ export class FakeCloudflare {
     const method = (init?.method ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     const headers = new Headers(init?.headers as HeadersInit | undefined);
-    if (url.hostname === 'cloudflare-dns.com') {
+    if (url.hostname === 'cloudflare-dns.com' || url.hostname === 'dns.google') {
+      this.dohHosts.push(url.hostname);
       const name = url.searchParams.get('name') ?? '';
       const qtype = (url.searchParams.get('type') ?? '').toUpperCase();
       const isMx = qtype === 'MX';
+      if (qtype === 'NS') {
+        // Real DoH answers carry the owner name of each record. A CNAME at the queried name is followed by a recursive resolver: the NS records
+        // that come back are the target's, owned by the target (`nsViaCname`).
+        const target = this.nsViaCname[name];
+        if (target) {
+          const hosts = this.ns[target] ?? (this.zones[target] ? (this.zones[target].nameServers ?? CF_NS) : []);
+          return new Response(JSON.stringify({ Status: 0, Answer: [{ name: `${name}.`, type: 5, data: `${target}.` }, ...hosts.map(h => ({ name: `${target}.`, type: 2, data: `${h}.` }))] }), { status: 200 });
+        }
+        const hosts = this.ns[name] ?? (this.zones[name] ? (this.zones[name].nameServers ?? CF_NS) : undefined);
+        return new Response(JSON.stringify(hosts ? { Status: 0, Answer: hosts.map(h => ({ name: `${name}.`, type: 2, data: `${h}.` })) } : { Status: 3 }), { status: 200 });
+      }
       const answers = qtype === 'CNAME' ? (this.cname[name] ? [this.cname[name]] : undefined) : isMx ? this.mx[name] : this.doh[name];
       const payload = answers
         ? { Status: 0, Answer: answers.map(data => (isMx ? { type: 15, data } : qtype === 'CNAME' ? { type: 5, data: `${data}.` } : { type: 16, data: `"${data}"` })) }
@@ -97,15 +129,24 @@ export class FakeCloudflare {
       const name = url.searchParams.get('name');
       if (name) {
         const z = this.zones[name];
-        return ok(z ? [{ id: z.id, name, account: z.cfAccountId ? { id: z.cfAccountId } : undefined }] : []);
+        return ok(z ? [{ id: z.id, name, account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined }] : []);
       }
-      return paged(Object.entries(this.zones).map(([n, z]) => ({ id: z.id, name: n, status: 'active', account: z.cfAccountId ? { id: z.cfAccountId } : undefined })));
+      const wantStatus = url.searchParams.get('status');
+      return paged(Object.entries(this.zones)
+        .map(([n, z]) => ({ id: z.id, name: n, status: z.status ?? 'active', account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined }))
+        .filter(z => !wantStatus || z.status === wantStatus));
     }
 
     if (m) {
       const zoneId = m[1];
       const rest = m[2] ?? '';
       const list = this.records.get(zoneId) ?? [];
+      if (rest === '' && method === 'GET') {
+        const hit = Object.entries(this.zones).find(([, z]) => z.id === zoneId);
+        if (!hit) return fail(404, 'Zone not found');
+        const [n, z] = hit;
+        return ok({ id: z.id, name: n, status: z.status ?? 'active', type: z.type ?? 'full', name_servers: z.nameServers ?? CF_NS, account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined, permissions: z.permissions ?? ['#zone:read', '#dns_records:edit'] });
+      }
       if (rest === '/workers/routes' && method === 'GET') return ok(this.routes[zoneId] ?? []);
       if (rest === '/email/routing/rules' && method === 'GET') {
         if (this.ruleFailPage && Number(url.searchParams.get('page') || 1) === this.ruleFailPage) return fail(500, 'Internal error');

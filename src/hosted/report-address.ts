@@ -13,7 +13,7 @@
 // so never a pending or lost claim (those live in domain_claims), never an evicted row, and never a row whose
 // ownership was not proven ('legacy', from before ownership checks).
 
-import { createResolver, lookupDmarc, planReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { createResolver, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
@@ -93,7 +93,7 @@ type Refusal = { kind: ReportConnectRefusal; reason: string };
  * `workspaceMay` (HOSTED_CONNECT_REPORTS for the workspace). Each is asked only when the checks before it passed.
  */
 async function refusalFrom(domain: ProofFacts, proven: () => boolean | Promise<boolean>, workspaceMay: () => boolean | Promise<boolean>): Promise<Refusal | null> {
-  if (domain.verified_via === 'legacy') return { kind: 'ownership', reason: `Ownership of ${domain.domain} is not proven in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
+  if (domain.verified_via === 'legacy') return { kind: 'ownership', reason: `Ownership of ${domain.domain} is not proven in this workspace. Use "Prove again" on the domain's page to prove that you control it (your report history stays), then connect reports.` };
   if (!(await proven())) return { kind: 'ownership', reason: `${domain.domain} was added through a parent domain that is no longer in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
   if (!(await workspaceMay())) return { kind: 'operator_only', reason: 'On this server, only the operator\'s workspaces can connect reports.' };
   return null;
@@ -251,4 +251,45 @@ export async function disconnectReports(tenant: TenantContext, domain: DomainRow
   audit(tenant, domain, 'reports.disconnect', actor, ctx);
   const fresh = (await tenant.scope.domains.getById(domain.id)) ?? domain;
   return reportAddressStatus(tenant, fresh, deps);
+}
+
+
+// ── Writing the report address into a DMARC record the product writes itself ──────────────────────────
+
+/**
+ * What a DMARC write for this domain does about reports, from the existing connect rules (reportConnectFor, connectReports):
+ *  - none: this deployment takes no hosted reports, or the domain's reports come through hosted records: the record is written as given;
+ *  - refused: reports cannot be connected for this domain or workspace (an unproven domain, or HOSTED_CONNECT_REPORTS does not admit the
+ *    workspace): the record is written without our address, and `reason` says why in the connect panel's words;
+ *  - ready: the address to carry (the fixed one, or the token address the domain already has).
+ */
+export type ReportWritePlan = { kind: 'none' } | { kind: 'refused'; reason: string } | { kind: 'ready'; address: string; connected: boolean };
+
+export async function reportAddressForWrite(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<ReportWritePlan> {
+  const rc = await reportConnectFor(tenant, domain, workspaceMay);
+  if (!rc || rc.refusal_kind === 'unavailable' || rc.refusal_kind === 'hosted_records') return { kind: 'none' };
+  if (!rc.can_connect) return { kind: 'refused', reason: rc.refusal ?? 'Reports cannot be connected for this domain.' };
+  const intakeDomain = reportIntakeDomain(tenant.env)!;
+  const current = await connectedAddress(tenant, domain, intakeDomain);
+  return { kind: 'ready', address: current ?? fixedReportAddress(intakeDomain), connected: !!current };
+}
+
+export type ReportMerge = 'present' | 'added' | 'limit';
+
+/**
+ * `record` with `address` in its rua= list, by the existing rule (planReportAddress): ours is added beside the addresses already there and
+ * nothing else changes (never a weaker policy; nobody's address is dropped). A record that already lists two addresses never gets a third:
+ * it is left as it is and the answer is `limit` (the person chooses what to replace in the reports panel). `liveRecord` is what is published
+ * now: a record that lists ours already is `present`, and one that grew past two with ours only because the caller appended it is cut back.
+ */
+export function mergeReportAddress(domain: string, record: string, address: string, liveRecord?: string | null): { record: string; outcome: ReportMerge } {
+  if (recordHasAddress(record, address)) {
+    const grewHere = !(liveRecord && recordHasAddress(liveRecord, address));
+    if (grewHere && ruaEntries(record).length > 2) return { record: withoutReportAddress(record, address), outcome: 'limit' };
+    return { record, outcome: 'present' };
+  }
+  const plan = planReportAddress({ status: 'found', domain, record: { raw: record, valid: true, issues: [], subdomainPolicy: '' }, foundAt: null, inherited: false, organizationalDomain: null }, address);
+  if (plan?.kind === 'add') return { record: plan.record, outcome: 'added' };
+  if (plan?.kind === 'published') return { record: plan.record, outcome: 'present' };
+  return { record, outcome: 'limit' };
 }

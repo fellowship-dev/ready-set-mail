@@ -10,13 +10,14 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, type DomainClaimRow } from '@ready-set-mail/db';
-import { normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { claimLookups, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
+import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
 import { loadTenant } from '../tenancy/load';
 import { resolverFor } from '../dns/resolver';
 import { removeAuthRecord, removeHostedRecords } from './remove';
+import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
 
@@ -68,22 +69,52 @@ function newToken(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
+export const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
+
+/** What a Cloudflare zone proof establishes, kept in the audit entry of the domain it admitted (action `domain.proof`). */
+export interface CloudflareProof {
+  method: 'cloudflare_zone';
+  connection_id: string;
+  cf_account_id: string | null;
+  zone_id: string;
+  zone_name: string;
+  /** The zone's name servers (Cloudflare's, lowercase, sorted): what public DNS delegated the zone to when it was proven. The daily re-check compares public DNS with them. */
+  name_servers: string[];
+  /** Unix seconds, when Cloudflare was asked. */
+  at: number;
+}
 
 /**
- * Does an active Cloudflare connection of this workspace manage the domain's zone, as a real delegation?
- *  - the zone is on the allow-list of an active connection, and Cloudflare says now that it is `active` and a `full` setup
- *    (a `partial`, CNAME-style setup or a `secondary` zone does not mean the account controls the domain's DNS);
- *  - the zone's own name servers (Cloudflare's `name_servers`) are the ones public DNS delegates the zone name to. When either
- *    side cannot be read the answer is "not proven" and the TXT proof is the way (the safer fallback);
+ * Does the token behind a connection hold DNS edit on a zone? Two ways to know, neither assumed:
+ *  - an OAuth grant whose scopes include a DNS write scope (Cloudflare names them; the deployment lists them in CF_OAUTH_SCOPES);
+ *  - the zone read itself, when Cloudflare returns the token's `permissions` on it, containing `#dns_records:edit`.
+ * When neither can be established the answer is no, and the TXT proof is the way.
+ */
+export function canEditDns(connection: { auth_type: string; scopes: string | null }, zone: { permissions?: string[] }): boolean {
+  if ((zone.permissions ?? []).some(p => p.toLowerCase() === '#dns_records:edit')) return true;
+  if (connection.auth_type !== 'oauth') return false;
+  return (connection.scopes ?? '').split(/\s+/).some(sc => /dns/i.test(sc) && /(edit|write)/i.test(sc));
+}
+
+/**
+ * Does an active Cloudflare connection of this workspace manage the domain's zone, as a real delegation? Returns what was established, or null.
+ *  - the zone is on the allow-list of an active connection, is not a public suffix (`co.uk` proves nothing), and the domain is the zone's
+ *    name or below it on a label boundary;
+ *  - Cloudflare says now (read through the stored connection: the zone id and name are the server's, never the browser's) that it is `active`,
+ *    a `full` setup (a `partial`, CNAME-style setup or a `secondary` zone does not mean the account controls the domain's DNS), the same zone,
+ *    in the connection's own Cloudflare account (when the connection, or the allow-list entry of that zone, records one), and that the token can edit its DNS (canEditDns);
+ *  - public DNS delegates the zone name to exactly the zone's own name servers (Cloudflare's `name_servers`): every NS answer is owned by the
+ *    zone name (a name that is an alias of another domain is not delegated), and the two sets are equal, not a subset. Cloudflare assigns a
+ *    zone exactly its set, and a domain delegated to only some of them is half-moved to another provider or to another account's zone, so it
+ *    proves nothing. When either side cannot be read the answer is "not proven" and the TXT proof is the way (the safer fallback);
  *  - hosted: not when a parent or a child of the name is verified in another workspace; that takes the TXT proof.
  */
-export async function provenByCloudflare(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<boolean> {
-  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return false;
+export async function cloudflareProof(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<CloudflareProof | null> {
+  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return null;
   const q = tenant.scope.connections;
   for (const c of await q.list()) {
     if (c.status !== 'active') continue;
-    const zones = (await q.zones(c.id)).filter(z => within(domain, z.zone_name.toLowerCase()));
+    const zones = (await q.zones(c.id)).filter(z => !isPublicSuffix(z.zone_name) && within(domain, z.zone_name.toLowerCase()));
     if (zones.length === 0) continue;
     // A child zone that exists but is not allowed serves this name: the parent's zone says nothing about it.
     const blocked = (await q.blockedZones(c.id)).map(z => z.zone_name.toLowerCase());
@@ -93,24 +124,19 @@ export async function provenByCloudflare(tenant: TenantContext, domain: string, 
       try {
         const live = await (await tenant.connections.clientFor(c.id)).getZone(zone.zone_id);
         if (live.status !== 'active' || live.type !== 'full' || live.name?.toLowerCase() !== zone.zone_name.toLowerCase()) continue;
-        if (await delegatedTo(resolver, zone.zone_name.toLowerCase(), live.name_servers)) return true;
+        if (c.cf_account_id && live.account?.id !== c.cf_account_id) continue;
+        if (zone.cf_account_id && live.account?.id !== zone.cf_account_id) continue;
+        if (!canEditDns(c, live)) continue;
+        if ((await checkDelegation(resolver, zone.zone_name, live.name_servers)) === 'match') {
+          return { method: 'cloudflare_zone', connection_id: c.id, cf_account_id: live.account?.id ?? c.cf_account_id, zone_id: zone.zone_id, zone_name: zone.zone_name.toLowerCase(), name_servers: (live.name_servers ?? []).map(normalizeName).sort(), at: Math.floor(Date.now() / 1000) };
+        }
       } catch { /* unreachable or refused: not proven */ }
     }
   }
-  return false;
+  return null;
 }
 
-/** Public NS records of the zone name are exactly Cloudflare's name servers for it. Unreadable on either side: false. */
-async function delegatedTo(resolver: Resolver, zoneName: string, nameServers: string[] | undefined): Promise<boolean> {
-  const want = new Set((nameServers ?? []).map(normalizeName));
-  if (want.size === 0) return false;
-  try {
-    const r = await resolver.resolve(zoneName, 'NS');
-    if (r.status !== 'ok') return false;
-    const have = r.answers.map(a => normalizeName(a.data));
-    return have.length > 0 && have.every(h => want.has(h));
-  } catch { return false; }
-}
+export const provenByCloudflare = async (tenant: TenantContext, domain: string, resolver?: Resolver): Promise<boolean> => (await cloudflareProof(tenant, domain, resolver)) !== null;
 
 type ProofRow = { id: number; domain: string; verified_via: string };
 
@@ -149,13 +175,22 @@ export async function demoteOrphanedSubdomains(tenant: TenantContext): Promise<n
   return orphans;
 }
 
+/**
+ * Does a parent in this workspace let it hold `domain`? A proven parent always does. A parent that proves nothing against another workspace
+ * (unprovenRow: 'legacy', or the 2.0.0 Cloudflare row with no servers) never does when another workspace holds the name, since it would then evict
+ * that holder on a proof nobody can check; with no rival it may still admit its own subdomain (nothing is evicted, nothing conflicts). A 'legacy'
+ * parent never does at all.
+ */
 async function provenByParent(tenant: TenantContext, domain: string): Promise<boolean> {
   const labels = domain.split('.');
+  let stale = false;
   for (let i = 1; i <= labels.length - 2; i++) {
     const parent = await tenant.scope.domains.getByName(labels.slice(i).join('.'));
-    if (parent && parent.verified_via !== 'legacy') return true; // a legacy row was never proven, so it proves nothing about its subdomains
+    if (!parent || parent.verified_via === 'legacy') continue; // a legacy row was never proven, so it proves nothing about its subdomains
+    if (!isUnprovenRow(parent)) return true;
+    stale = true;
   }
-  return false;
+  return stale && !(await claimLookups(tenant.db).findLegacyHolder(domain, tenant.workspaceId));
 }
 
 /** Is the claim's token published at `_readysetmail.<domain>`? Throws nothing: a lookup failure is reported as the reason. */
@@ -174,23 +209,42 @@ export async function provenByTxt(claim: DomainClaimRow, resolver: Resolver): Pr
 /** How long an evicted workspace can still export the report history of the domain it lost. */
 export const EVICTED_KEEP_DAYS = 30;
 
+/** What an eviction will do once the new holder's row is in (see planEviction): the holder, and its root row as it was. */
+export interface EvictionPlan { holderWorkspaceId: string; holderDomainId: number; root: DomainRow | null; via: VerifiedVia }
+
 /**
- * Proof established: an unproven (legacy) holder of the name in another workspace loses it. That goes through the normal
- * removal path (hosted records and their quota, the authorisation record), then the domain is detached rather than
- * deleted: its reports stay for 30 days for export and the retention job purges them. The workspace's owners are emailed and the
- * eviction is audit-logged in their workspace.
+ * Proof established: an unproven (legacy) holder of the name in another workspace loses it. Two steps, so that nobody loses a domain unless somebody gets it:
+ *  - planEviction (here, before the insert) only notes who the holder is. Nothing is changed. The caller passes `freeingFor(tenant, domain)` to the insert,
+ *    which detaches the holder's row in the same transaction (the name is unique, so it has to be free for the insert; a full plan or a failed insert
+ *    changes nothing);
+ *  - finishEviction (settleClaims, after the insert committed) does the rest through the normal removal path (hosted records and their quota, the
+ *    authorisation record, the holder's subdomains), leaves its reports for 30 days for export (the retention job purges them), emails the workspace's
+ *    owners and audit-logs the eviction in their workspace. Those removals delete records through the EVICTED workspace's own connection.
  */
-async function evictLegacyHolder(tenant: TenantContext, domain: string, via: VerifiedVia): Promise<void> {
-  const lookups = claimLookups(tenant.db);
-  const holder = await lookups.findLegacyHolder(domain, tenant.workspaceId);
+async function planEviction(tenant: TenantContext, domain: string, via: VerifiedVia): Promise<void> {
+  tenant.evictions.delete(domain);
+  const holder = await claimLookups(tenant.db).findLegacyHolder(domain, tenant.workspaceId);
   if (!holder) return;
-  const evicted = await loadTenant(tenant.env, { workspaceId: holder.workspaceId });
-  const root = await evicted.scope.domains.getById(holder.domainId);
+  const root = await (await loadTenant(tenant.env, { workspaceId: holder.workspaceId })).scope.domains.getById(holder.domainId);
+  tenant.evictions.set(domain, { holderWorkspaceId: holder.workspaceId, holderDomainId: holder.domainId, root, via });
+}
+
+/** The unproven holder's row the insert of `domain` must detach in its own transaction, if the proof just made evicts one. */
+export const freeingFor = (tenant: TenantContext, domain: string): number | undefined => tenant.evictions.get(domain)?.holderDomainId;
+
+async function finishEviction(tenant: TenantContext, domain: string): Promise<void> {
+  const plan = tenant.evictions.get(domain);
+  if (!plan) return;
+  tenant.evictions.delete(domain);
+  if (!(await tenant.scope.domains.getByName(domain))) return; // the insert did not happen: nobody was evicted
+  const { holderWorkspaceId, holderDomainId, root, via } = plan;
+  const lookups = claimLookups(tenant.db);
+  const evicted = await loadTenant(tenant.env, { workspaceId: holderWorkspaceId });
 
   // The domain and everything below it that this workspace had under it (its subdomains hang off it by parent_id):
   // deepest first, so no live child is left pointing at a detached parent.
-  const tree: Array<NonNullable<typeof root>> = [];
-  const walk = async (row: NonNullable<typeof root>) => {
+  const tree: DomainRow[] = [];
+  const walk = async (row: DomainRow) => {
     for (const child of await evicted.scope.domains.subdomains(row.id)) await walk(child);
     tree.push(row);
   };
@@ -207,13 +261,12 @@ async function evictLegacyHolder(tenant: TenantContext, domain: string, via: Ver
       console.warn(`[eviction] hosted cleanup failed for domain ${row.id}:`, e instanceof Error ? e.message : e);
     }
     await removeAuthRecord(evicted, row);
-    await lookups.detach(row.id, Math.floor(Date.now() / 1000));
-    logAudit({ db: tenant.db, workspaceId: holder.workspaceId }, {
+    if (row.id !== holderDomainId) await lookups.detach(row.id, Math.floor(Date.now() / 1000)); // the holder's own row went with the insert
+    logAudit({ db: tenant.db, workspaceId: holderWorkspaceId }, {
       actor_type: 'system', action: 'domain.evicted', resource_type: 'domain', resource_id: String(row.id), resource_name: row.domain,
-      meta: { reason: row.id === holder.domainId ? 'another workspace proved ownership' : `subdomain of ${domain}, evicted with it`, via, hosted_cleanup: cleanup, history_kept_days: EVICTED_KEEP_DAYS },
+      meta: { reason: row.id === holderDomainId ? 'another workspace proved ownership' : `subdomain of ${domain}, evicted with it`, via, hosted_cleanup: cleanup, history_kept_days: EVICTED_KEEP_DAYS },
     });
   }
-  if (!root) await lookups.detach(holder.domainId, Math.floor(Date.now() / 1000));
   const owners = (await evicted.scope.team.list()).filter(m => m.role === 'owner').map(m => m.email);
   await sendEvictionNotice(tenant.env, owners, domain, EVICTED_KEEP_DAYS);
 }
@@ -224,11 +277,16 @@ async function evictLegacyHolder(tenant: TenantContext, domain: string, via: Ver
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
-  if (await tenant.scope.domains.getByName(domain)) return { kind: 'verified', via: 'existing' }; // already ours: the insert reports the duplicate
+  // Already ours and proven: the insert reports the duplicate. Ours but UNPROVEN (a proof that lapsed, a parent that left): not "existing", the proof
+  // runs again below and, when it holds, restores the row in place (restoreInPlace), history and all. When it does not, a claim is opened for the TXT record.
+  const own = await tenant.scope.domains.getByName(domain);
+  if (own && own.verified_via !== 'legacy') return { kind: 'verified', via: 'existing' };
 
+  await reassessZoneHolders(tenant, domain); // a holder whose zone moved away stops counting as the owner
   if (await claimLookups(tenant.db).ownedByOther(domain, tenant.workspaceId)) return { kind: 'taken' };
-  if (await provenByParent(tenant, domain)) { await evictLegacyHolder(tenant, domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  if (await provenByCloudflare(tenant, domain)) { await evictLegacyHolder(tenant, domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
+  if (await provenByParent(tenant, domain)) { await planEviction(tenant, domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
+  const zoneProof = await cloudflareProof(tenant, domain);
+  if (zoneProof) { await planEviction(tenant, domain, 'cloudflare'); keepProof(tenant, domain, zoneProof); return { kind: 'verified', via: 'cloudflare' }; }
 
   const existing = await tenant.scope.claims.get(domain);
   if (existing) {
@@ -237,6 +295,25 @@ export async function admitDomain(tenant: TenantContext, domain: string): Promis
   }
   if ((await tenant.scope.claims.count()) >= MAX_PENDING_CLAIMS) return { kind: 'limit' };
   return { kind: 'pending', claim: await tenant.scope.claims.upsert(domain, newToken()) };
+}
+
+/**
+ * Admit a name by its Cloudflare zone alone, never creating a claim: used where a zone the person connected is imported, and when pending
+ * claims are re-examined after the allow-list changed. `unproven` leaves everything as it was.
+ */
+export async function admitByZone(tenant: TenantContext, domain: string, resolver?: Resolver): Promise<{ kind: 'verified'; via: 'cloudflare' } | { kind: 'taken' } | { kind: 'related' } | { kind: 'unproven' }> {
+  if (getMode(tenant.env) === 'saas') {
+    await reassessZoneHolders(tenant, domain, resolver);
+    const lookups = claimLookups(tenant.db);
+    if (await lookups.ownedByOther(domain, tenant.workspaceId)) return { kind: 'taken' };
+    // a parent or a subdomain verified in another workspace: a zone cannot prove this name, only the TXT record can (a different thing from "Cloudflare does not answer")
+    if (await lookups.relatedOwnedByOther(domain, tenant.workspaceId)) return { kind: 'related' };
+  }
+  const proof = await cloudflareProof(tenant, domain, resolver);
+  if (!proof) return { kind: 'unproven' };
+  await planEviction(tenant, domain, 'cloudflare');
+  keepProof(tenant, domain, proof);
+  return { kind: 'verified', via: 'cloudflare' };
 }
 
 /** Why a Verify did not prove the claim: the record is not visible (yet), or DNS could not be asked. Neither counts against anything. */
@@ -248,16 +325,19 @@ export type VerifyOutcome =
   | { kind: 'unproven'; reason: string; code?: UnprovenCode };
 
 /** The "Verify" button: re-check every kind of proof for a pending claim. */
-export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, resolver: Resolver = resolverFor(tenant.env)): Promise<VerifyOutcome> {
+export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, injected?: Resolver): Promise<VerifyOutcome> {
+  const resolver = injected ?? resolverFor(tenant.env);
+  await reassessZoneHolders(tenant, claim.domain, injected);
   if (await claimLookups(tenant.db).ownedByOther(claim.domain, tenant.workspaceId)) {
     await tenant.scope.claims.markLost(claim.id);
     return { kind: 'taken' };
   }
-  if (await provenByParent(tenant, claim.domain)) { await evictLegacyHolder(tenant, claim.domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  if (await provenByCloudflare(tenant, claim.domain, resolver)) { await evictLegacyHolder(tenant, claim.domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
+  if (await provenByParent(tenant, claim.domain)) { await planEviction(tenant, claim.domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
+  const zoneProof = await cloudflareProof(tenant, claim.domain, resolver);
+  if (zoneProof) { await planEviction(tenant, claim.domain, 'cloudflare'); keepProof(tenant, claim.domain, zoneProof); return { kind: 'verified', via: 'cloudflare' }; }
   const txt = await provenByTxt(claim, resolver);
   await tenant.scope.claims.recordCheck(claim.id, txt.ok ? null : (txt.reason ?? null));
-  if (txt.ok) await evictLegacyHolder(tenant, claim.domain, 'txt');
+  if (txt.ok) await planEviction(tenant, claim.domain, 'txt');
   return txt.ok ? { kind: 'verified', via: 'txt' } : { kind: 'unproven', reason: txt.reason ?? 'not verified', ...(txt.code ? { code: txt.code } : {}) };
 }
 
@@ -268,7 +348,52 @@ export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, 
 export async function settleClaims(tenant: TenantContext, domain: string): Promise<void> {
   const added = await tenant.scope.domains.getByName(domain);
   if (added) await tenant.scope.claims.settle(domain, added.id);
+  if (added) await recordProof(tenant, added.id, domain);
+  await tenant.scope.removals.forget(domain);
   await claimLookups(tenant.db).markLost(domain, tenant.workspaceId);
+  await finishEviction(tenant, domain); // the insert is in: now the holder it detached is cleaned up and told
+}
+
+// A Cloudflare proof is made by admitDomain / verifyClaim and committed by whichever caller inserts the row (the API, bulk import,
+// the agent tools), always followed by settleClaims. The proof waits on the request's tenant until the insert takes it with the row.
+function keepProof(tenant: TenantContext, domain: string, proof: CloudflareProof): void {
+  tenant.cloudflareProofs.set(domain, proof);
+}
+
+/**
+ * The zone proof the insert of `domain` must carry when it is verified through Cloudflare, written WITH the row (domains.cf_account_id, cf_zone_id,
+ * verified_at, cf_zone_name, cf_name_servers). A zone proof without its name servers cannot be re-checked, so none is ever written: the proof is missing
+ * or has no servers and the add fails (ProofIncompleteError, 409 `proof_incomplete`; the TXT record is the way). Release 2.0.0 could write such a row.
+ */
+export function proofColumns(tenant: TenantContext, domain: string, via: VerifiedVia | string | undefined): ZoneProofColumns | undefined {
+  if (via !== 'cloudflare') return undefined;
+  const proof = tenant.cloudflareProofs.get(domain);
+  if (!proof || proof.name_servers.length === 0) throw new ProofIncompleteError(domain);
+  return { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at, cf_zone_name: proof.zone_name, cf_name_servers: proof.name_servers };
+}
+
+/**
+ * An unproven row of this workspace was proven again (a lapsed zone proof through any current connection, a TXT record, a parent): the row is restored
+ * IN PLACE: same id, its reports, checks and settings untouched, only how it is proven changes. Returns the row, or null when it was not unproven.
+ */
+export async function restoreInPlace(tenant: TenantContext, existing: DomainRow, via: VerifiedVia, actor?: { id?: string; email?: string }): Promise<DomainRow | null> {
+  if (existing.verified_via !== 'legacy' || via === 'existing') return null;
+  const proof = proofColumns(tenant, existing.domain, via);
+  if (!(await tenant.scope.domains.restoreProof(existing.id, via, proof))) return null;
+  await settleClaims(tenant, existing.domain);
+  logAudit(tenant, { actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user', action: 'domain.proof_restored', resource_type: 'domain', resource_id: String(existing.id), resource_name: existing.domain, meta: { via, history_kept: true } });
+  return tenant.scope.domains.getById(existing.id);
+}
+
+/**
+ * How a domain was proven through Cloudflare, in the audit log (action `domain.proof`, the detail in after_value): method, Cloudflare account, zone id
+ * and name, connection, time. The columns on the domain row came with the insert (proofColumns). A record of what was true then: revoking the token later does not undo it.
+ */
+async function recordProof(tenant: TenantContext, domainId: number, domain: string): Promise<void> {
+  const proof = tenant.cloudflareProofs.get(domain);
+  if (!proof) return;
+  tenant.cloudflareProofs.delete(domain);
+  logAudit(tenant, { actor_type: 'system', action: 'domain.proof', resource_type: 'domain', resource_id: String(domainId), resource_name: domain, after_value: proof });
 }
 
 /** The workspace's claims for display, with any that another workspace has since won marked lost. */

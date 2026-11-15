@@ -44,6 +44,9 @@ import {
   verifyState,
 } from './oauth';
 import { ConnectionInputError, IMPLICIT_CONNECTION_ID, type PublicConnection } from './service';
+import { accountViews } from './accounts';
+import { importZones, suggestedZones, verifyPendingClaims } from './import';
+import { DomainServiceError } from '../domains/service';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -51,7 +54,7 @@ const err = (message: string, status: number, code?: string) => json({ error: me
 const USED_PREFIX = 'cf_oauth_used:';
 const COOKIE = 'ia_cf_oauth';
 const COOKIE_PATH = '/api/cloudflare/oauth';
-const CONNECTION = /^\/api\/cloudflare\/connections\/([^/]+)(?:\/(token|zones))?$/;
+const CONNECTION = /^\/api\/cloudflare\/connections\/([^/]+)(?:\/(token|zones|import))?$/;
 const DOMAIN_LINK = /^\/api\/domains\/(\d+)\/connection$/;
 
 export const isConnectionRoute = (path: string) => path.startsWith('/api/cloudflare/') || DOMAIN_LINK.test(path);
@@ -162,6 +165,9 @@ export async function handleConnectionRoutes(
       return json({ ok: true, domain_id: domain.id, connection_id: target });
     }
 
+    // GET /api/cloudflare/suggestions — zones of the connected accounts that are not domains of the workspace yet
+    if (path === '/api/cloudflare/suggestions' && method === 'GET') return json({ suggestions: await suggestedZones(tenant) });
+
     // ── Connections ─────────────────────────────────────────
     if (path === '/api/cloudflare/connections' && method === 'GET') {
       const connections: PublicConnection[] = await svc.list();
@@ -169,6 +175,7 @@ export async function handleConnectionRoutes(
       if (implicit) connections.unshift(implicit);
       return json({
         connections,
+        accounts: await accountViews(tenant),
         oauth: oauthOffer(tenant),
         token_paste: TokenCrypto.isConfigured(tenant.env),
         encryption_configured: TokenCrypto.isConfigured(tenant.env),
@@ -232,7 +239,23 @@ export async function handleConnectionRoutes(
         const zones = await svc.setAllowedZones(id, body.zone_ids as string[]);
         audit('cf_connection.zones', { id, name: before.label }, { before: { zones: before.zones.map(z => z.name) }, after: { zones: zones.map(z => z.name) } });
         tenant.invalidate();
-        return json({ zones });
+        // Pending claims this allow-list now proves are verified here, without a click (src/domains/ownership.ts).
+        return json({ zones, verified_claims: await verifyPendingClaims(tenant, { id: caller.user?.id, email: caller.user?.email }, ctx) });
+      }
+
+      // POST /api/cloudflare/connections/:id/import { zone_ids? } — add the connection's zones as verified domains (src/connections/import.ts)
+      if (sub === 'import' && method === 'POST') {
+        let body: { zone_ids?: unknown } = {};
+        try { const text = await request.text(); body = text.trim() ? JSON.parse(text) : {}; } catch { return err('Invalid JSON body', 400); }
+        if (body.zone_ids !== undefined && (!Array.isArray(body.zone_ids) || body.zone_ids.some(z => typeof z !== 'string') || body.zone_ids.length > 500)) return err('zone_ids must be an array of zone ids', 400);
+        try {
+          const result = await importZones(tenant, id, { zoneIds: body.zone_ids as string[] | undefined }, { id: caller.user?.id, email: caller.user?.email }, ctx);
+          tenant.invalidate();
+          return json(result);
+        } catch (e) {
+          if (e instanceof DomainServiceError) return json(e.body ?? { error: e.message }, e.status);
+          throw e;
+        }
       }
       return err('method not allowed', 405);
     }
@@ -350,6 +373,7 @@ function implicitConnection(tenant: TenantContext): PublicConnection | null {
     created_at: 0,
     last_used_at: null,
     zones: [],
+    accounts: [],
     implicit: true,
   };
 }

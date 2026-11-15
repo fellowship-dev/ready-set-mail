@@ -4,7 +4,8 @@
 //      touched: the job reports a change in them, it can't make one.
 //   2. re-flatten every hosted SPF from its stored source (provider IP ranges change).
 //   3. verify every hosted domain's pointers in the customer's DNS.
-//   4. forget expired canary addresses.
+//   4. re-check the zone-verified domains: public DNS against the name servers stored with each Cloudflare proof (src/domains/proof-recheck.ts).
+//   5. forget expired canary addresses.
 //
 // It piggybacks on the existing 11:00 UTC schedule, so no new trigger is needed in wrangler.jsonc.
 
@@ -19,6 +20,7 @@ import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { flattenSource } from './spf';
 import { discoverMxHosts } from '../email/mta-sts';
 import { nextPolicyId } from './service';
+import { recheckZoneProofs } from '../domains/proof-recheck';
 
 export const HOSTED_CRON = '0 11 * * *';
 
@@ -172,6 +174,7 @@ export async function runHostedCron(event: ScheduledController, env: BoundEnv, _
     ['SPF refresh', () => refreshHostedSpf(env)],
     ['MTA-STS MX refresh', () => refreshHostedMtaStsMx(env)],
     ['pointer verification', () => verifyAllPointers(env)],
+    ['zone proof re-check', () => recheckZoneProofs(env)],
     ['canary purge', () => globalQueries(env.DB).canary.purgeExpired(Math.floor(Date.now() / 1000))],
   ] as const) {
     try { await job(); } catch (e) { console.error(`[hosted] ${name} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : e); }

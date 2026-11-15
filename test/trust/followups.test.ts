@@ -1,7 +1,7 @@
 // Follow-ups: evicting a legacy domain holder safely, and invitees who sign up through an invite.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, makeEnv, signupVerified, completeWelcome, welcomeTokenIn } from '../auth/helpers';
+import { call, makeEnv, signupVerified, enterCode, lastCodeFor, pendingCookieOf } from '../auth/helpers';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { HOSTED_ENV } from '../hosted/world';
 import { runRetention } from '../../src/lifecycle/retention';
@@ -97,20 +97,16 @@ describe('evicting a legacy holder', () => {
 });
 
 describe('signing up through an invite (hosted)', () => {
-  it('creates no personal workspace; after verifying, the session shows the pending invite, and accepting joins the inviting workspace', async () => {
+  it('creates no personal workspace; the code verifies the address and joins the inviting workspace', async () => {
     const w = await world();
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
     const before = w.rows("SELECT COUNT(*) n FROM workspaces").at(0).n;
-    expect((await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'password-123' } })).status).toBe(201);
+    const asked = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'chosen-password-1' } });
+    expect(asked.status).toBe(200);
     expect(w.rows('SELECT COUNT(*) n FROM workspaces')[0].n).toBe(before); // no new workspace
-    // verify (as the emailed link would), choose a password, sign in
-    const reset = await completeWelcome(w.env, welcomeTokenIn((w.send.mock.calls.at(-1) as any)[0].text), 'chosen-password-1');
-    const session = (await json(reset)).token as string;
-    const me = await call(w.env, 'GET', '/api/me', { key: session });
-    expect(me.status).toBe(200);
-    expect(await json(me)).toMatchObject({ role: null, workspace_id: null, pending_invites: [{ token: inv.token, workspace_id: w.A.ws, role: 'member' }] });
-    expect((await call(w.env, 'GET', '/api/domains', { key: session })).status).toBe(403); // nothing else is open to them yet
-    expect((await call(w.env, 'POST', `/api/invites/${inv.token}`, { key: session, body: {} })).status).toBe(200);
+    const done = await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com'));
+    const session = (await json(done)).token as string;
+    expect(w.rows('SELECT COUNT(*) n FROM workspaces')[0].n).toBe(before);
     expect(await json(await call(w.env, 'GET', '/api/me', { key: session }))).toMatchObject({ role: 'member', workspace_id: w.A.ws });
   });
 
@@ -191,13 +187,23 @@ describe('a login with no workspace can start its own', () => {
   async function stranded() {
     const w = await world();
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
-    await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'password-123' } });
-    const session = (await json(await completeWelcome(w.env, welcomeTokenIn((w.send.mock.calls.at(-1) as any)[0].text), 'chosen-password-1'))).token as string;
-    // the owner revokes the invite
-    const id = (await json(await call(w.env, 'GET', '/api/team/invites', { key: w.A.token }))).invites[0].id;
-    expect((await call(w.env, 'DELETE', `/api/team/invites/${id}`, { key: w.A.token })).status).toBe(200);
+    const asked = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'chosen-password-1' } });
+    const session = (await json(await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com')))).token as string;
+    // a login left without a workspace (its only membership gone)
+    w.db.sqlite.prepare("DELETE FROM memberships WHERE user_id = (SELECT id FROM users WHERE email = 'friend@example.com')").run();
     return { w, session };
   }
+
+  it('an invite revoked before its code is typed creates no account at all', async () => {
+    const w = await world();
+    const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
+    const asked = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'chosen-password-1' } });
+    const id = (await json(await call(w.env, 'GET', '/api/team/invites', { key: w.A.token }))).invites[0].id;
+    expect((await call(w.env, 'DELETE', `/api/team/invites/${id}`, { key: w.A.token })).status).toBe(200);
+    const done = await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com'));
+    expect(done.status).toBeGreaterThanOrEqual(400);
+    expect(w.rows("SELECT id FROM users WHERE email = 'friend@example.com'")).toEqual([]);
+  });
 
   it('POST /api/workspaces works for them, and then they are an ordinary owner', async () => {
     const { w, session } = await stranded();
@@ -211,8 +217,9 @@ describe('a login with no workspace can start its own', () => {
     const { w, session } = await stranded();
     expect((await call(w.env, 'GET', '/api/domains', { key: session })).status).toBe(403);
     expect((await call(w.env, 'POST', '/api/domains', { key: session, body: { domain: 'x.example.net' } })).status).toBe(403);
-    const login = await call(w.env, 'POST', '/api/auth/login', { headers: { origin: 'https://ia.example.com' }, body: { email: 'friend@example.com', password: 'chosen-password-1' } });
-    const cookie = (login.headers as any).getSetCookie().map((c: string) => c.split(';')[0]).join('; ');
+    const asked = await call(w.env, 'POST', '/api/auth/login', { headers: { origin: 'https://ia.example.com' }, body: { email: 'friend@example.com', password: 'chosen-password-1' } });
+    const login = await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com'), { headers: { origin: 'https://ia.example.com' } });
+    const cookie = (login.headers as any).getSetCookie().map((c: string) => c.split(';')[0]).filter((c: string) => !c.endsWith('=')).join('; ');
     const cross = await call(w.env, 'POST', '/api/workspaces', { headers: { cookie, origin: 'https://evil.example' }, body: { name: 'x' } });
     expect(cross.status).toBe(403);
     expect(w.rows("SELECT COUNT(*) n FROM workspaces WHERE name = 'x'")).toEqual([{ n: 0 }]);

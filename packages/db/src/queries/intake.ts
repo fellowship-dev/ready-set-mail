@@ -354,7 +354,7 @@ export function intakeLookups(dbLike: DbLike) {
 			db
 				.select({ workspace_id: intakeTokens.workspace_id, domain_id: intakeTokens.domain_id, domain: domains.domain })
 				.from(intakeTokens)
-				.innerJoin(domains, and(eq(domains.id, intakeTokens.domain_id), isNull(domains.evicted_at)))
+				.innerJoin(domains, and(eq(domains.id, intakeTokens.domain_id), isNull(domains.evicted_at), isNull(domains.proof_lost_at))) // a domain whose proof lapsed receives nothing
 				.where(
 					/* workspace-scope-exempt: the token hash identifies the workspace */
 					or(eq(intakeTokens.token_hash, tokenHash), and(eq(intakeTokens.prev_token_hash, tokenHash), gt(intakeTokens.prev_expires_at, nowSeconds))),

@@ -9,6 +9,7 @@ import { auditQueries } from './audit';
 import { baseDomainQueries } from './base-domain';
 import { claimQueries } from './claims';
 import { connectionQueries } from './connections';
+import { removalQueries } from './removals';
 import { domainQueries } from './domains';
 export type { DomainRow, DmarcFacts } from './domains';
 import { mtaStsQueries, spfFlattenQueries } from './domain-config';
@@ -22,8 +23,8 @@ import { teamQueries } from './team';
 
 export * from './reports';
 export { counted, type CountingMode } from './counting';
-export type { DomainClaimRow } from './claims';
-export { claimLookups } from './claims';
+export type { DomainClaimRow, ZoneHolder } from './claims';
+export { claimLookups, isUnprovenRow } from './claims';
 export type { SenderRow, TrendRow } from './analytics';
 export { FIRST_SEEN_HORIZON_DAYS } from './analytics';
 export * from './audit';
@@ -31,7 +32,7 @@ export * from './team';
 export * from './api-keys';
 export type { CfConnectionInfo, CfConnectionZone } from './connections';
 export { authLookups } from './auth';
-export { PlanLimitError } from './plan-limit';
+export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns } from './plan-limit';
 export { workspaceLifecycle, type WorkspaceSummary } from './workspaces';
 export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow, TOKEN_ROTATION_GRACE_SECONDS, type QuotaLimits, type QuotaResult, type QuotaScope, type FailureRow, type IntakeTarget, type HostedDomainRow, type PointerStatus } from './intake';
 export * from './heartbeat';
@@ -76,6 +77,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		team: teamQueries(d, workspaceId),
 		apiKeys: apiKeyQueries(d, workspaceId),
 		connections: connectionQueries(d, workspaceId),
+		removals: removalQueries(d, workspaceId),
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
 		heartbeat: () => heartbeatStats(d, workspaceId),

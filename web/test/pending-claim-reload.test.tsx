@@ -22,7 +22,6 @@ beforeEach(() => sessionStorage.clear());
 /** A reload: nothing is cached, the first (and only) answer of GET /api/domains already carries the claim. */
 describe('reopening setup with a pending hosted domain', () => {
 	for (const [name, conns] of [
-		['Cloudflare can be connected', offer()],
 		['Cloudflare cannot be connected', offer({ token_paste: false, encryption_configured: false })],
 		['the connections request fails', fail(400)],
 	] as const) {
@@ -37,6 +36,19 @@ describe('reopening setup with a pending hosted domain', () => {
 			expect(screen.queryByRole('heading', { name: 'Which domain do you send email from?' })).not.toBeInTheDocument();
 		});
 	}
+});
+
+describe('reopening setup with a pending hosted domain and Cloudflare available', () => {
+	it('leads with Connect Cloudflare, and the claim is one click away', async () => {
+		renderApp(<Page />, {
+			route: '/setup',
+			status: { mode: 'saas', has_domain: false },
+			routes: { 'GET /api/domains': { domains: [], pending_claims: [claim] }, 'GET /api/cloudflare/connections': offer(), 'GET /api/domains/claims/5/preview': fail(502) },
+		});
+		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: "I'll add DNS records myself" }));
+		expect(await screen.findByText('readysetmail-verify=abc')).toBeInTheDocument();
+	});
 });
 
 describe('the zone list is only asked for with a usable Cloudflare connection', () => {

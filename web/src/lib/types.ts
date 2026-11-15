@@ -15,6 +15,11 @@ export interface Domain {
   created_at: number; // unix timestamp
   alerts_enabled: number; // 1 = on, 0 = off
   is_default: number; // 1 = this domain is the reports infrastructure hub
+  /** The Cloudflare account its zone belongs to, when it was verified through one. */
+  cf_account_id?: string | null;
+  /** How it was proven; 'legacy' is unproven. `proof_lost_at` is set when a proof that was made lapsed (unix seconds). */
+  verified_via?: string;
+  proof_lost_at?: number | null;
 }
 
 export interface DailyStat {
@@ -205,6 +210,8 @@ export interface OnboardingStatus {
   domain_id: number;
   domain: string;
   rua_address: string;
+  /** Hosted, reports not connected yet: the address Apply via Cloudflare would write AND connect. Never shown for a record to paste: pasted by hand, its reports would be refused. */
+  offered_rua_address?: string | null;
   cf_available: boolean;
   dmarc: {
     found: boolean;
@@ -359,6 +366,11 @@ export interface AuthStatus {
   help_url?: string | null;
   /** False when the free email check cannot work here (hosted without a canary domain): its menu item is hidden. */
   email_check?: boolean;
+  /** Whether sign-in ends with an emailed 6-digit code, and why. */
+  signin_codes?: boolean;
+  signin_codes_reason?: 'hosted' | 'mail' | 'no_mail' | 'turned_off';
+  /** Self-host with codes on: the domain the code email is sent from (e.g. reports.example.com). */
+  signin_code_sender_domain?: string | null;
 }
 
 /** GET /api/keys: prefixes only, never the secret. */

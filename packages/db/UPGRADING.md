@@ -11,6 +11,10 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
+## Cloudflare import (0015)
+
+Migration `0015_cloudflare_import.sql` is additive: ten nullable columns on `domains` (`cf_account_id`, `cf_zone_id`, `verified_at`: the Cloudflare account and zone a domain was verified through, and when; `cf_zone_name`, `cf_name_servers`: the zone's name and the name servers public DNS delegated it to, which the daily re-check compares with public DNS; `proof_checked_at`, `proof_lost_at`: when the delegation was last confirmed, and when the proof was withdrawn and the domain became unproven; `proof_attempted_at`: when the daily job last looked at the row, whatever came of it, which orders its queue so every row is reached in turn; `proof_answered_at`: when the daily job last got a real answer from public DNS for the row (rows answered in the last 30 days are its first queue, the rest share a reserved slice of every run); `proof_suspected_at`: when a re-check first saw the proof not hold, withdrawn only if a read at least 24 hours later agrees), one nullable column on `cloudflare_connection_zones` (`cf_account_name`, so Settings can name an account without calling Cloudflare) and one new table, `removed_domains` (names a person removed, so the Cloudflare import does not add them back). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values and the new columns stay empty until a domain is next verified through a Cloudflare zone. A domain that was verified through Cloudflare before this release has no stored name servers: it is only re-checked against its connection's live zone (and the daily job records its servers when that read and public DNS agree), never downgraded for the missing record. Such a row (made by the 2.0.0 claim Verify button, which stored `verified_via = 'cloudflare'` and nothing else) no longer blocks another workspace that proves the name by its own TXT or Cloudflare proof: it counts as unproven for that, and the holder keeps its report history read-only.
+
 ## Public reports (0014)
 
 Migration `0014_public_reports.sql` is additive: two new tables, `public_reports` (dated free-check reports at a private link, `src/public-reports/`) and `public_report_usage` (the running counters behind their storage budgets). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
@@ -35,6 +39,10 @@ Migration `0011_reports_connected_at.sql` is additive: one nullable `domains.rep
 ## DMARC enforcement level
 
 Migration `0012_dmarc_enforcement.sql` is additive: nullable `domains.dmarc_p`, `domains.dmarc_sp` and `domains.dmarc_rua` columns (the governing DMARC record's p=, sp= and whether it sends reports here); the existing `domains.dmarc_pct` column is now written by each DNS check. Apply it before serving the new Worker (the schema guard requires it). Until a domain is read from DNS again its enforcement level is shown as not known yet.
+
+## Terms acceptance
+
+Migration `0013_terms_acceptance.sql` is additive: nullable `users.terms_accepted_at` and `users.terms_version` columns, set when a hosted account's emailed code proves its address after the sign-up form showed the terms. Apply it before serving the new Worker (the schema guard requires it). Existing accounts and self-hosted accounts stay NULL. Sign-in codes use the existing `verifications` table; no other table changes.
 
 ## Settled claims
 

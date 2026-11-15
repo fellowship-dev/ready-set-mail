@@ -133,7 +133,7 @@ describe('first screen: Cloudflare first', () => {
 		expect(screen.queryByRole('button', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
 	});
 
-	it('hosted: a waiting claim offers to connect Cloudflare to verify it', async () => {
+	it('hosted: a waiting claim does not hide the Cloudflare card; the claim waits behind "I\'ll add DNS records myself"', async () => {
 		renderApp(<Page />, {
 			route: '/setup',
 			status: { mode: 'saas', has_domain: false },
@@ -144,7 +144,23 @@ describe('first screen: Cloudflare first', () => {
 				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
 			},
 		});
-		expect(await screen.findByText('acme.org uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		expect(screen.queryByText(/uses Cloudflare for DNS/)).toBeNull();
+		await userEvent.click(screen.getByRole('button', { name: 'Connect Cloudflare' }));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/setup/cloudflare'));
+	});
+
+	it('hosted: the waiting claim is still there for someone who adds records themselves', async () => {
+		renderApp(<Page />, {
+			route: '/setup',
+			status: { mode: 'saas', has_domain: false },
+			routes: {
+				...base,
+				'GET /api/cloudflare/connections': offer(),
+				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
+			},
+		});
+		await userEvent.click(await screen.findByRole('button', { name: "I'll add DNS records myself" }));
+		expect(await screen.findByText('readysetmail-verify=abc')).toBeInTheDocument();
 	});
 });

@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { clearProgress } from '../../../lib/cloudflare';
 import { appRoute, firstCheck, type NotWritten, type PlanStepKey, type PlanWrite } from '../../../lib/dns-plan';
+import { PublicDnsLive } from '../../../components/domain/PublicDnsLive';
 import { useSession } from '../../../lib/session';
 
 export interface DoneStepProps {
 	domainIds: number[];
 	written: { domains: number; records: number };
+	/** DMARC records written in this run: each is said to be live only once public DNS shows it. */
+	dmarc?: { domain: string; content: string }[];
 	notWritten: NotWritten[];
 	/** Writes the plan still holds (a write that failed, or one that was never applied), with the step each belongs to. */
 	pending?: { step: PlanStepKey; write: PlanWrite }[];
@@ -20,7 +23,7 @@ const STEP_LABEL: Record<PlanStepKey, string> = { dmarc: 'DMARC', reports_mailbo
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function DoneStep({ domainIds, written, notWritten, pending = [], onBack }: DoneStepProps) {
+export function DoneStep({ domainIds, written, dmarc = [], notWritten, pending = [], onBack }: DoneStepProps) {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const { me } = useSession();
@@ -84,7 +87,15 @@ export function DoneStep({ domainIds, written, notWritten, pending = [], onBack 
 					</ul>
 				</Alert>
 			) : null}
-			<p className="text-sm text-ink-2">Public DNS can take a few minutes to show the changes.</p>
+			{dmarc.length > 0 ? (
+				<section aria-label="Public DNS" className="space-y-1">
+					{dmarc.map((d) => (
+						<PublicDnsLive key={d.domain} domain={d.domain} record={d.content} label={`_dmarc.${d.domain}`} />
+					))}
+				</section>
+			) : (
+				<p className="text-sm text-ink-2">Public DNS can take a few minutes to show the changes.</p>
+			)}
 			<div>
 				<Button loading={leaving} onClick={() => void finish()}>
 					{leaving ? 'Checking your domains…' : 'Go to overview'}
