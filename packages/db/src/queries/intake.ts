@@ -162,6 +162,37 @@ export function intakeQueries(db: Db, workspaceId: string) {
 				ON CONFLICT(domain_id, reporter) DO UPDATE SET messages = intake_drops.messages + 1, last_at = excluded.last_at, label = excluded.label WHERE intake_drops.workspace_id = ${workspaceId}`);
 		},
 
+		/**
+		 * `drops`, `failures` and `usage` for every domain whose id is in `range` (a page of the overview): three statements whatever
+		 * the number of domains, keyed by domain id. `usage` is one statement (its four counters as one UNION ALL).
+		 */
+		async intakeByDomain(range: { fromId: number; toId: number }, sinceSeconds: number, sinceDay: string, day: string) {
+			const inRange = sql`domain_id BETWEEN ${range.fromId} AND ${range.toId}`;
+			const [dropRows, failureRows, usageRows] = await Promise.all([
+				db.all<DropRow & { domain_id: number }>(sql`SELECT domain_id, reporter, label, first_at, last_at, messages FROM intake_drops WHERE workspace_id = ${workspaceId} AND ${inRange} AND last_at >= ${sinceSeconds} ORDER BY domain_id, first_at, reporter`),
+				db.all<FailureRow & { domain_id: number }>(sql`SELECT domain_id, reason, SUM(messages) AS messages, MAX(last_at) AS last_at FROM intake_failures
+					WHERE workspace_id = ${workspaceId} AND ${inRange} AND day >= ${sinceDay} GROUP BY domain_id, reason ORDER BY domain_id, last_at DESC`),
+				db.all<{ k: string; scope: string | null; v: number }>(sql`
+					SELECT 'a' AS k, scope, messages AS v FROM intake_quota WHERE day = ${day} AND scope IN (SELECT 'a:' || id FROM domains WHERE workspace_id = ${workspaceId} AND id BETWEEN ${range.fromId} AND ${range.toId})
+					UNION ALL SELECT 'w', NULL, messages FROM intake_quota WHERE day = ${day} AND scope = ${'w:' + workspaceId}
+					UNION ALL SELECT 'ws', NULL, records FROM workspace_storage WHERE workspace_id = ${workspaceId}
+					UNION ALL SELECT 'inst', NULL, records FROM intake_quota WHERE scope = ${STORED_ROW.scope} AND day = ${STORED_ROW.day}`),
+			]);
+			const group = <T extends { domain_id: number }>(rows: T[]) => {
+				const m = new Map<number, Array<Omit<T, 'domain_id'>>>();
+				for (const { domain_id, ...rest } of rows) m.set(domain_id, [...(m.get(domain_id) ?? []), rest]);
+				return m;
+			};
+			const first = (k: string) => usageRows.find((r) => r.k === k)?.v ?? 0;
+			const addressMessagesToday = new Map<number, number>();
+			for (const r of usageRows) if (r.k === 'a' && r.scope) addressMessagesToday.set(Number(r.scope.slice(2)), r.v);
+			return {
+				drops: group(dropRows) as Map<number, DropRow[]>,
+				failures: group(failureRows) as Map<number, FailureRow[]>,
+				usage: (domainId: number) => ({ addressMessagesToday: addressMessagesToday.get(domainId) ?? 0, workspaceMessagesToday: first('w'), workspaceRecords: first('ws'), instanceRecords: first('inst') }),
+			};
+		},
+
 		/** Reporters whose counted reports were dropped for want of storage on this address, last drop at or after `sinceSeconds`. */
 		drops(domainId: number, sinceSeconds: number): Promise<DropRow[]> {
 			return db.all<DropRow>(sql`SELECT reporter, label, first_at, last_at, messages FROM intake_drops WHERE workspace_id = ${workspaceId} AND domain_id = ${domainId} AND last_at >= ${sinceSeconds} ORDER BY first_at, reporter`);
