@@ -1317,7 +1317,8 @@ async function _handleApi(
       if (typeof body.record !== 'string') return err('record must be a string', 400);
       const record = body.record.trim(); // published exactly as validated: a leading space makes receivers discard the record
       // The one SPF record rule the setup wizard asks before it offers Apply (packages/dns-checks/src/spf-record.ts).
-      const spfProblem = validateSpfRecord(record);
+      // Everything but ptr is judged before any Cloudflare call; a ptr is judged against the live record once it is read.
+      const spfProblem = validateSpfRecord(record, record);
       if (spfProblem) return err(spfProblem, 400);
       // And the one lookup judgement: past SPF_LOOKUP_LIMIT receivers treat SPF as a permanent error.
       let spfLookups: number;
@@ -1342,6 +1343,9 @@ async function _handleApi(
       } catch (e) {
         return cfFailure(e);
       }
+      // The one SPF rule against the live record: a ptr it already has may stay (the wizard warns), a new ptr is refused.
+      const ptrProblem = validateSpfRecord(record, existingSpf ? existingSpf.content.replace(/^"|"$/g, '') : null);
+      if (ptrProblem) return err(ptrProblem, 400);
       const existingId = existingSpf?.id;
 
       // Safety: require explicit confirmation when overwriting an existing record

@@ -12,7 +12,7 @@ import { StepAside, StepCard, StepColumns, StepMain } from '../../../components/
 import { StepFooter, StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
 import { SPF_PROVIDERS, detectProviders } from '@ready-set-mail/dns-checks/email-service-providers';
-import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, spfPtrWarning, validateSpfRecord, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { RadioCard } from '../../../components/wizard/RadioCard';
 import { useDebouncedValue, setupKeys } from './hooks';
@@ -89,7 +89,9 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 	const preview = selected.length > 0 || otherMechanisms.length > 0 ? buildSpfRecord(selected, qualifier, otherMechanisms) : null;
 	const hasChanges = preview !== spf.record;
 	// The one SPF record rule (validateSpfRecord): nothing is offered to apply or copy that receivers would treat as broken.
-	const invalid = preview ? validateSpfRecord(preview) : null;
+	// A ptr the live record already has may stay (with a warning); adding one is refused, as the apply route does.
+	const invalid = preview ? validateSpfRecord(preview, spf.record) : null;
+	const ptrWarning = preview && !invalid ? spfPtrWarning(preview) : null;
 
 	// The real count walks nested includes server-side; wait for typing to settle, and skip the call when the record is unchanged.
 	const debounced = useDebouncedValue(preview, 400);
@@ -226,6 +228,8 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 					{invalid}
 				</Alert>
 			) : null}
+
+			{preview && ptrWarning ? <Alert variant="warning">{ptrWarning}</Alert> : null}
 
 			{hasChanges && preview && !invalid ? (
 				<div className="space-y-2">

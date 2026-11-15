@@ -142,6 +142,15 @@ describe('buildFixes', () => {
     expect(unknown.records).toHaveLength(1);
   });
 
+  it('keeps the ptr a record already has when adding an include, and says to replace it', () => {
+    const rows = [row({ messages: 880 }), ownEnvelope({ messages: 120 })];
+    const fix = buildFixes({ ...dom, spf_record: 'v=spf1 ptr include:_spf.google.com ~all', spf_lookup_count: 3 }, send(rows))[0]!;
+    expect(fix.records[0]!.value).toBe('v=spf1 include:_spf.google.com include:servers.mcsv.net ptr ~all');
+    expect(fix.steps).toContain('Your record uses ptr, which receivers may skip. Replace it with ip4:, ip6: or include: when you can.');
+    const plain = buildFixes({ ...dom, spf_lookup_count: 3 }, send(rows))[0]!;
+    expect(plain.steps.join(' ')).not.toContain('ptr');
+  });
+
   it('adds an include to a redirect= record without an all (which would void the redirect), near the lookup limit', () => {
     const rows = [row({ messages: 880 }), ownEnvelope({ messages: 120 })];
     const fix = buildFixes({ ...dom, spf_record: 'v=spf1 redirect=_spf.acme.test', spf_lookup_count: 8 }, send(rows))[0]!;
