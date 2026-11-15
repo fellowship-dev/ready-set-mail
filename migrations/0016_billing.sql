@@ -8,6 +8,9 @@
 --                        one place that validates moves). amount is in minor units. The partial unique index is "one open order per workspace +
 --                        domain name + offer" (open = pending, paid, started): a second confirm loses the insert and gets the first order back.
 --                        failed_at is also the time of a cancel. owner_notified_at: when the instance owner was emailed that it was paid.
+--                        amount_paid: what Stripe collected (after a customer credit balance or coupon it can be less than amount). operator_alerted_at:
+--                        when the instance owner was emailed that this order needs attention (a paid invoice that is not what we sold, or a payment
+--                        for an order already closed); at most once per order.
 -- billing_events         Stripe events already seen (insert-first, so a repeated delivery does no work twice). status: processing, done, ignored, failed.
 -- billing_checkout_sessions  binds a Stripe Checkout (setup) session to the workspace and user that started it, with the validated return path.
 --                        ref is our own id, inserted before Stripe is called; stripe_session_id is filled in once Stripe answers.
@@ -24,6 +27,7 @@ CREATE TABLE billing_orders (
   offer TEXT NOT NULL,
   stripe_price_id TEXT NOT NULL,
   amount INTEGER NOT NULL,
+  amount_paid INTEGER,
   currency TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   stripe_customer_id TEXT,
@@ -38,6 +42,7 @@ CREATE TABLE billing_orders (
   failure_message TEXT,
   note TEXT,
   owner_notified_at INTEGER,
+  operator_alerted_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
   paid_at INTEGER,

@@ -67,7 +67,7 @@ function OrdersTable({ orders }: { orders: OperatorOrder[] }) {
 					<li key={o.id} className="space-y-3 rounded-lg border border-line bg-surface-1 p-4">
 						<div className="flex flex-wrap items-center justify-between gap-2">
 							<Badge variant={tone(o)}>{STATUS_WORDS[o.status]}</Badge>
-							<span className="text-sm font-medium">{formatMoney(o.amount, o.currency)}</span>
+							<span className="text-sm font-medium">{formatMoney(o.amount_paid ?? o.amount, o.currency)}</span>
 						</div>
 						<dl className="space-y-1.5 text-sm">
 							<Line label="Domain">{o.domain}</Line>
@@ -109,7 +109,7 @@ function OrdersTable({ orders }: { orders: OperatorOrder[] }) {
 								<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.workspace_name}</td>
 								<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.domain}</td>
 								<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.buyer_email ?? '—'}</td>
-								<td className="px-4 py-2 whitespace-nowrap">{formatMoney(o.amount, o.currency)}</td>
+								<td className="px-4 py-2 whitespace-nowrap">{formatMoney(o.amount_paid ?? o.amount, o.currency)}</td>
 								<td className="px-4 py-2 whitespace-nowrap">{orderDate(o.created_at)}</td>
 								<td className="px-4 py-2 whitespace-nowrap">{o.status === 'pending' || o.status === 'paid' ? '—' : orderDate(statusDate(o))}</td>
 								<td className="px-4 py-2 whitespace-nowrap">

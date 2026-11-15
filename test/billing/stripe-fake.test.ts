@@ -229,11 +229,35 @@ describe('invoices', () => {
     expect(fake.state.invoices.get(open.id)!.status).toBe('open');
     expect([...fake.state.paymentIntents.values()][0].status).toBe('requires_action');
     expect([...fake.state.events.values()].some(e => e.type === 'invoice.payment_action_required')).toBe(true);
+    // as real Stripe does for a payment that needs the bank: invoice.payment_failed too, while the intent is still requires_action
+    expect([...fake.state.events.values()].map(e => e.type).filter(t => t === 'invoice.payment_failed')).toHaveLength(1);
     fake.completeInvoiceAction(open.id, 'succeed');
     expect(fake.state.invoices.get(open.id)!.status).toBe('paid');
     expect([...fake.state.paymentIntents.values()]).toHaveLength(1);
     const paidEv = [...fake.state.events.values()].find(e => e.type === 'invoice.paid')!;
     expect(paidEv.data.object).toMatchObject({ id: open.id, status: 'paid' });
+  });
+
+  it('lists the lines (price, quantity, currency), applies a customer credit at finalize, and deletes an item only from a draft', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    fake.setCustomerBalance(cust, -900);
+    const inv = (await api(fake, 'POST', '/v1/invoices', { customer: cust, auto_advance: 'false', currency: 'usd' })).json;
+    const item = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, price: 'price_fake_fix_one_domain' })).json;
+    const draft = (await api(fake, 'GET', `/v1/invoices/${inv.id}`)).json;
+    expect(draft.lines.data).toHaveLength(1);
+    expect(draft.lines.data[0]).toMatchObject({ quantity: 1, currency: 'usd', amount: 14900, pricing: { price_details: { price: 'price_fake_fix_one_domain' } }, parent: { invoice_item_details: { invoice_item: item.id } } });
+    expect(draft).toMatchObject({ amount_due: 14900, status: 'draft' });
+    const fin = (await api(fake, 'POST', `/v1/invoices/${inv.id}/finalize`)).json;
+    expect(fin).toMatchObject({ total: 14900, amount_due: 14000, starting_balance: -900 });
+    expect(fake.state.customers.get(cust)!.balance).toBe(0);
+    expect((await api(fake, 'DELETE', `/v1/invoiceitems/${item.id}`)).json.error.code).toBe('invoice_not_editable');
+    const paid = (await api(fake, 'POST', `/v1/invoices/${inv.id}/pay`, { off_session: 'true' })).json;
+    expect(paid).toMatchObject({ status: 'paid', amount_paid: 14000 });
+    const d2 = (await api(fake, 'POST', '/v1/invoices', { customer: cust, auto_advance: 'false', currency: 'usd' })).json;
+    const i2 = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: d2.id, price: 'price_fake_fix_one_domain' })).json;
+    expect((await api(fake, 'DELETE', `/v1/invoiceitems/${i2.id}`)).json).toMatchObject({ deleted: true });
+    expect((await api(fake, 'GET', `/v1/invoices/${d2.id}`)).json.lines.data).toHaveLength(0);
   });
 
   it('fail action queues invoice.payment_failed', async () => {

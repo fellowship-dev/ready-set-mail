@@ -74,6 +74,8 @@ export interface FakeStripe {
   completeInvoiceAction(invoiceId: string, action: 'succeed' | 'fail'): StripeObject;
   /** Returns the refund object; the charge in `state.charges` is updated. */
   refund(chargeId: string, amountMinor?: number): StripeObject;
+  /** Credit (negative, minor units) applied to the customer's next finalized invoice. */
+  setCustomerBalance(customerId: string, balance: number): void;
   deleteCustomer(id: string): void;
   failNext(matcher: string | RegExp, failure?: { status?: number; error?: StripeObject }): void;
   reset(): void;

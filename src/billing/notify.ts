@@ -1,6 +1,6 @@
 // What happens around an order for people: the audit entries and the one email to the person who runs the instance.
 // The buyer's receipt comes from Stripe; nothing is sent to the buyer from here, and nothing is sent automatically on "done".
-import { billingLookups, globalQueries, type OrderRow } from '@ready-set-mail/db';
+import { billingLookups, billingQueries, globalQueries, type OrderRow } from '@ready-set-mail/db';
 import { logAudit } from '../audit/log';
 import { senderAddress } from '../auth/mail';
 import { mailFooter } from '../auth/legal';
@@ -37,7 +37,7 @@ export function ownerNoticeText(o: OrderRow): { subject: string; text: string } 
       `Workspace: ${o.workspace_name} (${o.workspace_id})`,
       `Domain: ${o.domain_name}`,
       `Buyer: ${o.buyer_email ?? 'unknown'}`,
-      `Amount: ${formatAmount(o.amount, o.currency)}`,
+      `Amount: ${formatAmount(o.amount, o.currency)}${o.amount_paid !== null && o.amount_paid !== o.amount ? ` (collected: ${formatAmount(o.amount_paid, o.currency)}, after a credit or coupon at Stripe)` : ''}`,
       `Order: ${o.id}`,
       `Stripe invoice: ${o.stripe_invoice_id ?? 'unknown'}`,
       '',
@@ -47,15 +47,14 @@ export function ownerNoticeText(o: OrderRow): { subject: string; text: string } 
   };
 }
 
-/** Email the instance owner (OWNER_EMAIL) that an order was paid. True when the provider accepted it. Never logs the address or the provider's error. */
-export async function emailOwnerPaid(env: BoundEnv, order: OrderRow): Promise<boolean> {
+/** One plain-text mail to OWNER_EMAIL. True when the provider accepted it. Never logs the address or the provider's error. */
+async function sendToOwner(env: BoundEnv, order: OrderRow, { subject, text }: { subject: string; text: string }): Promise<boolean> {
   const to = env.OWNER_EMAIL?.trim();
   const from = await senderAddress(env);
   if (!to || !env.SEND_EMAIL || !from) {
     console.warn(`[billing] owner notice for ${order.id} not sent: ${!to ? 'OWNER_EMAIL is not set' : !env.SEND_EMAIL ? 'SEND_EMAIL binding not configured' : 'no sender address'}`);
     return false;
   }
-  const { subject, text } = ownerNoticeText(order);
   const footer = mailFooter(env);
   try {
     await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [to], subject, text: `${text}\n\nReady Set Mail${footer ? `\n${footer}` : ''}` });
@@ -64,6 +63,43 @@ export async function emailOwnerPaid(env: BoundEnv, order: OrderRow): Promise<bo
     console.error(`[billing] owner notice for ${order.id} failed (provider error not logged)`);
     return false;
   }
+}
+
+/** Email the instance owner that an order was paid. */
+export const emailOwnerPaid = (env: BoundEnv, order: OrderRow): Promise<boolean> => sendToOwner(env, order, ownerNoticeText(order));
+
+export type AlertReason = 'invoice_not_as_sold' | 'paid_after_closed';
+
+/** The email to the instance owner for an order that needs a person: Stripe took (or reports) money we did not book as this order. */
+export function operatorAlertText(o: OrderRow, reason: AlertReason, detail: string): { subject: string; text: string } {
+  const what = reason === 'paid_after_closed'
+    ? `A payment arrived for an order that was already ${o.status}. The buyer was charged and no work is booked: refund it in the Stripe dashboard unless you want to reopen it.`
+    : 'Stripe reports the invoice paid, but it is not what this order sold, so the order was NOT marked paid and still holds its domain. Check the invoice in the Stripe dashboard: book it by hand or refund it.';
+  return {
+    subject: `Order needs attention: ${OFFER_NAME} for ${o.domain_name}`,
+    text: [
+      what,
+      '',
+      `Why: ${detail}`,
+      `Workspace: ${o.workspace_name} (${o.workspace_id})`,
+      `Domain: ${o.domain_name}`,
+      `Buyer: ${o.buyer_email ?? 'unknown'}`,
+      `Order: ${o.id} (${o.status}), ${formatAmount(o.amount, o.currency)} expected`,
+      `Stripe invoice: ${o.stripe_invoice_id ?? 'unknown'}`,
+    ].join('\n'),
+  };
+}
+
+/**
+ * Email the instance owner (OWNER_EMAIL) that an order needs attention, once per order (the claim is a conditional update; it is released if the
+ * mail did not go out, so the next event or the daily job tries again). Always logs an error line with the order id.
+ */
+export async function alertOperator(env: BoundEnv, order: OrderRow, reason: AlertReason, detail: string): Promise<void> {
+  console.error(`[billing] order ${order.id} needs attention: ${reason} (${detail})`);
+  const q = billingQueries(env.DB, order.workspace_id).orders;
+  if (!(await q.alertOnce(order.id))) return;
+  const sent = await sendToOwner(env, order, operatorAlertText(order, reason, detail));
+  if (!sent) await q.patch(order.id, { operator_alerted_at: null });
 }
 
 /** The side effects of the one move to `paid`: the audit entry and the owner's email; the daily job retries an email that did not go out. */

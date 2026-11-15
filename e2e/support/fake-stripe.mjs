@@ -194,9 +194,18 @@ export function createFakeStripe(opts = {}) {
     inv.amount_due = inv.status === 'paid' ? t : t;
     inv.amount_remaining = inv.status === 'paid' ? 0 : t;
   }
+  function linesOf(inv) {
+    const data = [...state.invoiceItems.values()].filter(i => i.invoice === inv.id).map(i => ({
+      id: `il_${i.id}`, object: 'line_item', amount: i.amount, currency: i.currency, description: i.description, quantity: i.quantity ?? 1, metadata: clone(i.metadata ?? {}),
+      pricing: i.price ? { type: 'price_details', price_details: { price: i.price.id, product: i.price.product }, unit_amount_decimal: String(i.price.unit_amount) } : { type: 'price_details', price_details: { price: null, product: null } },
+      parent: { type: 'invoice_item_details', invoice_item_details: { invoice_item: i.id } },
+    }));
+    return { object: 'list', data, has_more: false, url: `/v1/invoices/${inv.id}/lines` };
+  }
   function invoiceOut(inv, expand = []) {
     const out = clone(inv);
     delete out.payments;
+    out.lines = linesOf(inv);
     if (expand.some(e => e === 'payments' || e.startsWith('payments.'))) {
       const full = expand.includes('payments.data.payment.payment_intent');
       out.payments = {
@@ -288,6 +297,12 @@ export function createFakeStripe(opts = {}) {
     queue('charge.refunded', ch);
     return clone(re);
   };
+  /** Credit (a negative balance, minor units) that Stripe applies to the customer's next finalized invoice. */
+  fake.setCustomerBalance = (cid, balance) => {
+    const c = state.customers.get(cid);
+    if (!c || c.deleted) throw new Error(`fake-stripe: no such customer ${cid}`);
+    c.balance = balance;
+  };
   fake.deleteCustomer = cid => {
     if (!state.customers.get(cid)) throw new Error(`fake-stripe: no such customer ${cid}`);
     const stub = { id: cid, object: 'customer', deleted: true };
@@ -334,7 +349,7 @@ export function createFakeStripe(opts = {}) {
 
     if (path === '/v1/customers' && method === 'POST') {
       const c = base('cus', 'customer', {
-        email: form.email ?? null, name: form.name ?? null, metadata: {}, description: null,
+        email: form.email ?? null, name: form.name ?? null, metadata: {}, description: null, balance: 0,
         invoice_settings: { default_payment_method: null, custom_fields: null, footer: null, rendering_options: null },
       });
       mergeMeta(c.metadata, form.metadata);
@@ -417,12 +432,21 @@ export function createFakeStripe(opts = {}) {
       } else if (form.amount !== undefined) amount = Number(form.amount);
       else throw bad('Missing required param: price.', 'parameter_missing', 'price');
       const item = base('ii', 'invoiceitem', {
-        customer: cid, invoice: iid, amount, currency, description: form.description ?? null, metadata: clone(form.metadata ?? {}),
+        customer: cid, invoice: iid, amount, currency, quantity: form.quantity ? Number(form.quantity) : 1, description: form.description ?? null, metadata: clone(form.metadata ?? {}),
         price: price ? clone(price) : null, date: sec(),
       });
       state.invoiceItems.set(item.id, item);
       syncTotals(inv);
       return ok(clone(item));
+    }
+    if ((m = path.match(/^\/v1\/invoiceitems\/([^/]+)$/)) && method === 'DELETE') {
+      const item = state.invoiceItems.get(m[1]);
+      if (!item) throw missing('invoiceitem', m[1]);
+      const inv = item.invoice ? state.invoices.get(item.invoice) : null;
+      if (inv && inv.status !== 'draft') throw bad('You can only delete invoice items on a draft invoice.', 'invoice_not_editable');
+      state.invoiceItems.delete(item.id);
+      if (inv) syncTotals(inv);
+      return ok({ id: item.id, object: 'invoiceitem', deleted: true });
     }
     if ((m = path.match(/^\/v1\/invoices\/([^/]+)(?:\/(finalize|pay|void))?$/))) {
       const inv = state.invoices.get(m[1]);
@@ -476,6 +500,10 @@ export function createFakeStripe(opts = {}) {
     if (action === 'finalize') {
       if (inv.status !== 'draft') throw bad("This invoice is already finalized, you can't re-finalize a non-draft invoice.", 'invoice_not_draft');
       syncTotals(inv);
+      // A credit on the customer's balance is applied when the invoice is finalized: what is due drops, what is sold does not.
+      const cust = state.customers.get(inv.customer);
+      const credit = cust && cust.balance < 0 ? Math.min(-cust.balance, inv.total) : 0;
+      if (credit) { cust.balance += credit; inv.starting_balance = -credit; inv.amount_due = inv.total - credit; inv.amount_remaining = inv.amount_due; }
       inv.status = 'open';
       inv.hosted_invoice_url = `${fake.publicBase}/i/${inv.id}`;
       inv.status_transitions.finalized_at = sec();
@@ -507,7 +535,9 @@ export function createFakeStripe(opts = {}) {
       throw new ApiError(402, { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_intent: clone(pi) });
     }
     pi.status = 'requires_action';
+    // Real Stripe sends invoice.payment_failed as well while the PaymentIntent is still waiting for the buyer (3-D Secure); either may arrive first.
     queue('invoice.payment_action_required', invoiceOut(inv));
+    queue('invoice.payment_failed', invoiceOut(inv));
     throw new ApiError(402, { type: 'invalid_request_error', code: 'invoice_payment_intent_requires_action', message: 'This payment requires additional user action before it can be completed successfully.', payment_intent: clone(pi) });
   }
 

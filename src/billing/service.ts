@@ -8,7 +8,7 @@ import { priceLookupKey } from './config';
 import { BillingError, idOf, type BillingDeps } from './deps';
 import { appUrl } from './paths';
 import { OFFER_ID, OFFER_NAME } from './offer';
-import { failOrder, reconcileOrder } from './sync';
+import { failOrder, reconcileOrder, soldProblem } from './sync';
 import { orderView, type OrderView } from './orders';
 import { PriceMisconfiguredError, PriceUnavailableError, resolvePrice, type OfferPrice } from './price';
 import { StripeError, StripeNetworkError, type StripeObject } from './stripe-client';
@@ -195,7 +195,8 @@ export interface PurchaseResult {
   message?: string;
 }
 
-export interface PurchaseInput { domainId: number; expectedAmount?: number }
+/** The price the buyer was shown: the order is created only if Stripe's fresh price is exactly this. */
+export interface PurchaseInput { domainId: number; expectedAmount: number; expectedCurrency: string }
 
 /**
  * Buy "Fix one domain" for a domain of this workspace, charging the card on file. The order row is inserted FIRST (a unique slot per workspace,
@@ -209,7 +210,7 @@ export async function purchase(d: BillingDeps, ws: Ws, actor: Actor, input: Purc
   if (!domain) throw new BillingError(404, 'domain_not_found', 'That domain was not found.');
   if (isUnprovenRow(domain) || domain.proof_lost_at) throw new BillingError(409, 'domain_unproven', 'Prove that you control this domain before buying work on it.');
   const price = await offerPrice(d, true);
-  if (input.expectedAmount !== undefined && input.expectedAmount !== price.amount) {
+  if (input.expectedAmount !== price.amount || input.expectedCurrency.toLowerCase() !== price.currency) {
     throw new BillingError(409, 'price_changed', 'The price changed. Review it and confirm again.', { amount: price.amount, currency: price.currency });
   }
   const customerId = await scope.billing.customer.get();
@@ -254,7 +255,17 @@ export async function runCharge(d: BillingDeps, order: OrderRow): Promise<Purcha
       invoiceId = inv.id;
       await q.patch(order.id, { stripe_invoice_id: invoiceId });
     }
-    await d.stripe.createInvoiceItem({ orderId: order.id, customerId, invoiceId, priceId: order.stripe_price_id, description: `${OFFER_NAME}: ${order.domain_name}` });
+    const item = await d.stripe.createInvoiceItem({ orderId: order.id, customerId, invoiceId, priceId: order.stripe_price_id, description: `${OFFER_NAME}: ${order.domain_name}` });
+    // Defense in depth: before anything can be charged, the draft must be exactly what the buyer confirmed (one line, our price, the order's amount and currency).
+    const draft = await d.stripe.retrieveInvoice(invoiceId);
+    if (draft.status === 'draft' || draft.status === 'open') {
+      const problem = soldProblem(order, draft) ?? (draft.amount_due !== order.amount ? `amount due ${String(draft.amount_due)} is not the order's ${order.amount}` : null);
+      if (problem) {
+        console.error(`[billing] order ${order.id}: invoice ${invoiceId} is not what was confirmed (${problem}); it is discarded, nothing was charged`);
+        if (draft.status === 'draft' && typeof item.id === 'string') await d.stripe.deleteInvoiceItem(item.id).catch((e) => { if (!(e instanceof StripeError)) throw e; });
+        return notStarted(d, q, (await q.get(order.id)) ?? current, { code: 'invoice_mismatch', message: 'We could not start the payment. You have not been charged.' });
+      }
+    }
     const fin = await d.stripe.finalizeInvoice(order.id, invoiceId);
     if (typeof fin.hosted_invoice_url === 'string') await q.patch(order.id, { hosted_invoice_url: fin.hosted_invoice_url });
     current = (await q.get(order.id)) ?? order;
@@ -278,15 +289,20 @@ export async function runCharge(d: BillingDeps, order: OrderRow): Promise<Purcha
       // A refusal that retrying cannot fix (bad request, missing object): end the order, nothing was charged. Server errors and rate limits stay pending.
       if (e.status >= 400 && e.status < 500 && e.status !== 429 && e.status !== 409) {
         console.error(`[billing] order ${order.id} could not start: status=${e.status} type=${e.type} code=${e.code ?? '-'}`);
-        const result = await failOrder(d, current, { code: e.code ?? 'stripe_error', message: 'We could not start the payment. You have not been charged.' });
-        const row = (await q.get(order.id)) ?? current;
-        if (result === 'paid') return { order: orderView(row), outcome: 'processing' };
-        return { order: orderView(row), outcome: 'failed', message: row.failure_message ?? 'We could not start the payment. You have not been charged.' };
+        return notStarted(d, q, current, { code: e.code ?? 'stripe_error', message: 'We could not start the payment. You have not been charged.' });
       }
     }
     const failure = stripeFailure(e);
     throw new BillingError(failure.status, failure.code, failure.message, { order: orderView((await q.get(order.id)) ?? current) });
   }
+}
+
+/** End an order whose payment could not be started (the draft invoice is voided or deleted), as the answer to the buyer. */
+async function notStarted(d: BillingDeps, q: ReturnType<typeof billingQueries>['orders'], order: OrderRow, why: { code: string; message: string }): Promise<PurchaseResult> {
+  const result = await failOrder(d, order, why);
+  const row = (await q.get(order.id)) ?? order;
+  if (result === 'paid') return { order: orderView(row), outcome: 'processing' };
+  return { order: orderView(row), outcome: 'failed', message: row.failure_message ?? why.message };
 }
 
 /** One order of the workspace; a pending order older than an hour is settled from Stripe first. */

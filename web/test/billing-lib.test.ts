@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { cardLine, formatMoney, hasSomethingToFix, orderSentence, STATUS_WORDS, type Order } from '../src/lib/billing';
+import { cardLine, failureSentence, formatMoney, hasSomethingToFix, orderSentence, STATUS_WORDS, type Order } from '../src/lib/billing';
 
 const order = (over: Partial<Order> = {}): Order => ({
-	id: 'ord_1', domain: 'acme.com', domain_id: 1, offer: 'fix-one-domain', amount: 14900, currency: 'usd', status: 'paid', amount_refunded: 0, buyer_email: 'o@x.co',
+	id: 'ord_1', domain: 'acme.com', domain_id: 1, offer: 'fix-one-domain', amount: 14900, amount_paid: null, currency: 'usd', payment_review: false, status: 'paid', amount_refunded: 0, buyer_email: 'o@x.co',
 	failure_message: null, action_required: false, action_url: null, created_at: 1_800_000_000, paid_at: 1_800_000_000, started_at: null, done_at: null, refunded_at: null, failed_at: null, ...over,
 });
 const NEXT = 'We will write to you about the access the work needs. The work starts when you have given it, and ends with our written note that the domain is done.';
 
 describe('money and card words', () => {
 	it('whole amounts have no cents, others two; the currency comes from the price', () => {
-		expect(formatMoney(14900, 'usd')).toBe('$149');
-		expect(formatMoney(14950, 'usd')).toBe('$149.50');
-		expect(formatMoney(9900, 'USD')).toBe('$99');
+		expect(formatMoney(14900, 'usd')).toBe('$149 USD');
+		expect(formatMoney(14950, 'usd')).toBe('$149.50 USD');
+		expect(formatMoney(9900, 'USD')).toBe('$99 USD');
+		expect(formatMoney(14900, 'eur')).toBe('€149 EUR');
 	});
 	it('the card line is brand, last four and expiry', () => {
 		expect(cardLine({ brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2028 })).toBe('Visa ending 4242, expires 12/28');
@@ -46,6 +47,21 @@ describe('the sentence for an order', () => {
 		expect(orderSentence(order({ status: 'canceled', failed_at: 1_800_000_000 }), NEXT)).toMatch(/was not confirmed\. You have not been charged\.$/);
 		expect(orderSentence(order({ status: 'pending' }), NEXT)).toBe('Waiting for the payment to be confirmed.');
 		expect(orderSentence(order({ status: 'pending', action_required: true }), NEXT)).toBe("Waiting for your bank's confirmation.");
+	});
+	it('"You have not been charged." is said once, and never over a payment that went through', () => {
+		const said = (o: Order) => (orderSentence(o, NEXT).match(/not been charged/g) ?? []).length;
+		expect(said(order({ status: 'failed', failed_at: 1, failure_message: 'We could not start the payment. You have not been charged.' }))).toBe(1);
+		expect(said(order({ status: 'failed', failed_at: 1, failure_message: 'Your card was declined.' }))).toBe(1);
+		expect(said(order({ status: 'failed', failed_at: 1, failure_message: null }))).toBe(1);
+		expect(said(order({ status: 'canceled', failed_at: 1, failure_message: 'The payment was not confirmed in time. You have not been charged.' }))).toBe(1);
+		const late = order({ status: 'failed', failed_at: 1, failure_message: 'You were charged after this order was closed. We will write to you about a refund.' });
+		expect(said(late)).toBe(0);
+		expect(failureSentence(late)).toBe('You were charged after this order was closed. We will write to you about a refund.');
+	});
+	it('a paid invoice we are still checking says the payment arrived, never "not charged"', () => {
+		const s = orderSentence(order({ status: 'pending', payment_review: true }), NEXT);
+		expect(s).toBe('Your payment went through. We are checking it against your order and will write to you.');
+		expect(s).not.toMatch(/not been charged/);
 	});
 	it('promises no turnaround time in any state', () => {
 		const all = (Object.keys(STATUS_WORDS) as Order['status'][]).map((s) => orderSentence(order({ status: s, started_at: 1, done_at: 1, refunded_at: 1, failed_at: 1 }), NEXT)).join(' ');

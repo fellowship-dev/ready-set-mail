@@ -42,6 +42,8 @@ export interface OrderView {
   domain_id: number | null;
   offer: string;
   amount: number;
+  /** What Stripe collected (less than `amount` after a credit balance or coupon); null until paid. */
+  amount_paid: number | null;
   currency: string;
   status: OrderStatus;
   amount_refunded: number;
@@ -51,6 +53,8 @@ export interface OrderView {
   /** True while the buyer has to finish confirming with their bank (the invoice page is `action_url`). */
   action_required: boolean;
   action_url: string | null;
+  /** True while Stripe reports the invoice paid but we are checking it against what was sold: the buyer is told it arrived. */
+  payment_review: boolean;
   created_at: number;
   paid_at: number | null;
   started_at: number | null;
@@ -62,9 +66,9 @@ export interface OrderView {
 export function orderView(o: OrderRow): OrderView {
   const action = o.status === 'pending' && o.note === 'action_required';
   return {
-    id: o.id, domain: o.domain_name, domain_id: o.domain_id, offer: o.offer, amount: o.amount, currency: o.currency, status: o.status,
+    id: o.id, domain: o.domain_name, domain_id: o.domain_id, offer: o.offer, amount: o.amount, amount_paid: o.amount_paid, currency: o.currency, status: o.status,
     amount_refunded: o.amount_refunded, buyer_email: o.buyer_email, failure_message: o.failure_message,
-    action_required: action, action_url: action ? o.hosted_invoice_url : null,
+    action_required: action, action_url: action ? o.hosted_invoice_url : null, payment_review: o.status === 'pending' && o.note === 'payment_review',
     created_at: o.created_at, paid_at: o.paid_at, started_at: o.started_at, done_at: o.done_at, refunded_at: o.refunded_at, failed_at: o.failed_at,
   };
 }

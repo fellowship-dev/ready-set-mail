@@ -148,10 +148,16 @@ async function dispatch(d: BillingDeps, event: StripeEvent): Promise<Handled> {
         if (r === 'pending' && order.status === 'pending') await billingQueries(d.db, order.workspace_id).orders.patch(order.id, { note: 'action_required' });
         return result(r);
       }
-      // invoice.payment_failed: only if Stripe still says the invoice is unpaid.
+      // invoice.payment_failed: only if Stripe still says the invoice is unpaid, and the payment is not merely waiting on the buyer. For a payment
+      // that needs bank confirmation (3-D Secure) Stripe sends this event too, while the PaymentIntent is still requires_action: the buyer can
+      // finish on the hosted page, so that is not a failure.
       const inv = await d.stripe.retrieveInvoice(obj.id);
       if (inv.status === 'paid') return result(await applyInvoice(d, order, obj.id));
       if (idOf(inv.customer) !== order.stripe_customer_id || (inv.metadata as Record<string, unknown> | undefined)?.order_id !== order.id) return { status: 'ignored', outcome: 'mismatch' };
+      if (inv.status === 'open' && waitingOnBuyer(inv)) {
+        if (order.status === 'pending') await billingQueries(d.db, order.workspace_id).orders.patch(order.id, { note: 'action_required' });
+        return { status: 'done', outcome: 'awaiting_buyer' };
+      }
       const { code, message } = lastPaymentError(inv);
       return result(await failOrder(d, order, { code, message: message ?? 'The payment did not go through. You have not been charged.' }));
     }
@@ -172,6 +178,18 @@ async function dispatch(d: BillingDeps, event: StripeEvent): Promise<Handled> {
     default:
       return { status: 'ignored', outcome: 'ignored_type' };
   }
+}
+
+/** PaymentIntent states in which the payment is still the buyer's (or the bank's) to finish. */
+const WAITING_INTENT = new Set(['requires_action', 'requires_confirmation', 'processing']);
+
+/** True when an open payment of the invoice (its expanded PaymentIntent) is still waiting on the buyer or the bank. */
+function waitingOnBuyer(inv: StripeObject): boolean {
+  const list = (inv.payments as { data?: Array<{ status?: string; payment?: { payment_intent?: unknown } }> } | undefined)?.data ?? [];
+  return list.some((p) => {
+    const pi = p.payment?.payment_intent;
+    return p.status !== 'canceled' && !!pi && typeof pi === 'object' && WAITING_INTENT.has(String((pi as { status?: unknown }).status));
+  });
 }
 
 /** Stripe's words for why the latest attempt failed, from the invoice's expanded payment intent. */

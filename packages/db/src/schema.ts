@@ -1040,6 +1040,8 @@ export const billingOrders = sqliteTable(
 		stripe_price_id: text('stripe_price_id').notNull(),
 		/** Minor units of `currency`. */
 		amount: integer('amount').notNull(),
+		/** What Stripe collected for the invoice (can be less than `amount` after a credit balance or coupon); NULL until paid. */
+		amount_paid: integer('amount_paid'),
 		currency: text('currency').notNull(),
 		status: text('status', { enum: ORDER_STATUSES }).notNull().default('pending'),
 		stripe_customer_id: text('stripe_customer_id'),
@@ -1054,6 +1056,8 @@ export const billingOrders = sqliteTable(
 		failure_message: text('failure_message'),
 		note: text('note'),
 		owner_notified_at: integer('owner_notified_at'),
+		/** When the instance owner was emailed that this order needs a look (a paid invoice that is not what we sold; a payment for a closed order). Once. */
+		operator_alerted_at: integer('operator_alerted_at'),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		paid_at: integer('paid_at'),

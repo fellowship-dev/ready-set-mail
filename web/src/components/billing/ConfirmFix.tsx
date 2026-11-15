@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../../lib/api';
-import { billingKeys, cardLine, formatMoney, startCardSession, useOrder, type DomainBilling, type Offer, type Order } from '../../lib/billing';
+import { billingKeys, cardLine, failureSentence, formatMoney, startCardSession, useOrder, type DomainBilling, type Offer, type Order } from '../../lib/billing';
 import type { Domain } from '../../lib/types';
 
 interface Purchase {
@@ -18,8 +18,11 @@ interface Purchase {
  * links to the terms and refund policy, and which card will be charged. Without a card the one primary action is "Add a card to continue" (Stripe's
  * page, then back to this same step); with one it is "Pay <price>". Only the workspace owner can act; everyone else is told so.
  */
-export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { open: boolean; onOpenChange: (o: boolean) => void; domain: Domain; billing: DomainBilling; offer: Offer }) {
+export function ConfirmFix({ open, onOpenChange, domain, billing, offer: shown }: { open: boolean; onOpenChange: (o: boolean) => void; domain: Domain; billing: DomainBilling; offer: Offer }) {
 	const qc = useQueryClient();
+	// The price Stripe now has, when the server refused the one that was shown (409 price_changed): the step re-renders with it.
+	const [repriced, setRepriced] = useState<Pick<Offer, 'amount' | 'currency'> | null>(null);
+	const offer: Offer = repriced ? { ...shown, ...repriced } : shown;
 	const [purchase, setPurchase] = useState<Purchase | null>(null);
 	const [problem, setProblem] = useState<string | null>(null);
 	const sending = useRef(false);
@@ -33,6 +36,7 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 		if (open) {
 			setPurchase(null);
 			setProblem(null);
+			setRepriced(null);
 		}
 	}, [open]);
 	useEffect(() => {
@@ -40,7 +44,7 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 	}, [order?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const pay = useMutation({
-		mutationFn: () => api<Purchase>('/api/billing/orders', { method: 'POST', body: { domain_id: domain.id, offer: offer.id, expected_amount: offer.amount } }),
+		mutationFn: () => api<Purchase>('/api/billing/orders', { method: 'POST', body: { domain_id: domain.id, offer: offer.id, expected_amount: offer.amount, expected_currency: offer.currency } }),
 		onSuccess: (p) => {
 			setPurchase(p);
 			// The bank's own page opens in a new tab; the order is polled here meanwhile.
@@ -48,11 +52,15 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 			void qc.invalidateQueries({ queryKey: billingKeys.all });
 		},
 		onError: (e) => {
-			const body = (e instanceof ApiError ? e.body : undefined) as { code?: string; order?: Order } | undefined;
+			const body = (e instanceof ApiError ? e.body : undefined) as { code?: string; order?: Order; amount?: number; currency?: string } | undefined;
 			if (body?.code === 'order_open' && body.order) {
 				setPurchase({ order: body.order, outcome: 'processing' });
+			} else if (body?.code === 'price_changed' && typeof body.amount === 'number' && typeof body.currency === 'string') {
+				setRepriced({ amount: body.amount, currency: body.currency });
+				setProblem(`The price changed to ${formatMoney(body.amount, body.currency)}. Check it below and confirm again.`);
+				void qc.invalidateQueries({ queryKey: billingKeys.all });
 			} else {
-				setProblem(body?.code === 'price_changed' ? 'The price changed. Check it below and confirm again.' : errorMessage(e));
+				setProblem(errorMessage(e));
 				void qc.invalidateQueries({ queryKey: billingKeys.all });
 			}
 		},
@@ -71,7 +79,7 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 	}
 
 	const owner = billing.role === 'owner';
-	const card = billing.card;
+	const card = billing.card ?? null;
 	const busy = pay.isPending;
 	const finished = order && order.status !== 'pending';
 	const waitingForBank = order?.status === 'pending' && order.action_required;
@@ -118,8 +126,8 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 							<Row label="Price">
 								<strong className="font-semibold">{price}</strong>, once, charged now
 							</Row>
-							<Row label="Card">{card ? cardLine(card) : billing.card_unavailable ? 'We could not read your card just now.' : 'No card on file yet.'}</Row>
-							<Row label="Billing email">{billing.billing_email ?? 'Your email address'}</Row>
+							<Row label="Card">{card ? cardLine(card) : billing.card_on_file ? 'A card is on file.' : billing.card_unavailable ? 'We could not read your card just now.' : 'No card on file yet.'}</Row>
+							{owner ? <Row label="Billing email">{billing.billing_email ?? 'Your email address'}</Row> : null}
 						</dl>
 						<p className="text-sm text-ink-1">{offer.refund_rule}</p>
 						<p className="text-sm text-ink-1">{offer.next_steps}</p>
@@ -142,7 +150,7 @@ export function ConfirmFix({ open, onOpenChange, domain, billing, offer }: { ope
 
 				{failedNow ? (
 					<Alert variant="danger" title="The payment did not go through">
-						{order?.failure_message ?? purchase?.message ?? 'The payment did not go through.'} You have not been charged. You can change the card and try again.
+						{failureSentence(order ?? { failure_message: null }, purchase?.message)} You can change the card and try again.
 					</Alert>
 				) : null}
 				{problem ? (

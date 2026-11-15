@@ -2,9 +2,11 @@
 // declined-card answer) goes through here, and every one RE-FETCHES the object from Stripe: an event body only says where to look.
 //
 // An order is bound to Stripe by: our order id in the invoice's metadata, the Stripe customer, and (once set) the invoice id. All three
-// must agree with what the re-fetch returns, and for `paid` the amount and currency too; otherwise nothing changes (`mismatch`).
+// must agree with what the re-fetch returns, and for `paid` the invoice must be what was SOLD (one line, our price, quantity 1, our currency);
+// the amount collected may differ (a credit balance or coupon) and is recorded. Otherwise nothing changes (`mismatch`), and a paid invoice that
+// is not ours to book is reported to the instance owner.
 import { billingLookups, billingQueries, type OrderRow } from '@ready-set-mail/db';
-import { auditOrder, onOrderPaid } from './notify';
+import { alertOperator, auditOrder, onOrderPaid } from './notify';
 import { predecessorsOf, STAMP } from './orders';
 import { StripeError, type StripeObject } from './stripe-client';
 import { idOf, type BillingDeps } from './deps';
@@ -22,6 +24,20 @@ function invoiceMatches(order: OrderRow, inv: StripeObject): boolean {
     && (order.stripe_invoice_id === null || order.stripe_invoice_id === inv.id);
 }
 
+/** Why an invoice is not what this order sold (one line, our stored price, quantity 1, our currency), or null when it is. The amount is not part of it. */
+export function soldProblem(order: OrderRow, inv: StripeObject): string | null {
+  const lines = inv.lines as { data?: Array<Record<string, unknown>>; has_more?: boolean } | undefined;
+  const data = lines?.data;
+  if (!Array.isArray(data) || lines?.has_more) return 'the invoice does not list exactly one line';
+  if (data.length !== 1) return `the invoice has ${data.length} lines instead of one`;
+  const line = data[0]!;
+  const price = (line.pricing as { price_details?: { price?: unknown } } | undefined)?.price_details?.price;
+  if (idOf(price) !== order.stripe_price_id) return 'the line is not the price that was sold';
+  if (line.quantity !== 1) return 'the quantity is not 1';
+  if (inv.currency !== order.currency || (line.currency !== undefined && line.currency !== order.currency)) return 'the currency is not the order\'s';
+  return null;
+}
+
 /** The payment intent and charge that paid an invoice, from `payments` expanded with its payment intent. */
 export function paymentOf(inv: StripeObject): { paymentIntentId: string | null; chargeId: string | null } {
   const list = (inv.payments as { data?: Array<{ status?: string; payment?: { type?: string; payment_intent?: unknown } }> } | undefined)?.data ?? [];
@@ -35,16 +51,24 @@ export async function applyInvoice(d: BillingDeps, order: OrderRow, invoiceId = 
   if (!invoiceId) return 'noop';
   if (order.stripe_invoice_id && order.stripe_invoice_id !== invoiceId) return 'mismatch';
   const inv = await d.stripe.retrieveInvoice(invoiceId);
-  if (!invoiceMatches(order, inv)) return 'mismatch';
   const q = scoped(d, order);
+  const matches = invoiceMatches(order, inv);
+  if (!matches && inv.status !== 'paid') return 'mismatch';
 
   if (inv.status === 'paid') {
-    if (inv.amount_paid !== order.amount || inv.currency !== order.currency) return 'mismatch';
+    const problem = matches ? soldProblem(order, inv) : 'the invoice names another customer, order or invoice than this order';
+    if (problem) {
+      // Money was taken for something that is not this order: never book it, tell a person (once), and tell the buyer it arrived.
+      if (order.status === 'pending') await q.patch(order.id, { note: 'payment_review' });
+      await alertOperator(d.env, order, 'invoice_not_as_sold', problem);
+      return 'mismatch';
+    }
     const { paymentIntentId, chargeId } = paymentOf(inv);
     const paidAt = (inv.status_transitions as { paid_at?: unknown } | undefined)?.paid_at;
     const moved = await q.move(order.id, predecessorsOf('paid'), 'paid', {
       paid_at: typeof paidAt === 'number' ? paidAt : d.now(),
       stripe_invoice_id: inv.id, stripe_payment_intent_id: paymentIntentId, stripe_charge_id: chargeId, note: null,
+      amount_paid: typeof inv.amount_paid === 'number' ? inv.amount_paid : order.amount,
     });
     if (moved) {
       const fresh = await q.get(order.id);
@@ -53,7 +77,9 @@ export async function applyInvoice(d: BillingDeps, order: OrderRow, invoiceId = 
     }
     const now = await q.get(order.id);
     if (now && (now.status === 'failed' || now.status === 'canceled')) {
-      console.error(`[billing] order ${order.id} is ${now.status} but its invoice is paid: refund it in Stripe`);
+      // The buyer was charged for an order we closed: say so truthfully to them, and tell a person to refund or reopen it.
+      await q.patch(order.id, { failure_message: 'You were charged after this order was closed. We will write to you about a refund.' });
+      await alertOperator(d.env, now, 'paid_after_closed', `the invoice is paid but the order is ${now.status}`);
       return 'closed_but_paid';
     }
     // Already past pending: fill in the charge if an earlier path did not know it yet.

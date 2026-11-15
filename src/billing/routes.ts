@@ -6,7 +6,7 @@
 // refused: money is spent from a browser session only. State-changing routes inherit the resolver's CSRF check for cookie sessions.
 import { billingLookups, billingQueries, forWorkspace, globalQueries, workspaceLifecycle, type MembershipRole } from '@ready-set-mail/db';
 import { AuthError } from '../api/auth';
-import { legal } from '../auth/legal';
+import { siteOrigin } from '../auth/legal';
 import { isInstanceOwner } from '../funnel/routes';
 import type { BoundEnv } from '../index';
 import type { AuthedWorkspace } from '../auth/resolver';
@@ -80,11 +80,16 @@ async function offerView(d: BillingDeps) {
   }
 }
 
+/** Terms and refund policy are pages of the website: `<site origin>/terms` and `<site origin>/refund-policy` (the origin the app already has: SITE_URL, else the hosted site). */
 function links(env: BoundEnv) {
-  const terms = legal(env).termsUrl;
-  let refund: string | null = null;
-  if (terms) { try { refund = `${new URL(terms).origin}/refund-policy`; } catch { /* no link */ } }
-  return { terms_url: terms, refund_policy_url: refund };
+  const origin = siteOrigin(env);
+  return { terms_url: origin ? `${origin}/terms` : null, refund_policy_url: origin ? `${origin}/refund-policy` : null };
+}
+
+/** What the viewer may know of the workspace's card: the owner sees it and the billing email; everyone else only whether there is one. */
+function cardFields(isOwner: boolean, view: Awaited<ReturnType<typeof readCard>>) {
+  const card_on_file = !!view.card;
+  return isOwner ? { card_on_file, card: view.card, billing_email: view.email } : { card_on_file };
 }
 
 export async function handleBillingRoutes(request: Request, env: BoundEnv, ctx: ExecutionContext, resolver: WorkspaceResolver, opts: RouteOpts = {}): Promise<Response | null> {
@@ -119,7 +124,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const orders = await scope.billing.orders.list(50);
     return json({
       enabled: true, role: me.role, can_manage: isOwner,
-      billing_email: view.email, has_customer: view.customer, card: view.card, ...(view.unavailable ? { card_unavailable: true } : {}),
+      ...cardFields(isOwner, view), has_customer: view.customer, ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, orders: orders.map(orderView), ...links(env),
     });
   }
@@ -135,7 +140,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const history = await scope.billing.orders.forDomain(domain.domain);
     return json({
       domain: { id: domain.id, name: domain.domain }, role: me.role, can_buy: isOwner && !!offer && !stillOpen,
-      has_customer: view.customer, card: view.card, ...(view.unavailable ? { card_unavailable: true } : {}), billing_email: view.email,
+      has_customer: view.customer, ...cardFields(isOwner, view), ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, open_order: stillOpen ? orderView(stillOpen) : null, orders: history.map(orderView), ...links(env),
     });
   }
@@ -166,11 +171,13 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (!isOwner) return OWNER_ONLY();
     const b = await body(request);
     if (b instanceof Response) return b;
-    // Only these three fields are read: a price, amount or currency in the request is ignored (the price comes from Stripe).
+    // The charge is the price Stripe has now; the request only says which price the buyer was shown (expected_amount and expected_currency,
+    // both required): if Stripe's differs, nothing is created and the answer is 409 price_changed with the new price.
     if (b.offer !== OFFER_ID) return fail(400, 'unknown_offer', 'Unknown offer.');
     if (typeof b.domain_id !== 'number' || !Number.isSafeInteger(b.domain_id) || b.domain_id < 1) return fail(400, 'invalid_domain', 'domain_id must be a positive integer.');
-    if (b.expected_amount !== undefined && (typeof b.expected_amount !== 'number' || !Number.isSafeInteger(b.expected_amount))) return fail(400, 'invalid_amount', 'expected_amount must be a whole number.');
-    const r = await purchase(d, me.ws, me.actor, { domainId: b.domain_id, expectedAmount: b.expected_amount as number | undefined });
+    if (typeof b.expected_amount !== 'number' || !Number.isSafeInteger(b.expected_amount) || b.expected_amount < 0) return fail(400, 'invalid_amount', 'expected_amount is required: the price in minor units that you were shown.');
+    if (typeof b.expected_currency !== 'string' || !/^[A-Za-z]{3}$/.test(b.expected_currency)) return fail(400, 'invalid_currency', 'expected_currency is required: the three-letter currency of the price that you were shown.');
+    const r = await purchase(d, me.ws, me.actor, { domainId: b.domain_id, expectedAmount: b.expected_amount, expectedCurrency: b.expected_currency });
     return json(r, 201);
   }
   return json({ error: 'not found' }, 404);

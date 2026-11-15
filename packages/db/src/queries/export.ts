@@ -54,7 +54,7 @@ export const EXPORT_EXCLUDED = {
 	spf_flatten_config: ['workspace_id'],
 	mta_sts_config: ['workspace_id'],
 	hosted_domains: ['workspace_id'],
-	billing_orders: ['workspace_id', 'workspace_name', 'hosted_invoice_url', 'owner_notified_at'],
+	billing_orders: ['workspace_id', 'workspace_name', 'hosted_invoice_url', 'owner_notified_at', 'operator_alerted_at'],
 } as const;
 
 /** Setting keys that hold no secret. Anything else (e.g. turnstile_secret_key) is not exported. */

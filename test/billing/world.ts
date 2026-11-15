@@ -70,7 +70,7 @@ export async function billingWorld(extraEnv: Record<string, unknown> = {}, opts:
     const r = await call(env, 'GET', back.replace('https://stripe.fake', '').replace(/^https?:\/\/[^/]+/, ''), { key: p.token, headers: h(p) });
     return { started, sessionId, back, response: r };
   };
-  const buy = (p: Person, domainId: number, extra: Record<string, unknown> = {}) => api(p, 'POST', '/api/billing/orders', { domain_id: domainId, offer: 'fix-one-domain', ...extra });
+  const buy = (p: Person, domainId: number, extra: Record<string, unknown> = {}) => api(p, 'POST', '/api/billing/orders', { domain_id: domainId, offer: 'fix-one-domain', expected_amount: 14900, expected_currency: 'usd', ...extra });
   const sendEvent = async (ev: ReturnType<FakeStripe['makeEvent']>, opts: { secret?: string; t?: number; body?: string; headers?: Record<string, string> } = {}) => {
     const body = opts.body ?? JSON.stringify(ev);
     const sig = await signStripePayload(opts.secret ?? WHSEC, body, opts.t);
@@ -78,7 +78,9 @@ export async function billingWorld(extraEnv: Record<string, unknown> = {}, opts:
   };
   const order = (id: string) => rows(db, 'SELECT * FROM billing_orders WHERE id = ?', id)[0];
   const ownerMails = () => mailbox(env).send.mock.calls.map((c) => c[0] as { to: string[]; subject: string; text: string }).filter((m) => m.to.includes('operator@example.com') && /New order/.test(m.subject));
+  /** Mail to the instance owner that an order needs a look (not the "New order" notice). */
+  const alertMails = () => mailbox(env).send.mock.calls.map((c) => c[0] as { to: string[]; subject: string; text: string }).filter((m) => m.to.includes('operator@example.com') && /needs attention/.test(m.subject));
   const audits = (workspaceId: string) => rows(db, "SELECT action, actor_id, actor_type FROM audit_log WHERE workspace_id = ? AND action LIKE 'billing.%' ORDER BY id", workspaceId).map((r) => r.action as string);
-  return { db, env, fake, connectWebhook, owner, operator, person, cookieFor, addDomain, addMember, api, addCard, buy, sendEvent, order, ownerMails, audits, h };
+  return { db, env, fake, connectWebhook, owner, operator, person, cookieFor, addDomain, addMember, api, addCard, buy, sendEvent, order, ownerMails, alertMails, audits, h };
 }
 export type World = Awaited<ReturnType<typeof billingWorld>>;

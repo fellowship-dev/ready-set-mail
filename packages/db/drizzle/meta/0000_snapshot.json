@@ -1224,6 +1224,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "amount_paid": {
+          "name": "amount_paid",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "currency": {
           "name": "currency",
           "type": "text",
@@ -1319,6 +1326,13 @@
         },
         "owner_notified_at": {
           "name": "owner_notified_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "operator_alerted_at": {
+          "name": "operator_alerted_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

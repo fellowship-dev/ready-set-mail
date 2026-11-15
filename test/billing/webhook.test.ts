@@ -183,15 +183,15 @@ describe('events are only pointers: everything is re-read from Stripe and must a
     expect(rows(w.db, 'SELECT outcome FROM billing_events WHERE id = ?', ev.id)[0].outcome).toBe('invoice_mismatch');
     expect(w.order(orderId).status).toBe('pending');
   });
-  it('when Stripe\'s own copy disagrees (customer, metadata order id, amount, currency) nothing moves', async () => {
+  it('when Stripe\'s own copy disagrees (customer, metadata order id, price, currency) nothing moves', async () => {
     for (const tamper of [
       (i: any) => { i.customer = 'cus_someone_else'; },
       (i: any) => { i.metadata = { ...i.metadata, order_id: 'ord_other' }; },
-      (i: any) => { i.amount_paid = 100; },
+      (_i: any, w: World) => { [...w.fake.state.invoiceItems.values()][0]!.price.id = 'price_other'; }, // the amount collected may differ (review.test.ts); what was sold may not
       (i: any) => { i.currency = 'eur'; },
     ]) {
       const { w, orderId, invoice } = await withOrder();
-      tamper(w.fake.state.invoices.get(invoice.id)!);
+      tamper(w.fake.state.invoices.get(invoice.id)!, w);
       await w.sendEvent(w.fake.makeEvent('invoice.paid', { ...invoice }));
       expect(w.order(orderId), String(tamper)).toMatchObject({ status: 'pending', paid_at: null });
       expect(w.ownerMails()).toHaveLength(0);

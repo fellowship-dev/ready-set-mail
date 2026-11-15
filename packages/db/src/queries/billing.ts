@@ -61,6 +61,9 @@ export function billingQueries(dbLike: DbLike, workspaceId: string) {
 				db.select().from(billingOrders).where(and(mine, eq(billingOrders.domain_name, domainName), eq(billingOrders.offer, offer), inArray(billingOrders.status, [...OPEN_ORDER_STATUSES]))).get().then((r) => r ?? null),
 			/** Set fields without changing the status. */
 			patch: (id: string, fields: OrderPatch) => db.update(billingOrders).set({ ...fields, updated_at: now as unknown as number }).where(and(mine, eq(billingOrders.id, id))).run(),
+			/** Claim the one operator alert of this order: true for the single caller that should send it. */
+			alertOnce: (id: string) =>
+				db.update(billingOrders).set({ operator_alerted_at: now as unknown as number }).where(and(mine, eq(billingOrders.id, id), isNull(billingOrders.operator_alerted_at))).run().then((r) => changesOf(r) > 0),
 			/**
 			 * Move to `to` only from one of `from`: one conditional statement. True when this call made the move, so exactly one caller
 			 * performs the side effects (audit, the owner's email) of a transition.

@@ -87,7 +87,7 @@ test('owner adds a card through Stripe, pays once, and the webhook marks the ord
 
 		// The quiet offer, below "Do this next".
 		await page.goto(`${inst.url}/#/w/${workspaceId}/domains/${domainId}`);
-		const offer = page.getByRole('button', { name: 'Have us fix this domain: $149' });
+		const offer = page.getByRole('button', { name: 'Have us fix this domain: $149 USD' });
 		await expect(offer).toBeVisible({ timeout: 60_000 });
 		await offer.click();
 
@@ -109,7 +109,7 @@ test('owner adds a card through Stripe, pays once, and the webhook marks the ord
 		await expect(page).toHaveURL(new RegExp(`#/w/${workspaceId}/domains/${domainId}$`)); // the return parameters are gone from the address
 
 		// Pay, double-clicked: one request, one invoice, one charge.
-		await dialog.getByRole('button', { name: 'Pay $149' }).dblclick();
+		await dialog.getByRole('button', { name: 'Pay $149 USD' }).dblclick();
 		await expect(dialog.getByText('Paid', { exact: true })).toBeVisible({ timeout: 60_000 }); // the signed webhook marked it paid
 		const pays = stripe.fake.calls.filter((c) => c.method === 'POST' && /\/v1\/invoices\/[^/]+\/pay$/.test(c.path));
 		expect(pays).toHaveLength(1);
@@ -124,7 +124,7 @@ test('owner adds a card through Stripe, pays once, and the webhook marks the ord
 		await page.goto(`${inst.url}/#/w/${workspaceId}/settings`);
 		const billing = page.getByRole('region', { name: 'Billing' });
 		await expect(billing.getByText(/^Visa ending 4242/)).toBeVisible({ timeout: 30_000 });
-		await expect(billing.getByRole('row', { name: new RegExp(`${DOMAIN}.*Fix one domain.*\\$149.*Paid`) })).toBeVisible();
+		await expect(billing.getByRole('row', { name: new RegExp(`${DOMAIN}.*Fix one domain.*\\$149 USD.*Paid`) })).toBeVisible();
 		await expect(billing.getByRole('button', { name: 'Change card or see invoices' })).toBeVisible();
 
 		// A member sees the offer, is told only the owner can buy, and has no way to pay.

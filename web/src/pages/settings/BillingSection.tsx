@@ -33,8 +33,8 @@ export function BillingSection() {
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">
-								<Row label="Card">{b.card ? cardLine(b.card) : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}</Row>
-								<Row label="Billing email">{b.billing_email ?? <span className="text-ink-2">The owner's email address, once a card is added.</span>}</Row>
+								<Row label="Card">{b.card ? cardLine(b.card) : b.card_on_file ? 'A card is on file.' : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}</Row>
+								{b.can_manage ? <Row label="Billing email">{b.billing_email ?? <span className="text-ink-2">The owner's email address, once a card is added.</span>}</Row> : null}
 							</dl>
 						</CardContent>
 						<CardFooter className="flex-wrap justify-between gap-3">
@@ -84,7 +84,7 @@ export function BillingSection() {
 										<tr key={o.id} className="border-b border-line last:border-0">
 											<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.domain_id ? <Link className="text-brand-ink underline underline-offset-4" to={`/domains/${o.domain_id}`}>{o.domain}</Link> : o.domain}</td>
 											<td className="px-4 py-2">{b.offer?.id === o.offer ? b.offer.name : 'Fix one domain'}</td>
-											<td className="px-4 py-2 whitespace-nowrap">{formatMoney(o.amount, o.currency)}</td>
+											<td className="px-4 py-2 whitespace-nowrap">{formatMoney(o.amount_paid ?? o.amount, o.currency)}</td>
 											<td className="px-4 py-2">
 												<Badge variant={TONE[o.status]}>{STATUS_WORDS[o.status]}</Badge>
 											</td>

@@ -145,6 +145,10 @@ export class StripeClient {
   createInvoiceItem(p: { orderId: string; customerId: string; invoiceId: string; priceId: string; description: string }) {
     return this.#call('POST', '/v1/invoiceitems', { customer: p.customerId, invoice: p.invoiceId, price: p.priceId, description: p.description, metadata: { order_id: p.orderId } }, `rsm-${p.orderId}-item`);
   }
+  /** An item on a draft invoice (deleting a draft invoice must not leave its item to land on the customer's next one). */
+  deleteInvoiceItem(id: string) {
+    return this.#call('DELETE', `/v1/invoiceitems/${enc(id)}`);
+  }
   finalizeInvoice(orderId: string, invoiceId: string) {
     return this.#call('POST', `/v1/invoices/${enc(invoiceId)}/finalize`, { auto_advance: false }, `rsm-${orderId}-finalize`);
   }

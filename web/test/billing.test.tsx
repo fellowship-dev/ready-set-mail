@@ -27,10 +27,10 @@ const fine = {
 
 const OFFER = { id: 'fix-one-domain', name: 'Fix one domain', scope: 'The authentication part of Fix it, for one domain: every authorized sender confirmed, SPF and DKIM fixed, DMARC moved to reject.', amount: 14900, currency: 'usd', refund_rule: 'Until we send the written note that the domain is done, you can ask for the full fee back.', next_steps: 'We will write to you about the access the work needs. The work starts when you have given it, and ends with our written note that the domain is done.' };
 const CARD = { brand: 'visa', last4: '4242', exp_month: 12, exp_year: 2028 };
-const order = (over: Record<string, unknown> = {}) => ({ id: 'ord_a', domain: 'example.com', domain_id: 1, offer: 'fix-one-domain', amount: 14900, currency: 'usd', status: 'pending', amount_refunded: 0, buyer_email: 'owner@example.com', failure_message: null, action_required: false, action_url: null, created_at: 1_800_000_000, paid_at: null, started_at: null, done_at: null, refunded_at: null, failed_at: null, ...over });
+const order = (over: Record<string, unknown> = {}) => ({ id: 'ord_a', domain: 'example.com', domain_id: 1, offer: 'fix-one-domain', amount: 14900, amount_paid: null, currency: 'usd', payment_review: false, status: 'pending', amount_refunded: 0, buyer_email: 'owner@example.com', failure_message: null, action_required: false, action_url: null, created_at: 1_800_000_000, paid_at: null, started_at: null, done_at: null, refunded_at: null, failed_at: null, ...over });
 const links = { terms_url: 'https://readysetmail.com/terms', refund_policy_url: 'https://readysetmail.com/refund-policy' };
-const billing = (over: Record<string, unknown> = {}) => ({ enabled: true, role: 'owner', can_manage: true, billing_email: 'owner@example.com', has_customer: true, card: CARD, offer: OFFER, offer_problem: null, orders: [], ...links, ...over });
-const domainBilling = (over: Record<string, unknown> = {}) => ({ domain: { id: 1, name: 'example.com' }, role: 'owner', can_buy: true, has_customer: true, card: CARD, billing_email: 'owner@example.com', offer: OFFER, offer_problem: null, open_order: null, orders: [], ...links, ...over });
+const billing = (over: Record<string, unknown> = {}) => ({ enabled: true, role: 'owner', can_manage: true, billing_email: 'owner@example.com', has_customer: true, card_on_file: true, card: CARD, offer: OFFER, offer_problem: null, orders: [], ...links, ...over });
+const domainBilling = (over: Record<string, unknown> = {}) => ({ domain: { id: 1, name: 'example.com' }, role: 'owner', can_buy: true, has_customer: true, card_on_file: true, card: CARD, billing_email: 'owner@example.com', offer: OFFER, offer_problem: null, open_order: null, orders: [], ...links, ...over });
 
 const base = {
 	'GET /api/domains': { domains: [domain] },
@@ -61,7 +61,7 @@ const page = (opts: Parameters<typeof renderApp>[1]) =>
 		{ route: '/domains/1', status: { mode: 'saas' }, ...opts },
 	);
 const dialogOf = async () => within(await screen.findByRole('dialog'));
-const offerButton = () => screen.findByRole('button', { name: 'Have us fix this domain: $149' });
+const offerButton = () => screen.findByRole('button', { name: 'Have us fix this domain: $149 USD' });
 
 describe('the offer on a domain page', () => {
 	it('is a quiet secondary action below "Do this next", once, with the price from the API', async () => {
@@ -79,7 +79,7 @@ describe('the offer on a domain page', () => {
 
 	it('the price follows the API, not the code', async () => {
 		page({ routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ offer: { ...OFFER, amount: 19950 } }) }) });
-		expect(await screen.findByRole('button', { name: 'Have us fix this domain: $199.50' })).toBeInTheDocument();
+		expect(await screen.findByRole('button', { name: 'Have us fix this domain: $199.50 USD' })).toBeInTheDocument();
 	});
 
 	it('is absent on a domain that is fine', async () => {
@@ -148,14 +148,14 @@ describe('the confirm step', () => {
 		expect(d.getByText(OFFER.scope)).toBeInTheDocument();
 		expect(d.getByText('example.com')).toBeInTheDocument();
 		expect(d.queryByRole('textbox')).not.toBeInTheDocument(); // the domain is shown, never typed
-		expect(d.getByText('$149')).toBeInTheDocument();
+		expect(d.getByText('$149 USD')).toBeInTheDocument();
 		expect(d.getByText(OFFER.refund_rule)).toBeInTheDocument();
 		expect(d.getByText(OFFER.next_steps)).toBeInTheDocument();
 		expect(d.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', 'https://readysetmail.com/terms');
 		expect(d.getByRole('link', { name: 'Refund policy' })).toHaveAttribute('href', 'https://readysetmail.com/refund-policy');
 		expect(d.getByText('Visa ending 4242, expires 12/28')).toBeInTheDocument();
 		expect(d.getByText('owner@example.com')).toBeInTheDocument();
-		expect(d.getByRole('button', { name: 'Pay $149' })).toBeInTheDocument();
+		expect(d.getByRole('button', { name: 'Pay $149 USD' })).toBeInTheDocument();
 		expect(d.queryByRole('button', { name: 'Add a card to continue' })).not.toBeInTheDocument();
 		expect(document.body.textContent).not.toMatch(/\b(hours?|within \d|turnaround|business days)\b/i);
 	});
@@ -165,13 +165,13 @@ describe('the confirm step', () => {
 		await userEvent.click(await offerButton());
 		const d = await dialogOf();
 		const filled = d.getAllByRole('button').filter((b) => b.className.includes('bg-brand ') || b.className.endsWith('bg-brand') || /\bbg-brand\b/.test(b.className));
-		expect(filled.map((b) => b.textContent)).toEqual(['Pay $149']);
+		expect(filled.map((b) => b.textContent)).toEqual(['Pay $149 USD']);
 	});
 
 	it('without a card the one action is "Add a card to continue": Stripe\'s page, back to this same step', async () => {
 		const assign = vi.fn();
 		vi.stubGlobal('location', { ...window.location, assign });
-		const r = page({ routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ card: null, has_customer: false }), 'POST /api/billing/card-session': { url: 'https://stripe.test/c/pay/cs_1' } }) });
+		const r = page({ routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ card: null, card_on_file: false, has_customer: false }), 'POST /api/billing/card-session': { url: 'https://stripe.test/c/pay/cs_1' } }) });
 		await userEvent.click(await offerButton());
 		const d = await dialogOf();
 		expect(d.getByText('No card on file yet.')).toBeInTheDocument();
@@ -184,7 +184,7 @@ describe('the confirm step', () => {
 	it('back from Stripe (?order=fix-one-domain) the same step reopens, with the card, and the address is cleaned', async () => {
 		page({ route: '/domains/1?order=fix-one-domain&card=added', routes: hostedRoutes() });
 		const d = await dialogOf();
-		expect(d.getByRole('button', { name: 'Pay $149' })).toBeInTheDocument();
+		expect(d.getByRole('button', { name: 'Pay $149 USD' })).toBeInTheDocument();
 		expect(d.getByText('Visa ending 4242, expires 12/28')).toBeInTheDocument();
 		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/domains\/1$/));
 	});
@@ -195,7 +195,7 @@ describe('the confirm step', () => {
 		const r = page({ routes: hostedRoutes({ 'POST /api/billing/orders': async () => { await slow; return { order: order(), outcome: 'processing' }; }, 'GET /api/billing/orders/ord_a': { order: order() } }) });
 		await userEvent.click(await offerButton());
 		const d = await dialogOf();
-		const pay = d.getByRole('button', { name: 'Pay $149' });
+		const pay = d.getByRole('button', { name: 'Pay $149 USD' });
 		await userEvent.dblClick(pay);
 		await userEvent.click(pay);
 		expect(pay).toBeDisabled();
@@ -203,7 +203,7 @@ describe('the confirm step', () => {
 		await d.findByText('Confirming your payment');
 		const posts = r.calls.filter((c) => c.method === 'POST' && c.path === '/api/billing/orders');
 		expect(posts).toHaveLength(1);
-		expect(posts[0]!.body).toEqual({ domain_id: 1, offer: 'fix-one-domain', expected_amount: 14900 });
+		expect(posts[0]!.body).toEqual({ domain_id: 1, offer: 'fix-one-domain', expected_amount: 14900, expected_currency: 'usd' });
 	});
 
 	it('a payment that needs the bank opens its page in a new tab and waits, then shows it paid', async () => {
@@ -215,7 +215,7 @@ describe('the confirm step', () => {
 			'GET /api/billing/orders/ord_a': () => ({ order: order(status === 'paid' ? { status: 'paid', paid_at: 1_800_000_000 } : { action_required: true, action_url: 'https://stripe.test/i/in_1' }) }),
 		}) });
 		await userEvent.click(await offerButton());
-		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149' }));
+		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149 USD' }));
 		const d = await dialogOf();
 		expect(await d.findByText("Waiting for your bank's confirmation")).toBeInTheDocument();
 		expect(open).toHaveBeenCalledWith('https://stripe.test/i/in_1', '_blank', 'noopener,noreferrer');
@@ -228,11 +228,47 @@ describe('the confirm step', () => {
 	it('a declined card shows Stripe\'s message in plain words and offers to change the card', async () => {
 		page({ routes: hostedRoutes({ 'POST /api/billing/orders': { order: order({ status: 'failed', failure_message: 'Your card was declined.', failed_at: 1_800_000_000 }), outcome: 'failed', message: 'Your card was declined.' } }) });
 		await userEvent.click(await offerButton());
-		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149' }));
+		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149 USD' }));
 		const d = await dialogOf();
 		expect(await d.findByText(/Your card was declined\. You have not been charged\./)).toBeInTheDocument();
 		expect(d.getByRole('button', { name: 'Change card' })).toBeInTheDocument();
-		expect(d.queryByRole('button', { name: 'Pay $149' })).not.toBeInTheDocument();
+		expect(d.queryByRole('button', { name: 'Pay $149 USD' })).not.toBeInTheDocument();
+	});
+
+	it('a declined card says "You have not been charged." once', async () => {
+		page({ routes: hostedRoutes({ 'POST /api/billing/orders': { order: order({ status: 'failed', failure_message: 'Your card was declined.', failed_at: 1_800_000_000 }), outcome: 'failed', message: 'Your card was declined.' } }) });
+		await userEvent.click(await offerButton());
+		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149 USD' }));
+		const d = await dialogOf();
+		await d.findByText(/Your card was declined\./);
+		expect(screen.getByRole('dialog').textContent!.match(/You have not been charged/g)).toHaveLength(1);
+		// a server-written failure that already says it
+		const again = page({ routes: hostedRoutes({ 'POST /api/billing/orders': { order: order({ status: 'failed', failure_message: 'We could not start the payment. You have not been charged.', failed_at: 1_800_000_000 }), outcome: 'failed', message: 'We could not start the payment. You have not been charged.' } }) });
+		void again;
+	});
+
+	it('a changed price (409 price_changed) re-renders the step with the new price, and the next Pay confirms that price', async () => {
+		const orders: any[] = [];
+		const r = page({ routes: hostedRoutes({ 'POST /api/billing/orders': (req: any) => {
+			orders.push(req.body);
+			return req.body.expected_amount === 14900
+				? { __status: 409, body: { error: 'The price changed. Review it and confirm again.', code: 'price_changed', amount: 99900, currency: 'usd' } }
+				: { order: order({ amount: 99900 }), outcome: 'processing' };
+		}, 'GET /api/billing/orders/ord_a': { order: order({ amount: 99900 }) } }) });
+		await userEvent.click(await offerButton());
+		let d = await dialogOf();
+		await userEvent.click(d.getByRole('button', { name: 'Pay $149 USD' }));
+		d = await dialogOf();
+		expect(await d.findByText(/The price changed to \$999 USD/)).toBeInTheDocument();
+		expect(d.getByText('$999 USD')).toBeInTheDocument(); // the price row
+		expect(d.queryByRole('button', { name: 'Pay $149 USD' })).not.toBeInTheDocument();
+		await userEvent.click(d.getByRole('button', { name: 'Pay $999 USD' }));
+		await d.findByText('Confirming your payment');
+		expect(orders).toEqual([
+			{ domain_id: 1, offer: 'fix-one-domain', expected_amount: 14900, expected_currency: 'usd' },
+			{ domain_id: 1, offer: 'fix-one-domain', expected_amount: 99900, expected_currency: 'usd' },
+		]);
+		void r;
 	});
 
 	it('an order that already exists (409) is shown, not charged again', async () => {
@@ -240,21 +276,35 @@ describe('the confirm step', () => {
 		void ApiError;
 		page({ routes: hostedRoutes({ 'POST /api/billing/orders': { __status: 409, body: { error: 'There is already an order for this domain.', code: 'order_open', order: order() } }, 'GET /api/billing/orders/ord_a': { order: order() } }) });
 		await userEvent.click(await offerButton());
-		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149' }));
+		await userEvent.click((await dialogOf()).getByRole('button', { name: 'Pay $149 USD' }));
 		expect(await (await dialogOf()).findByText('Confirming your payment')).toBeInTheDocument();
 	});
 
 	it('a member or admin is told only the owner can buy, and has no pay button', async () => {
 		for (const role of ['member', 'admin'] as const) {
-			const { unmount } = page({ role, routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ role, can_buy: false }) }) });
+			const { unmount } = page({ role, routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ role, can_buy: false, card: undefined, billing_email: undefined }) }) });
 			await userEvent.click(await offerButton());
 			const d = await dialogOf();
 			expect(d.getByText('Only the workspace owner can add a card or buy.')).toBeInTheDocument();
 			expect(d.queryByRole('button', { name: /^Pay/ })).not.toBeInTheDocument();
 			expect(d.queryByRole('button', { name: 'Add a card to continue' })).not.toBeInTheDocument();
 			expect(d.getByText(OFFER.refund_rule)).toBeInTheDocument();
+			// the server tells them only that a card exists: no brand, digits, expiry or email
+			expect(d.getByText('A card is on file.')).toBeInTheDocument();
+			expect(d.queryByText('Billing email')).not.toBeInTheDocument();
+			expect(screen.getByRole('dialog').textContent).not.toMatch(/visa|4242|owner@example\.com/i);
 			unmount();
 		}
+	});
+});
+
+describe('terms and refund policy links', () => {
+	it('are the ones the server derived from the site origin', async () => {
+		page({ routes: hostedRoutes({ 'GET /api/billing/domains/1': domainBilling({ terms_url: 'https://site.example/terms', refund_policy_url: 'https://site.example/refund-policy' }) }) });
+		await userEvent.click(await offerButton());
+		const d = await dialogOf();
+		expect(d.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', 'https://site.example/terms');
+		expect(d.getByRole('link', { name: 'Refund policy' })).toHaveAttribute('href', 'https://site.example/refund-policy');
 	});
 });
 
@@ -273,7 +323,7 @@ describe('Settings -> Billing', () => {
 		const rows = section.getAllByRole('row');
 		expect(within(rows[1]!).getByRole('link', { name: 'example.com' })).toHaveAttribute('href', '/domains/1');
 		expect(within(rows[1]!).getByText('Fix one domain')).toBeInTheDocument();
-		expect(within(rows[1]!).getByText('$149')).toBeInTheDocument();
+		expect(within(rows[1]!).getByText('$149 USD')).toBeInTheDocument();
 		expect(within(rows[1]!).getByText('Paid')).toBeInTheDocument();
 		expect(within(rows[1]!).getByText('Jan 15, 2027')).toBeInTheDocument();
 		expect(within(rows[2]!).getByText('Not paid')).toBeInTheDocument();
@@ -282,10 +332,17 @@ describe('Settings -> Billing', () => {
 		expect(r.calls.some((c) => c.path === '/api/billing/portal-session')).toBe(true);
 	});
 
+	it('states what was collected when a credit made it less than the price', async () => {
+		const paid = order({ status: 'paid', paid_at: 1_800_000_000, amount_paid: 14000 });
+		settings({ routes: { 'GET /api/billing': billing({ orders: [paid] }) } });
+		const section = within(await screen.findByRole('region', { name: 'Billing' }));
+		expect(await section.findByText('$140 USD')).toBeInTheDocument();
+	});
+
 	it('without a card: "Add a card" goes to Stripe and back to Settings', async () => {
 		const assign = vi.fn();
 		vi.stubGlobal('location', { ...window.location, assign });
-		const r = settings({ routes: { 'GET /api/billing': billing({ card: null, has_customer: false, billing_email: null }), 'POST /api/billing/card-session': { url: 'https://stripe.test/c/pay/cs_2' } } });
+		const r = settings({ routes: { 'GET /api/billing': billing({ card: null, card_on_file: false, has_customer: false, billing_email: null }), 'POST /api/billing/card-session': { url: 'https://stripe.test/c/pay/cs_2' } } });
 		const section = within(await screen.findByRole('region', { name: 'Billing' }));
 		expect(await section.findByText('No card on file.')).toBeInTheDocument();
 		await userEvent.click(section.getByRole('button', { name: 'Add a card' }));
@@ -296,9 +353,11 @@ describe('Settings -> Billing', () => {
 
 	it('admins and members see the card and orders and the plain note, and no buttons', async () => {
 		for (const role of ['admin', 'member'] as const) {
-			const { unmount } = settings({ role, routes: { 'GET /api/billing': billing({ role, can_manage: false }) } });
+			const { unmount } = settings({ role, routes: { 'GET /api/billing': billing({ role, can_manage: false, card: undefined, billing_email: undefined }) } });
 			const section = within(await screen.findByRole('region', { name: 'Billing' }));
-			expect(await section.findByText('Visa ending 4242, expires 12/28')).toBeInTheDocument();
+			expect(await section.findByText('A card is on file.')).toBeInTheDocument();
+			expect(section.queryByText('Billing email')).not.toBeInTheDocument();
+			expect(screen.getByRole('region', { name: 'Billing' }).textContent).not.toMatch(/visa|4242|owner@example\.com/i);
 			expect(section.getByText('Only the workspace owner can add a card or buy.')).toBeInTheDocument();
 			expect(section.queryByRole('button')).not.toBeInTheDocument();
 			unmount();
@@ -337,7 +396,7 @@ describe('the instance owner\'s orders', () => {
 		const rows = await screen.findAllByRole('row');
 		expect(within(rows[1]!).getByText('Acme workspace')).toBeInTheDocument();
 		expect(within(rows[1]!).getByText('owner@example.com')).toBeInTheDocument();
-		expect(within(rows[1]!).getByText('$149')).toBeInTheDocument();
+		expect(within(rows[1]!).getByText('$149 USD')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /refund/i })).not.toBeInTheDocument();
 		await userEvent.click(within(rows[1]!).getByRole('button', { name: 'Mark started' }));
 		await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Mark started' }));
@@ -365,7 +424,7 @@ describe('the orders list on a narrow screen', () => {
 	it('also renders one card per order, with every detail and the action', async () => {
 		renderApp(<OrdersPage />, { status: { mode: 'saas' }, routes: { 'GET /api/operator/orders': { orders: [{ ...order({ status: 'paid', paid_at: 1_800_000_000 }), workspace_id: 'ws_a', workspace_name: 'Acme workspace', stripe_invoice_id: 'in_1', next: 'started' }] } } });
 		const list = within(await screen.findByRole('list', { name: 'Orders' }));
-		for (const t of ['Paid', '$149', 'example.com', 'Acme workspace', 'owner@example.com', 'Jan 15, 2027']) expect(list.getByText(t)).toBeInTheDocument();
+		for (const t of ['Paid', '$149 USD', 'example.com', 'Acme workspace', 'owner@example.com', 'Jan 15, 2027']) expect(list.getByText(t)).toBeInTheDocument();
 		expect(list.getByRole('button', { name: 'Mark started' })).toBeInTheDocument();
 		expect(screen.getByText(/whatever their status/)).toBeInTheDocument();
 		expect(document.body.textContent).not.toMatch(/Paid orders from/);

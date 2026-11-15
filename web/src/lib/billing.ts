@@ -33,6 +33,8 @@ export interface Order {
 	domain_id: number | null;
 	offer: string;
 	amount: number;
+	/** What Stripe collected (less than `amount` after a credit balance or coupon); null until paid. */
+	amount_paid: number | null;
 	currency: string;
 	status: OrderStatus;
 	amount_refunded: number;
@@ -40,6 +42,8 @@ export interface Order {
 	failure_message: string | null;
 	action_required: boolean;
 	action_url: string | null;
+	/** Stripe says the invoice is paid but it is being checked against the order. */
+	payment_review: boolean;
 	created_at: number;
 	paid_at: number | null;
 	started_at: number | null;
@@ -52,9 +56,12 @@ export interface BillingView {
 	enabled: true;
 	role: 'owner' | 'admin' | 'member';
 	can_manage: boolean;
-	billing_email: string | null;
+	/** The owner only: admins and members get `card_on_file` and nothing about the card or the email. */
+	billing_email?: string | null;
 	has_customer: boolean;
-	card: Card | null;
+	card_on_file: boolean;
+	/** The owner only. */
+	card?: Card | null;
 	card_unavailable?: boolean;
 	offer: Offer | null;
 	offer_problem: string | null;
@@ -68,9 +75,12 @@ export interface DomainBilling {
 	role: BillingView['role'];
 	can_buy: boolean;
 	has_customer: boolean;
-	card: Card | null;
+	card_on_file: boolean;
+	/** The owner only. */
+	card?: Card | null;
 	card_unavailable?: boolean;
-	billing_email: string | null;
+	/** The owner only. */
+	billing_email?: string | null;
 	offer: Offer | null;
 	offer_problem: string | null;
 	open_order: Order | null;
@@ -126,10 +136,11 @@ export function useOrder(id: string | null) {
 	});
 }
 
-/** Whole amounts without cents: $149, else $149.50. The currency comes from the Stripe price. */
+/** Whole amounts without cents, always with the currency code: "$149 USD", "$149.50 USD". Used wherever a charge is stated; the currency comes from the Stripe price. */
 export function formatMoney(amount: number, currency: string): string {
 	const whole = amount % 100 === 0;
-	return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase(), minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(amount / 100);
+	const code = currency.toUpperCase();
+	return `${new Intl.NumberFormat('en-US', { style: 'currency', currency: code, minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(amount / 100)} ${code}`;
 }
 
 const BRANDS: Record<string, string> = { visa: 'Visa', mastercard: 'Mastercard', amex: 'American Express', discover: 'Discover', diners: 'Diners Club', jcb: 'JCB', unionpay: 'UnionPay', cartes_bancaires: 'Cartes Bancaires' };
@@ -174,10 +185,22 @@ export function hasSomethingToFix(actions: readonly Pick<DomainAction, 'key' | '
 	return actions.some((a) => a.status === 'attention' || a.status === 'improve' || a.status === 'approval' || a.status === 'prepared' || a.status === 'gathering');
 }
 
+const NOT_CHARGED = 'You have not been charged.';
+
+/**
+ * Why a payment did not go through, in plain words, saying once that nothing was taken. The server's own messages already say it (or, for a
+ * payment that arrived after the order was closed, say that the buyer WAS charged); Stripe's decline wording does not, so it is added there.
+ */
+export function failureSentence(o: Pick<Order, 'failure_message'>, fallback?: string | null): string {
+	const message = (o.failure_message ?? fallback ?? 'The payment did not go through.').trim();
+	return /charged/i.test(message) ? message : `${message} ${NOT_CHARGED}`;
+}
+
 /** The sentence on the domain page for an order. Never a promise of when. */
 export function orderSentence(o: Order, next: string): string {
 	switch (o.status) {
 		case 'pending':
+			if (o.payment_review) return 'Your payment went through. We are checking it against your order and will write to you.';
 			return o.action_required ? "Waiting for your bank's confirmation." : 'Waiting for the payment to be confirmed.';
 		case 'paid':
 			return `Fix ordered on ${orderDate(o.paid_at ?? o.created_at)}. ${next}`;
@@ -188,7 +211,7 @@ export function orderSentence(o: Order, next: string): string {
 		case 'refunded':
 			return `The fee for this fix was refunded on ${orderDate(o.refunded_at ?? o.created_at)}.`;
 		case 'failed':
-			return `The payment on ${orderDate(o.failed_at ?? o.created_at)} did not go through${o.failure_message ? `: ${o.failure_message}` : '.'} You have not been charged.`;
+			return `The payment on ${orderDate(o.failed_at ?? o.created_at)} did not go through${o.failure_message ? `: ${failureSentence(o)}` : `. ${NOT_CHARGED}`}`;
 		case 'canceled':
 			return `The payment on ${orderDate(o.failed_at ?? o.created_at)} was not confirmed. You have not been charged.`;
 	}
