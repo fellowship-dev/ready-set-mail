@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 /** A TXT value with a caption and an optional badge ("12 / 10 lookups"). */
-export function TxtRecord({ title, value, name = '@', badge, className }: { title: ReactNode; value: string; name?: string; badge?: ReactNode; className?: string }) {
+export function TxtRecord({ title, value, name = '@', badge, className, copyable = true }: { title: ReactNode; value: string; name?: string; badge?: ReactNode; className?: string; /** False for a record the product writes itself. */ copyable?: boolean }) {
 	const record: DnsRecord = { type: 'TXT', name, value };
 	return (
 		<div className={cn('min-w-0 space-y-1.5', className)}>
@@ -11,7 +11,7 @@ export function TxtRecord({ title, value, name = '@', badge, className }: { titl
 				<p className="text-sm font-medium text-ink-1">{title}</p>
 				{badge}
 			</div>
-			<RecordBlock record={record} />
+			<RecordBlock record={record} copyable={copyable} />
 		</div>
 	);
 }

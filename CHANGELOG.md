@@ -14,6 +14,7 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 
 ### Changed
 
+- **On the hosted service, a DMARC record Ready Set Mail writes carries your report address.** The record shown in setup step 4 and in the Cloudflare plan is the record written: the address is added beside any address already there (never dropped, never a weaker policy, never a third when two are listed), and writing it connects the domain's reports, so nothing is left to connect. Where reports are not available for your workspace the record is written without the address and the page says why. Records Apply writes itself have no Copy button, and a record is called live only after a fresh look at public DNS shows it; until then it was written and is waiting to show.
 - **Cloudflare proves ownership only when it really can.** The zone must be in the connection's own Cloudflare account, the token must be able to edit its DNS, and a zone that is itself a public suffix (such as `co.uk`) proves nothing. Everything else falls back to the DNS record, as before.
 - **Connecting Cloudflare from the dashboard or the first screen continues in the setup wizard** instead of returning to a "verify your domain" prompt. A waiting domain no longer hides the Cloudflare card on the first screen, and on the overview what blocks progress (a domain waiting for proof, a Cloudflare connection that stopped working) comes before "Get to your first answer".
 

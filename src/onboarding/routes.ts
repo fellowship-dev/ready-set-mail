@@ -14,6 +14,7 @@ import { writableDomains } from './domains';
 import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
+import { ReportAddressError, connectReports } from '../hosted/report-address';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -45,7 +46,7 @@ async function dnsState(name: string, resolver: Resolver) {
     dmarc: !dmarc || dmarc.status === 'error'
       ? { state: 'error' }
       : dmarc.status === 'found' && dmarc.record
-        ? { state: dmarc.inherited ? 'inherited' : 'found', ...(dmarc.record.valid ? { policy: dmarc.record.policy } : {}) }
+        ? { state: dmarc.inherited ? 'inherited' : 'found', ...(dmarc.record.valid ? { policy: dmarc.record.policy } : {}), ...(dmarc.inherited ? {} : { record: dmarc.record.raw }) }
         : dmarc.status === 'multiple' ? { state: dmarc.inherited ? 'inherited' : 'found' } : { state: 'missing' },
     mx: !mx || mx.status === 'error' ? null : mx.status === 'found',
   };
@@ -163,16 +164,28 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const { plan, exec } = await buildPlan(tenant, input.ids);
     if (plan.plan_id !== input.body.plan_id) return json({ error: 'Cloudflare changed since you looked; review again.', code: 'plan_changed', plan }, 409);
     const writes = plan.steps.find(s => s.key === step)?.writes ?? [];
-    const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string }[] = [];
+    const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string; reports?: 'connected' | 'refused' }[] = [];
+    // Hosted: a record that carries our report address connects the domain's reports (the "Connect reports" step), so nothing is left to connect.
+    const connect = async (x: { domainId?: number; reportAddress?: string } | undefined): Promise<'connected' | 'refused' | undefined> => {
+      if (!x?.reportAddress || !x.domainId) return undefined;
+      const row = await tenant.scope.domains.getById(x.domainId);
+      if (!row) return undefined;
+      try { await connectReports(tenant, row, {}, { id: caller.user?.id, email: caller.user?.email }, ctx); return 'connected'; } catch (e) { if (e instanceof ReportAddressError) return 'refused'; throw e; }
+    };
     for (const w of writes) {
-      if (w.action === 'none') continue;
+      if (w.action === 'none') {
+        const reports = await connect(exec.get(w.id)); // already in place: still connect
+        if (reports) results.push({ id: w.id, ok: true, reports });
+        continue;
+      }
       try {
         const x = exec.get(w.id);
         // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
         if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
         await applyWrite(tenant, w, x, ctx, caller);
         const v = await verifyWrite(tenant, w, x);
-        results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}) });
+        const reports = await connect(x);
+        results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}), ...(reports ? { reports } : {}) });
       } catch (e) {
         const code = failureCode(e);
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });

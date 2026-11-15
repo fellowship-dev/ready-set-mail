@@ -1,5 +1,5 @@
 import { Alert, Button } from '@ready-set-mail/ui';
-import { Check, Copy } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { errorMessage } from '../../../lib/api';
@@ -10,7 +10,7 @@ export interface PlanStepProps {
 	domainIds: number[];
 	onNext: () => void;
 	/** Called once, just before `onNext`, with the plan writes that succeeded (e.g. `dmarc:7`, `auth:7`, `mx:…`) and how many were checked in Cloudflare afterwards. */
-	onWritten?: (written: { ids: string[]; verified: number; rules: number }) => void;
+	onWritten?: (written: { ids: string[]; verified: number; rules: number; dmarc: { domain: string; content: string }[] }) => void;
 }
 
 /** Whether the viewport is at least `md` (768px): the table from there, stacked blocks below. */
@@ -40,29 +40,6 @@ function Breakable({ text }: { text: string }) {
 				</Fragment>
 			))}
 		</>
-	);
-}
-
-function CopyValue({ text, label }: { text: string; label: string }) {
-	const [copied, setCopied] = useState(false);
-	return (
-		<Button
-			variant="secondary"
-			size="sm"
-			aria-label={label}
-			onClick={async () => {
-				try {
-					await navigator.clipboard.writeText(text);
-					setCopied(true);
-					setTimeout(() => setCopied(false), 2000);
-				} catch {
-					/* the value stays selectable */
-				}
-			}}
-		>
-			{copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-			{copied ? 'Copied' : 'Copy'}
-		</Button>
 	);
 }
 
@@ -107,7 +84,6 @@ function ValueCell({ w }: { w: PlanWrite }) {
 				<p className="min-w-0 flex-1 basis-40 font-mono text-xs [overflow-wrap:anywhere]">
 					<Breakable text={value(w)} />
 				</p>
-				<CopyValue text={w.content} label={`Copy value of ${w.name}`} />
 			</div>
 		</div>
 	);
@@ -120,7 +96,7 @@ function Status({ w, ok, verified, note, error }: { w: PlanWrite; ok: boolean; v
 			{ok ? (
 				<p className={`mt-1 flex items-start gap-1 ${verified ? 'text-success' : 'text-ink-2'}`}>
 					<Check aria-hidden className={`size-4 shrink-0 ${verified ? '' : 'mt-0.5'} text-success`} />
-					<span className="[overflow-wrap:anywhere]">{verified ? 'Written and checked in Cloudflare' : `Written, not checked: ${note ?? 'Cloudflare did not confirm it.'}`}</span>
+					<span className="[overflow-wrap:anywhere]">{verified ? 'Written to Cloudflare. Waiting to show in public DNS.' : `Written, not confirmed in Cloudflare: ${note ?? 'Cloudflare did not confirm it.'}`}</span>
 				</p>
 			) : error ? (
 				<p role="alert" className="mt-1 text-danger [overflow-wrap:anywhere]">
@@ -231,7 +207,7 @@ export function PlanStep({ stepKey, domainIds, onNext, onWritten }: PlanStepProp
 	// Report what was written, then move on: the next step says what happened.
 	const finish = () => {
 		const ids = [...doneRef.current];
-		if (ids.length > 0) onWritten?.({ ids, verified: ids.filter((i) => verifiedRef.current.has(i)).length, rules: writes.filter((w) => w.action === 'rule' && doneRef.current.has(w.id)).length });
+		if (ids.length > 0) onWritten?.({ ids, verified: ids.filter((i) => verifiedRef.current.has(i)).length, rules: writes.filter((w) => w.action === 'rule' && doneRef.current.has(w.id)).length, dmarc: writes.filter((w) => w.type === 'TXT' && w.name.startsWith('_dmarc.') && doneRef.current.has(w.id)).map((w) => ({ domain: w.domain, content: w.content })) });
 		onNext();
 	};
 

@@ -49,7 +49,7 @@ export interface DnsState {
 	name: string;
 	resolves: boolean;
 	spf: 'found' | 'missing' | 'error';
-	dmarc: { state: 'found' | 'missing' | 'inherited' | 'error'; policy?: string };
+	dmarc: { state: 'found' | 'missing' | 'inherited' | 'error'; policy?: string; /** The record public DNS shows at the name itself. */ record?: string };
 	mx: boolean | null;
 }
 
@@ -259,6 +259,8 @@ export interface CfWizardProgress {
 	step: CfStepKey;
 	domainIds: number[];
 	written: { domains: number; records: number };
+	/** DMARC records written in this run, so the last screen can say whether public DNS shows them yet. */
+	dmarc?: { domain: string; content: string }[];
 	connectionId?: string;
 }
 export type CfStepKey = 'connect' | 'zones' | 'domains' | 'dmarc' | 'reports_mailbox' | 'done';

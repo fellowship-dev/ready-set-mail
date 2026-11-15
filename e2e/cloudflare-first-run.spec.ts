@@ -5,7 +5,7 @@
 // of e2e/support/fake-cloudflare.mjs which also answers DNS-over-HTTPS), so api.cloudflare.com is never contacted. The fake has no OAuth
 // screen, so the connection is made with a pasted token: everything after it is the same code as after the OAuth return.
 // Hosted sign-up asks Cloudflare's Turnstile test endpoint (challenges.cloudflare.com) to check a dummy token: this spec needs that network access.
-// Ports 8815-8817. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/cloudflare-first-run.spec.ts
+// Ports 8815-8819. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/cloudflare-first-run.spec.ts
 import { expect, test, type Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -39,6 +39,22 @@ async function signUp(page: Page, inst: Instance, email: string) {
 	await expect.poll(() => mailedCodes(inst).length, { timeout: 30_000 }).toBeGreaterThan(before);
 	await page.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!); // the sixth digit submits
 	await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * The setup status reads public DNS for the domain page itself (not through the fake), and the fake's made-up names do not exist there:
+ * answer as if the name resolved and has no DMARC record yet, which is what the fake zone holds.
+ */
+async function publicDnsHasNoDmarc(page: Page) {
+	await page.route('**/api/domains/*/onboarding-status', async (route) => {
+		const res = await route.fetch();
+		const b = await res.json();
+		b.nxdomain = false;
+		delete b.dns_errors;
+		b.dmarc = { ...b.dmarc, found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } };
+		b.spf = { record: null, lookup_count: null, flattening_active: false };
+		await route.fulfill({ response: res, json: b });
+	});
 }
 
 async function connectWithToken(page: Page) {
@@ -123,6 +139,55 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
 		expect(inst.d1('SELECT domain, verified_via FROM domains WHERE domain = \'harbor-lane.org\'')).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare' }]);
 		expect(inst.d1('SELECT settled_at IS NOT NULL AS settled FROM domain_claims')).toEqual([{ settled: 1 }]);
+	} finally {
+		await inst.stop();
+	}
+});
+
+test('hosted with report intake: Apply writes the DMARC record with the report address, connects reports, and says "live" only after public DNS shows it', async ({ page }) => {
+	const intake = 'rua.intake.example.net'; // configuration, not a product constant
+	const inst = await startInstance({ mode: 'hosted', port: 8818, tokenKey: true, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
+	try {
+		await signUp(page, inst, 'owner@harbor-lane.org');
+		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
+		await connectWithToken(page);
+		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
+		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
+
+		await publicDnsHasNoDmarc(page);
+		await page.goto(`${inst.url}/#/domains/${id}/setup/4`);
+		await expect(page.getByText('The record Ready Set Mail will write')).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText(`rua=mailto:rua@${intake}`).first()).toBeVisible();
+		await expect(page.getByRole('button', { name: /^Copy/ })).toHaveCount(0); // Apply writes it: nothing to paste
+		await page.getByRole('button', { name: 'Apply via Cloudflare' }).click();
+
+		await expect(page.getByText('Reports are connected: nothing is left to set up.', { exact: false })).toBeVisible({ timeout: 30_000 });
+		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
+		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual([`v=DMARC1; p=none; rua=mailto:rua@${intake}`]);
+		expect(inst.d1(`SELECT rua_address, reports_connected_at IS NOT NULL AS connected FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: `rua@${intake}`, connected: 1 }]);
+		// "Live" only once public DNS (the fake's DNS-over-HTTPS) shows it: until the re-read it was written and waiting.
+		await expect(page.getByText('Live in public DNS.')).toBeVisible({ timeout: 60_000 });
+	} finally {
+		await inst.stop();
+	}
+});
+
+test('hosted where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the record is written without the address and the page says why', async ({ page }) => {
+	const inst = await startInstance({ mode: 'hosted', port: 8819, tokenKey: true, vars: { INTAKE_DOMAIN: 'rua.intake.example.net', HOSTED_CONNECT_REPORTS: 'owner' } });
+	try {
+		await signUp(page, inst, 'owner@harbor-lane.org');
+		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
+		await connectWithToken(page);
+		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
+		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
+		await publicDnsHasNoDmarc(page);
+		await page.goto(`${inst.url}/#/domains/${id}/setup/4`);
+		await expect(page.getByText('only the operator', { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+		await page.getByRole('button', { name: 'Apply via Cloudflare' }).click();
+		await expect(page.getByText('Written to Cloudflare.', { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
+		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
+		expect(inst.d1(`SELECT rua_address FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: '' }]);
 	} finally {
 		await inst.stop();
 	}

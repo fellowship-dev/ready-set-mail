@@ -248,7 +248,7 @@ describe('Cloudflare wizard: resume', () => {
 			'PUT /api/domains/1/wizard-state': { ok: true },
 		});
 		await userEvent.click(await screen.findByRole('button', { name: 'Write 2 records and continue' }));
-		expect(await screen.findByText('2 records written to Cloudflare and checked')).toBeInTheDocument();
+		expect(await screen.findByText('2 records written to Cloudflare. Waiting to show in public DNS.')).toBeInTheDocument();
 		expect(screen.getByText(/Step 5 of 6/)).toBeInTheDocument();
 	});
 

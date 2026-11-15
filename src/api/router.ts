@@ -85,7 +85,7 @@ import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
-import { reportConnectFor, reportConnectForPage } from '../hosted/report-address';
+import { ReportAddressError, connectReports, mergeReportAddress, reportAddressForWrite, reportConnectFor, reportConnectForPage, type ReportMerge } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
@@ -1172,10 +1172,13 @@ async function _handleApi(
       }
 
       const spfFlatConfig = await tenant.scope.spf.get(domain.id);
+      // Hosted, reports not connected yet but connectable: the address a DMARC write would carry, so the record offered is the record written.
+      // (The write connects the domain's reports; until then the stored address stays empty.)
+      const reportWrite = domain.rua_address?.trim() ? null : await reportAddressForWrite(tenant, domain);
       return json({
         domain_id: domain.id,
         domain: domain.domain,
-        rua_address: domain.rua_address,
+        rua_address: reportWrite?.kind === 'ready' ? reportWrite.address : domain.rua_address,
         cf_available: tenant.hasCloudflare(),
         // `effective`: the policy that applies (RFC 7489), own or inherited from the organizational domain; null when DNS
         // could not say. The dashboard never offers a record weaker than this.
@@ -1235,7 +1238,7 @@ async function _handleApi(
       const body = await parseBody<{ record?: unknown }>(request);
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
-      const record = body.record.trim();
+      let record = body.record.trim();
       const problem = dmarcRecordProblem(record);
       if (problem) return err(`Not a valid DMARC record: ${problem}`, 400);
       // A later policy change (PATCH) rewrites p= and adds our rua= when missing: what that can grow to must fit the cap too, so a
@@ -1245,6 +1248,10 @@ async function _handleApi(
       }
 
       const recordName = `_dmarc.${domain.domain}`;
+
+      // Hosted: whether reports can be connected for this domain decides whether our address is written (src/hosted/report-address.ts).
+      const reportPlan = await reportAddressForWrite(tenant, domain);
+      let reportMerge: ReportMerge | null = null;
 
       // The write goes to the zone this domain lives in, through the connection it is linked to.
       let written;
@@ -1257,6 +1264,13 @@ async function _handleApi(
           return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
         }
         existing = live.kind === 'one' ? live : null;
+        // Hosted: the report address goes into the record being written, by the existing report-address rules.
+        if (reportPlan.kind === 'ready') {
+          const merged = mergeReportAddress(domain.domain, record, reportPlan.address, existing?.content ?? null);
+          record = merged.record;
+          reportMerge = merged.outcome;
+        }
+        if (dmarcRecordProblem(record) || withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) return err(`Not a valid DMARC record: with the report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
         written = await writeDmarcRecord(cf, zoneId, domain.domain, existing?.record ?? null, record);
       } catch (e) {
         return cfFailure(e);
@@ -1290,7 +1304,22 @@ async function _handleApi(
         }
       }
 
-      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id });
+      // The record now carries our address: connect the domain's reports (the same step as "Connect reports"), so nothing is left to connect.
+      type ReportsOutcome = { state: 'connected' | 'limit' | 'refused' | 'unavailable'; address?: string; reason?: string };
+      let reports: ReportsOutcome = reportPlan.kind === 'refused' ? { state: 'refused', reason: reportPlan.reason } : { state: 'unavailable' };
+      if (reportPlan.kind === 'ready') {
+        if (reportMerge === 'limit') reports = { state: 'limit', address: reportPlan.address, reason: 'The record already lists two report addresses, so ours was not added. Choose which to replace under DMARC reports on the domain page.' };
+        else {
+          try {
+            await connectReports(tenant, domain, {}, { id: userBySession?.id, email: userBySession?.email }, ctx);
+            reports = { state: 'connected', address: reportPlan.address };
+          } catch (e) {
+            if (!(e instanceof ReportAddressError)) throw e;
+            reports = { state: 'refused', reason: e.message };
+          }
+        }
+      }
+      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id, reports });
     }
 
     // POST /api/spf-lookup-count — count real DNS lookups for an arbitrary SPF record

@@ -59,6 +59,18 @@ export function withReportAddress(record: string, address: string, replace?: str
   return parts.join(';');
 }
 
+/** The record without `address` in its rua= list (the rua= tag goes when it was the only entry). Every other tag stays as published. */
+export function withoutReportAddress(record: string, address: string): string {
+  const ours = ruaEntryAddress(address);
+  const parts = strip(record).split(';');
+  const i = parts.findIndex((p) => readDmarcTag(p)?.key === 'rua');
+  if (i < 0) return record;
+  const kept = ruaEntries(record).filter((e) => ruaEntryAddress(e) !== ours);
+  if (kept.length === 0) parts.splice(i, 1);
+  else parts[i] = `${/^\s*/.exec(parts[i] ?? '')?.[0] ?? ''}rua=${kept.join(',')}`;
+  return parts.join(';');
+}
+
 /**
  * A record for a subdomain that today follows its organizational domain's record, carrying exactly the enforcement in
  * force, never weaker or stricter: `p=` the policy the subdomain gets now (the parent's `sp=`, else its `p=`), the

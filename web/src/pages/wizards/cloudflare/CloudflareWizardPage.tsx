@@ -78,11 +78,11 @@ export function CloudflareWizardPage() {
 		markAll(progress.domainIds, { routing: 'complete' });
 		go('done');
 	};
-	const addRecords = (from: CfStepKey, w: { ids: string[]; verified: number; rules: number }) => {
+	const addRecords = (from: CfStepKey, w: { ids: string[]; verified: number; rules: number; dmarc: { domain: string; content: string }[] }) => {
 		const n = w.ids.length;
-		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n } }));
+		setProgress((p) => ({ ...p, written: { ...p.written, records: p.written.records + n }, dmarc: [...(p.dmarc ?? []).filter((d) => !w.dmarc.some((x) => x.domain === d.domain)), ...w.dmarc] }));
 		const noun = w.rules > 0 ? (n === 1 ? 'change' : 'changes') : n === 1 ? 'record' : 'records';
-		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? ' and checked' : `, ${n - w.verified} not checked`}`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
+		setNotice({ text: `${n} ${noun} written to Cloudflare${w.verified === n ? '' : `, ${n - w.verified} not confirmed there`}. Waiting to show in public DNS.`, shownOn: from === 'dmarc' && !hosted ? 'reports_mailbox' : 'done' });
 	};
 
 	const index = hosted ? (progress.step === 'connect' || !connection ? 0 : 1) : Math.max(0, steps.indexOf(progress.step));
@@ -137,5 +137,5 @@ export function CloudflareWizardPage() {
 function Done({ progress, onBack }: { progress: CfWizardProgress; onBack: (step: CfStepKey) => void }) {
 	const plan = useQuery({ queryKey: ['dns-plan-not-written', ...progress.domainIds], queryFn: () => fetchPlan(progress.domainIds), enabled: progress.domainIds.length > 0, retry: false });
 	const pending = (plan.data?.steps ?? []).flatMap((s) => pendingWrites(s.writes).map((write) => ({ step: s.key, write })));
-	return <DoneStep domainIds={progress.domainIds} written={progress.written} notWritten={plan.data?.not_written ?? []} pending={pending} onBack={onBack} />;
+	return <DoneStep domainIds={progress.domainIds} written={progress.written} dmarc={progress.dmarc ?? []} notWritten={plan.data?.not_written ?? []} pending={pending} onBack={onBack} />;
 }
