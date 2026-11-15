@@ -77,6 +77,8 @@ export class TenantContext {
   readonly #fetch?: typeof fetch;
   #cf?: CfClient;
   #connections?: ConnectionService;
+  /** Cloudflare zone proofs made during this request, waiting for the domain row they admitted (src/domains/ownership.ts, keepProof). */
+  readonly cloudflareProofs = new Map<string, import('../domains/ownership').CloudflareProof>();
   /** domain name -> linked connection id (null: unlinked), read once per context. */
   #links?: Promise<Map<string, string | null>>;
   #hasConnections = false;

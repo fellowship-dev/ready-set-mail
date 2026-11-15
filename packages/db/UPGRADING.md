@@ -11,6 +11,10 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
+## Cloudflare import (0015)
+
+Migration `0015_cloudflare_import.sql` is additive: three nullable columns on `domains` (`cf_account_id`, `cf_zone_id`, `verified_at`: the Cloudflare account and zone a domain was verified through, and when), one nullable column on `cloudflare_connection_zones` (`cf_account_name`, so Settings can name an account without calling Cloudflare) and one new table, `removed_domains` (names a person removed, so the Cloudflare import does not add them back). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values and the new columns stay empty until a domain is next verified through a Cloudflare zone.
+
 ## Public reports (0014)
 
 Migration `0014_public_reports.sql` is additive: two new tables, `public_reports` (dated free-check reports at a private link, `src/public-reports/`) and `public_report_usage` (the running counters behind their storage budgets). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).

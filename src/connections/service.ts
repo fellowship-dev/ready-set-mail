@@ -63,11 +63,20 @@ export interface PublicConnection {
   created_at: number;
   last_used_at: number | null;
   zones: { id: string; name: string }[];
+  /** The Cloudflare accounts this connection reaches (a grant can cover several): from its allow-listed zones and its own recorded account. */
+  accounts: { id: string; name: string | null }[];
   /** The self-host CLOUDFLARE_API_TOKEN, shown as a connection: cannot be edited or deleted. */
   implicit?: true;
 }
 
 export const IMPLICIT_CONNECTION_ID = 'env';
+
+function accountsOf(c: CfConnectionInfo, zones: CfConnectionZone[]): { id: string; name: string | null }[] {
+  const out = new Map<string, string | null>();
+  if (c.cf_account_id) out.set(c.cf_account_id, c.cf_account_name);
+  for (const z of zones) if (z.cf_account_id && (!out.has(z.cf_account_id) || !out.get(z.cf_account_id))) out.set(z.cf_account_id, z.cf_account_name ?? out.get(z.cf_account_id) ?? null);
+  return [...out].map(([id, name]) => ({ id, name }));
+}
 
 /** A connection row as the API shows it: no envelope, ever. */
 export function toPublic(c: CfConnectionInfo, zones: CfConnectionZone[]): PublicConnection {
@@ -84,6 +93,7 @@ export function toPublic(c: CfConnectionInfo, zones: CfConnectionZone[]): Public
     created_at: c.created_at,
     last_used_at: c.last_used_at,
     zones: zones.map(z => ({ id: z.zone_id, name: z.zone_name })),
+    accounts: accountsOf(c, zones),
   };
 }
 
@@ -302,10 +312,10 @@ export class ConnectionService {
   // ── Zones ──────────────────────────────────────────────────
 
   /** Every active zone the connection's token can see, with whether Ready Set Mail may manage it. */
-  async availableZones(id: string): Promise<{ id: string; name: string; allowed: boolean; cfAccountId?: string }[]> {
+  async availableZones(id: string): Promise<{ id: string; name: string; allowed: boolean; cfAccountId?: string; cfAccountName?: string }[]> {
     const cf = await this.#setupClient(id);
     const allowed = new Set((await this.#host.scope.connections.zones(id)).map(z => z.zone_id));
-    return (await cf.listZones()).map(z => ({ id: z.id, name: z.name.toLowerCase(), allowed: allowed.has(z.id), cfAccountId: z.account?.id }));
+    return (await cf.listZones()).map(z => ({ id: z.id, name: z.name.toLowerCase(), allowed: allowed.has(z.id), cfAccountId: z.account?.id, cfAccountName: z.account?.name }));
   }
 
   /** Replace the allow-list. Every id must be a zone the token can actually see (names come from Cloudflare, not the caller). */
@@ -322,7 +332,7 @@ export class ConnectionService {
     const blocked = [...visible.entries()]
       .filter(([zid, z]) => !chosen.has(zid) && parents.some(p => z.name.endsWith(`.${p}`)))
       .map(([zid, z]) => ({ zone_id: zid, zone_name: z.name }));
-    if (!(await this.#host.scope.connections.setZones(id, unique.map(z => ({ zone_id: z, zone_name: visible.get(z)!.name, cf_account_id: visible.get(z)!.cfAccountId })), blocked))) throw new CfConnectionError('missing', id);
+    if (!(await this.#host.scope.connections.setZones(id, unique.map(z => ({ zone_id: z, zone_name: visible.get(z)!.name, cf_account_id: visible.get(z)!.cfAccountId, cf_account_name: visible.get(z)!.cfAccountName })), blocked))) throw new CfConnectionError('missing', id);
     this.invalidate();
     return unique.map(z => ({ id: z, name: visible.get(z)!.name }));
   }

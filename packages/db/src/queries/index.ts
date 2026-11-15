@@ -9,6 +9,7 @@ import { auditQueries } from './audit';
 import { baseDomainQueries } from './base-domain';
 import { claimQueries } from './claims';
 import { connectionQueries } from './connections';
+import { removalQueries } from './removals';
 import { domainQueries } from './domains';
 export type { DomainRow, DmarcFacts } from './domains';
 import { mtaStsQueries, spfFlattenQueries } from './domain-config';
@@ -76,6 +77,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		team: teamQueries(d, workspaceId),
 		apiKeys: apiKeyQueries(d, workspaceId),
 		connections: connectionQueries(d, workspaceId),
+		removals: removalQueries(d, workspaceId),
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
 		heartbeat: () => heartbeatStats(d, workspaceId),

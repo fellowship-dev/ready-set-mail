@@ -11,7 +11,7 @@
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
 import { claimLookups, type DomainClaimRow } from '@ready-set-mail/db';
-import { normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
 import { loadTenant } from '../tenancy/load';
@@ -70,20 +70,46 @@ function newToken(): string {
 
 const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
 
+/** What a Cloudflare zone proof establishes, kept in the audit entry of the domain it admitted (action `domain.proof`). */
+export interface CloudflareProof {
+  method: 'cloudflare_zone';
+  connection_id: string;
+  cf_account_id: string | null;
+  zone_id: string;
+  zone_name: string;
+  /** Unix seconds, when Cloudflare was asked. */
+  at: number;
+}
+
 /**
- * Does an active Cloudflare connection of this workspace manage the domain's zone, as a real delegation?
- *  - the zone is on the allow-list of an active connection, and Cloudflare says now that it is `active` and a `full` setup
- *    (a `partial`, CNAME-style setup or a `secondary` zone does not mean the account controls the domain's DNS);
+ * Does the token behind a connection hold DNS edit on a zone? Two ways to know, neither assumed:
+ *  - an OAuth grant whose scopes include a DNS write scope (Cloudflare names them; the deployment lists them in CF_OAUTH_SCOPES);
+ *  - the zone read itself, when Cloudflare returns the token's `permissions` on it, containing `#dns_records:edit`.
+ * When neither can be established the answer is no, and the TXT proof is the way.
+ */
+export function canEditDns(connection: { auth_type: string; scopes: string | null }, zone: { permissions?: string[] }): boolean {
+  if ((zone.permissions ?? []).some(p => p.toLowerCase() === '#dns_records:edit')) return true;
+  if (connection.auth_type !== 'oauth') return false;
+  return (connection.scopes ?? '').split(/\s+/).some(sc => /dns/i.test(sc) && /(edit|write)/i.test(sc));
+}
+
+/**
+ * Does an active Cloudflare connection of this workspace manage the domain's zone, as a real delegation? Returns what was established, or null.
+ *  - the zone is on the allow-list of an active connection, is not a public suffix (`co.uk` proves nothing), and the domain is the zone's
+ *    name or below it on a label boundary;
+ *  - Cloudflare says now (read through the stored connection: the zone id and name are the server's, never the browser's) that it is `active`,
+ *    a `full` setup (a `partial`, CNAME-style setup or a `secondary` zone does not mean the account controls the domain's DNS), the same zone,
+ *    in the connection's own Cloudflare account (when the connection, or the allow-list entry of that zone, records one), and that the token can edit its DNS (canEditDns);
  *  - the zone's own name servers (Cloudflare's `name_servers`) are the ones public DNS delegates the zone name to. When either
  *    side cannot be read the answer is "not proven" and the TXT proof is the way (the safer fallback);
  *  - hosted: not when a parent or a child of the name is verified in another workspace; that takes the TXT proof.
  */
-export async function provenByCloudflare(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<boolean> {
-  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return false;
+export async function cloudflareProof(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<CloudflareProof | null> {
+  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return null;
   const q = tenant.scope.connections;
   for (const c of await q.list()) {
     if (c.status !== 'active') continue;
-    const zones = (await q.zones(c.id)).filter(z => within(domain, z.zone_name.toLowerCase()));
+    const zones = (await q.zones(c.id)).filter(z => !isPublicSuffix(z.zone_name) && within(domain, z.zone_name.toLowerCase()));
     if (zones.length === 0) continue;
     // A child zone that exists but is not allowed serves this name: the parent's zone says nothing about it.
     const blocked = (await q.blockedZones(c.id)).map(z => z.zone_name.toLowerCase());
@@ -93,12 +119,19 @@ export async function provenByCloudflare(tenant: TenantContext, domain: string, 
       try {
         const live = await (await tenant.connections.clientFor(c.id)).getZone(zone.zone_id);
         if (live.status !== 'active' || live.type !== 'full' || live.name?.toLowerCase() !== zone.zone_name.toLowerCase()) continue;
-        if (await delegatedTo(resolver, zone.zone_name.toLowerCase(), live.name_servers)) return true;
+        if (c.cf_account_id && live.account?.id !== c.cf_account_id) continue;
+        if (zone.cf_account_id && live.account?.id !== zone.cf_account_id) continue;
+        if (!canEditDns(c, live)) continue;
+        if (await delegatedTo(resolver, zone.zone_name.toLowerCase(), live.name_servers)) {
+          return { method: 'cloudflare_zone', connection_id: c.id, cf_account_id: live.account?.id ?? c.cf_account_id, zone_id: zone.zone_id, zone_name: zone.zone_name.toLowerCase(), at: Math.floor(Date.now() / 1000) };
+        }
       } catch { /* unreachable or refused: not proven */ }
     }
   }
-  return false;
+  return null;
 }
+
+export const provenByCloudflare = async (tenant: TenantContext, domain: string, resolver?: Resolver): Promise<boolean> => (await cloudflareProof(tenant, domain, resolver)) !== null;
 
 /** Public NS records of the zone name are exactly Cloudflare's name servers for it. Unreadable on either side: false. */
 async function delegatedTo(resolver: Resolver, zoneName: string, nameServers: string[] | undefined): Promise<boolean> {
@@ -228,7 +261,8 @@ export async function admitDomain(tenant: TenantContext, domain: string): Promis
 
   if (await claimLookups(tenant.db).ownedByOther(domain, tenant.workspaceId)) return { kind: 'taken' };
   if (await provenByParent(tenant, domain)) { await evictLegacyHolder(tenant, domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  if (await provenByCloudflare(tenant, domain)) { await evictLegacyHolder(tenant, domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
+  const zoneProof = await cloudflareProof(tenant, domain);
+  if (zoneProof) { await evictLegacyHolder(tenant, domain, 'cloudflare'); keepProof(tenant, domain, zoneProof); return { kind: 'verified', via: 'cloudflare' }; }
 
   const existing = await tenant.scope.claims.get(domain);
   if (existing) {
@@ -237,6 +271,19 @@ export async function admitDomain(tenant: TenantContext, domain: string): Promis
   }
   if ((await tenant.scope.claims.count()) >= MAX_PENDING_CLAIMS) return { kind: 'limit' };
   return { kind: 'pending', claim: await tenant.scope.claims.upsert(domain, newToken()) };
+}
+
+/**
+ * Admit a name by its Cloudflare zone alone, never creating a claim: used where a zone the person connected is imported, and when pending
+ * claims are re-examined after the allow-list changed. `unproven` leaves everything as it was.
+ */
+export async function admitByZone(tenant: TenantContext, domain: string, resolver?: Resolver): Promise<{ kind: 'verified'; via: 'cloudflare' } | { kind: 'taken' } | { kind: 'unproven' }> {
+  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).ownedByOther(domain, tenant.workspaceId)) return { kind: 'taken' };
+  const proof = await cloudflareProof(tenant, domain, resolver);
+  if (!proof) return { kind: 'unproven' };
+  await evictLegacyHolder(tenant, domain, 'cloudflare');
+  keepProof(tenant, domain, proof);
+  return { kind: 'verified', via: 'cloudflare' };
 }
 
 /** Why a Verify did not prove the claim: the record is not visible (yet), or DNS could not be asked. Neither counts against anything. */
@@ -254,7 +301,8 @@ export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, 
     return { kind: 'taken' };
   }
   if (await provenByParent(tenant, claim.domain)) { await evictLegacyHolder(tenant, claim.domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  if (await provenByCloudflare(tenant, claim.domain, resolver)) { await evictLegacyHolder(tenant, claim.domain, 'cloudflare'); return { kind: 'verified', via: 'cloudflare' }; }
+  const zoneProof = await cloudflareProof(tenant, claim.domain, resolver);
+  if (zoneProof) { await evictLegacyHolder(tenant, claim.domain, 'cloudflare'); keepProof(tenant, claim.domain, zoneProof); return { kind: 'verified', via: 'cloudflare' }; }
   const txt = await provenByTxt(claim, resolver);
   await tenant.scope.claims.recordCheck(claim.id, txt.ok ? null : (txt.reason ?? null));
   if (txt.ok) await evictLegacyHolder(tenant, claim.domain, 'txt');
@@ -268,7 +316,27 @@ export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, 
 export async function settleClaims(tenant: TenantContext, domain: string): Promise<void> {
   const added = await tenant.scope.domains.getByName(domain);
   if (added) await tenant.scope.claims.settle(domain, added.id);
+  if (added) await recordProof(tenant, added.id, domain);
+  await tenant.scope.removals.forget(domain);
   await claimLookups(tenant.db).markLost(domain, tenant.workspaceId);
+}
+
+// A Cloudflare proof is made by admitDomain / verifyClaim and committed by whichever caller inserts the row (the API, bulk import,
+// the agent tools), always followed by settleClaims. The proof waits on the request's tenant until settleClaims writes it down.
+function keepProof(tenant: TenantContext, domain: string, proof: CloudflareProof): void {
+  tenant.cloudflareProofs.set(domain, proof);
+}
+
+/**
+ * How a domain was proven through Cloudflare: the account, zone and time on the domain row (domains.cf_account_id, cf_zone_id, verified_at) and the
+ * whole record in the audit log (action `domain.proof`, the detail in after_value): method, Cloudflare account, zone id and name, connection, time. It is a record of what was true then: revoking the token later does not undo it.
+ */
+async function recordProof(tenant: TenantContext, domainId: number, domain: string): Promise<void> {
+  const proof = tenant.cloudflareProofs.get(domain);
+  if (!proof) return;
+  tenant.cloudflareProofs.delete(domain);
+  await tenant.scope.domains.setCloudflareProof(domainId, { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at });
+  logAudit(tenant, { actor_type: 'system', action: 'domain.proof', resource_type: 'domain', resource_id: String(domainId), resource_name: domain, after_value: proof });
 }
 
 /** The workspace's claims for display, with any that another workspace has since won marked lost. */

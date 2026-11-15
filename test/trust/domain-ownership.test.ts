@@ -178,7 +178,7 @@ describe('other proofs', () => {
     for (const z of Object.values(zones)) if (z && !(z instanceof Error)) ns[`NS ${z.name}`] = ['a.ns.cloudflare.com.', 'b.ns.cloudflare.com.'];
     vi.stubGlobal('fetch', dohFetch(ns));
     vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({
-      getZone: async (id: string) => { const z = live[id]; if (!z || z instanceof Error) throw z ?? new Error('gone'); return { id, type: 'full', name_servers: ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'], ...z }; },
+      getZone: async (id: string) => { const z = live[id]; if (!z || z instanceof Error) throw z ?? new Error('gone'); return { id, type: 'full', name_servers: ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'], permissions: ['#dns_records:edit'], ...z }; },
     }) as any);
   };
   const connect = (w: Awaited<ReturnType<typeof world>>, ws: string, zone: string, status = 'active') => {

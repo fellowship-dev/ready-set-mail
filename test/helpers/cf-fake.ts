@@ -1,6 +1,19 @@
 import { vi } from 'vitest';
 
-export interface FakeZone { id: string; cfAccountId?: string }
+export interface FakeZone {
+  id: string;
+  cfAccountId?: string;
+  cfAccountName?: string;
+  /** Default 'active'. */
+  status?: string;
+  /** Default 'full'. */
+  type?: string;
+  /** What Cloudflare returns for the token on this zone (GET /zones/:id). Default: DNS edit. */
+  permissions?: string[];
+  /** The zone's own Cloudflare name servers (GET /zones/:id). Public DNS answers the same unless `ns` says otherwise. */
+  nameServers?: string[];
+}
+export const CF_NS = ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'];
 export interface FakeRecord { id: string; type: string; name: string; content: string }
 
 export interface FakeCall {
@@ -33,6 +46,8 @@ export class FakeCloudflare {
   validTokens?: Set<string>;
   /** Cloudflare accounts the token can see (GET /accounts). */
   accounts: { id: string; name: string }[] = [];
+  /** NS answers for DNS-over-HTTPS lookups: name -> hosts. A zone name not listed answers with its zone's own name servers. */
+  readonly ns: Record<string, string[]> = {};
   #nextId = 1;
 
   constructor(
@@ -64,6 +79,10 @@ export class FakeCloudflare {
       const name = url.searchParams.get('name') ?? '';
       const qtype = (url.searchParams.get('type') ?? '').toUpperCase();
       const isMx = qtype === 'MX';
+      if (qtype === 'NS') {
+        const hosts = this.ns[name] ?? (this.zones[name] ? (this.zones[name].nameServers ?? CF_NS) : undefined);
+        return new Response(JSON.stringify(hosts ? { Status: 0, Answer: hosts.map(h => ({ type: 2, data: `${h}.` })) } : { Status: 3 }), { status: 200 });
+      }
       const answers = qtype === 'CNAME' ? (this.cname[name] ? [this.cname[name]] : undefined) : isMx ? this.mx[name] : this.doh[name];
       const payload = answers
         ? { Status: 0, Answer: answers.map(data => (isMx ? { type: 15, data } : qtype === 'CNAME' ? { type: 5, data: `${data}.` } : { type: 16, data: `"${data}"` })) }
@@ -97,15 +116,24 @@ export class FakeCloudflare {
       const name = url.searchParams.get('name');
       if (name) {
         const z = this.zones[name];
-        return ok(z ? [{ id: z.id, name, account: z.cfAccountId ? { id: z.cfAccountId } : undefined }] : []);
+        return ok(z ? [{ id: z.id, name, account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined }] : []);
       }
-      return paged(Object.entries(this.zones).map(([n, z]) => ({ id: z.id, name: n, status: 'active', account: z.cfAccountId ? { id: z.cfAccountId } : undefined })));
+      const wantStatus = url.searchParams.get('status');
+      return paged(Object.entries(this.zones)
+        .map(([n, z]) => ({ id: z.id, name: n, status: z.status ?? 'active', account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined }))
+        .filter(z => !wantStatus || z.status === wantStatus));
     }
 
     if (m) {
       const zoneId = m[1];
       const rest = m[2] ?? '';
       const list = this.records.get(zoneId) ?? [];
+      if (rest === '' && method === 'GET') {
+        const hit = Object.entries(this.zones).find(([, z]) => z.id === zoneId);
+        if (!hit) return fail(404, 'Zone not found');
+        const [n, z] = hit;
+        return ok({ id: z.id, name: n, status: z.status ?? 'active', type: z.type ?? 'full', name_servers: z.nameServers ?? CF_NS, account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined, permissions: z.permissions ?? ['#zone:read', '#dns_records:edit'] });
+      }
       if (rest === '/workers/routes' && method === 'GET') return ok(this.routes[zoneId] ?? []);
       if (rest === '/email/routing/rules' && method === 'GET') {
         if (this.ruleFailPage && Number(url.searchParams.get('page') || 1) === this.ruleFailPage) return fail(500, 'Internal error');

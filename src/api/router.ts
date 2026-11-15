@@ -297,6 +297,8 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   }
 
   await tenant.scope.domains.delete(id);
+  // Cloudflare auto-import does not add a removed name back; it is offered as a suggestion instead (src/connections/import.ts).
+  await tenant.scope.removals.remember(domain.domain);
   // Subdomains admitted only through this domain are no longer proven by anything (src/domains/ownership.ts).
   const orphaned = await demoteOrphanedSubdomains(tenant);
   if (orphaned.length) console.warn(`[domains] ${orphaned.length} subdomain(s) of ${domain.domain} lost their proof and are now unproven`);

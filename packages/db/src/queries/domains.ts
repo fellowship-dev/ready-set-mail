@@ -179,6 +179,11 @@ export function domainQueries(db: Db, workspaceId: string) {
 			return db.update(domains).set({ rollout_rec_policy: policy, rollout_rec_pct: pct, updated_at: touch as any }).where(and(mine, eq(domains.id, id))).run();
 		},
 
+		/** How a domain was proven through a Cloudflare zone: the account and zone Cloudflare named, and when (unix seconds). */
+		setCloudflareProof(id: number, p: { cf_account_id: string | null; cf_zone_id: string; verified_at: number }) {
+			return db.update(domains).set({ cf_account_id: p.cf_account_id, cf_zone_id: p.cf_zone_id, verified_at: p.verified_at }).where(and(mine, eq(domains.id, id))).run();
+		},
+
 		/** Link a domain to one of this workspace's Cloudflare connections (null unlinks). False: no such domain or connection. */
 		async setConnection(id: number, connectionId: string | null): Promise<boolean> {
 			if (connectionId !== null) {

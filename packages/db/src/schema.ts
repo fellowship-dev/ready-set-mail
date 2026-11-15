@@ -113,6 +113,10 @@ export const domains = sqliteTable(
 		cf_connection_id: text('cf_connection_id').references((): any => cloudflareConnections.id, { onDelete: 'set null' }),
 		/** How ownership was proven: selfhost | cloudflare | txt | parent | legacy (rows from before 0002). Every row here is verified. */
 		verified_via: text('verified_via').notNull().default('legacy'),
+		/** Verified through a Cloudflare zone (0015): the account and the zone Cloudflare named at that moment, and when. Null for every other proof. */
+		cf_account_id: text('cf_account_id'),
+		cf_zone_id: text('cf_zone_id'),
+		verified_at: integer('verified_at'),
 		/** Set when a legacy holder lost the name to a proven claim: the row is detached (renamed, hidden) and purged after 30 days (0005). */
 		evicted_at: integer('evicted_at'),
 		evicted_name: text('evicted_name'),
@@ -730,12 +734,25 @@ export const cloudflareConnectionZones = sqliteTable(
 		zone_name: text('zone_name').notNull(),
 		/** The Cloudflare account that owns the zone (from Cloudflare when the zone was allowed): what `/accounts/*` calls are checked against. */
 		cf_account_id: text('cf_account_id'),
+		/** That account's name as Cloudflare returned it with the zone list (0015). One grant can cover several accounts. */
+		cf_account_name: text('cf_account_name'),
 		created_at: integer('created_at').notNull().default(now),
 	},
 	(t) => [
 		primaryKey({ columns: [t.connection_id, t.zone_id] }),
 		index('idx_cf_connection_zones_workspace').on(t.workspace_id),
 	],
+);
+
+/** Names a person removed from the workspace (0015): Cloudflare auto-import does not add them back; they are offered as suggestions. */
+export const removedDomains = sqliteTable(
+	'removed_domains',
+	{
+		workspace_id: text('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+		domain: text('domain').notNull(),
+		removed_at: integer('removed_at').notNull().default(now),
+	},
+	(t) => [primaryKey({ columns: [t.workspace_id, t.domain] })],
 );
 
 /**
@@ -803,6 +820,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'cloudflare_connections',
 	'cloudflare_connection_zones',
 	'cloudflare_connection_blocked_zones',
+	'removed_domains',
 	'domain_claims',
 	'intake_usage',
 	'workspace_storage',
