@@ -7,6 +7,7 @@ import { accountLabel, connectCloudflarePath, importAll, importSummary } from '.
 import { CloudflareAttention } from '../src/components/domain/CloudflareAttention';
 import { CloudflareSuggestions } from '../src/components/domain/CloudflareSuggestions';
 import { DomainRow } from '../src/components/domain/DomainRow';
+import { AddDomainPage } from '../src/pages/domains/AddDomainPage';
 import { CloudflareSection } from '../src/pages/settings/CloudflareSection';
 import { CloudflareWizardPage } from '../src/pages/wizards/cloudflare/CloudflareWizardPage';
 import { renderApp } from './render';
@@ -93,6 +94,14 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Add 2 domains' }));
 		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
 		expect(calls.filter((c) => c.path.endsWith('/import')).at(-1)!.body).toEqual({ zone_ids: ['z0', 'z1'] });
+	});
+
+	it('a plan that is already full says so and does not ask to choose', async () => {
+		renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: { 'GET /api/cloudflare/connections': offer([conn()]), 'POST /api/cloudflare/connections/c1/import': done({ needs_selection: { room: 0, cap: 2, zones: [{ id: 'z1', name: 'a.com', account_id: null, account_name: null }] } }) } });
+		expect(await screen.findByText(/Your plan covers 2 domains and this workspace has them all/)).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		await userEvent.click(screen.getByRole('button', { name: 'Go to dashboard' }));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
 	});
 
 	it('an account with no active zones says so and leaves by a button', async () => {
@@ -230,5 +239,28 @@ describe('suggestions and attention on the dashboard', () => {
 	it('shows nothing to people who cannot connect Cloudflare', async () => {
 		const { container } = renderApp(<CloudflareAttention />, { role: 'member', routes: {} });
 		await waitFor(() => expect(container.textContent).toBe(''));
+	});
+});
+
+describe('Add domain: a name inside a connected zone', () => {
+	it('says it is verified on the spot; a name outside every zone says nothing', async () => {
+		renderApp(<AddDomainPage />, {
+			status: hosted,
+			routes: {
+				'GET /api/cloudflare/connections': offer([conn()]),
+				'GET /api/cloudflare/connections/c1/zones': { zones: [{ id: 'z1', name: 'one.com', allowed: true }] },
+				'GET /api/cloudflare/suggestions': { suggestions: [] },
+			},
+		});
+		await userEvent.click(await screen.findByRole('button', { name: 'Enter manually' }));
+		const field = screen.getByLabelText('Your domain');
+		await userEvent.type(field, 'shop.one.com');
+		expect(screen.getByText('shop.one.com is in your Cloudflare zone one.com, so it is verified on the spot.')).toBeInTheDocument();
+		await userEvent.clear(field);
+		await userEvent.type(field, 'other.org');
+		expect(screen.queryByText(/verified on the spot/)).toBeNull();
+		await userEvent.clear(field);
+		await userEvent.type(field, 'notone.com');
+		expect(screen.queryByText(/verified on the spot/)).toBeNull(); // a lookalike is not inside the zone
 	});
 });

@@ -64,11 +64,11 @@ export function ImportStep({ connection, onDone }: { connection: CfConnection; o
 			</StepCard>
 		);
 	}
-	return <Choose selection={state.selection} onChoose={(ids) => void run(ids)} />;
+	return <Choose selection={state.selection} onChoose={(ids) => void run(ids)} onDismiss={onDone} />;
 }
 
 /** The plan covers fewer domains than the account has zones: the person picks which to add. */
-export function Choose({ selection, onChoose, busy = false, error }: { selection: Selection; onChoose: (zoneIds: string[]) => void; busy?: boolean; error?: unknown }) {
+export function Choose({ selection, onChoose, onDismiss, busy = false, error }: { selection: Selection; onChoose: (zoneIds: string[]) => void; onDismiss: () => void; busy?: boolean; error?: unknown }) {
 	const [picked, setPicked] = useState<Set<string>>(new Set());
 	const over = picked.size > selection.room;
 	const toggle = (id: string, on: boolean) => {
@@ -77,6 +77,18 @@ export function Choose({ selection, onChoose, busy = false, error }: { selection
 		else next.delete(id);
 		setPicked(next);
 	};
+	if (selection.room === 0) {
+		return (
+			<StepCard title="Your plan is full">
+				<div className="space-y-4">
+					<p className="max-w-prose text-sm text-ink-2">
+						Your plan covers {selection.cap} {selection.cap === 1 ? 'domain' : 'domains'} and this workspace has {selection.cap === 1 ? 'it' : 'them all'}. Remove a domain you no longer need to add another from Cloudflare.
+					</p>
+					<StepFooter end={<Button onClick={onDismiss}>Go to dashboard</Button>} />
+				</div>
+			</StepCard>
+		);
+	}
 	return (
 		<StepCard title="Choose which to add">
 			<div className="space-y-4">

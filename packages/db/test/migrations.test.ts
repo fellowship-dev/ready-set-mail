@@ -174,7 +174,6 @@ describe('0015 cloudflare_import', () => {
 	it('remembers a removed name once per workspace, and forgets it with the workspace', () => {
 		const d = createTestD1();
 		applyMigrations(d.sqlite, { through: MINE });
-		d.sqlite.pragma?.('foreign_keys = ON');
 		d.sqlite.prepare("INSERT INTO workspaces (id, name) VALUES ('ws_x', 'X')").run();
 		d.sqlite.prepare("INSERT INTO removed_domains (workspace_id, domain) VALUES ('ws_x', 'acme.com')").run();
 		expect(() => d.sqlite.prepare("INSERT INTO removed_domains (workspace_id, domain) VALUES ('ws_x', 'acme.com')").run()).toThrow();
