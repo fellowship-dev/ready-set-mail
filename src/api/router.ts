@@ -128,6 +128,7 @@ import { logAudit } from '../audit/log';
 import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/spf-flattener';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -141,7 +142,6 @@ import {
   buildPolicyFile,
 } from '../email/mta-sts';
 import { MAX_DMARC_RECORD_LENGTH, dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
-import { spfApplyProblem } from '../dns/spf-apply-check';
 
 /** Free-check sessions one IP may create per window. */
 export const CHECK_SESSIONS_PER_IP = 10;
@@ -1323,8 +1323,17 @@ async function _handleApi(
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
       const record = body.record.trim(); // published exactly as validated: a leading space makes receivers discard the record
-      const spfProblem = spfApplyProblem(record);
+      // The one SPF record rule the setup wizard asks before it offers Apply (packages/dns-checks/src/spf-record.ts).
+      const spfProblem = validateSpfRecord(record);
       if (spfProblem) return err(spfProblem, 400);
+      // And the one lookup judgement: past SPF_LOOKUP_LIMIT receivers treat SPF as a permanent error.
+      let spfLookups: number;
+      try {
+        spfLookups = await countSpfLookupsFromRecord(record);
+      } catch (e) {
+        return err(`Could not count the DNS lookups this SPF record needs, so it was not applied: ${e instanceof Error ? e.message : 'DNS lookup failed'}. Try again.`, 502);
+      }
+      if (spfLookupJudgement(spfLookups).level === 'over') return err(`SPF record needs ${spfLookups} DNS lookups. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it was not applied. Remove includes you no longer use, or flatten the record.`, 400);
 
       const recordName = domain.domain;
 

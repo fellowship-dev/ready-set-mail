@@ -1,4 +1,6 @@
-/** Pure SPF record helpers for the setup wizard. */
+/** Pure SPF record helpers for the setup wizard and the apply route. */
+
+import { isSpfRecord, parseSpfTerms } from './spf-terms';
 
 export type SpfQualifier = '~all' | '-all';
 
@@ -29,27 +31,93 @@ export function hasSpfRedirect(record: string | null | undefined): boolean {
 export function buildSpfRecord(includes: string[], qualifier: SpfQualifier | null = '~all', otherMechanisms: string[] = []): string {
 	const redirect = otherMechanisms.filter(isRedirect);
 	const rest = otherMechanisms.filter((m) => !isRedirect(m));
-	return ['v=spf1', ...includes.map((i) => `include:${i}`), ...rest, ...(qualifier ? [qualifier] : []), ...redirect].join(' ');
+	// With an `all` written, a redirect= is ignored by receivers (RFC 7208 section 6.1): it is left out, so the record means the
+	// same and is one the apply route accepts (validateSpfRecord refuses both together).
+	return ['v=spf1', ...includes.map((i) => `include:${i}`), ...rest, ...(qualifier ? [qualifier] : redirect)].join(' ');
+}
+
+const MECHANISM_NAMES: ReadonlySet<string> = new Set(['all', 'include', 'a', 'mx', 'ptr', 'ip4', 'ip6', 'exists']);
+const NEEDS_VALUE: ReadonlySet<string> = new Set(['include', 'ip4', 'ip6', 'exists']);
+const MODIFIER_NAME = /^[a-z][a-z0-9._-]*$/;
+/** Longer than any sensible record, short enough that a pasted blob is refused. */
+export const MAX_SPF_RECORD_LENGTH = 2048;
+
+/** A dotted-quad IPv4 address, each part 0-255 without leading zeros. */
+function isIp4(s: string): boolean {
+	const parts = s.split('.');
+	return parts.length === 4 && parts.every((p) => /^(0|[1-9][0-9]{0,2})$/.test(p) && Number(p) <= 255);
+}
+
+/** An IPv6 address in RFC 4291 text form: up to 8 hex groups, at most one `::`, optionally ending in an IPv4 address. */
+function isIp6(s: string): boolean {
+	if (!/^[0-9a-f:.]+$/i.test(s) || s.split('::').length > 2) return false;
+	let tail = s;
+	let extra = 0;
+	const v4 = s.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+	if (v4) {
+		if (!isIp4(v4[2]!)) return false;
+		tail = v4[1]!.endsWith('::') ? v4[1]! : v4[1]!.slice(0, -1);
+		extra = 2;
+	}
+	const [head, rest] = tail.split('::');
+	const groups = (x: string | undefined) => (x ? x.split(':') : []);
+	const all = [...groups(head), ...groups(rest)];
+	if (!all.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return false;
+	const count = all.length + extra;
+	return rest === undefined ? count === 8 : count <= 7;
+}
+
+/** `ip4:` / `ip6:` value that is not an address with an optional prefix length in range. */
+function ipProblem(name: 'ip4' | 'ip6', value: string): boolean {
+	const [addr, prefix, ...more] = value.split('/');
+	if (more.length) return true;
+	const max = name === 'ip4' ? 32 : 128;
+	if (prefix !== undefined && !(/^(0|[1-9][0-9]{0,2})$/.test(prefix) && Number(prefix) <= max)) return true;
+	return !(name === 'ip4' ? isIp4(addr ?? '') : isIp6(addr ?? ''));
 }
 
 /**
- * Why an SPF record must not be published, in plain words, or null when it may. A record ends in exactly one `all`
- * mechanism, or, with no `all`, in exactly one `redirect=` (RFC 7208 sections 5.1 and 6.1: with an `all` present the
- * redirect is ignored). More than one of either is refused, and so are `+all` and `?all`, which let any server send.
- * The setup wizard checks a proposal with this before offering Apply; the server's apply route can use the same function.
+ * THE SPF record rule: why a record must not be published, in a plain sentence, or null when it may. The setup wizard asks
+ * it before offering Apply or Copy, and POST /api/domains/:id/apply-spf refuses what it refuses, so nothing the wizard
+ * offers is refused by the server and nothing the server refuses is offered. Checked on the trimmed record (publish that
+ * same text): printable ASCII without quotes or backslashes, at most MAX_SPF_RECORD_LENGTH characters, starting with
+ * v=spf1; every term a known mechanism (with a value where one is required) or a modifier with a value; redirect= and
+ * exp= at most once; and complete: exactly one `all`, last among the mechanisms, or no `all` and a redirect= (RFC 7208
+ * section 6.1: with an `all` present the redirect is ignored, so both together are refused). `+all` and `?all` are refused
+ * (they let any server send), as are ptr (RFC 7208 section 5.5: do not use) and ip4:/ip6: values that are not addresses
+ * with a prefix in range (a permanent error for every message). The lookup cost is judged apart (spfLookupJudgement).
  */
-export function validateSpfRecord(record: string): string | null {
-	const terms = record.trim().split(/\s+/).filter(Boolean);
-	if (terms[0]?.toLowerCase() !== 'v=spf1') return 'An SPF record starts with v=spf1.';
-	const alls = terms.filter((t) => /^[+?~-]?all$/i.test(t));
-	const redirects = terms.filter(isRedirect);
-	if (alls.length > 1) return 'The record has more than one all mechanism, so receivers treat it as an error.';
-	if (redirects.length > 1) return 'The record has more than one redirect=, so receivers treat it as an error.';
-	const all = alls[0];
-	if (all && /^[+?]/.test(all)) return `${all} lets any server send as this domain. End the record with ~all or -all.`;
-	if (!all && redirects.length === 0) return 'The record must end with ~all or -all, or with a redirect= to another record.';
-	if (!all && redirects[0]!.length <= 'redirect='.length) return 'redirect= needs the domain whose record applies.';
-	return null;
+export function validateSpfRecord(input: string): string | null {
+	const record = input.trim();
+	if (!isSpfRecord(record)) return 'SPF record must start with v=spf1';
+	if (record.length > MAX_SPF_RECORD_LENGTH || /[^\x20-\x7e]/.test(record) || /["\\]/.test(record)) return `SPF record must be printable text without quotes or backslashes, at most ${MAX_SPF_RECORD_LENGTH} characters`;
+	const terms = parseSpfTerms(record);
+	const seen = new Map<string, number>();
+	for (const t of terms) {
+		if (t.kind === 'modifier') {
+			if (!MODIFIER_NAME.test(t.name) || !t.value) return `SPF record is not valid: "${t.raw}" is not a valid modifier`;
+			seen.set(t.name, (seen.get(t.name) ?? 0) + 1);
+			continue;
+		}
+		if (!MECHANISM_NAMES.has(t.name)) return `SPF record is not valid: "${t.raw}" is not an SPF mechanism`;
+		if (NEEDS_VALUE.has(t.name) && !t.value) return `SPF record is not valid: "${t.raw}" needs a value`;
+		if ((t.name === 'ip4' || t.name === 'ip6') && ipProblem(t.name, t.value!)) return `SPF record is not valid: "${t.raw}" is not a valid ${t.name === 'ip4' ? 'IPv4' : 'IPv6'} address or prefix`;
+		if (t.name === 'ptr') return 'SPF record must not use ptr: RFC 7208 says not to, and receivers may skip it. List the sending servers with ip4:, ip6: or include: instead.';
+	}
+	for (const m of ['redirect', 'exp']) if ((seen.get(m) ?? 0) > 1) return `SPF record is not valid: ${m}= appears more than once`;
+	const mechanisms = terms.filter((t) => t.kind === 'mechanism');
+	const alls = mechanisms.filter((t) => t.name === 'all');
+	if (alls.length > 1) return 'SPF record has more than one all mechanism: anything after the first all is never evaluated. Keep one, at the end.';
+	const allIndex = mechanisms.findIndex((t) => t.name === 'all');
+	const redirect = seen.has('redirect');
+	if (allIndex >= 0 && redirect) return 'SPF record has both an all mechanism and redirect=: receivers ignore redirect= when all is present. Keep one of them.';
+	if (allIndex >= 0) {
+		if (mechanisms[allIndex]!.qualifier === '+') return 'SPF record must not use +all: it lets any server send as this domain. Use -all or ~all.';
+		if (mechanisms[allIndex]!.qualifier === '?') return 'SPF record must not use ?all: neutral protects nothing. Use -all or ~all.';
+		if (allIndex !== mechanisms.length - 1) return 'SPF record must end with its all mechanism: anything after all is never evaluated';
+		return null;
+	}
+	return redirect ? null : 'SPF record must end with an all mechanism or a redirect= modifier';
 }
 
 /**

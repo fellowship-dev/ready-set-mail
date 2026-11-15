@@ -10,17 +10,24 @@ describe("validateSpfRecord: one all, or one redirect= and no all", () => {
     ["v=spf1 include:mail.test ~all", null],
     ["v=spf1 redirect=_spf.x.test", null],
     ["v=spf1 include:mail.test redirect=_spf.x.test", null],
-    ["v=spf1 include:a.test -all redirect=x.test", null],
+    ["  v=spf1 include:mail.test -all  ", null],
   ])("accepts %s", (r, want) => expect(validateSpfRecord(r)).toBe(want));
   it.each([
-    ["v=spf1 include:allmail.com", /must end with ~all or -all, or with a redirect=/],
+    ["v=spf1 include:allmail.com", /must end with an all mechanism or a redirect= modifier/],
     ["v=spf1 include:mail.test", /must end with/],
-    ["v=spf1 include:a.test +all", /\+all lets any server send/],
-    ["v=spf1 include:a.test ?all", /\?all lets any server send/],
+    ["v=spf1 include:a.test +all", /must not use \+all/],
+    ["v=spf1 include:a.test ?all", /must not use \?all/],
     ["v=spf1 ~all -all", /more than one all/],
-    ["v=spf1 redirect=a.test redirect=b.test", /more than one redirect=/],
-    ["v=spf1 redirect=", /redirect= needs the domain/],
-    ["spf1 -all", /starts with v=spf1/],
+    ["v=spf1 redirect=a.test redirect=b.test", /redirect= appears more than once/],
+    ["v=spf1 redirect=", /"redirect=" is not a valid modifier/],
+    ["spf1 -all", /must start with v=spf1/],
+    // Folded in from the apply route (one rule for both): an ignored redirect=, ptr, bad addresses, all not last.
+    ["v=spf1 include:a.test -all redirect=x.test", /both an all mechanism and redirect=/],
+    ["v=spf1 ptr -all", /must not use ptr/],
+    ["v=spf1 ip4:1.2.3.4/33 -all", /not a valid IPv4/],
+    ["v=spf1 ip6:2001:db8::/129 -all", /not a valid IPv6/],
+    ["v=spf1 -all include:a.test", /must end with its all mechanism/],
+    ['v=spf1 include:"a.test" -all', /without quotes/],
   ])("refuses %s", (r, why) => expect(validateSpfRecord(r)).toMatch(why));
   it("every record the builder proposes from a valid live record is valid", () => {
     for (const live of ["v=spf1 redirect=icann.org", "v=spf1 include:a.test -all", "v=spf1 include:a.test +all", "v=spf1 include:a.test", "v=spf1 mx redirect=x.test"]) expect(validateSpfRecord(propose(live, ["b.test"]))).toBeNull();
@@ -38,8 +45,8 @@ describe("buildSpfRecord: never voids a redirect, never weakens -all (RFC 7208 s
     expect(propose("v=spf1 redirect=x.test", ["mail.test"])).not.toMatch(/all/);
   });
 
-  it("a record with both all and redirect keeps its all (the redirect is already ignored; nothing changes)", () => {
-    expect(propose("v=spf1 include:a.test -all redirect=x.test")).toBe("v=spf1 include:a.test -all redirect=x.test");
+  it("a record with both all and redirect keeps its all and drops the redirect receivers already ignore (the record means the same, and the apply route accepts it)", () => {
+    expect(propose("v=spf1 include:a.test -all redirect=x.test")).toBe("v=spf1 include:a.test -all");
   });
 
   it("include with no all: gets the softfail default", () => {
