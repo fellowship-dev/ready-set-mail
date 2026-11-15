@@ -85,6 +85,10 @@ What does not carry over: **report history** (it stays in your export, a SQL dum
 - "No reports" is said only when none arrived: reports dropped for storage, not processed or not counted are named on the overview, the domain page, the report list and day pages, the charts, the PDF and in the agent tools. ([#161](https://github.com/fellowship-dev/ready-set-mail/pull/161))
 - Subdomain badges, the live policy badge and the Rollout section say only what was read: "DMARC not checked yet", "No DMARC record found" or the record's problem, never `p=none` or "Fully graduated" without evidence. ([#161](https://github.com/fellowship-dev/ready-set-mail/pull/161))
 - A failed summary refresh shows the last known steps as possibly out of date, with a retry, instead of "Reading…" forever. ([#161](https://github.com/fellowship-dev/ready-set-mail/pull/161))
+- An SPF record that already uses `ptr` can get a provider added again (setup wizard, the fixes advice and `POST /api/domains/:id/apply-spf`): the `ptr` is kept, with "Your record uses ptr, which receivers may skip. Replace it with ip4:, ip6: or include: when you can."; adding a new `ptr` is still refused. ([#170](https://github.com/fellowship-dev/ready-set-mail/pull/170))
+- An invalid `sp=` is named as written (`sp=Rejectt`) on every page, as the DNS records row shows it. ([#170](https://github.com/fellowship-dev/ready-set-mail/pull/170))
+- Setup step 4 no longer says "Reports are configured" for a DMARC record receivers do not apply as written; it says what is wrong and what to fix. ([#170](https://github.com/fellowship-dev/ready-set-mail/pull/170))
+- On the hosted service, report pages for a domain whose reports cannot come here say so ("Reports are not available …"), as its domain page does, instead of suggesting a report address could be added. ([#170](https://github.com/fellowship-dev/ready-set-mail/pull/170))
 
 ### Security
 
