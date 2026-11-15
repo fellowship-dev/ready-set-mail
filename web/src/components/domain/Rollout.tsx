@@ -7,6 +7,7 @@ import { domainKeys, useRolloutNext, type RolloutNext } from '../../lib/domain-q
 import type { Domain } from '../../lib/types';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 import { ConfirmDialog } from './ConfirmDialog';
+import { dmarcRecordProblem } from '../../lib/dmarc-record';
 
 const label = (policy: string, testing: boolean) => `${policy === 'quarantine' ? 'Quarantine' : policy === 'reject' ? 'Reject' : policy}${testing ? ' (testing, t=y)' : ''}`;
 
@@ -55,8 +56,9 @@ export function Rollout({ domain }: { domain: Domain }) {
 	if (q.isPending) return <Section title="Rollout"><ListSkeleton rows={1} label="Loading rollout" /></Section>;
 	if (q.isError) return <Section title="Rollout"><LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load the rollout" /></Section>;
 	const r = q.data;
-	// Without an enforcing record there is no rollout to show (guidance above covers p=none).
+	// Without an enforcing record there is no rollout to show (guidance above covers p=none and records that are not applied as written).
 	if (r.current_policy !== 'quarantine' && r.current_policy !== 'reject') return null;
+	if (dmarcRecordProblem(r.current_record ?? null, `_dmarc.${domain.domain}`)) return null;
 
 	return (
 		<Section

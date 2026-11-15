@@ -14,6 +14,8 @@
  * (authenticated, not in the registry), received but not counted (not authenticated). Refused reports (malformed, not a report, not your domain) are never stored.
  */
 
+import { emptyReportsMessage as sharedEmptyReportsMessage, emptyReportsState, type EmptyReportsState } from '@ready-set-mail/dns-checks/dmarc-evidence';
+
 export type ReportCounting = 'registry' | 'authenticated' | 'all';
 export type ReporterTier = 'counted' | 'unknown' | 'unauthenticated';
 
@@ -116,28 +118,12 @@ export function intakeNotice(v: ReportVisibilityFields | null | undefined, opts:
 	return drops.length ? drops.join('. ') : v?.intake?.notice ?? null;
 }
 
-/** Why a page that shows no counted numbers is empty. Never `none` while reports were left out or lost. */
-export type EmptyReportsState = 'counted' | 'none' | 'only_unrecognised' | 'not_processed' | 'limited' | 'blocked';
+/** Why a page that shows no counted numbers is empty. Never `none` while reports were left out or lost (the shared rule, which the agent tools use too). */
+export { emptyReportsState, type EmptyReportsState };
 
-export function emptyReportsState(totalCountedMessages: number, v: ReportVisibilityFields | null | undefined): EmptyReportsState {
-	if (v?.intake?.status === 'limited') return 'limited';
-	if (v?.intake?.status === 'not_processed' && totalCountedMessages === 0) return 'not_processed';
-	if (totalCountedMessages > 0) return 'counted';
-	if (v?.counting_note) return 'blocked';
-	if ((v?.uncounted?.reports ?? 0) > 0) return 'only_unrecognised';
-	return 'none';
-}
-
-/** The sentence for the empty state, or null for `counted`. `none` is the only state that may say there are no reports. */
+/** The sentence for the empty state, or null for `counted`, with a dropped report's time in the user's locale. `none` is the only state that may say there are no reports. */
 export function emptyReportsMessage(totalCountedMessages: number, v: ReportVisibilityFields | null | undefined): string | null {
-	switch (emptyReportsState(totalCountedMessages, v)) {
-		case 'counted': return null;
-		case 'limited': return intakeNotice(v);
-		case 'not_processed': return intakeNotice(v);
-		case 'blocked': return v?.counting_note ?? null;
-		case 'only_unrecognised': return `No counted reports yet. ${uncountedNotice(v)}`;
-		case 'none': return 'No reports yet.';
-	}
+	return sharedEmptyReportsMessage(totalCountedMessages, v, (d) => storageDropNotice(d));
 }
 
 /** How the report browser labels one report's sender. */

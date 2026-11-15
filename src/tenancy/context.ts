@@ -67,6 +67,11 @@ export class TenantContext {
   /** Workspace-scoped queries: every tenant-data read and write goes through this. */
   readonly scope: WorkspaceScope;
   settings: TenantSettings;
+  /**
+   * The caller runs this instance (src/funnel/routes.ts isInstanceOwner), set by the router once it knows who is asking. On the hosted
+   * service it decides operator-only wording (the AUTHSERV_* counting note); false until set, so a context nobody marked reads as a customer's.
+   */
+  operatorView = false;
 
   readonly #cfToken?: string;
   readonly #fetch?: typeof fetch;

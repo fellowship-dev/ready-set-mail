@@ -5,6 +5,7 @@
 
 import { createResolver, isSpfRecord, lookupDmarc, parseDmarcRecord, ruaEntries, ruaEntryAddress, type DmarcLookup, type Resolver, type TxtResult } from '@ready-set-mail/dns-checks';
 import { parseDmarcTags } from '@ready-set-mail/dns-checks/dmarc-tags';
+import { dmarcBreakOf } from '@ready-set-mail/dns-checks/dmarc-problem';
 import type { DmarcFacts } from '@ready-set-mail/db';
 import { RECORDS_SEPARATOR, lookupSpf } from './dns-check';
 
@@ -18,7 +19,10 @@ export function spfFromTxt(records: readonly string[]): string | null {
  * The DMARC policy that applies to the domain, from the package's RFC 7489 discovery (`lookupDmarc`: the domain's own
  * record, else its organizational domain's). The policy is the EFFECTIVE one: an own record's `p=`; an inherited
  * record's `sp=` when it has one, else its `p=`. `undefined`: DNS could not answer, so nothing is known.
- * `null` policy with an `issue`: a record exists but receivers get no policy from it (several records, or no valid `p=`).
+ * `null` policy with an `issue`: a record exists but receivers get no policy from it as written: several records
+ * (`multiple`), no valid `p=` (`invalid`) or an invalid `sp=` (`invalid_sp`). For the last two the record's tags are stored
+ * too, `p` holding what receivers apply instead (RFC 7489 section 6.6.3: 'none' with a valid rua=, null without) and `sp`
+ * the invalid value as written, so every page can say exactly what is wrong (packages/dns-checks/src/dmarc-problem.ts).
  */
 export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
   if (l.status === 'error') return undefined;
@@ -26,6 +30,8 @@ export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
   const none = { pct: null, p: null, sp: null, rua: null };
   if (l.status === 'none') return { policy: null, issue: null, inherited_from: null, ...none };
   if (l.status === 'multiple') return { policy: null, issue: 'multiple', inherited_from, ...none };
+  const broken = l.record ? dmarcBreakOf(l.record.raw) : null;
+  if (l.record && broken) return { policy: null, issue: broken.issue, inherited_from, ...governingTags(l.record.raw) };
   if (!l.record?.valid) return { policy: null, issue: 'invalid', inherited_from, ...none };
   return { policy: l.inherited ? l.record.subdomainPolicy : l.record.policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
 }
@@ -37,10 +43,12 @@ export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
 export function governingTags(raw: string): Required<Pick<DmarcFacts, 'pct' | 'p' | 'sp' | 'rua'>> {
   const rec = parseDmarcRecord(raw);
   const sp = parseDmarcTags(raw)['sp']?.trim().toLowerCase();
+  const broken = dmarcBreakOf(raw);
   return {
     pct: rec.pct,
-    p: rec.policy,
-    sp: sp === 'none' || sp === 'quarantine' || sp === 'reject' ? sp : null,
+    // A broken record (no valid p=, or an invalid sp=): p is what receivers apply instead, sp the invalid value as written.
+    p: broken ? broken.appliedAs : rec.policy,
+    sp: broken ? (broken.issue === 'invalid_sp' ? (broken.sp ?? '').toLowerCase() : null) : sp === 'none' || sp === 'quarantine' || sp === 'reject' ? sp : null,
     rua: ruaEntries(raw).map(ruaEntryAddress).filter(Boolean),
   };
 }

@@ -1,6 +1,10 @@
 import { forWorkspace } from '@ready-set-mail/db';
 import { checkDomain, createResolver, DOH_ENDPOINTS } from '@ready-set-mail/dns-checks';
-import { dmarcSteps, isReportAddress, policyInForce, publicSuffixParent } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcSteps, policyInForce, publicSuffixParent } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcEvidenceFor, type ReportConnectFacts, type VisibilityFacts } from '@ready-set-mail/dns-checks/dmarc-evidence';
+import { reportConnectFor } from '../../hosted/report-address';
+import { reportVisibility } from '../../reports/visibility';
+import type { TenantContext } from '../../tenancy/context';
 import { buildReport } from '@ready-set-mail/report';
 import { authorizeResource, authorizedDomains } from '../../access/resolve';
 import { getDomainReport } from '../../reports/service';
@@ -50,12 +54,16 @@ export async function listResources(context: ToolContext, input: { workspaceId?:
  * The DMARC policy in force and the next step, from the same stored facts and 30-day totals as the dashboard's overview
  * row and domain page (packages/dns-checks/src/dmarc-next-step.ts), so the agent and the dashboard say the same thing.
  * The reports address is never returned (offered records leave rua= out). Same address check (isReportAddress) and the
- * same public-suffix note (publicSuffixParent, from the listed parent's stored facts) as the dashboard.
+ * same public-suffix note (publicSuffixParent, from the listed parent's stored facts) as the dashboard, the same evidence
+ * builder (dmarcEvidenceFor), the same per-domain answer on connecting reports (reportConnectFor, as `report_connect`) and
+ * the same report visibility where nothing was counted (reportVisibility), so a refused or uncounted domain reads the same.
+ * `deps` replaces those two reads (tests); by default they are made on the real tenant.
  */
 export async function dmarcNextStep(
  tenant: { scope: { reports: { checkSummary(id: number, since: number): Promise<any> }; domains: { getById(id: number): Promise<any> } } },
  domain: { id: number; domain: string; rua_address: string | null; parent_id?: number | null },
  now = Date.now() / 1000,
+ deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
 ) {
  const since = Math.floor(now) - 30 * 86400;
  const s = await tenant.scope.reports.checkSummary(domain.id, since);
@@ -64,7 +72,12 @@ export async function dmarcNextStep(
  const policy_in_force = policyInForce(domain.domain, s, read);
  const parent = domain.parent_id ? await tenant.scope.domains.getById(domain.parent_id) : null;
  const suffixParent = parent ? publicSuffixParent(s, { domain: parent.domain, summary: await tenant.scope.reports.checkSummary(parent.id, since) }) : null;
- const steps = dmarcSteps(domain.domain, policy_in_force, { reportsAddress: isReportAddress(domain.rua_address), ruaAddress: null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent });
+ const real = 'env' in tenant ? (tenant as unknown as TenantContext) : null;
+ const reportConnect = deps.reportConnect ? await deps.reportConnect() : real ? await reportConnectFor(real, domain as any) : null;
+ // Where nothing was counted, why (dropped, limited, not counted), as the dashboard's summaries carry it.
+ const visibility = s.total_messages === 0 ? (deps.visibility ? await deps.visibility(since) : real ? await reportVisibility(real, domain.id, since) : null) : null;
+ const evidence = dmarcEvidenceFor({ ruaAddress: domain.rua_address, offeredRua: null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect });
+ const steps = dmarcSteps(domain.domain, policy_in_force, evidence);
  return { policy_in_force, next_step: steps[0] ?? null, steps };
 }
 async function report(context: ToolContext, input: DomainInput, action: 'reports:read' | 'metrics:read' | 'remediation:plan' | 'resources:read', withDmarc = false) {

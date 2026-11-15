@@ -84,6 +84,7 @@ describe('item 5: pages', () => {
 				routes: {
 					'GET /api/domains': { domains: [domain] },
 					'GET /api/domains/3/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=reject; sp=quarantine', cf_managed: false },
+					'GET /api/domains/3/check-summary': { domain_id: 3, total_messages: 5 },
 					'GET /api/domains/3/reports': {
 						date: '2026-10-01', domain: 'example.com', summary: { total: 5, passed: 0, failed: 5 },
 						sources: [{ source_ip: '9.9.9.9', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],

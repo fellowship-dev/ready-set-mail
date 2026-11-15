@@ -57,7 +57,7 @@ const sub = (parent: string, p: string, sp: string | null, pct: number, rua: 0 |
 export const TRUTH: Row[] = [
 	// Own record
 	{ name: 'reject, pct=100, reports pass', sum: passing(99), status: 'verified', level: 2, sentence: /example\.com's own DMARC record sets p=reject, so mail from example\.com that fails DMARC is rejected\.$/, next: 'Nothing to do' },
-	{ name: 'reject, no reports yet', sum: passing(null), status: 'verified', level: 2, sentence: /is rejected\.$/, next: 'Nothing to do', why: /Nothing in public DNS needs a change/ },
+	{ name: 'reject, no reports yet', sum: passing(null), status: 'verified', level: 2, sentence: /is rejected\.$/, next: 'Nothing to do', why: /Nothing about DMARC in public DNS needs a change/ },
 	{ name: 'reject, pct=10, reports pass', sum: { ...passing(99), dmarc_pct: 10 }, status: 'approval', level: 1, sentence: /sets p=reject at pct=10, so only 10% of mail/, next: 'Raise pct from 10 to 100' },
 	{ name: 'reject, pct=10, no reports', sum: { ...passing(null), dmarc_pct: 10 }, status: 'gathering', level: 1, sentence: /pct=10/, next: 'Wait for DMARC reports before raising pct to 100' },
 	{ name: 'reject, own sp=none, reports pass: one rung for subdomains', sum: { ...passing(99), dmarc_sp: 'none' }, status: 'approval', level: 2, sentence: /p=reject/, next: 'Set sp=quarantine to enforce subdomains too' },
@@ -89,7 +89,7 @@ export const TRUTH: Row[] = [
 	{ name: 'WTO shape: parent p=reject; pct=25, no reports address in it', dom: { domain: 'www.wto.org' }, sum: sub('wto.org', 'reject', null, 25, 0, 'reject'), status: 'improve', level: 1, sentence: /follows p=reject at pct=25 from wto\.org/, next: 'Add the reports address to the DMARC record at _dmarc.wto.org', why: /before raising pct to 100 at _dmarc\.wto\.org/, record: 'v=DMARC1; p=reject; pct=25; rua=mailto:r@reports.test' },
 	{ name: 'inherited p=reject at pct=100, reports pass', dom: { domain: 'www.example.org' }, sum: { ...passing(99), ...sub('example.org', 'reject', null, 100, 1, 'reject') }, status: 'verified', level: 2, sentence: /follows p=reject from example\.org, so mail from www\.example\.org that fails DMARC is rejected/, next: 'Nothing to do' },
 	{ name: 'inherited p=none, no sp, no reports yet', dom: { domain: 'www.example.org' }, sum: sub('example.org', 'none', null, 100, 1, 'none'), status: 'gathering', level: 1, sentence: /follows p=none/, next: 'Wait for DMARC reports before adding sp=quarantine at _dmarc.example.org' },
-	{ name: 'parent record gives no policy', dom: { domain: 'www.example.org' }, sum: { dmarc_policy: null, dmarc_issue: 'invalid', dmarc_inherited_from: 'example.org', dmarc_p: null }, status: 'attention', level: 0, sentence: /_dmarc\.example\.org has no valid p= policy/, next: 'Fix the DMARC record at _dmarc.example.org so it has a valid p= policy', why: /Or publish a DMARC record at _dmarc\.www\.example\.org/ },
+	{ name: 'parent record gives no policy', dom: { domain: 'www.example.org' }, sum: { dmarc_policy: null, dmarc_issue: 'invalid', dmarc_inherited_from: 'example.org', dmarc_p: null }, status: 'attention', level: 0, sentence: /At _dmarc\.example\.org, the DMARC record has no valid p= policy/, next: 'Fix the DMARC record at _dmarc.example.org so it has a valid p= policy', why: /Or publish a DMARC record at _dmarc\.www\.example\.org/ },
 	{ name: 'www.gov.uk: listed under gov.uk, a public suffix', dom: { domain: 'www.gov.uk' }, sum: { dmarc_policy: null, dmarc_p: null, dmarc_pct: null, dmarc_rua: null }, suffixParent: 'gov.uk', status: 'attention', level: 0, sentence: /no DMARC record/, next: 'Publish a DMARC record at p=none', why: /gov\.uk is a public suffix, so its DMARC record does not apply to www\.gov\.uk/, record: 'v=DMARC1; p=none; rua=mailto:r@reports.test' },
 ];
 
@@ -330,7 +330,8 @@ describe('follow-ups after review', () => {
 		const got = domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: ob }));
 		expect(got.map((a) => `${a.status}:${a.key}`)).toEqual(['verified:done', 'note:parent-sp-invalid']);
 		expect(got[1]).toMatchObject({ do: 'Fix sp=bogus at _dmarc.example.org' });
-		expect(got[1]!.why).toBe("example.org's DMARC record has sp=bogus, which is not a valid policy (none, quarantine or reject), so receivers ignore it and www.example.org follows its p=reject. Set sp= to the policy you mean for its subdomains, or remove the tag.");
+		// RFC 7489 section 6.6.3: an invalid sp= means the record is not applied as written.
+		expect(got[1]!.why).toBe("example.org's DMARC record has sp=bogus, which is not a valid policy (none, quarantine or reject), so receivers do not apply that record as written: with a valid rua= they treat it as p=none, without one they ignore it. Neither example.org nor www.example.org gets its p=reject. Set sp= to the policy you mean for its subdomains, or remove the tag.");
 		// A valid sp= gets no note.
 		const okOb = onboarding({ dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: 'reject', inherited_from: 'example.org', issue: null, record: 'v=DMARC1; p=reject; sp=reject' } } });
 		expect(domainActions(input({ domain: sub, summary: s, dns: dns(null), onboarding: okOb })).some((a) => a.key === 'parent-sp-invalid')).toBe(false);

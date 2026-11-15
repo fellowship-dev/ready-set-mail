@@ -3,9 +3,11 @@ import { isDkimRecord } from '@ready-set-mail/dns-checks/dkim';
 import { isRevokedDkimKey } from './dkim';
 import { dkimWildcardSummary } from './dkim-wildcard';
 import { invalidDmarcSp, parseDmarcPolicy } from './dmarc-record';
-import { stepLink, type DmarcStep } from './dmarc-step';
+import { recordAlignment } from './dmarc-coverage';
+import { stepLink, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import type { DnsCheck, OnboardingResult } from './domain-queries';
-import { didNotResolve, SPF_LOOKUP_LIMIT, type HostedLevelInput } from './levels';
+import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { didNotResolve, type HostedLevelInput } from './levels';
 import type { Domain, DomainCheckSummary, FailingSource } from './types';
 import { WHO, dmarcStepsFor, exactRate, totalsFromSummary } from './verdict';
 
@@ -56,6 +58,8 @@ export interface ActionInput {
 	hosted?: HostedLevelInput | null;
 	/** A listed parent whose own record does not cover this name (a public suffix). */
 	suffixParent?: string | null;
+	/** False: this workspace cannot connect reports (hosted plan), so connecting is not a step for anyone here. */
+	reportsRefusal?: ReportsRefusal | null;
 }
 
 const MAX = 3;
@@ -119,7 +123,7 @@ export function domainActions(input: ActionInput): DomainAction[] {
 		const spf = onboarding.spf;
 		if (!spf.record) {
 			out.push({ key: 'spf-missing', status: 'attention', do: 'Publish an SPF record that lists the services that send your mail', why: `Without it, receivers cannot tell which servers may send as ${name}.`, who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
-		} else if (spf.lookup_count !== null && spf.lookup_count > SPF_LOOKUP_LIMIT) {
+		} else if (spf.lookup_count !== null && spfLookupJudgement(spf.lookup_count).level === 'over') {
 			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true });
 		}
 	}
@@ -127,7 +131,9 @@ export function domainActions(input: ActionInput): DomainAction[] {
 	if (input.summary === null && !dmarcFailed) out.push({ key: 'summary-failed', status: 'unknown', do: 'Check DMARC again', why: 'What is stored about this domain could not be loaded, so its DMARC step is not known yet.', who: WHO.you, retry: true });
 
 	// DMARC: the overview's rule on the same stored summary (stored by this page's live read) and the same 30-day totals.
-	const dmarc = summary && !dmarcFailed ? dmarcStepsFor(domain, summary, totalsFromSummary(summary), input.hosted ?? null, input.suffixParent ?? null) : null;
+	// The live read's governing record: an offered record of the name's own keeps its adkim=/aspf=, as the DNS records section does.
+	const governing = onboarding?.dmarc.effective?.inherited_from ? (onboarding.dmarc.effective.record ?? null) : null;
+	const dmarc = summary && !dmarcFailed ? dmarcStepsFor(domain, summary, totalsFromSummary(summary), input.hosted ?? null, input.suffixParent ?? null, governing ? recordAlignment(governing) : null, input.reportsRefusal) : null;
 	const done = dmarc?.[0]?.key === 'done' ? fromStep(dmarc[0], page, input.parentId, sources) : null;
 	for (const step of dmarc ?? []) if (step.key !== 'done') out.push(fromStep(step, page, input.parentId, sources));
 
@@ -141,7 +147,8 @@ export function domainActions(input: ActionInput): DomainAction[] {
 			key: 'parent-sp-invalid',
 			status: 'note',
 			do: `Fix sp=${badSp} at _dmarc.${eff.inherited_from}`,
-			why: `${eff.inherited_from}'s DMARC record has sp=${badSp}, which is not a valid policy (none, quarantine or reject), so receivers ignore it and ${name} follows its p=${p ?? 'none'}. Set sp= to the policy you mean for its subdomains, or remove the tag.`,
+			// RFC 7489 section 6.6.3: an invalid sp= means the record is not applied as written (p=none with a valid rua=, else no DMARC).
+			why: `${eff.inherited_from}'s DMARC record has sp=${badSp}, which is not a valid policy (none, quarantine or reject), so receivers do not apply that record as written: with a valid rua= they treat it as p=none, without one they ignore it. Neither ${eff.inherited_from} nor ${name} gets its p=${p ?? 'none'}. Set sp= to the policy you mean for its subdomains, or remove the tag.`,
 			who: WHO.dns,
 			...(input.parentId !== undefined ? { to: `/domains/${input.parentId}`, cta: `Open ${eff.inherited_from}` } : {}),
 		});
@@ -173,7 +180,9 @@ export function domainActions(input: ActionInput): DomainAction[] {
 	const sorted = out.map((a, i) => [a, i] as const).sort((x, y) => statusRank(x[0].status) - statusRank(y[0].status) || x[1] - y[1]).map(([a]) => a);
 	const blocking = sorted.filter((a) => a.status !== 'note');
 	if (blocking.length > 0) return sorted.slice(0, MAX);
-	if (actionsPending(input) || !done) return [];
+	if (actionsPending(input)) return [];
+	// Notes only (for example, reports are not available on this plan): show them, never an empty list.
+	if (!done) return sorted.slice(0, MAX);
 	// Nothing to do: the DMARC rule said so (p=reject on all mail, evidence known) and nothing else needs a change.
 	return [{ ...done, do: 'Nothing to do' }, ...sorted].slice(0, MAX);
 }

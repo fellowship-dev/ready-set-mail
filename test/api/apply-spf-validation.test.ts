@@ -13,7 +13,7 @@ vi.mock('../../src/api/auth', () => ({
 
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { handleApi } from '../../src/api/router';
-import { spfApplyProblem } from '../../src/dns/spf-apply-check';
+import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, validateSpfRecord as spfApplyProblem } from '@ready-set-mail/dns-checks/spf-record';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { seedSettings } from '../helpers/tenant';
 
@@ -87,7 +87,36 @@ describe('apply-spf record validation', () => {
     expect(cf.records.get('zone-acme')).toEqual([expect.objectContaining({ content: 'v=spf1 include:_spf.google.com -all' })]);
   });
 
-  it('spfApplyProblem (unit): null exactly for the accepted records', () => {
+  it('validateSpfRecord (the one rule, unit): null exactly for the accepted records', () => {
     for (const r of accepted) expect(spfApplyProblem(r), r).toBeNull();
+  });
+
+  // The setup wizard proposes buildSpfRecord(includes, existingQualifier(live), extractOtherMechanisms(live)) and offers it
+  // only when validateSpfRecord accepts it. Every such record must be applied by the route (no "Apply" that the server refuses).
+  const LIVE = [
+    null, 'v=spf1 -all', 'v=spf1 ~all', 'v=spf1 +all', 'v=spf1 ?all', 'v=spf1 include:_spf.google.com ~all', 'v=spf1 mx a ip4:192.0.2.1 -all',
+    'v=spf1 redirect=_spf.provider.example', 'v=spf1 mx redirect=_spf.provider.example', 'v=spf1 include:a.test -all redirect=_spf.provider.example',
+    'v=spf1 ip6:2001:db8::/32 include:a.test ~all exp=explain.acme.com', 'v=spf1 include:a.test', 'v=spf1 a:mail.acme.com/24 -all',
+  ];
+  const ADD = [[], ['_spf.google.com'], ['spf.protection.outlook.com', 'sendgrid.net']];
+  const proposals = [...new Set(LIVE.flatMap((live) => ADD.flatMap((add) => [buildSpfRecord([...new Set([...extractIncludes(live ?? ''), ...add])], existingQualifier(live), live ? extractOtherMechanisms(live) : [])])))]
+    .filter((r) => spfApplyProblem(r) === null);
+  it('the wizard proposes something for every live record', () => expect(proposals.length).toBeGreaterThan(20));
+  it.each(proposals)('the route applies the wizard\'s proposal %s', async (record) => {
+    const res = await handleApi(apply(record), makeEnv(), ctx);
+    expect(res.status, record).toBe(200);
+  });
+  it('a live record with both an all and redirect= gets a proposal without the ignored redirect=', () => {
+    const live = 'v=spf1 include:a.test -all redirect=_spf.provider.example';
+    expect(buildSpfRecord(extractIncludes(live), existingQualifier(live), extractOtherMechanisms(live))).toBe('v=spf1 include:a.test -all');
+  });
+
+  it('refuses a record past the lookup limit with the shared judgement (10 allowed, 11 refused)', async () => {
+    const eleven = 'v=spf1 ' + Array.from({ length: 11 }, (_, i) => `a:h${i}.acme.com`).join(' ') + ' -all';
+    const res = await handleApi(apply(eleven), makeEnv(), ctx);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('SPF record needs 11 DNS lookups. Past 10, receivers treat SPF as an error, so it was not applied. Remove includes you no longer use, or flatten the record.');
+    const ten = 'v=spf1 ' + Array.from({ length: 10 }, (_, i) => `a:h${i}.acme.com`).join(' ') + ' -all';
+    expect((await handleApi(apply(ten), makeEnv(), ctx)).status).toBe(200);
   });
 });

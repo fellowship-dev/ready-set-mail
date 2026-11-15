@@ -111,6 +111,14 @@ export interface DomainCheckSummary {
 	dmarc_rua: number | null;
 }
 
+/** One reporter behind the counted numbers. */
+export interface CountedReporter { reporter: string; label: string; reports: number; messages: number }
+
+/** Which domains a statement covers: one id, an id range, or (null) the whole workspace. */
+type DomainScope = number | null | { fromId: number; toId: number };
+
+export const emptySummary = (): UncountedSummary => ({ reports: 0, messages: 0, latest_at: null, unknown: 0, unauthenticated: 0, by_reporter: [] });
+
 export interface UncountedSummary {
 	reports: number;
 	messages: number;
@@ -212,24 +220,59 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 
 	/** The window column: `period` (the default) is the period a report covers (date_begin); `received` is when we stored it (created_at). */
 	const windowCol = (by: ReportWindow) => (by === 'received' ? sql`aggregate_reports.created_at` : sql`aggregate_reports.date_begin`);
-	const summarise = async (domainId: number | null, since: number, excluded: ReturnType<typeof sql>, on: ReportWindow = 'period'): Promise<UncountedSummary> => {
-		const scope = domainId === null ? sql`` : sql`AND aggregate_reports.domain_id = ${domainId}`;
+	/** Which domains a statement covers: one (`domainId`), a range of ids (a page of the overview), or the whole workspace (null). */
+	const scopeOf = (s: DomainScope) =>
+		s === null ? sql`` : typeof s === 'number' ? sql`AND aggregate_reports.domain_id = ${s}` : sql`AND aggregate_reports.domain_id BETWEEN ${s.fromId} AND ${s.toId}`;
+	/**
+	 * Stored reports in the window matching `excluded`, per domain (`domain_id` 0 when the scope is the whole workspace): ONE statement,
+	 * grouped by reporter, folded here into the totals and the top 5 reporters (reports desc, then reporter), so a page of domains costs
+	 * the same as one.
+	 */
+	const summariseByDomain = async (s: DomainScope, since: number, excluded: ReturnType<typeof sql>, on: ReportWindow = 'period'): Promise<Map<number, UncountedSummary>> => {
 		const w = windowCol(on);
 		/** Not authenticated: what the report says about its sender is only a claim. */
 		const unverified = sql`(COALESCE(aggregate_reports.reporter_tier, '') = 'unauthenticated' OR COALESCE(aggregate_reports.reporter_auth, '') <> 'pass')`;
-		const [tot, by] = await Promise.all([
-			db.all<{ reports: number; messages: number; latest_at: number | null; unknown: number | null; unauthenticated: number | null }>(sql`
-				SELECT COUNT(*) AS reports, COALESCE(SUM(total_count), 0) AS messages, MAX(created_at) AS latest_at,
-					SUM(CASE WHEN aggregate_reports.reporter_tier = 'unknown' THEN 1 ELSE 0 END) AS unknown, SUM(CASE WHEN aggregate_reports.reporter_tier = 'unauthenticated' THEN 1 ELSE 0 END) AS unauthenticated
-				FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} ${scope} AND ${w} >= ${since} AND ${excluded}`),
-			db.all<{ reporter: string; reports: number; unverified: number; claims: string | null }>(sql`
-				SELECT CASE WHEN ${unverified} THEN 'unverified sender' ELSE COALESCE(aggregate_reports.reporter_auth_domain, aggregate_reports.org_name) END AS reporter,
-					CASE WHEN ${unverified} THEN 1 ELSE 0 END AS unverified, CASE WHEN ${unverified} THEN aggregate_reports.org_name END AS claims, COUNT(*) AS reports
-				FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} ${scope} AND ${w} >= ${since} AND ${excluded}
-				GROUP BY reporter, unverified, claims ORDER BY reports DESC, reporter LIMIT 5`),
-		]);
-		const byReporter = by.map((r) => (r.unverified ? { reporter: r.reporter, reports: r.reports, unverified: true, claims: r.claims } : { reporter: r.reporter, reports: r.reports }));
-		return { reports: tot[0]?.reports ?? 0, messages: tot[0]?.messages ?? 0, latest_at: tot[0]?.latest_at ?? null, unknown: tot[0]?.unknown ?? 0, unauthenticated: tot[0]?.unauthenticated ?? 0, by_reporter: byReporter };
+		const dom = s === null ? sql`0` : sql`aggregate_reports.domain_id`;
+		const byDom = s === null ? sql`` : sql`aggregate_reports.domain_id, `;
+		const rows = await db.all<{ dk: number; reporter: string; unverified: number; claims: string | null; reports: number; messages: number; latest_at: number | null; unknown: number | null; unauthenticated: number | null }>(sql`
+			SELECT ${dom} AS dk,
+				CASE WHEN ${unverified} THEN 'unverified sender' ELSE COALESCE(aggregate_reports.reporter_auth_domain, aggregate_reports.org_name) END AS reporter,
+				CASE WHEN ${unverified} THEN 1 ELSE 0 END AS unverified, CASE WHEN ${unverified} THEN aggregate_reports.org_name END AS claims,
+				COUNT(*) AS reports, COALESCE(SUM(total_count), 0) AS messages, MAX(created_at) AS latest_at,
+				SUM(CASE WHEN aggregate_reports.reporter_tier = 'unknown' THEN 1 ELSE 0 END) AS unknown, SUM(CASE WHEN aggregate_reports.reporter_tier = 'unauthenticated' THEN 1 ELSE 0 END) AS unauthenticated
+			FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} ${scopeOf(s)} AND ${w} >= ${since} AND ${excluded}
+			GROUP BY ${byDom}reporter, unverified, claims`);
+		const groups = new Map<number, typeof rows>();
+		for (const r of rows) groups.set(r.dk, [...(groups.get(r.dk) ?? []), r]);
+		const out = new Map<number, UncountedSummary>();
+		for (const [id, g] of groups) {
+			const top = [...g].sort((a, b) => b.reports - a.reports || (a.reporter < b.reporter ? -1 : a.reporter > b.reporter ? 1 : 0)).slice(0, 5);
+			out.set(id, {
+				reports: g.reduce((n, r) => n + Number(r.reports), 0),
+				messages: g.reduce((n, r) => n + Number(r.messages), 0),
+				latest_at: g.reduce<number | null>((m, r) => (r.latest_at !== null && (m === null || r.latest_at > m) ? r.latest_at : m), null),
+				unknown: g.reduce((n, r) => n + Number(r.unknown ?? 0), 0),
+				unauthenticated: g.reduce((n, r) => n + Number(r.unauthenticated ?? 0), 0),
+				by_reporter: top.map((r) => (r.unverified ? { reporter: r.reporter, reports: r.reports, unverified: true, claims: r.claims } : { reporter: r.reporter, reports: r.reports })),
+			});
+		}
+		return out;
+	};
+	const summarise = async (domainId: number | null, since: number, excluded: ReturnType<typeof sql>, on: ReportWindow = 'period'): Promise<UncountedSummary> =>
+		(await summariseByDomain(domainId, since, excluded, on)).get(domainId ?? 0) ?? emptySummary();
+	/** Counted reports per reporter, per domain (top 20 by messages): the statement behind `counted`. */
+	const countedByDomain = async (s: DomainScope, since: number, by: ReportWindow = 'period'): Promise<Map<number, CountedReporter[]>> => {
+		const dom = s === null ? sql`0` : sql`aggregate_reports.domain_id`;
+		const byDom = s === null ? sql`` : sql`aggregate_reports.domain_id, `;
+		const rows = await db.all<{ dk: number; reporter: string; known_as: string | null; org: string | null; reports: number; messages: number }>(sql`
+			SELECT ${dom} AS dk, COALESCE(aggregate_reports.reporter_identity, aggregate_reports.reporter_auth_domain, aggregate_reports.org_name) AS reporter,
+				MAX(aggregate_reports.reporter_known_as) AS known_as, MAX(aggregate_reports.org_name) AS org, COUNT(*) AS reports, COALESCE(SUM(aggregate_reports.total_count), 0) AS messages
+			FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} ${scopeOf(s)} AND ${windowCol(by)} >= ${since} AND ${C('aggregate_reports')}
+			GROUP BY ${byDom}reporter`);
+		const out = new Map<number, CountedReporter[]>();
+		for (const r of rows) out.set(r.dk, [...(out.get(r.dk) ?? []), { reporter: r.reporter, label: (r.known_as ?? r.org) as string, reports: r.reports, messages: r.messages }]);
+		for (const [id, list] of out) out.set(id, list.sort((a, b) => b.messages - a.messages).slice(0, 20));
+		return out;
 	};
 
 	return {
@@ -279,12 +322,21 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		 * Who the COUNTED numbers in the window come from: counted reports per reporter (identity, label, reports, messages). Every percentage
 		 * shown can name them; advice needs a major reporter (google, microsoft) here.
 		 */
-		counted(domainId: number | null, since: number, by: ReportWindow = 'period'): Promise<Array<{ reporter: string; label: string; reports: number; messages: number }>> {
-			const scope = domainId === null ? sql`` : sql`AND aggregate_reports.domain_id = ${domainId}`;
-			return db.all(sql`SELECT COALESCE(aggregate_reports.reporter_identity, aggregate_reports.reporter_auth_domain, aggregate_reports.org_name) AS reporter,
-					COALESCE(MAX(aggregate_reports.reporter_known_as), MAX(aggregate_reports.org_name)) AS label, COUNT(*) AS reports, COALESCE(SUM(aggregate_reports.total_count), 0) AS messages
-				FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} ${scope} AND ${windowCol(by)} >= ${since} AND ${C('aggregate_reports')}
-				GROUP BY reporter ORDER BY messages DESC LIMIT 20`);
+		async counted(domainId: number | null, since: number, by: ReportWindow = 'period'): Promise<CountedReporter[]> {
+			return (await countedByDomain(domainId, since, by)).get(domainId ?? 0) ?? [];
+		},
+
+		/**
+		 * `counted`, `uncounted` and `unrecognised` for every domain whose id is in `range`, in one statement each (two in `all` mode), keyed by
+		 * domain id. A domain with no such reports is absent from the maps. What a page of the overview reads in place of one call per domain.
+		 */
+		async visibilityByDomain(range: { fromId: number; toId: number }, since: number, by: ReportWindow = 'period') {
+			const [unrecognised, uncounted, countedBy] = await Promise.all([
+				summariseByDomain(range, since, sql`aggregate_reports.reporter_tier IS NOT 'counted'`, by),
+				counting === 'all' ? Promise.resolve(new Map<number, UncountedSummary>()) : summariseByDomain(range, since, sql`NOT (${C('aggregate_reports')})`, by),
+				countedByDomain(range, since, by),
+			]);
+			return { unrecognised, uncounted, counted: countedBy };
 		},
 
 		/**
