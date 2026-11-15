@@ -23,7 +23,7 @@ node --import ./packages/report/loader.mjs packages/report/cli.ts --in domains.t
 |---|---|
 | `<domain>...`, `--in <file>` | Domains, as arguments or whitespace-separated in a file. URLs, paths, ports and case are normalized to the registrable domain (`https://WWW.Example.com/x` -> `example.com`); duplicates run once. |
 | `--tokens <json>` | `{"domain": "token"}`. A domain's `reportUrl` is `<report-url-base><token>`; a domain without a token gets `reportUrl: null`. The CLI never generates tokens. |
-| `--report-url-base <url>` | Default `https://readysetmail.com/r/`. |
+| `--report-url-base <url>` | Default `https://readysetmail.com/r/`, the address the website now serves public reports from (`public_reports`, `src/public-reports/`). A token there resolves only to a stored public report; this CLI stores nothing, so its links work only once such a report exists. |
 | `--blocks <file>` | JSON `{"domain": [{"id", "html"}]}`: trusted caller HTML (an offer, a DMARC-vendor note) inserted into that domain's HTML report after the fixes. The Markdown agent prompt never carries caller blocks. |
 | `--concurrency <n>` | Domains checked at once. Default 4. |
 

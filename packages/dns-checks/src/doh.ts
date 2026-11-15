@@ -39,6 +39,8 @@ export interface DnsResponse {
   status: DnsStatus;
   /** Answers of the requested type only (CNAME chain entries are dropped). */
   answers: DnsAnswer[];
+  /** NXDOMAIN only: the answer still carried a CNAME, so the queried name itself has a record (its target is what is missing). */
+  hasCname?: boolean;
   /** DNS RCODE when one was received. */
   rcode?: number;
   /** Human-readable reason, set when status === 'error'. */
@@ -122,7 +124,11 @@ export function classifyDohBody(body: unknown, type: DnsRecordType): DnsResponse
     return errorResponse('malformed DoH response: missing Status');
   }
   const rcode = b.Status;
-  if (rcode === 3) return { status: 'nxdomain', answers: [], rcode };
+  if (rcode === 3) {
+    const chain = Array.isArray(b.Answer) ? (b.Answer as { type?: unknown }[]) : [];
+    const hasCname = chain.some(e => typeof e === 'object' && e !== null && e.type === RECORD_TYPE_CODES.CNAME);
+    return { status: 'nxdomain', answers: [], rcode, ...(hasCname ? { hasCname } : {}) };
+  }
   if (rcode !== 0) return errorResponse(`DNS ${RCODE_NAMES[rcode] ?? `RCODE ${rcode}`}`, rcode);
 
   if (b.Answer === undefined || b.Answer === null) return { status: 'nodata', answers: [], rcode };

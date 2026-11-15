@@ -402,6 +402,42 @@ export const checkResults = sqliteTable(
 	(t) => [index('idx_check_results_domain').on(t.from_domain), index('idx_check_results_token').on(t.session_token), index('idx_check_results_created').on(t.created_at)],
 );
 
+/**
+ * Public, dated free-check reports at https://readysetmail.com/r/<id> (migrations/0014_public_reports.sql). Anyone with the link can
+ * read one; not tied to any workspace. Written once; only dedupe_key is ever cleared. Kept until deleted.
+ */
+export const publicReports = sqliteTable(
+	'public_reports',
+	{
+		id: text('id').primaryKey(),
+		domain: text('domain').notNull(),
+		created_at: integer('created_at').notNull(),
+		schema_version: integer('schema_version').notNull(),
+		source: text('source').notNull(),
+		result_json: text('result_json').notNull(),
+		/** UTF-8 bytes of result_json, given back to public_report_usage when the report is deleted. */
+		result_bytes: integer('result_bytes').notNull(),
+		delete_token_hash: text('delete_token_hash').notNull(),
+		dedupe_key: text('dedupe_key'),
+	},
+	(t) => [index('idx_public_reports_created').on(t.created_at), index('idx_public_reports_dedupe').on(t.dedupe_key)],
+);
+
+/**
+ * The running byte and report counters behind the public-report budgets (one row, id 1; migrations/0014_public_reports.sql).
+ * A new report reserves its bytes here in one conditional upsert, so concurrent requests cannot overshoot a cap; a deleted
+ * report gives its bytes back; the daily job recounts it from public_reports.
+ */
+export const publicReportUsage = sqliteTable('public_report_usage', {
+	id: integer('id').primaryKey(),
+	/** UTC day (YYYY-MM-DD) the day_* counters belong to. */
+	day: text('day').notNull(),
+	day_reports: integer('day_reports').notNull(),
+	day_bytes: integer('day_bytes').notNull(),
+	total_reports: integer('total_reports').notNull(),
+	total_bytes: integer('total_bytes').notNull(),
+});
+
 /** Public IP metadata cache shared by everyone. */
 export const ipInfo = sqliteTable('ip_info', {
 	ip: text('ip').primaryKey(),
@@ -727,6 +763,8 @@ export const GLOBAL_TABLES = {
 	workspaces: 'the tenant registry itself',
 	users: 'a user can belong to several workspaces; membership carries the role',
 	check_results: 'anonymous public free-check results, not tenant data',
+	public_reports: 'dated free-check reports at a private link, readable by anyone with it; not tied to any workspace',
+	public_report_usage: 'one instance-wide row of byte and report counters for the public-report budgets; a counter, no report content',
 	ip_info: 'shared public IP-metadata cache',
 	password_reset_tokens: 'keyed by user_id, which is global (superseded by verifications)',
 	sessions: 'keyed by user; a session is resolved to a workspace through memberships',

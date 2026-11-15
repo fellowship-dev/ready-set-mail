@@ -26,7 +26,7 @@ export interface BuildReportInput {
   ns?: string[];
   /** DNS host; defaults to the one detected from `ns` in that run. */
   dnsHost?: DnsHost;
-  /** Where the report will live (`https://readysetmail.com/r/<token>`); this package does not serve it. */
+  /** Where the report will live (`https://readysetmail.com/r/<token>`); this package does not serve it. The website serves `/r/<id>` from the app's stored public reports (src/public-reports/), so a token resolves only to one of those. */
   reportUrl?: string | null;
   generatedAt: string;
 }
