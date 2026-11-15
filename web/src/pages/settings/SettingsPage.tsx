@@ -15,10 +15,12 @@ import { MetricConnectionsSection } from './MetricConnectionsSection';
 import { CloudflareSection } from './CloudflareSection';
 import { SetupCheck } from '../../components/SetupCheck';
 import { LegalLinks, useLegal } from '../auth/LegalLinks';
+import { SigninCodesForMe } from './SigninCodes';
 
 /** How people sign in here, in one plain sentence (GET /api/auth/status signin_codes_reason). */
 export function signinModeText(reason: string | undefined): string | null {
-	if (reason === 'hosted' || reason === 'mail') return 'Password, then a 6-digit code emailed at every sign-in.';
+	if (reason === 'hosted') return 'Password, then a 6-digit code emailed at every sign-in.';
+	if (reason === 'mail') return 'Password, then a 6-digit code emailed at every sign-in, for each person once a test code has reached them.';
 	if (reason === 'no_mail') return "Password only. This instance can't send email, so sign-in codes are off. Set up outbound email (the SEND_EMAIL binding and a sender address) to turn them on.";
 	if (reason === 'turned_off') return 'Password only. Sign-in codes are turned off on this instance (SIGNIN_CODES=off).';
 	return null;
@@ -97,7 +99,7 @@ export function SettingsPage() {
 							<Row label="Name">{me?.user ? cleanName(me.user.name) || me.user.email : 'Instance API key'}</Row>
 							<Row label="Email">{me?.user?.email ?? 'Not tied to a user'}</Row>
 							<Row label="Role">{role ? <Badge variant="brand">{role}</Badge> : null}</Row>
-							{signinMode ? <Row label="Sign-in">{signinMode}</Row> : null}
+							{signinMode ? <Row label="Sign-in">{signinMode}{!hosted && me?.user ? <SigninCodesForMe /> : null}</Row> : null}
 						</dl>
 					</CardContent>
 				</Card>

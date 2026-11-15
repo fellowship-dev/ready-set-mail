@@ -4,7 +4,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, ctx, enterCode, flushBackground, lastCodeFor, loginWithCode, mailsTo, makeEnv, pendingCookieOf, setupOwner, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import {
-  CODE_FAILS_PER_ACCOUNT, CODE_FAILS_PER_IP, CODE_MAIL_CAPS, CODE_MAX_TRIES, CODE_SECONDS, newCode,
+  CODE_FAILS_PER_IP, CODE_MAIL_CAPS, CODE_MAX_TRIES, CODE_SECONDS, SIGNIN_FAILS_PER_HOUR, newCode,
 } from '../../src/auth/codes';
 import { codeEmailText, SIGNUP_NOTICE_SUBJECT } from '../../src/auth/mail';
 import { mailFooter } from '../../src/auth/legal';
@@ -70,7 +70,7 @@ describe('happy paths', () => {
     const res = await signup(w.env, 'new@acme.com', 'new-password-1');
     expect(res.status).toBe(200);
     expect(await json(res.clone())).toEqual({ code_required: true, purpose: 'signup', email: 'new@acme.com', expires_in: CODE_SECONDS });
-    expect(w.account('new@acme.com').email_verified).toBe(0);
+    expect(w.account('new@acme.com')).toBeUndefined(); // nothing is created before the code
     const done = await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'new@acme.com'));
     expect(done.status).toBe(200);
     const body = await json(done);
@@ -119,7 +119,7 @@ describe('threat 1: pre-registration and password overwrite', () => {
     await signup(w.env, 'victim@acme.com', 'attacker-pass-1');
     const attackersCode = await nthCode(w.env, 'victim@acme.com', 1);
     expect((await enterCode(w.env, pendingCookieOf(victim), attackersCode)).status).toBe(400);
-    expect(w.account('victim@acme.com').email_verified).toBe(0);
+    expect(w.account('victim@acme.com')).toBeUndefined();
   });
 
   it('nothing an unverified registrant typed survives: names are reset at verification', async () => {
@@ -179,14 +179,14 @@ describe('threat 2: guessing a code', () => {
     expect((await json(late)).code).toBe('code_used_up');
   });
 
-  it(`across codes: ${CODE_FAILS_PER_ACCOUNT} wrong codes an hour per address and purpose, ${CODE_FAILS_PER_IP} per IP`, async () => {
+  it(`across codes: ${SIGNIN_FAILS_PER_HOUR} wrong sign-in codes an hour per address, ${CODE_FAILS_PER_IP} per IP (past the first try on a new code)`, async () => {
     const w = hosted();
     await signupVerified(w.env, 'a@example.com', 'a-password-1');
     let wrong = 0;
-    while (wrong < CODE_FAILS_PER_ACCOUNT) {
+    while (wrong < SIGNIN_FAILS_PER_HOUR) {
       const res = await login(w.env, 'a@example.com', 'a-password-1');
       const code = await lastCodeFor(w.env, 'a@example.com');
-      for (let i = 0; i < 4 && wrong < CODE_FAILS_PER_ACCOUNT; i++, wrong++) await enterCode(w.env, pendingCookieOf(res), otherThan(code), { ip: ip() });
+      for (let i = 0; i < 4 && wrong < SIGNIN_FAILS_PER_HOUR; i++, wrong++) await enterCode(w.env, pendingCookieOf(res), otherThan(code), { ip: ip() });
     }
     const res = await login(w.env, 'a@example.com', 'a-password-1');
     const r = await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'a@example.com'), { ip: ip() });
@@ -201,7 +201,10 @@ describe('threat 2: guessing a code', () => {
       for (let i = 0; i < 2; i++) await enterCode(v.env, pendingCookieOf(res), otherThan(code), { ip: attacker });
     }
     const last = await signup(v.env, 'z@example.com', 'pass-word-123');
-    expect((await enterCode(v.env, pendingCookieOf(last), await lastCodeFor(v.env, 'z@example.com'), { ip: attacker })).status).toBe(429);
+    const zCode = await lastCodeFor(v.env, 'z@example.com');
+    // The first try on a new code is compared even over the IP's budget (it never blocks the owner of that code), the next is not.
+    expect((await enterCode(v.env, pendingCookieOf(last), otherThan(zCode), { ip: attacker })).status).toBe(400);
+    expect((await enterCode(v.env, pendingCookieOf(last), zCode, { ip: attacker })).status).toBe(429);
   }, 30000);
 
   it('over the mail allowance an attempt is a decoy: no unsent code can be guessed at', async () => {
@@ -254,7 +257,7 @@ describe('threat 2: guessing a code', () => {
 
 describe('threat 3: mail flooding and denial', () => {
   it(`allowances per address: sign-up ${CODE_MAIL_CAPS.signup.hour}/h, sign-in ${CODE_MAIL_CAPS.signin.hour}/h, reset ${CODE_MAIL_CAPS.reset.hour}/h, separate pools`, () => {
-    expect(CODE_MAIL_CAPS).toEqual({ signup: { hour: 2, day: 4 }, signin: { hour: 10, day: 30 }, reset: { hour: 3, day: 10 } });
+    expect(CODE_MAIL_CAPS).toEqual({ signup: { hour: 2, day: 4 }, signin: { hour: 10, day: 30 }, reset: { hour: 3, day: 10 }, 'reset-device': { hour: 3, day: 10 } });
   });
 
   it('sign-up codes need the bot check and stop at the allowance, with the same answer', async () => {
@@ -342,7 +345,7 @@ describe('threat 6: the pending-attempt handle is not a session', () => {
     const { handleApi } = await import('../../src/api/router');
     const plain = await handleApi(new Request('https://ia.example.com/api/auth/code', { method: 'POST', headers: { 'content-type': 'text/plain', cookie, origin: 'https://ia.example.com' }, body: JSON.stringify({ code }) }), w.env, ctx);
     expect(plain.status).toBe(415);
-    expect(w.account('a@example.com').email_verified).toBe(0);
+    expect(w.account('a@example.com')).toBeUndefined();
   });
 });
 
@@ -433,8 +436,7 @@ describe('terms acceptance', () => {
   it('is recorded when the code proves the address, not before', async () => {
     const w = hosted({ TERMS_VERSION: '2026-11-14' });
     const res = await signup(w.env, 'a@example.com', 'a-password-1');
-    expect(w.account('a@example.com').terms_accepted_at).toBeNull();
-    expect(w.account('a@example.com').terms_version).toBeNull();
+    expect(w.account('a@example.com')).toBeUndefined(); // no account, so nothing accepted, before the code
     await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'a@example.com'));
     expect(w.account('a@example.com').terms_version).toBe('2026-11-14');
     expect(Math.abs(w.account('a@example.com').terms_accepted_at - Date.now() / 1000)).toBeLessThan(60);
@@ -467,11 +469,14 @@ describe('self-host: codes follow the ability to send mail', () => {
     expect((await json(r)).token).toBeTruthy();
   });
 
-  it('with mail: the same code step; SIGNIN_CODES=off turns it off; hosted ignores the switch', async () => {
+  it('with mail: password alone until a test code reached the owner, then the code step; SIGNIN_CODES=off turns it off; hosted ignores the switch', async () => {
     const send = vi.fn(async () => {});
     const env = makeEnv(createMigratedD1(), { SEND_EMAIL: { send } });
-    await setupOwner(env);
+    const owner = await setupOwner(env);
     expect((await json(await call(env, 'GET', '/api/auth/status'))).signin_codes_reason).toBe('mail');
+    expect((await json(await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'correct-horse-battery' } }))).token).toBeTruthy();
+    const test = await call(env, 'POST', '/api/auth/codes/test', { key: owner, body: {} });
+    expect((await call(env, 'POST', '/api/auth/codes/confirm', { key: owner, body: { code: await lastCodeFor(env, 'owner@example.com') }, headers: { cookie: pendingCookieOf(test) } })).status).toBe(200);
     expect((await json(await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'correct-horse-battery' } }))).code_required).toBe(true);
     expect((await me(env, await loginWithCode(env, 'owner@example.com', 'correct-horse-battery'))).status).toBe(200);
     const off = { ...env, SIGNIN_CODES: 'off' } as typeof env;

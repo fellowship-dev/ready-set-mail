@@ -1,27 +1,37 @@
-// Six-digit emailed codes: the second step of every hosted sign-up, sign-in, password reset and invite acceptance.
+// Six-digit emailed codes: the second step of every hosted sign-up, sign-in, password reset and invite acceptance, and of a
+// self-hosted sign-in once that person has proven that codes reach them.
 //
 // A code belongs to one pending attempt. The attempt is a row in the existing verifications table, keyed by a SHA-256 of a
 // random handle that only the browser that started it holds, in an HttpOnly, SameSite=Strict cookie (`__Host-` prefixed over
 // https, so no other subdomain can plant one). The handle is not a session: it opens nothing, and it lives exactly as long as
 // its code (CODE_SECONDS). A code typed in another browser has no handle to go with it, so it does nothing.
 //
-// The row holds what the attempt will do once the code is right and nothing else: the account, the address, a keyed hash of
-// the code (HMAC-SHA256 under the auth secret, never the code itself), the number of tries, and for sign-up the hash of the
-// password typed in that same attempt. Every new attempt gets a new handle; a browser that starts one drops the attempt its
-// old cookie pointed at, so asking for a new code always invalidates the previous one.
+// The row holds what the attempt will do once the code is right and nothing else: the account (or, for a hosted sign-up or
+// invite of a new address, that the account is to be created then), the address, a keyed hash of the code (HMAC-SHA256 under
+// the auth secret, never the code itself), the number of tries, and for sign-up the hash of the password typed in that same
+// attempt. Every new attempt gets a new handle; a browser that starts one drops the attempt its old cookie pointed at, so
+// asking for a new code always invalidates the previous one.
 //
-// Limits (all counted in D1, so every isolate agrees):
-//  - CODE_MAX_TRIES wrong tries per code; the try is counted before the comparison, so concurrent guesses cannot exceed it;
-//  - CODE_FAILS_PER_ACCOUNT wrong codes an hour per address and purpose, across codes (a stranger who can start reset or
-//    sign-up attempts for an address can spend that purpose's count, never sign-in's, which needs the password first);
-//  - CODE_FAILS_PER_IP wrong codes an hour per IP, across every address;
-//  - mail allowances per address and purpose (CODE_MAIL_CAPS), which also bound how many codes a guesser can get.
+// Limits (all counted in D1 with one conditional statement each, so every isolate agrees and parallel requests cannot all
+// pass a stale read):
+//  - CODE_MAX_TRIES wrong tries per code; the try is counted before the comparison;
+//  - wrong-code budgets across codes (codeBudgets): a wrong code is reserved before the comparison and given back when the
+//    code was right (or never compared), so only genuinely wrong comparisons count. Sign-in (which needs the password first):
+//    SIGNIN_FAILS_PER_HOUR and SIGNIN_FAILS_PER_DAY per address. Sign-up, invite and reset (which anyone can start for an
+//    address): OPEN_FAILS_PER_DAY per address together, with a separate budget for a browser holding that account's device
+//    cookie. CODE_FAILS_PER_IP an hour per IP, across every address;
+//  - the first try on a freshly mailed code is always compared, even over the open and per-IP budgets, so a stranger who
+//    spends them cannot stop the owner who types the code right first time (one extra guess per mailed code at most, and
+//    mailed codes are bounded by the mail allowances);
+//  - mail allowances per address and pool (CODE_MAIL_CAPS), which also bound how many codes a guesser can get.
+import { globalQueries } from '@ready-set-mail/db';
 import type { AuthEnv } from './config';
 import { authSecret } from './secret';
 import { d1RateLimitStorage } from './rate-limit';
 import { addressKey } from './welcome';
 
-export type CodePurpose = 'signup' | 'invite' | 'signin' | 'reset';
+/** `confirm`: a self-hosted user's test code (Settings), which turns sign-in codes on for them once entered. */
+export type CodePurpose = 'signup' | 'invite' | 'signin' | 'reset' | 'confirm';
 
 /** How long a code (and the attempt it belongs to) works. The email and the pages state this number. */
 export const CODE_SECONDS = 10 * 60;
@@ -29,34 +39,43 @@ export const CODE_MINUTES = CODE_SECONDS / 60;
 export const CODE_LENGTH = 6;
 /** Wrong tries per code; the next answer is "send a new code". */
 export const CODE_MAX_TRIES = 5;
-/** Wrong codes per address and purpose, per hour, across codes. */
-export const CODE_FAILS_PER_ACCOUNT = 10;
+/** Wrong sign-in (and test) codes per address: an hour, and a day (then code entry waits for the next day or a reset). */
+export const SIGNIN_FAILS_PER_HOUR = 10;
+export const SIGNIN_FAILS_PER_DAY = 20;
+/** After this many wrong sign-in codes in a day, the account's owner is told once that someone has their password. */
+export const SIGNIN_ALERT_AT = 10;
+/** Wrong sign-up, invite and reset codes per address and day, together (a device-cookie browser has its own). */
+export const OPEN_FAILS_PER_DAY = 10;
 /** Wrong codes per IP, per hour, across addresses. */
 export const CODE_FAILS_PER_IP = 30;
-export const CODE_FAIL_WINDOW_SECONDS = 3600;
+const HOUR = 3600;
+const DAY = 86400;
 
 /**
- * Code mail per address, per purpose. Separate pools, so one cannot use up another: a stranger can spend `signup` (bot-checked)
- * and `reset` (bot-checked when the keys are set), never `signin`, which only sends after the right password.
- * `signup` also carries hosted invite codes and the "someone tried to sign up with your address" notice.
+ * Code mail per address, per pool. Separate pools, so one cannot use up another: a stranger can spend `signup` (bot-checked)
+ * and `reset` (bot-checked on hosted), never `signin`, which only sends after the right password, nor `reset-device`, which is
+ * the reset allowance of a browser that holds the account's device cookie.
+ * `signup` also carries hosted invite codes and the "someone tried to sign up with your address" notice; `reset` also carries
+ * the "no account with this address" notice; `signin` also carries self-host test codes and the wrong-codes alert.
  */
-export type MailPool = 'signup' | 'signin' | 'reset';
+export type MailPool = 'signup' | 'signin' | 'reset' | 'reset-device';
 export const CODE_MAIL_CAPS: Readonly<Record<MailPool, { hour: number; day: number }>> = Object.freeze({
   signup: { hour: 2, day: 4 },
   signin: { hour: 10, day: 30 },
   reset: { hour: 3, day: 10 },
+  'reset-device': { hour: 3, day: 10 },
 });
-export const poolFor = (purpose: CodePurpose): MailPool => (purpose === 'invite' ? 'signup' : purpose);
+export const poolFor = (purpose: CodePurpose): MailPool => (purpose === 'invite' ? 'signup' : purpose === 'confirm' ? 'signin' : purpose);
 
 /** Spend one mail from the address's allowance for this pool. Returns 0 when allowed, else the seconds until it would be. */
 export async function codeMailWait(env: AuthEnv, email: string, pool: MailPool): Promise<number> {
   const limiter = d1RateLimitStorage(env.DB as D1Database);
   const k = addressKey(email);
   const cap = CODE_MAIL_CAPS[pool];
-  const hour = await limiter.consume(`code-mail:${pool}:h:${k}`, { window: 3600, max: cap.hour });
-  if (!hour.allowed) return hour.retryAfter ?? 3600;
-  const day = await limiter.consume(`code-mail:${pool}:d:${k}`, { window: 86400, max: cap.day });
-  return day.allowed ? 0 : (day.retryAfter ?? 86400);
+  const hour = await limiter.consume(`code-mail:${pool}:h:${k}`, { window: HOUR, max: cap.hour });
+  if (!hour.allowed) return hour.retryAfter ?? HOUR;
+  const day = await limiter.consume(`code-mail:${pool}:d:${k}`, { window: DAY, max: cap.day });
+  return day.allowed ? 0 : (day.retryAfter ?? DAY);
 }
 
 // ── The pending-attempt cookie ────────────────────────────────────
@@ -113,8 +132,13 @@ function sameString(a: string, b: string): boolean {
 
 export interface Attempt {
   purpose: CodePurpose;
-  /** Null: a decoy (an address that cannot use this step); its code was never sent and nothing matches it. */
+  /**
+   * The account the code is for. Null with `create`: a hosted sign-up or invite of an address with no account yet, created
+   * when the code is right. Null without `create`: a decoy (an address that cannot use this step); its code was never sent
+   * and nothing matches it.
+   */
   userId: string | null;
+  create?: boolean;
   email: string;
   /** Sign-up and invite: the password hash typed in this attempt, the only one that can become the account's. */
   passwordHash?: string;
@@ -124,18 +148,24 @@ export interface Attempt {
   terms?: string;
 }
 
-interface Stored { p: CodePurpose; u: string | null; e: string; c: string; t: number; pw?: string; inv?: string; terms?: string }
+interface Stored { p: CodePurpose; u: string | null; n?: 1; e: string; c: string; t: number; pw?: string; inv?: string; terms?: string }
+
+/** The attempt as a decoy: it keeps the purpose and address, and can do nothing. */
+export const decoyOf = (a: Attempt): Attempt => ({ purpose: a.purpose, userId: null, email: a.email });
 
 /**
  * Start an attempt: drop the one this browser held (if any), store the new one, and return its handle and code. A decoy
- * (userId null) looks the same from outside; its code is never sent.
+ * looks the same from outside; its code is never sent.
  */
 export async function startAttempt(env: AuthEnv, previousHandle: string | null, a: Attempt, now = Date.now()): Promise<{ handle: string; code: string }> {
   const db = env.DB as D1Database;
   const handle = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const id = await identifierFor(handle);
   const code = newCode();
-  const stored: Stored = { p: a.purpose, u: a.userId, e: a.email, c: await codeMac(env, id, code), t: 0, ...(a.passwordHash ? { pw: a.passwordHash } : {}), ...(a.invite ? { inv: a.invite } : {}), ...(a.terms ? { terms: a.terms } : {}) };
+  const stored: Stored = {
+    p: a.purpose, u: a.userId, ...(a.userId === null && a.create ? { n: 1 as const } : {}), e: a.email, c: await codeMac(env, id, code), t: 0,
+    ...(a.passwordHash ? { pw: a.passwordHash } : {}), ...(a.invite ? { inv: a.invite } : {}), ...(a.terms ? { terms: a.terms } : {}),
+  };
   const stmts = [
     db.prepare("DELETE FROM verifications WHERE identifier LIKE 'signin-code:%' AND expires_at < ?1").bind(Math.floor(now / 1000)),
     db.prepare('INSERT INTO verifications (id, identifier, value, expires_at) VALUES (?1, ?2, ?3, ?4)').bind(crypto.randomUUID(), id, JSON.stringify(stored), Math.floor(now / 1000) + CODE_SECONDS),
@@ -145,22 +175,32 @@ export async function startAttempt(env: AuthEnv, previousHandle: string | null, 
   return { handle, code };
 }
 
-/** The live attempt behind a handle, without spending a try (for the limits, which need its address and purpose). */
-export async function peekAttempt(env: AuthEnv, handle: string, now = Date.now()): Promise<Attempt | null> {
-  const row = await (env.DB as D1Database).prepare('SELECT value FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(await identifierFor(handle), Math.floor(now / 1000)).first<{ value: string }>();
-  return row ? toAttempt(JSON.parse(row.value) as Stored) : null;
+/** Drop the attempt behind a handle (its code could not be sent). */
+export async function dropAttempt(env: AuthEnv, handle: string): Promise<void> {
+  await (env.DB as D1Database).prepare('DELETE FROM verifications WHERE identifier = ?1').bind(await identifierFor(handle)).run();
 }
 
-const toAttempt = (s: Stored): Attempt => ({ purpose: s.p, userId: s.u, email: s.e, ...(s.pw ? { passwordHash: s.pw } : {}), ...(s.inv ? { invite: s.inv } : {}), ...(s.terms ? { terms: s.terms } : {}) });
+/** The live attempt behind a handle and how many tries it has had, without spending one (the limits need them). */
+export async function peekAttempt(env: AuthEnv, handle: string, now = Date.now()): Promise<(Attempt & { tries: number }) | null> {
+  const row = await (env.DB as D1Database).prepare('SELECT value FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(await identifierFor(handle), Math.floor(now / 1000)).first<{ value: string }>();
+  if (!row) return null;
+  const s = JSON.parse(row.value) as Stored;
+  return { ...toAttempt(s), tries: s.t };
+}
+
+const toAttempt = (s: Stored): Attempt => ({
+  purpose: s.p, userId: s.u, ...(s.n ? { create: true } : {}), email: s.e,
+  ...(s.pw ? { passwordHash: s.pw } : {}), ...(s.inv ? { invite: s.inv } : {}), ...(s.terms ? { terms: s.terms } : {}),
+});
 
 export type CodeRefusal = 'code_expired' | 'code_wrong' | 'code_used_up';
 
 /**
  * Check a code against the attempt behind `handle`. The try is counted first (atomically, only while fewer than
  * CODE_MAX_TRIES were made), then compared in constant time; a right code deletes the attempt, so it works once even when
- * sent twice at the same moment.
+ * sent twice at the same moment. `compared` says whether a comparison happened (only a compared wrong code is a wrong code).
  */
-export async function checkCode(env: AuthEnv, handle: string, code: string, now = Date.now()): Promise<{ attempt: Attempt } | { refused: CodeRefusal; triesLeft?: number }> {
+export async function checkCode(env: AuthEnv, handle: string, code: string, now = Date.now()): Promise<{ attempt: Attempt } | { refused: CodeRefusal; triesLeft?: number; compared: boolean }> {
   const db = env.DB as D1Database;
   const id = await identifierFor(handle);
   const nowS = Math.floor(now / 1000);
@@ -168,17 +208,18 @@ export async function checkCode(env: AuthEnv, handle: string, code: string, now 
     .bind(id, nowS, CODE_MAX_TRIES).first<{ value: string }>();
   if (!counted) {
     const live = await db.prepare('SELECT 1 AS x FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(id, nowS).first();
-    return { refused: live ? 'code_used_up' : 'code_expired' };
+    return { refused: live ? 'code_used_up' : 'code_expired', compared: false };
   }
   const stored = JSON.parse(counted.value) as Stored;
   const wellFormed = new RegExp(`^\\d{${CODE_LENGTH}}$`).test(code);
   const mac = await codeMac(env, id, wellFormed ? code : 'x');
-  if (!wellFormed || !sameString(mac, stored.c) || stored.u === null) {
+  const decoy = stored.u === null && !stored.n;
+  if (!wellFormed || !sameString(mac, stored.c) || decoy) {
     const left = CODE_MAX_TRIES - stored.t;
-    return left > 0 ? { refused: 'code_wrong', triesLeft: left } : { refused: 'code_used_up' };
+    return left > 0 ? { refused: 'code_wrong', triesLeft: left, compared: true } : { refused: 'code_used_up', compared: true };
   }
   const used = await db.prepare('DELETE FROM verifications WHERE identifier = ?1').bind(id).run();
-  if ((used.meta.changes ?? 0) !== 1) return { refused: 'code_expired' }; // the same code, sent twice: one wins
+  if ((used.meta.changes ?? 0) !== 1) return { refused: 'code_expired', compared: false }; // the same code, sent twice: one wins
   return { attempt: toAttempt(stored) };
 }
 
@@ -187,27 +228,95 @@ export async function dropAttemptsOf(env: AuthEnv, userId: string): Promise<void
   await (env.DB as D1Database).prepare("DELETE FROM verifications WHERE identifier LIKE 'signin-code:%' AND json_extract(value, '$.u') = ?1").bind(userId).run();
 }
 
-// ── Wrong-code limits across codes ───────────────────────────────
+// ── Self-host: codes are asked for only from someone they have reached ──
 
-const accountKey = (purpose: CodePurpose, email: string) => `code-fail:${poolFor(purpose)}:${addressKey(email)}`;
-const ipKey = (ip: string) => `code-fail:ip:${ip}`;
+/** The proof that codes reach this account's address: a row in the existing verifications table (no migration). */
+const provenIdentifier = (userId: string) => `code-proven:${userId}`;
 
-async function waitFor(db: D1Database, key: string, limit: number, now: number): Promise<number> {
-  const row = await db.prepare('SELECT count, last_request FROM auth_rate_limits WHERE key = ?1').bind(key).first<{ count: number; last_request: number }>();
-  if (!row) return 0;
-  const end = row.last_request + CODE_FAIL_WINDOW_SECONDS * 1000;
-  return row.count >= limit && now < end ? Math.max(1, Math.ceil((end - now) / 1000)) : 0;
+/** Has this account ever entered a right code (so mail is known to reach it)? */
+export async function codeProven(env: AuthEnv, userId: string): Promise<boolean> {
+  return !!(await (env.DB as D1Database).prepare('SELECT 1 AS x FROM verifications WHERE identifier = ?1').bind(provenIdentifier(userId)).first());
 }
 
-/** Seconds before another code may be checked for this address and purpose, or from this IP; 0 when it may. */
-export async function codeCheckWait(env: AuthEnv, attempt: Pick<Attempt, 'purpose' | 'email'>, ip: string, now = Date.now()): Promise<number> {
+export async function markCodeProven(env: AuthEnv, userId: string): Promise<void> {
   const db = env.DB as D1Database;
-  return Math.max(await waitFor(db, accountKey(attempt.purpose, attempt.email), CODE_FAILS_PER_ACCOUNT, now), await waitFor(db, ipKey(ip), CODE_FAILS_PER_IP, now));
+  await db.batch([
+    db.prepare('DELETE FROM verifications WHERE identifier = ?1').bind(provenIdentifier(userId)),
+    db.prepare('INSERT INTO verifications (id, identifier, value, expires_at) VALUES (?1, ?2, ?3, ?4)').bind(crypto.randomUUID(), provenIdentifier(userId), String(Math.floor(Date.now() / 1000)), Math.floor(Date.now() / 1000) + 20 * 365 * DAY),
+  ]);
 }
 
-/** Count one wrong code against the address (for this purpose) and the IP. */
-export async function recordCodeFailure(env: AuthEnv, attempt: Pick<Attempt, 'purpose' | 'email'>, ip: string): Promise<void> {
-  const limiter = d1RateLimitStorage(env.DB as D1Database);
-  await limiter.consume(accountKey(attempt.purpose, attempt.email), { window: CODE_FAIL_WINDOW_SECONDS, max: CODE_FAILS_PER_ACCOUNT });
-  await limiter.consume(ipKey(ip), { window: CODE_FAIL_WINDOW_SECONDS, max: CODE_FAILS_PER_IP });
+/** A code could not be sent to this account: back to the password alone until it proves delivery again. */
+export async function clearCodeProven(env: AuthEnv, userId: string): Promise<void> {
+  await (env.DB as D1Database).prepare('DELETE FROM verifications WHERE identifier = ?1').bind(provenIdentifier(userId)).run();
+}
+
+// ── Wrong-code budgets across codes ──────────────────────────────
+
+export type BudgetKind = 'signin-hour' | 'signin-day' | 'open-day' | 'ip';
+interface Budget { kind: BudgetKind; key: string; window: number; max: number; firstTryCompared: boolean }
+
+/**
+ * The budgets a wrong code spends. Sign-in and test codes: the address's hourly and daily sign-in budgets (no first-try
+ * exception: only the password holder can start these attempts, so the daily cap must hold). Sign-up, invite and reset: one
+ * daily budget per address together, or the device budget when the browser holds this account's device cookie. Every
+ * purpose: the IP's hourly budget.
+ */
+function codeBudgets(attempt: Pick<Attempt, 'purpose' | 'email'>, ip: string, device: boolean): Budget[] {
+  const k = addressKey(attempt.email);
+  const ipBudget: Budget = { kind: 'ip', key: `code-fail:ip:${ip}`, window: HOUR, max: CODE_FAILS_PER_IP, firstTryCompared: true };
+  // The day first: when both are spent, the answer names the longer wait and the way through (a reset).
+  if (attempt.purpose === 'signin' || attempt.purpose === 'confirm') {
+    return [
+      { kind: 'signin-day', key: `code-fail:signin:d:${k}`, window: DAY, max: SIGNIN_FAILS_PER_DAY, firstTryCompared: false },
+      { kind: 'signin-hour', key: `code-fail:signin:h:${k}`, window: HOUR, max: SIGNIN_FAILS_PER_HOUR, firstTryCompared: false },
+      ipBudget,
+    ];
+  }
+  return [{ kind: 'open-day', key: `code-fail:open:d:${device ? 'device:' : ''}${k}`, window: DAY, max: OPEN_FAILS_PER_DAY, firstTryCompared: true }, ipBudget];
+}
+
+export type Reservation = { keys: string[]; signinDayCount: number | null };
+
+/**
+ * Reserve one wrong code in every budget before the comparison (one conditional statement each). Over a budget: refused,
+ * with what was reserved given back, unless this is the first try on its code and the budget lets a first try through.
+ */
+export async function reserveWrongCode(
+  env: AuthEnv, attempt: Pick<Attempt, 'purpose' | 'email'>, ip: string, opts: { device: boolean; firstTry: boolean }, now = Date.now(),
+): Promise<{ reserved: Reservation } | { refused: BudgetKind; wait: number }> {
+  const db = env.DB as D1Database;
+  const q = globalQueries(db).rateLimit;
+  const reserved: Reservation = { keys: [], signinDayCount: null };
+  for (const b of codeBudgets(attempt, ip, opts.device)) {
+    const row = await q.hitUnder(b.key, now, b.window * 1000, b.max);
+    if (row) {
+      reserved.keys.push(b.key);
+      if (b.kind === 'signin-day') reserved.signinDayCount = row.count;
+      continue;
+    }
+    if (opts.firstTry && b.firstTryCompared) continue;
+    await giveBack(env, reserved);
+    const start = await db.prepare('SELECT last_request FROM auth_rate_limits WHERE key = ?1').bind(b.key).first<{ last_request: number }>();
+    return { refused: b.kind, wait: Math.max(1, Math.ceil(((start?.last_request ?? now) + b.window * 1000 - now) / 1000)) };
+  }
+  return { reserved };
+}
+
+/** The code was right, or never compared: what was reserved for it is given back. */
+export async function giveBack(env: AuthEnv, reserved: Reservation): Promise<void> {
+  const db = env.DB as D1Database;
+  if (reserved.keys.length === 0) return;
+  await db.batch(reserved.keys.map(k => db.prepare('UPDATE auth_rate_limits SET count = count - 1 WHERE key = ?1 AND count > 0').bind(k)));
+}
+
+/** A password reset ends a stranger's hold on the address's sign-in codes. */
+export async function clearSigninCodeBudgets(env: AuthEnv, email: string): Promise<void> {
+  const k = addressKey(email);
+  await (env.DB as D1Database).prepare('DELETE FROM auth_rate_limits WHERE key IN (?1, ?2)').bind(`code-fail:signin:h:${k}`, `code-fail:signin:d:${k}`).run();
+}
+
+/** At most one "someone has your password" alert a day per address. True when this one may be sent. */
+export async function signinAlertAllowed(env: AuthEnv, email: string): Promise<boolean> {
+  return (await d1RateLimitStorage(env.DB as D1Database).consume(`code-alert:signin:${addressKey(email)}`, { window: DAY, max: 1 })).allowed;
 }

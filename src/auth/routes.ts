@@ -6,8 +6,9 @@
 // would bypass the sign-up policy) is not.
 //
 // Sign-in codes (src/auth/codes.ts): hosted sign-up, sign-in, password reset and invite acceptance end with a six-digit code
-// emailed to the address, typed in the same browser. A self-hosted instance uses them too when it can send mail, unless its
-// operator set SIGNIN_CODES=off (signinCodes below).
+// emailed to the address, typed in the same browser. On a self-hosted instance that can send mail (and whose operator did not
+// set SIGNIN_CODES=off), a person's sign-in asks for a code only once that person has entered one (a test code from Settings,
+// or a reset code): mail is then known to reach them (codesFor below).
 import type { BoundEnv as Env } from '../index';
 import { authLookups, forWorkspace, globalQueries, workspaceLifecycle, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import { logAudit, type AuditEntry } from '../audit/log';
@@ -26,10 +27,11 @@ import { cleanName } from './names';
 import { deviceCookie, knownDevice, rotateDeviceEpoch } from './device';
 import { d1RateLimitStorage } from './rate-limit';
 import {
-  CODE_MAX_TRIES, CODE_SECONDS, checkCode, clearPendingCookie, codeCheckWait, codeMailWait, dropAttemptsOf, peekAttempt,
-  pendingCookie, pendingHandle, poolFor, recordCodeFailure, startAttempt, type Attempt, type CodePurpose,
+  CODE_MAX_TRIES, CODE_SECONDS, SIGNIN_ALERT_AT, checkCode, clearCodeProven, clearPendingCookie, clearSigninCodeBudgets, codeMailWait,
+  codeProven, decoyOf, dropAttempt, dropAttemptsOf, giveBack, markCodeProven, peekAttempt, pendingCookie, pendingHandle, poolFor,
+  reserveWrongCode, signinAlertAllowed, startAttempt, type Attempt, type BudgetKind, type CodePurpose, type MailPool,
 } from './codes';
-import { mailReady, requestedFrom, sendCodeEmail, sendSignupNotice } from './mail';
+import { mailReady, requestedFrom, sendCodeEmail, senderAddress, sendNoAccountResetNotice, sendSigninAlert, sendSignupNotice } from './mail';
 import { legal, legalStatus } from './legal';
 import { helpUrl } from '../funnel/config';
 import { emailCheckAvailable } from '../hosted/config';
@@ -156,14 +158,19 @@ async function ipLimited(env: Env, request: Request, name: string, rule: { windo
 
 /**
  * Bot check. A configured Turnstile secret (hosted: TURNSTILE_SECRET_KEY; else the platform setting) requires a valid
- * token. Hosted sign-up fails closed: without both keys nobody can create an account, so a misconfiguration cannot turn
- * Ready Set Mail into an open mail relay. Sign-in and reset are never locked by missing keys: closed means no NEW accounts,
- * and an existing user signs in (and resets) without the check, since the page cannot render it. The mail those can trigger is
- * capped per address (codeMailWait) and the routes are rate limited per IP. When the keys ARE configured, every form keeps
- * the check. Returns the refusal, or null to carry on.
+ * token. Hosted sign-up and hosted reset fail closed: without both keys nobody can create an account or ask for a reset code,
+ * so a misconfiguration cannot turn Ready Set Mail into an open mail relay or let a stranger spend an address's reset mail
+ * without a check. Hosted sign-in is never locked by missing keys (a code is sent only after the right password), and a
+ * self-hosted instance has the check only when its operator configured the keys. When the keys ARE configured, every form
+ * keeps the check. Returns the refusal, or null to carry on.
  */
-async function botCheck(env: Env, request: Request, token: string | undefined, purpose: 'signup' | 'signin'): Promise<Response | null> {
-  if (await hostedSignupClosed(env)) return purpose === 'signup' ? err(SIGNUP_CLOSED_MESSAGE, 503) : null;
+const RESET_UNAVAILABLE = "Password reset isn't available right now. Try again later.";
+async function botCheck(env: Env, request: Request, token: string | undefined, purpose: 'signup' | 'signin' | 'reset'): Promise<Response | null> {
+  if (await hostedSignupClosed(env)) {
+    if (purpose === 'signup') return err(SIGNUP_CLOSED_MESSAGE, 503);
+    if (purpose === 'reset' && isSaas(env)) return err(RESET_UNAVAILABLE, 503, 'reset_unavailable');
+    return null;
+  }
   const secret = await turnstileSecret(env);
   if (!secret) return null;
   if (!token || !(await verifyTurnstile(token, secret, request.headers.get('CF-Connecting-IP') ?? ''))) return err('Bot check failed', 403);
@@ -189,9 +196,9 @@ async function signUp(
 }
 
 /**
- * Whether sign-in codes are in force. Hosted: always (it cannot be turned off). Self-host: when the instance can send mail
- * (SEND_EMAIL and a sender address), unless SIGNIN_CODES=off; without mail, sign-in is the password alone, so an owner is never
- * locked out by a code that cannot be delivered.
+ * Whether sign-in codes can be used here. Hosted: always (it cannot be turned off). Self-host: when the instance is set up to
+ * send mail (SEND_EMAIL and a sender address), unless SIGNIN_CODES=off; even then a person is asked for one only once a code
+ * has reached them (codesFor), because a configured sender does not mean Cloudflare delivers to their address.
  */
 export async function signinCodes(env: Env): Promise<{ on: boolean; reason: 'hosted' | 'mail' | 'no_mail' | 'turned_off' }> {
   if (isSaas(env)) return { on: true, reason: 'hosted' };
@@ -200,14 +207,27 @@ export async function signinCodes(env: Env): Promise<{ on: boolean; reason: 'hos
   return { on: true, reason: 'mail' };
 }
 
+/** Does this person's sign-in end with a code? Hosted: always. Self-host: only once a code has reached them (codeProven). */
+async function codesFor(env: Env, userId: string): Promise<boolean> {
+  if (isSaas(env)) return true;
+  return (await signinCodes(env)).on && (await codeProven(env, userId));
+}
+
 const secureOrigin = (env: Env, request: Request) => baseUrl(env, new URL(request.url).origin).startsWith('https://');
 
-/** A well-formed hash nothing matches, verified against when an address has no password: a missing account costs the same PBKDF2 time as a wrong password. */
-const TIMING_HASH = `${'0'.repeat(32)}:${'0'.repeat(64)}`;
+/**
+ * A real hash in hashPassword's format and cost (PBKDF2-SHA256, 100,000 iterations, 16-byte salt) of a random password that was
+ * discarded: an address with no password is verified against it, so a missing account costs exactly what a wrong password
+ * costs. A constant, because Workers cannot make random values at global scope and src/ keeps no module-level mutable state.
+ */
+const TIMING_HASH = '8d1f24b2f4ad776c65a8839ead0bb78d:e20bd7489ff0cf8ba7d966ed63b6693ec57587495792882f5d8da019d87ce6e8';
 
-/** Does this account's own password match? Unverified (hosted) accounts never match: nobody chose their password. */
+/**
+ * Does this account's own password match? Unverified (hosted) accounts never match: nobody chose their password. Always one
+ * query and one PBKDF2 verification, whether or not the address has an account.
+ */
 async function passwordMatches(env: Env, user: { id: string; email_verified: number | boolean } | null, password: string): Promise<boolean> {
-  const row = user ? await env.DB.prepare("SELECT password FROM auth_accounts WHERE user_id = ?1 AND provider_id = 'credential'").bind(user.id).first<{ password: string | null }>() : null;
+  const row = await env.DB.prepare("SELECT password FROM auth_accounts WHERE user_id = ?1 AND provider_id = 'credential'").bind(user?.id ?? '').first<{ password: string | null }>();
   const ok = await verifyPassword(password, row?.password || TIMING_HASH).catch(() => false);
   return ok && !!row?.password && !!user && (!isSaas(env) || !!user.email_verified);
 }
@@ -219,26 +239,41 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  * match, so the number of codes that can be guessed at is the number actually mailed.
  */
 async function answerWithCode(
-  env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
-  send: { code: boolean; notice?: boolean } = { code: true },
+  env: Env, request: Request, attempt: Attempt, opts: { pool?: MailPool; notice?: 'signup' | 'reset' } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
-  const mailing = !!attempt.userId && send.code && !(await codeMailWait(env, attempt.email, poolFor(attempt.purpose)));
-  if (attempt.userId && send.code && !mailing) console.warn('[auth] code email not sent: per-address limit reached');
-  const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : { ...attempt, userId: null, passwordHash: undefined, invite: undefined });
-  if (mailing) {
-    ctx.waitUntil(sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request)).catch(() => {}));
-  } else if (send.notice) {
-    ctx.waitUntil((async () => {
-      if (await codeMailWait(env, attempt.email, 'signup')) return;
-      await sendSignupNotice(env, attempt.email, origin);
-    })().catch(() => {}));
+  // The allowance is spent for every address, account or not, so every request does the same work.
+  const allowed = !(await codeMailWait(env, attempt.email, opts.pool ?? poolFor(attempt.purpose)));
+  const mailing = allowed && (!!attempt.userId || !!attempt.create);
+  if (!allowed) console.warn('[auth] code email not sent: per-address limit reached');
+  const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : decoyOf(attempt));
+  // One email whenever the allowance has room: the code, or, for an address that cannot use this step, the notice that stands
+  // in for it. It is sent before answering, so a send the provider refused is never answered as "code sent".
+  let sent = true;
+  if (mailing) sent = await sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request));
+  else if (allowed && opts.notice === 'signup') sent = await sendSignupNotice(env, attempt.email, origin);
+  else if (allowed && opts.notice === 'reset') sent = await sendNoAccountResetNotice(env, attempt.email, origin);
+  if (!sent) {
+    await dropAttempt(env, handle);
+    return notSent(env);
   }
   const out = json({ code_required: true, purpose: attempt.purpose, email: attempt.email, expires_in: CODE_SECONDS });
   out.headers.append('set-cookie', pendingCookie(handle, secure));
   return out;
 }
+
+/**
+ * The answer when a code (or the notice standing in for one) could not be handed to the mail provider. Hosted: the same words
+ * for every address (a send failure is about the service, not the address). Self-host: what the operator can do.
+ */
+const SELF_HOST_NOT_SENT = "We couldn't email a code to that address: this instance may not be able to deliver mail to it. If you can't sign in, ask whoever runs this instance to add the address as a verified destination in Cloudflare Email Routing (self-hosting guide, \"Sign-in codes\").";
+function notSent(env: Env): Response {
+  return isSaas(env) ? err("We couldn't send the code. Try again in a minute.", 503, 'code_not_sent') : err(SELF_HOST_NOT_SENT, 503, 'code_not_sent');
+}
+
+/** Self-host: the sign-in code could not be sent, so this sign-in used the password alone (the rule before proof). */
+const SIGNIN_CODE_NOT_SENT = "We couldn't email your sign-in code, so you were signed in with your password alone. Sign-in codes are off for you until you send yourself a test code in Settings.";
 
 /** Opens a session for a user whose code step is done; the response carries the session cookie (and token for scripts). */
 async function openSession(env: Env, request: Request, ctx: ExecutionContext, userId: string, body: Record<string, unknown>): Promise<Response> {
@@ -253,6 +288,17 @@ async function openSession(env: Env, request: Request, ctx: ExecutionContext, us
   out.headers.append('set-cookie', await deviceCookie(env, userId, secure));
   out.headers.append('set-cookie', clearPendingCookie(secure));
   return out;
+}
+
+/** A password sign-in with no code step (self-host, for someone codes have not reached yet). */
+async function passwordSession(env: Env, request: Request, ctx: ExecutionContext, user: { id: string; email: string }, body: Record<string, unknown>): Promise<Response> {
+  auditUser(env, ctx, user.id, {
+    actor_id: user.id, actor_email: user.email, actor_type: 'user',
+    action: 'auth.login',
+    resource_type: 'user', resource_id: user.id, resource_name: user.email,
+    meta: { ip: clientIp(request) },
+  });
+  return openSession(env, request, ctx, user.id, body);
 }
 
 /**
@@ -292,24 +338,43 @@ function codeRefusal(refused: 'code_expired' | 'code_wrong' | 'code_used_up', tr
   return err('This code has expired or was replaced by a newer one. Send a new code.', 410, 'code_expired');
 }
 
+/** Over a wrong-code budget: the truth, and the way through. */
+function codeThrottled(kind: BudgetKind, wait: number): Response {
+  const message = kind === 'signin-day'
+    ? 'Too many wrong codes for this account today. Try again tomorrow, or reset your password to sign in now.'
+    : kind === 'open-day'
+      ? 'Too many wrong codes for this address today. Ask for a new code and enter it carefully: the first try on a new code always counts.'
+      : `Too many wrong codes. Try again in ${minutesText(wait)}.`;
+  const out = err(message, 429, 'code_throttled');
+  out.headers.set('retry-after', String(wait));
+  return out;
+}
+
 /**
- * The shared front half of /api/auth/code and /api/auth/reset: the attempt this browser holds, the limits, and the code.
- * Returns the confirmed attempt, or the response to send.
+ * The shared front half of /api/auth/code, /api/auth/reset and /api/auth/codes/confirm: the attempt this browser holds, the
+ * wrong-code budgets, and the code. A wrong code is reserved in each budget before the comparison and given back unless a
+ * comparison found the code wrong (codes.ts reserveWrongCode). Returns the confirmed attempt, or the response to send.
  */
-async function confirmCode(env: Env, request: Request, code: unknown, purposes: readonly CodePurpose[]): Promise<{ attempt: Attempt } | { response: Response }> {
+async function confirmCode(env: Env, request: Request, ctx: ExecutionContext, code: unknown, purposes: readonly CodePurpose[]): Promise<{ attempt: Attempt } | { response: Response }> {
   const handle = pendingHandle(request, secureOrigin(env, request));
   const pending = handle ? await peekAttempt(env, handle) : null;
   if (!handle || !pending || !purposes.includes(pending.purpose)) return { response: codeRefusal('code_expired') };
   const ip = clientIp(request);
-  const wait = await codeCheckWait(env, pending, ip);
-  if (wait) {
-    const out = err(`Too many wrong codes. Try again in ${minutesText(wait)}.`, 429, 'code_throttled');
-    out.headers.set('retry-after', String(wait));
-    return { response: out };
-  }
+  // A browser holding this account's device cookie has its own sign-up/invite/reset budget, which a stranger cannot spend.
+  const device = pending.purpose !== 'signin' && pending.purpose !== 'confirm' && !!pending.userId && (await knownDevice(env, request, pending.userId));
+  const reservation = await reserveWrongCode(env, pending, ip, { device, firstTry: pending.tries === 0 });
+  if ('refused' in reservation) return { response: codeThrottled(reservation.refused, reservation.wait) };
   const result = await checkCode(env, handle, typeof code === 'string' ? code.replace(/\s+/g, '') : '');
+  if (!('refused' in result) || !result.compared) await giveBack(env, reservation.reserved);
   if ('refused' in result) {
-    if (result.refused !== 'code_expired') await recordCodeFailure(env, pending, ip);
+    // The SIGNIN_ALERT_AT-th wrong sign-in code today: whoever typed it knew the password. Told once a day at most.
+    if (result.compared && pending.purpose === 'signin' && pending.userId && reservation.reserved.signinDayCount === SIGNIN_ALERT_AT) {
+      const origin = baseUrl(env, new URL(request.url).origin);
+      ctx.waitUntil((async () => {
+        if (!(await signinAlertAllowed(env, pending.email)) || (await codeMailWait(env, pending.email, 'signin'))) return;
+        await sendSigninAlert(env, pending.email, origin);
+      })().catch(() => {}));
+    }
     return { response: codeRefusal(result.refused, result.triesLeft) };
   }
   return { attempt: result.attempt };
@@ -378,6 +443,9 @@ export async function handleAuthRoute(
       // Whether sign-in ends with an emailed code, and why (hosted | mail | no_mail | turned_off).
       signin_codes: codes.on,
       signin_codes_reason: codes.reason,
+      // Self-host with codes on: the domain the code email comes from (the domain only, never the address), so the sign-in
+      // screen can tell the owner before the password that a code will be emailed and where it comes from.
+      ...(!saas && codes.on ? { signin_code_sender_domain: (await senderAddress(env))?.split('@')[1] ?? null } : {}),
       // Terms, privacy and operator: hosted always; self-host only what its operator configured.
       legal: legalStatus(env),
     });
@@ -437,22 +505,14 @@ export async function handleAuthRoute(
     { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signup'); if (bot) return bot; }
 
     const email = body.email.toLowerCase().trim();
+    // Every address does the same work here (one password hash, one lookup, one mail allowance spent, one attempt stored, at
+    // most one email) and nothing is created: a new address's account is created when its code is right (POST /api/auth/code).
     const passwordHash = await hashPassword(body.password);
-    let user = await globalQueries(env.DB).users.byEmail(email);
-    if (!user) {
-      // Hosted: no name before the address is proven (it would be whoever typed it), and a password nobody knows.
-      const created = await signUp(env, request, ctx, { kind: 'signup' }, { name: email, email, password: unusablePassword() });
-      user = await globalQueries(env.DB).users.byEmail(email); // also when two sign-ups raced and the other created it
-      if (!user) return authError(created.res, 'sign-up failed');
-      if (created.user) auditUser(env, ctx, user.id, {
-        actor_id: user.id, actor_email: email, actor_type: 'user',
-        action: 'auth.signup', resource_type: 'user', resource_id: user.id, resource_name: email,
-        after_value: { email, role: 'owner' }, meta: { ip: clientIp(request) },
-      });
-    }
+    const user = await globalQueries(env.DB).users.byEmail(email);
     const terms = legal(env).termsVersion ?? undefined;
-    if (user.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { code: false, notice: true });
-    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user.id, email, passwordHash, terms });
+    if (user?.email_verified) return answerWithCode(env, request, { purpose: 'signup', userId: null, email }, { notice: 'signup' });
+    // No account yet, or one still waiting for its code from before codes: the code sets this attempt's password.
+    return answerWithCode(env, request, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms });
   }
 
   // ── POST /api/auth/login — password; then, when codes are on, the emailed code ──
@@ -472,50 +532,35 @@ export async function handleAuthRoute(
       if (!known || !(await knownDevice(env, request, known.id))) return throttled(wait);
     }
 
-    const codes = await signinCodes(env);
-    if (codes.on) {
-      if (await ipLimited(env, request, 'signin', { window: 60, max: 10 })) return err('Too many requests — try again later', 429);
-      const user = await globalQueries(env.DB).users.byEmail(email);
-      if (!user || !(await passwordMatches(env, user, body.password))) {
-        await recordSigninFailure(env, email);
-        return err('invalid credentials', 401);
-      }
-      await clearSigninFailures(env, email);
-      // The right password proves who is asking, so the mail allowance can be stated plainly (nobody else learns anything).
-      const mailWait = await codeMailWait(env, email, 'signin');
-      if (mailWait) {
-        const out = err(`We have sent this address several sign-in codes recently. Use the newest one you received, or try again in ${minutesText(mailWait)}.`, 429, 'code_mail_limit');
-        out.headers.set('retry-after', String(mailWait));
-        return out;
-      }
-      const secure = secureOrigin(env, request);
-      const { handle, code } = await startAttempt(env, pendingHandle(request, secure), { purpose: 'signin', userId: user.id, email });
-      const origin = baseUrl(env, url.origin);
-      ctx.waitUntil(sendCodeEmail(env, email, code, 'signin', origin, requestedFrom(request)).catch(() => {}));
-      const out = json({ code_required: true, purpose: 'signin', email, expires_in: CODE_SECONDS });
-      out.headers.append('set-cookie', pendingCookie(handle, secure));
-      return out;
-    }
-
-    // Codes off (self-host without mail, or SIGNIN_CODES=off): the password alone signs in, through Better Auth.
-    const auth = await createAuth(env, request, { ctx });
-    const res = await callAuth(auth, env, request, '/sign-in/email', { body: { email, password: body.password } });
-    if (!res.ok) {
-      if (res.status === 429) return authError(res, 'too many requests');
+    if (await ipLimited(env, request, 'signin', { window: 60, max: 10 })) return err('Too many requests — try again later', 429);
+    // One path for every address: one lookup, one query and one PBKDF2 verification (passwordMatches), so neither the answer
+    // nor its timing says whether the address has an account.
+    const user = await globalQueries(env.DB).users.byEmail(email);
+    if (!(await passwordMatches(env, user, body.password)) || !user) {
       await recordSigninFailure(env, email);
       return err('invalid credentials', 401);
     }
     await clearSigninFailures(env, email);
+    if (!(await codesFor(env, user.id))) return passwordSession(env, request, ctx, user, {});
 
-    const { user } = await res.clone().json() as { user: { id: string; email: string } };
-    auditUser(env, ctx, user.id, {
-      actor_id: user.id, actor_email: user.email, actor_type: 'user',
-      action: 'auth.login',
-      resource_type: 'user', resource_id: user.id, resource_name: user.email,
-      meta: { ip: clientIp(request) },
-    });
-    const out = sessionResponse(request, res, {});
-    out.headers.append('set-cookie', await deviceCookie(env, user.id, secureOrigin(env, request)));
+    // The right password proves who is asking, so the mail allowance can be stated plainly (nobody else learns anything).
+    const mailWait = await codeMailWait(env, email, 'signin');
+    if (mailWait) {
+      const out = err(`We have sent this address several sign-in codes recently. Use the newest one you received, or try again in ${minutesText(mailWait)}.`, 429, 'code_mail_limit');
+      out.headers.set('retry-after', String(mailWait));
+      return out;
+    }
+    const secure = secureOrigin(env, request);
+    const { handle, code } = await startAttempt(env, pendingHandle(request, secure), { purpose: 'signin', userId: user.id, email });
+    if (!(await sendCodeEmail(env, email, code, 'signin', baseUrl(env, url.origin), requestedFrom(request)))) {
+      await dropAttempt(env, handle);
+      if (isSaas(env)) return notSent(env);
+      // Self-host: the code did not go out, so this person is back to the rule before proof (the password alone).
+      await clearCodeProven(env, user.id);
+      return passwordSession(env, request, ctx, user, { notice: SIGNIN_CODE_NOT_SENT });
+    }
+    const out = json({ code_required: true, purpose: 'signin', email, expires_in: CODE_SECONDS });
+    out.headers.append('set-cookie', pendingCookie(handle, secure));
     return out;
   }
 
@@ -523,11 +568,27 @@ export async function handleAuthRoute(
   if (path === '/api/auth/code' && method === 'POST') {
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
     const body = await readJson<{ code?: unknown }>(request);
-    const confirmed = await confirmCode(env, request, body.code, ['signup', 'invite', 'signin']);
+    const confirmed = await confirmCode(env, request, ctx, body.code, ['signup', 'invite', 'signin']);
     if ('response' in confirmed) return confirmed.response;
     const { attempt } = confirmed;
-    const userId = attempt.userId!;
     const ip = clientIp(request);
+    let userId = attempt.userId;
+    if (!userId) {
+      // Closed sign-up (no bot protection): no new account by any route, a code typed now included.
+      if (await hostedSignupClosed(env)) return err(SIGNUP_CLOSED_MESSAGE, 503);
+      // A hosted sign-up or invite of a new address: the account is created only now, when the code proved the address.
+      // Its password is set by proveAddress below, from this attempt (two attempts at once: one wins, the other is refused).
+      const intent: SignupIntent = attempt.purpose === 'invite' && attempt.invite ? { kind: 'invitee', token: attempt.invite } : { kind: 'signup' };
+      const created = await signUp(env, request, ctx, intent, { name: attempt.email, email: attempt.email, password: unusablePassword() });
+      const user = await globalQueries(env.DB).users.byEmail(attempt.email);
+      if (!user) return created.res.ok ? codeRefusal('code_expired') : authError(created.res, 'sign-up failed');
+      if (created.user) auditUser(env, ctx, user.id, {
+        actor_id: user.id, actor_email: attempt.email, actor_type: 'user',
+        action: 'auth.signup', resource_type: 'user', resource_id: user.id, resource_name: attempt.email,
+        after_value: { email: attempt.email, role: 'owner' }, meta: { ip },
+      });
+      userId = user.id;
+    }
 
     if (attempt.purpose === 'signin') {
       const user = await globalQueries(env.DB).users.byId(userId);
@@ -567,14 +628,65 @@ export async function handleAuthRoute(
     return openSession(env, request, ctx, userId, { purpose: attempt.purpose, ...(joined ?? {}) });
   }
 
+  // ── Self-host: sign-in codes per person ─────────────────────
+  // GET says whether they are on for the caller; POST /test emails the caller a test code; POST /confirm with that code turns
+  // them on for the caller (the code reached them, so a sign-in code will too). Hosted: always on, nothing to turn on.
+  if (path === '/api/auth/codes' && method === 'GET') {
+    const me = await currentUser(request, env, ctx).catch(() => null);
+    if (!me) return err('sign in first', 401);
+    const instance = await signinCodes(env);
+    return json({ available: instance.on, reason: instance.reason, on_for_me: isSaas(env) || (instance.on && (await codeProven(env, me.id))) });
+  }
+  if (path === '/api/auth/codes/test' && method === 'POST') {
+    if (await limited(env, request)) return err('Too many requests — try again later', 429);
+    const me = await currentUser(request, env, ctx).catch(() => null);
+    if (!me) return err('sign in first', 401);
+    if (isSaas(env)) return err('sign-in codes are always on here', 409);
+    const instance = await signinCodes(env);
+    if (!instance.on) return err(instance.reason === 'turned_off' ? 'Sign-in codes are turned off on this instance (SIGNIN_CODES=off).' : "This instance can't send email, so sign-in codes are off.", 409, 'codes_unavailable');
+    const email = me.email.toLowerCase();
+    const mailWait = await codeMailWait(env, email, 'signin');
+    if (mailWait) {
+      const out = err(`We have sent this address several codes recently. Use the newest one you received, or try again in ${minutesText(mailWait)}.`, 429, 'code_mail_limit');
+      out.headers.set('retry-after', String(mailWait));
+      return out;
+    }
+    const secure = secureOrigin(env, request);
+    const { handle, code } = await startAttempt(env, pendingHandle(request, secure), { purpose: 'confirm', userId: me.id, email });
+    if (!(await sendCodeEmail(env, email, code, 'confirm', baseUrl(env, url.origin), requestedFrom(request)))) {
+      await dropAttempt(env, handle);
+      return err(`We couldn't send a code to ${email}. This instance may not be able to deliver mail to that address, so sign-in codes stay off for you.`, 503, 'code_not_sent');
+    }
+    const out = json({ code_required: true, purpose: 'confirm', email, expires_in: CODE_SECONDS });
+    out.headers.append('set-cookie', pendingCookie(handle, secure));
+    return out;
+  }
+  if (path === '/api/auth/codes/confirm' && method === 'POST') {
+    if (await limited(env, request)) return err('Too many requests — try again later', 429);
+    const me = await currentUser(request, env, ctx).catch(() => null);
+    if (!me) return err('sign in first', 401);
+    const body = await readJson<{ code?: unknown }>(request);
+    const confirmed = await confirmCode(env, request, ctx, body.code, ['confirm']);
+    if ('response' in confirmed) return confirmed.response;
+    if (confirmed.attempt.userId !== me.id) return codeRefusal('code_expired');
+    await markCodeProven(env, me.id);
+    auditUser(env, ctx, me.id, {
+      actor_id: me.id, actor_email: me.email, actor_type: 'user',
+      action: 'auth.signin_codes_on', resource_type: 'user', resource_id: me.id, resource_name: me.email,
+    });
+    const out = json({ ok: true, on_for_me: true });
+    out.headers.append('set-cookie', clearPendingCookie(secureOrigin(env, request)));
+    return out;
+  }
+
   // ── GET /api/auth/verify-email — links sent before the welcome-page design ──
   // Changes nothing and creates nothing: a page moves the token into the welcome page's fragment (no Location carries it).
   if (path === '/api/auth/verify-email' && method === 'GET') return legacyVerifyLinkPage();
 
   // ── Retired: the emailed link's welcome page and its resend ──
-  // Links already in inboxes open a page that says to sign in or create the account again (which sends a code).
+  // Links already in inboxes open a page that says to sign in, or to reset the password (which sends a code) if none was chosen.
   if ((path === '/api/auth/welcome' || path === '/api/auth/resend-verification') && method === 'POST') {
-    return err('Email links are no longer used. Sign in, or create your account again with the same email to get a code.', 410, 'link_retired');
+    return err('Email links are no longer used. Sign in, or, if you never chose a password, use "Forgot your password?" to choose one: we email you a code.', 410, 'link_retired');
   }
 
   // ── POST /api/auth/logout ───────────────────────────────────
@@ -597,16 +709,20 @@ export async function handleAuthRoute(
     const body = await readJson<{ email?: string; cf_turnstile_token?: string }>(request);
     if (!body.email) return err('email is required', 400);
     if (await ipLimited(env, request, 'reset', { window: 3600, max: 10 })) return err('Too many requests — try again later', 429);
-    // The bot check when the keys are set; never closed (an existing user can always reset).
-    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signin'); if (bot) return bot; }
+    // Hosted: always the bot check (without keys, reset is unavailable). Self-host: when its operator set the keys.
+    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'reset'); if (bot) return bot; }
     const email = body.email.toLowerCase().trim();
-    const user = EMAIL_RE.test(email) ? await globalQueries(env.DB).users.byEmail(email) : null;
+    if (!EMAIL_RE.test(email)) return err('invalid email', 400);
+    const user = await globalQueries(env.DB).users.byEmail(email);
     if (user) auditUser(env, ctx, user.id, {
       actor_id: user.id, actor_email: user.email, actor_type: 'user',
       action: 'auth.password_reset', resource_type: 'user', resource_id: user.id, resource_name: user.email,
       meta: { phase: 'requested' },
     });
-    return answerWithCode(env, request, ctx, { purpose: 'reset', userId: user?.id ?? null, email });
+    // A browser that signed in to this account before has its own reset allowance: a stranger who spends the address's cannot
+    // spend it. An address with no account gets a notice instead of a code, so every request sends the same one email.
+    const device = !!user && (await knownDevice(env, request, user.id));
+    return answerWithCode(env, request, { purpose: 'reset', userId: user?.id ?? null, email }, { pool: device ? 'reset-device' : 'reset', notice: 'reset' });
   }
 
   // ── POST /api/auth/reset — the emailed reset code and a new password, in the browser that asked ──
@@ -617,7 +733,7 @@ export async function handleAuthRoute(
     const body = await readJson<{ code?: unknown; password?: string }>(request);
     if (!body.password || body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (body.password.length > MAX_PASSWORD) return err(`password must be at most ${MAX_PASSWORD} characters`, 400);
-    const confirmed = await confirmCode(env, request, body.code, ['reset']);
+    const confirmed = await confirmCode(env, request, ctx, body.code, ['reset']);
     if ('response' in confirmed) return confirmed.response;
     const userId = confirmed.attempt.userId!;
     const user = await globalQueries(env.DB).users.byId(userId);
@@ -631,6 +747,8 @@ export async function handleAuthRoute(
     await globalQueries(env.DB).sessions.revokeAll(userId);
     await rotateDeviceEpoch(env, userId);
     await clearSigninFailures(env, user.email); // whoever was guessing this account's password no longer holds the person up
+    await clearSigninCodeBudgets(env, user.email); // nor whoever, knowing the old password, typed wrong sign-in codes
+    if (!isSaas(env)) await markCodeProven(env, userId); // the reset code reached this address: sign-in codes are on for them
     auditUser(env, ctx, userId, {
       actor_id: userId, actor_email: user.email, actor_type: 'user',
       action: 'auth.password_reset', resource_type: 'user', resource_id: userId,
@@ -690,17 +808,11 @@ export async function handleAuthRoute(
     if (body.password && body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (body.password && body.password.length > MAX_PASSWORD) return err(`password must be at most ${MAX_PASSWORD} characters`, 400);
 
-    // Hosted: holding the link is not proof of owning the address. The invitee gets a login with no password anyone knows and
-    // no workspace; the code emailed to the invited address sets the password typed here, verifies it and accepts the invite.
+    // Hosted: holding the link is not proof of owning the address. Nothing is created yet: the code emailed to the invited
+    // address creates the login (for a new address), sets the password typed here, verifies it and accepts the invite.
     if (isSaas(env)) {
       const passwordHash = await hashPassword(body.password!);
-      let user = existingUser;
-      if (!user) {
-        const created = await signUp(env, request, ctx, { kind: 'invitee', token: invite.token }, { name: invite.email, email: invite.email, password: unusablePassword() });
-        user = await globalQueries(env.DB).users.byEmail(invite.email);
-        if (!user) return authError(created.res, 'could not create account');
-      }
-      return answerWithCode(env, request, ctx, { purpose: 'invite', userId: user.id, email: invite.email, passwordHash, invite: invite.token, terms: legal(env).termsVersion ?? undefined });
+      return answerWithCode(env, request, { purpose: 'invite', userId: existingUser?.id ?? null, create: !existingUser, email: invite.email, passwordHash, invite: invite.token, terms: legal(env).termsVersion ?? undefined });
     }
 
     const { res, user } = await signUp(env, request, ctx, { kind: 'invite', token: invite.token }, {

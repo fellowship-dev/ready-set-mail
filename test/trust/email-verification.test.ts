@@ -2,7 +2,7 @@
 // on an address they have not proven. Self-host keeps working with no email setup.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, makeEnv, setupOwner, inviteAndAccept, signupVerified, req, enterCode, lastCodeFor, pendingCookieOf } from '../auth/helpers';
+import { call, mailbox, makeEnv, setupOwner, inviteAndAccept, signupVerified, req, enterCode, lastCodeFor, pendingCookieOf } from '../auth/helpers';
 import { delegatedKey } from '../auth/grant-fixture';
 import { createAuth } from '../../src/auth';
 import { handleOAuthUserInfo } from 'better-auth/oauth2';
@@ -44,21 +44,20 @@ describe('hosted sign-up requires a verified email', () => {
     expect((await json(await call(w.env, 'POST', '/api/auth/login', { body: { email: 'new@example.com', password: 'password-123' } }))).code_required).toBe(true);
   });
 
-  it('pre-registration does not hand an account to the real owner: the registrant’s password never becomes the account’s, and their sessions end', async () => {
+  it('pre-registration does not hand an account to the real owner: nothing exists before a code, and the registrant’s password never becomes the account’s', async () => {
     const w = saas();
-    // the attacker registers the CFO's address with a password they know
+    // the attacker registers the CFO's address with a password they know: nothing is created, no session can exist
     await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'attacker-password-1' } });
-    const uid = w.rows("SELECT id FROM users WHERE email = 'cfo@acme.com'")[0].id;
-    w.db.sqlite.prepare("INSERT INTO sessions (id, user_id, token, expires_at) VALUES ('s1', ?, 'attacker-session', 9999999999)").run(uid);
+    expect(w.rows("SELECT id FROM users WHERE email = 'cfo@acme.com'")).toEqual([]);
     // the real CFO signs up and types the code they received
     const own = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-own-password-1' } });
     expect((await w.confirm(own, 'cfo@acme.com')).status).toBe(200);
-    expect(w.rows("SELECT * FROM sessions WHERE user_id = ? AND token = 'attacker-session'", uid)).toEqual([]);
+    expect(w.rows("SELECT COUNT(*) n FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ n: 1 }]);
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: 'attacker-password-1' } })).status).toBe(401);
     expect((await call(w.env, 'POST', '/api/auth/login', { body: { email: 'cfo@acme.com', password: 'cfo-own-password-1' } })).status).toBe(200);
   });
 
-  it('a reset request emails a code only to a real account, with the same answer for an unknown address', async () => {
+  it('a reset request emails a code only to a real account (an unknown address gets a no-account notice), with the same answer', async () => {
     const w = saas();
     await signupVerified(w.env, 'a@example.com');
     w.send.mockClear();
@@ -66,14 +65,18 @@ describe('hosted sign-up requires a verified email', () => {
     const ghost = await call(w.env, 'POST', '/api/auth/forgot', { body: { email: 'nobody@example.com' } });
     expect([real.status, ghost.status]).toEqual([200, 200]);
     await lastCodeFor(w.env, 'a@example.com');
-    expect(w.send).toHaveBeenCalledTimes(1);
+    expect(w.send).toHaveBeenCalledTimes(2);
+    expect((w.send.mock.calls as any[]).map(c => [c[0].to[0], /is your Ready Set Mail code$/.test(c[0].subject)])).toEqual([['a@example.com', true], ['nobody@example.com', false]]);
   });
 
   it('signing up again with an existing address looks the same and creates nothing', async () => {
     const w = saas();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } });
+    const first = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } });
+    expect(w.rows('SELECT COUNT(*) n FROM users')).toEqual([{ n: 0 }]); // nothing before the code
+    await w.confirm(first, 'a@example.com');
     const again = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'another-pass-1' } });
     expect(again.status).toBe(200);
+    expect(Object.keys(await again.json() as object).sort()).toEqual(Object.keys(await first.json() as object).sort());
     expect(w.rows('SELECT COUNT(*) n FROM users')).toEqual([{ n: 1 }]);
     expect(w.rows('SELECT COUNT(*) n FROM workspaces WHERE id != ?', 'ws_default')).toEqual([{ n: 1 }]);
   });
@@ -134,6 +137,7 @@ describe('sign-up bot check is mandatory when hosted', () => {
     expect(closed.status).toBe(503);
     expect(db.sqlite.prepare('SELECT COUNT(*) n FROM users').all()).toEqual([{ n: 0 }]);
     const keyed = makeEnv(db, { MODE: 'saas', SAAS_ENABLED: '1' });
+    mailbox(keyed);
     expect((await call(keyed, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123', cf_turnstile_token: 'bad' } })).status).toBe(403);
     expect((await call(keyed, 'POST', '/api/auth/signup', { body: { email: 'a@example.com', password: 'password-123' } })).status).toBe(200);
   });
@@ -225,9 +229,10 @@ describe('OAuth account linking (behaviour)', () => {
   }
   const ghAccounts = (w: any) => w.rows("SELECT user_id FROM auth_accounts WHERE provider_id = 'github'");
 
-  it('does not link to a local account whose email nobody verified (the pre-registered account stays out of reach)', async () => {
+  it('does not link to a local account whose email nobody verified (an unverified account from before codes stays out of reach)', async () => {
     const w = saas();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'attacker-password-1' } });
+    // Sign-up no longer creates an unverified account; one can remain from the earlier link design.
+    w.db.sqlite.prepare("INSERT INTO users (id, email, name, email_verified) VALUES ('legacy-1', 'cfo@acme.com', 'cfo@acme.com', 0)").run();
     const res = await oauthSignIn(w.env, 'cfo@acme.com', true);
     expect(res.error).toBeTruthy();
     expect(ghAccounts(w)).toEqual([]);

@@ -6,7 +6,6 @@ import { useClaimLink } from '../../lib/claim-link';
 import { useSession } from '../../lib/session';
 import { HostedAlternative } from '../../components/HostedAlternative';
 import { AuthLayout, Field } from '../auth/AuthLayout';
-import { CheckEmail } from '../auth/CheckEmail';
 import { useHumanCheck } from '../auth/Turnstile';
 
 const SETUP_TOKEN = /^(\d{1,12})\.[A-Za-z0-9_-]{43}$/;
@@ -38,7 +37,6 @@ export function OwnerSetupPage() {
 	const [telemetry, setTelemetry] = useState(status?.telemetry_default ?? false);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
-	const [verifyFor, setVerifyFor] = useState<string | null>(null);
 	/** The server refused the held link: it is shown as expired, whatever the reason. */
 	const [refused, setRefused] = useState(false);
 	const check = useHumanCheck(status?.turnstile_site_key);
@@ -57,23 +55,19 @@ export function OwnerSetupPage() {
 		setBusy(true);
 		try {
 			const turnstile = check.token ? { cf_turnstile_token: check.token } : {};
-			const res = await api<{ verification_required?: boolean; has_domain?: boolean }>('/api/auth/setup', {
+			// Setup opens the owner's session at once, with no emailed code (first-owner setup is self-host only).
+			const res = await api<{ has_domain?: boolean }>('/api/auth/setup', {
 				method: 'POST',
 				body: { name, email, password, telemetry, ...turnstile },
 				headers: { 'X-Ready-Set-Mail-Bootstrap': linkToken ?? bootstrapProof },
 			});
 			setBootstrapProof('');
 			claim.clear();
-			if (res.verification_required) {
-				setVerifyFor(email);
-				return;
-			}
 			await signedIn();
 			// A new owner with no domain yet goes straight to the setup wizard.
 			navigate(res.has_domain === false ? '/setup' : '/', { replace: true });
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 403 && (err.body as { code?: string } | undefined)?.code === 'email_not_verified') setVerifyFor(email);
-			else if (linkToken && err instanceof ApiError && err.status === 403) setRefused(true);
+			if (linkToken && err instanceof ApiError && err.status === 403) setRefused(true);
 			else if (err instanceof ApiError && err.status === 403 && /installer proof/i.test(err.message)) setError('That installer proof was not accepted. Paste the exact BOOTSTRAP_SECRET value set on the Worker. If none was set yet, the person who deployed it needs to set one first.');
 			else setError(errorMessage(err));
 		} finally {
@@ -89,7 +83,6 @@ export function OwnerSetupPage() {
 			</AuthLayout>
 		);
 	}
-	if (verifyFor) return <CheckEmail email={verifyFor} onBack={() => { setVerifyFor(null); setError(''); }} />;
 
 	return (
 		<AuthLayout

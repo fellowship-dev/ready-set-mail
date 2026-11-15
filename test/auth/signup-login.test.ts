@@ -16,7 +16,7 @@ vi.mock('../../src/env-utils', async (importOriginal) => {
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { call, ctx, makeEnv, setupOwner, inviteAndAccept, req } from './helpers';
+import { call, ctx, makeEnv, setupOwner, inviteAndAccept, req, signupVerified } from './helpers';
 import { handleApi } from '../../src/api/router';
 
 const rows = (db: ReturnType<typeof createMigratedD1>, sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
@@ -150,10 +150,8 @@ describe('MODE=saas: a workspace per signup', () => {
     expect(status).toMatchObject({ mode: 'saas', signup_open: true, configured: true });
 
     expect((await call(env, 'POST', '/api/auth/setup', { body: { email: 'a@example.com', password: 'password-123' } })).status).toBe(409);
-    for (const e of ['a@example.com', 'b@example.com']) {
-      const r = await call(env, 'POST', '/api/auth/signup', { body: { name: e, email: e, password: 'password-123' } });
-      expect(r.status).toBe(200);
-    }
+    // Each workspace is made when that sign-up's code is right (nothing is created before).
+    for (const e of ['a@example.com', 'b@example.com']) await signupVerified(env, e, 'password-123');
     const ms = rows(db, "SELECT m.workspace_id, m.role, u.email FROM memberships m JOIN users u ON u.id = m.user_id ORDER BY u.email");
     expect(ms.map(m => m.role)).toEqual(['owner', 'owner']);
     expect(new Set(ms.map(m => m.workspace_id)).size).toBe(2);

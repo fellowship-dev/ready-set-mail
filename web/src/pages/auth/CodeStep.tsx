@@ -5,10 +5,13 @@ import { useSession } from '../../lib/session';
 import { AuthLayout } from './AuthLayout';
 import { useHumanCheck } from './Turnstile';
 
+/** Where a self-hosted instance's operator reads how to turn sign-in codes off. */
+export const SELF_HOST_CODES_DOC = 'https://github.com/fellowship-dev/ready-set-mail/blob/main/docs/self-hosting.md#sign-in-codes';
+
 /** How long a code works (src/auth/codes.ts CODE_MINUTES). */
 export const CODE_MINUTES = 10;
 
-export type CodePurpose = 'signup' | 'invite' | 'signin' | 'reset';
+export type CodePurpose = 'signup' | 'invite' | 'signin' | 'reset' | 'confirm';
 
 /** The server's answer to a form that ends with an emailed code. */
 export interface CodeRequired {
@@ -24,6 +27,7 @@ export const CODE_PURPOSE_TEXT: Record<CodePurpose, string> = {
 	invite: 'This confirms your email address. Once the code is in, you are signed in and join the workspace.',
 	signin: 'Your password was right. Enter the code from the email to finish signing in.',
 	reset: 'Enter the code from the email and choose a new password. Then you are signed in.',
+	confirm: 'Enter the code we just emailed you. Once it is in, every sign-in here ends with a code like this one.',
 };
 
 /** Keep the digits of whatever was typed or pasted ("123 456", "123-456"), at most six. */
@@ -144,6 +148,12 @@ export function CodeForm({ email, purpose, onSubmit, onResend, onChangeEmail, ex
 						className="h-14 text-center font-mono text-2xl tracking-[0.4em]"
 					/>
 					{error ? <FieldError id="code-error">{error}</FieldError> : null}
+					{purpose === 'signin' && status?.mode === 'self-host' ? (
+						<p className="text-xs text-ink-2">
+							Code never arrives? Whoever runs this instance can turn codes off with <code className="font-mono">SIGNIN_CODES=off</code>:{' '}
+							<a href={SELF_HOST_CODES_DOC} target="_blank" rel="noreferrer" className="text-brand-ink underline underline-offset-4">self-hosting guide</a>.
+						</p>
+					) : null}
 				</div>
 				{extra ? <div id="code-extra">{extra}</div> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={code.length !== 6}>

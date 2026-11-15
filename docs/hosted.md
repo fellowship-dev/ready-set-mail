@@ -184,7 +184,9 @@ the pointer instructions name `h.<zone>` from config, so they must read the doma
 address (`src/auth/codes.ts`). Sign-up asks for the email and one password (and the bot check); sign-in asks for the email and
 password and, only when the password is right, emails a code. Every sign-in needs a fresh code: there is no "remember this
 device". A reset asks for the email (and the bot check when the keys are set), then the code and a new password on one screen;
-saving signs in without a second code and ends every other session.
+saving signs in without a second code and ends every other session. Every code is sent before the answer: when the mail provider
+refuses it, the answer is "We couldn't send the code. Try again in a minute." (`503 code_not_sent`), the same words for every
+address, and no attempt is kept.
 
 * **The code.** Six digits from `crypto.getRandomValues` (rejection sampling, no bias). Stored only as HMAC-SHA256 under the auth
   secret, bound to its attempt; compared in constant time; single use; valid 10 minutes (`CODE_SECONDS`, the number the mail
@@ -197,37 +199,58 @@ saving signs in without a second code and ends every other session.
   every form submission (an incoming one is dropped, never adopted), so it cannot be fixed by an attacker. A code typed in
   another browser has no handle with it and does nothing. `POST /api/auth/code` takes the code (same-origin JSON, like every
   auth POST); `POST /api/auth/reset` takes the reset code and the new password.
-* **Pre-registration.** A sign-up for an address with no account creates it unverified with a random password nobody is told
-  and no name. The password typed at sign-up becomes the account's only when the code of that same attempt is typed, in one
-  statement that applies only while the account is unverified. At that moment every other pending attempt is dropped (a
-  registrant's password is discarded), every session ends, and the display name and sign-up workspace name are reset from the
-  email address. A sign-up for an address that is already verified changes nothing; the owner gets "Someone tried to create a
-  Ready Set Mail account with your email" (within the sign-up allowance). The answer to a sign-up is the same for new, pending and
-  verified addresses (`{ code_required, purpose, email, expires_in }` and a pending cookie). An unverified account can never sign
-  in: its only password is the random one.
-* **Limits.** Per code: 5 tries. Across codes: 10 wrong codes an hour per address and purpose (sign-up and invites share one
-  count, sign-in and reset each have their own) and 30 per IP. Code mail per address, in separate allowances: sign-up and
-  invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour and 30 a day, reset 3 an hour and
-  10 a day. Over the sign-up or reset allowance nothing is sent, the answer is unchanged, and the attempt can never succeed (its
-code was never sent), so only mailed codes can be guessed at. Over the sign-in allowance, which
+* **Pre-registration.** A sign-up creates nothing: the attempt holds the address, the hash of the password typed in it and the
+  terms shown. When that attempt's code is typed, the account and its workspace are created and the attempt's password becomes
+  the account's, so a registrant who cannot read the mailbox never has an account to wait in, and no unverified row, name or
+  workspace exists for anyone to plant text in. A hosted invite works the same way (nothing is created until the invitee's code;
+  a revoked invite then creates nothing). Accounts left unverified by the earlier link design keep the old guarantees: the
+  password is set in one statement that applies only while the account is unverified, every other pending attempt is dropped,
+  every session ends and the names are reset. A sign-up for an address that is already verified changes nothing; the owner gets
+  "Someone tried to create a Ready Set Mail account with your email" (within the sign-up allowance). The answer to a sign-up is
+  the same for new, pending and verified addresses (`{ code_required, purpose, email, expires_in }` and a pending cookie), and so
+  is the work: one password hash, one lookup, one mail allowance spent, one attempt stored and one email (the code or the
+  notice). A reset request for an address with no account sends "Ready Set Mail password reset" (there is no account with this
+  address) in place of the code, so reset requests also do the same work for every address. Sign-in for an unknown address runs
+  the same query and one PBKDF2 verification against a real dummy hash made by the same `hashPassword`.
+* **Limits.** Per code: 5 tries. Across codes, counted only when a comparison found the code wrong (never a used-up, expired or
+  replaced code; a wrong code is reserved before the comparison in one conditional statement and given back when the code was
+  right, so parallel requests cannot pass a cap): sign-in 10 an hour and 20 a day per address; sign-up, invite and reset 10 a day
+  per address together (a browser holding the account's device cookie has its own 10); 30 an hour per IP. The first try on a
+  freshly mailed code is always compared, even when the address or the IP is over its sign-up/invite/reset budget, so a stranger
+  who spends it cannot stop the owner who types the code right the first time; over the budget a second try answers "Too many
+  wrong codes for this address today. Ask for a new code and enter it carefully: the first try on a new code always counts."
+  Sign-in has no such exception (only the password holder can start those attempts): past 20 wrong codes in a day, "Too many
+  wrong codes for this account today. Try again tomorrow, or reset your password to sign in now."; a reset clears it. At the
+  10th wrong sign-in code in a day the owner gets, once a day at most, "Someone entered your Ready Set Mail password": whoever
+  typed the codes knew the password. Wrong sign-in codes never feed the wrong-password throttle. Code mail per address, in
+  separate allowances: sign-up and invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour
+  and 30 a day, reset 3 an hour and 10 a day (also the no-account notice), and a separate reset allowance of 3 an hour and 10 a
+  day for a request carrying the account's device cookie. Over the sign-up or reset allowance nothing is sent, the answer is
+  unchanged, and the attempt can never succeed (its code was never sent), so only mailed codes can be guessed at. Hosted reset
+  always needs the bot check; without the keys it answers "Password reset isn't available right now. Try again later." Over the
+  sign-in allowance, which
   only someone with the password can reach, the answer says so: "We have sent this address several sign-in codes recently. Use
   the newest one you received, or try again in N minutes." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
   (D1), plus `AUTH_LIMITER`.
-* **Guessing.** With 5 tries per code and at most 4 sign-up, 30 sign-in or 10 reset codes a day per address, an attacker gets
-  at most 20, 150 or 50 guesses a day against one address (and sign-in codes need the password first). Each guess is a
-  1-in-1,000,000 chance: about 0.005% per code, and a 1% chance needs about 10,050 guesses, which is 201 days of the reset
-  allowance or 503 days of the sign-up allowance for a single address.
+* **Guessing.** Each guess is a 1-in-1,000,000 chance, and a 1% chance needs about 10,050 guesses. Against one address a day:
+  sign-up, invite and reset together at most 10 wrong codes, plus one first try on each code mailed after those 10 were spent
+  (at most 4 sign-up and 10 reset codes a day, and filling the 10 takes two of them), so at most 22 guesses: a 1% chance in
+  about 457 days (about 1,005 days at the 10-wrong cap alone). Sign-in, with
+  the password already known, at most 20 a day: about 503 days, with the owner warned by email from the 10th wrong code.
 * **Phishing relay.** A page that imitates Ready Set Mail can ask for the password and the code and replay both at once; a code
   does not prevent that. What limits it: the code lives 10 minutes and works once, only with the attempt the relay started; the
   email says what the code is for, the address to enter it on, and, when Cloudflare knows it, the approximate place it was asked
   for from.
-* **Lockout.** Wrong passwords are counted per address (below); wrong codes are counted per purpose, so a stranger who starts
-  reset or sign-up attempts for an address can at most delay resets or sign-up codes for that address for an hour, never its
-  sign-in.
+* **Lockout.** Wrong passwords are counted per address (below). A stranger who starts reset or sign-up attempts for an address
+  can spend its daily sign-up/reset wrong-code budget, but the owner's first try on a new code is always compared, and the
+  owner's own browser (device cookie) has its own reset mail and its own wrong-code budget. What a stranger can still do to an
+  owner without a device cookie: spend the address's reset mail allowance (3 an hour, 10 a day; each request needs a solved bot
+  check and counts against 10 reset requests an hour per IP), so the owner's own reset request in that hour answers as usual but
+  sends nothing. Sign-in is never affected: its codes need the password.
 
 **Links from before codes.** Confirmation links sent before codes (`<origin>/#/welcome/<token>`, or the older
-`GET /api/auth/verify-email?token=…`, which only moves the token into that fragment) open a page that says to sign in, or to
-create the account again with the same email to get a code; the token is not used. `POST /api/auth/welcome` and
+`GET /api/auth/verify-email?token=…`, which only moves the token into that fragment) open a page that says to sign in, or, if no
+password was chosen, to reset the password (which sends a code); the token is not used. `POST /api/auth/welcome` and
 `POST /api/auth/resend-verification` answer `410` `link_retired`. An old reset link (`#/reset/<token>`) says to ask for a code.
 
 **Names.** Names typed before the address was proven are not kept: sign-up asks for no name, and verification sets the display
@@ -256,13 +279,16 @@ sign-up matches a pending invite only on a provider-verified email. OAuth sign-i
 proves the person). Code mail uses the platform sender (`from_email` setting of the default workspace) over `SEND_EMAIL`; without
 it nothing is sent and the Worker log records only a static reason (never the code or address).
 
-**Self-host.** Sign-in codes are on when the instance can send mail (`SEND_EMAIL` and a sender address) and off otherwise:
-then sign-in is the password alone, so an owner is never locked out by a code that cannot be delivered. `SIGNIN_CODES=off`
-turns them off on a self-hosted instance that can send mail; hosted ignores it. Cloudflare Email Routing delivers only to
-verified destination addresses, so on a self-hosted instance codes reach the owner but may not reach a teammate: turn codes off
-if teammates do not receive them. Owner setup (installer proof) and self-host invites work as before. Settings → Account →
+**Self-host.** Sign-in codes can be used when the instance is set up to send mail (`SEND_EMAIL` and a sender address), but a
+person is asked for one only after a code has reached them: a test code from Settings → Account → Sign-in, or a reset code
+(a `code-proven:<user id>` row in `verifications`). Until then, and on an instance without a sender address, sign-in is the
+password alone. That matters because Cloudflare Email Routing delivers only to verified destination addresses: a configured
+sender does not mean a code reaches the owner or a teammate. A sign-in whose code the provider refused goes ahead with the
+password alone, says so, and turns codes off for that person until a test code reaches them again; a reset whose code cannot be
+sent says so plainly. `SIGNIN_CODES=off` turns codes off on a self-hosted instance; hosted ignores it. Owner setup (the setup
+link or the installer proof) opens the owner's session with no code. Self-host invites work as before. Settings → Account →
 Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason`
-(`hosted`, `mail`, `no_mail`, `turned_off`).
+(`hosted`, `mail`, `no_mail`, `turned_off`), and `GET /api/auth/codes` (signed in) says whether codes are on for the caller.
 
 **Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
 button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to

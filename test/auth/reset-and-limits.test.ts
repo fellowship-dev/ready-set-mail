@@ -40,7 +40,10 @@ describe('password reset (by code)', () => {
 
     // background work (the mail) completes via ctx.waitUntil; await what was scheduled
     await Promise.all((ctxCalls()).map(p => p));
-    expect(send).toHaveBeenCalledTimes(1);
+    // One email for each: the code to the account, and to the unknown address a notice that it has no account here.
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1][0].to).toEqual(['ghost@example.com']);
+    expect(send.mock.calls[1][0].subject).toBe('Ready Set Mail password reset');
     const mail = send.mock.calls[0][0];
     expect(mail.to).toEqual(['owner@example.com']);
     expect(mail.from).toEqual({ name: 'Ready Set Mail', email: 'noreply@reports.example.com' });
@@ -96,15 +99,18 @@ describe('password reset (by code)', () => {
     other.mockRestore();
   });
 
-  it('does not surface mail failures (no enumeration via errors)', async () => {
+  it('a mail failure is said plainly (no code is pretended), the same for an unknown address, and the provider error is not logged', async () => {
     const { env, send } = envWithMail();
     await setupOwner(env, 'owner@example.com');
     send.mockRejectedValue(new Error('destination address not verified'));
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const res = await call(env, 'POST', '/api/auth/forgot', { body: { email: 'owner@example.com' } });
     await Promise.all(ctxCalls());
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ code_required: true, purpose: 'reset' });
+    expect(res.status).toBe(503);
+    const said = await res.json();
+    expect(said).toMatchObject({ code: 'code_not_sent' });
+    const ghost = await call(env, 'POST', '/api/auth/forgot', { body: { email: 'ghost@example.com' } });
+    expect([ghost.status, await ghost.json()]).toEqual([503, said]);
     expect(JSON.stringify(err.mock.calls)).not.toContain('destination address');
     err.mockRestore();
   });
@@ -135,7 +141,7 @@ describe('rate limits', () => {
   });
 
   it('signup (saas): limited per IP per hour', async () => {
-    const env = makeEnv(createMigratedD1(), { MODE: 'saas', SAAS_ENABLED: '1' });
+    const env = makeEnv(createMigratedD1(), { MODE: 'saas', SAAS_ENABLED: '1', SEND_EMAIL: { send: vi.fn(async () => {}) } });
     const ip = freshIp();
     const statuses: number[] = [];
     for (let i = 0; i < 12; i++) {

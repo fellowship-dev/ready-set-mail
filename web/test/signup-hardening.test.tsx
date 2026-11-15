@@ -181,7 +181,7 @@ describe('links sent before codes', () => {
 		expect(await screen.findByRole('heading', { name: 'This link is no longer used' })).toBeInTheDocument();
 		expect(screen.getByText('Ready Set Mail now confirms email addresses with a 6-digit code instead of a link.')).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/');
-		expect(screen.getByRole('link', { name: 'Create your account' })).toHaveAttribute('href', '/signup');
+		expect(screen.getByRole('link', { name: 'Reset your password' })).toHaveAttribute('href', '/forgot');
 		expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
 	});
 });

@@ -114,7 +114,10 @@ describe('3. names typed before the address was proven do not survive it', () =>
 
   it('sign-up ignores a submitted name; the workspace starts from the email\'s domain', async () => {
     const w = hosted();
-    await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-pass-123', name: planted }, ...ip() });
+    const res = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'cfo@acme.com', password: 'cfo-pass-123', name: planted }, ...ip() });
+    // Nothing is stored before the code proves the address, so a name typed with the form has nowhere to go.
+    expect(w.rows("SELECT name FROM users WHERE email = 'cfo@acme.com'")).toEqual([]);
+    expect((await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'cfo@acme.com'))).status).toBe(200);
     expect(w.rows("SELECT name FROM users WHERE email = 'cfo@acme.com'")).toEqual([{ name: 'cfo@acme.com' }]);
     expect(w.rows("SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = 'cfo@acme.com'")).toEqual([{ name: 'acme.com workspace' }]);
   });
@@ -137,7 +140,7 @@ describe('3. names typed before the address was proven do not survive it', () =>
     const before = w.rows('SELECT name FROM workspaces WHERE id = (SELECT workspace_id FROM invites)');
     const res = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: planted, password: 'friend-pass-123' }, ...ip() });
     expect(res.status).toBe(200);
-    expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([{ name: 'friend@example.com' }]);
+    expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([]); // nothing before the code
     await enterCode(w.env, pendingCookieOf(res), await lastCodeFor(w.env, 'friend@example.com'));
     expect(w.rows("SELECT name FROM users WHERE email = 'friend@example.com'")).toEqual([{ name: 'friend@example.com' }]);
     expect(w.rows('SELECT name FROM workspaces WHERE id = (SELECT workspace_id FROM invites)')).toEqual(before);
@@ -216,7 +219,7 @@ describe('review follow-ups', () => {
 
   it('a free-mail address starts with "My workspace", a company address with "<domain> workspace"', async () => {
     const w = hosted();
-    for (const email of ['someone@gmail.com', 'cfo@acme.com']) await call(w.env, 'POST', '/api/auth/signup', { body: { email, password: 'pass-word-123' }, ...ip() });
+    for (const email of ['someone@gmail.com', 'cfo@acme.com']) await signupVerified(w.env, email, 'pass-word-123');
     const name = (email: string) => w.rows('SELECT w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id JOIN users u ON u.id = m.user_id WHERE u.email = ?', email)[0].name;
     expect(name('someone@gmail.com')).toBe('My workspace');
     expect(name('cfo@acme.com')).toBe('acme.com workspace');

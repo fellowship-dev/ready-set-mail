@@ -4546,6 +4546,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": "0"
+        },
+        "terms_accepted_at": {
+          "name": "terms_accepted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "terms_version": {
+          "name": "terms_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

@@ -175,7 +175,7 @@ describe('6. hosted sign-up closed: no NEW account by any route; existing users 
     }
   });
 
-  it('existing verified users still sign in with the code (no bot check while the keys are missing), reset their password and finish a pending sign-up code', async () => {
+  it('existing verified users still sign in with the code (no bot check while the keys are missing); reset says it is unavailable; a pending sign-up code creates no account', async () => {
     const open = hosted();
     await signupVerified(open.env, 'owner@example.com', 'owner-password-1');
     const late = await call(open.env, 'POST', '/api/auth/signup', { body: { email: 'late@example.com', password: 'late-password-1' } }); // before the keys went missing
@@ -186,10 +186,12 @@ describe('6. hosted sign-up closed: no NEW account by any route; existing users 
       expect(login.status).toBe(200);
       expect((await enterCode(closed, pendingCookieOf(login), await lastCodeFor(open.env, 'owner@example.com'))).status).toBe(200);
       const forgot = await call(closed, 'POST', '/api/auth/forgot', { body: { email: 'owner@example.com', cf_turnstile_token: '' } });
-      expect(forgot.status).toBe(200);
+      expect(forgot.status).toBe(503);
+      expect(await forgot.json()).toEqual({ error: "Password reset isn't available right now. Try again later.", code: 'reset_unavailable' });
     }
     const closed = { ...open.env, TURNSTILE_SECRET_KEY: undefined, TURNSTILE_SITE_KEY: undefined } as typeof open.env;
-    expect((await enterCode(closed, pendingCookieOf(late), lateCode)).status).toBe(200);
+    expect((await enterCode(closed, pendingCookieOf(late), lateCode)).status).toBe(503);
+    expect(open.rows("SELECT id FROM users WHERE email = 'late@example.com'")).toEqual([]);
   });
 
   it('with the keys configured, sign-in keeps the bot check', async () => {

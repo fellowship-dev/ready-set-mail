@@ -1,8 +1,10 @@
 // Sign-in code emails and account notices, over the same outbound path as every other Ready Set Mail email
 // (the SEND_EMAIL binding).
 //
-// Self-host limitation: Cloudflare Email Routing only delivers to destination addresses verified on the account, so a code
-// reaches the owner (verified during setup) but maybe not an arbitrary teammate (docs/hosted.md, "Sign-in codes").
+// Self-host limitation: Cloudflare's send_email delivers only to addresses verified as Email Routing destinations on the
+// account, so a configured binding and sender address do not mean a code reaches anyone. That is why a self-hosted instance
+// asks a person for a code only after that person has once entered one (codeProven in codes.ts), and why every send reports
+// whether the provider accepted it: a send that failed is never answered as "code sent".
 // Without SEND_EMAIL (or a sender address) nothing is sent and the Worker log records only a static reason: the code, the
 // recipient and provider errors are never logged.
 import { forWorkspace, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
@@ -22,19 +24,22 @@ export async function mailReady(env: AuthEnv): Promise<boolean> {
   return !!env.SEND_EMAIL && !!(await senderAddress(env));
 }
 
-async function send(env: AuthEnv, operation: string, to: string, subject: string, body: string): Promise<void> {
+/** Hands the message to the provider. True when it accepted it; false when it refused or nothing could be sent. */
+async function send(env: AuthEnv, operation: string, to: string, subject: string, body: string): Promise<boolean> {
   const footer = mailFooter(env);
   const text = `${body}\n\nReady Set Mail${footer ? `\n${footer}` : ''}`;
   const from = await senderAddress(env);
   if (env.SEND_EMAIL && from) {
     try {
       await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [to], subject, text });
+      return true;
     } catch {
       console.error(`[auth] ${operation} email send failed (provider error not logged)`);
+      return false;
     }
-  } else {
-    unsent(operation, env);
   }
+  unsent(operation, env);
+  return false;
 }
 
 export const codeSubject = (code: string): string => `${code} is your Ready Set Mail code`;
@@ -44,6 +49,7 @@ const WHAT_FOR: Readonly<Record<CodePurpose, string>> = Object.freeze({
   invite: 'confirm your email address and join the workspace you were invited to on Ready Set Mail',
   signin: 'finish signing in to Ready Set Mail',
   reset: 'reset your Ready Set Mail password',
+  confirm: 'confirm that Ready Set Mail sign-in codes reach you (once it is entered, every sign-in asks for a code)',
 });
 
 /** Where the code was asked for, when Cloudflare knows it: an approximate place, from the network address. */
@@ -72,8 +78,8 @@ export function codeEmailText(code: string, purpose: CodePurpose, origin: string
   return lines.join('\n');
 }
 
-export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purpose: CodePurpose, origin: string, from: string | null): Promise<void> {
-  await send(env, 'code', to, codeSubject(code), codeEmailText(code, purpose, origin, from));
+export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purpose: CodePurpose, origin: string, from: string | null): Promise<boolean> {
+  return send(env, 'code', to, codeSubject(code), codeEmailText(code, purpose, origin, from));
 }
 
 export const SIGNUP_NOTICE_SUBJECT = 'Someone tried to create a Ready Set Mail account with your email';
@@ -83,8 +89,33 @@ export function signupNoticeText(origin: string): string {
   return `Hi,\n\nSomeone tried to create a new Ready Set Mail account with this email address. You already have an account, so no new account was created and nothing about yours was changed.\n\nIf it was you, sign in at ${origin} instead. If you forgot your password, use "Forgot your password?" on the sign-in page. If it wasn't you, you can ignore this email.`;
 }
 
-export async function sendSignupNotice(env: AuthEnv, to: string, origin: string): Promise<void> {
-  await send(env, 'signup notice', to, SIGNUP_NOTICE_SUBJECT, signupNoticeText(origin));
+export async function sendSignupNotice(env: AuthEnv, to: string, origin: string): Promise<boolean> {
+  return send(env, 'signup notice', to, SIGNUP_NOTICE_SUBJECT, signupNoticeText(origin));
+}
+
+export const NO_ACCOUNT_RESET_SUBJECT = 'Ready Set Mail password reset';
+
+/**
+ * To an address with no account, when someone asked to reset its password. Sent so that a reset request does the same work
+ * (one email) whether or not the address has an account: the answer and its timing say nothing about who signed up.
+ */
+export function noAccountResetText(origin: string): string {
+  return `Hi,\n\nSomeone asked to reset the Ready Set Mail password for this email address, but there is no Ready Set Mail account with it at ${origin}, so nothing was changed.\n\nIf it was you, you may have signed up with another address. If it wasn't you, you can ignore this email.`;
+}
+
+export async function sendNoAccountResetNotice(env: AuthEnv, to: string, origin: string): Promise<boolean> {
+  return send(env, 'reset notice', to, NO_ACCOUNT_RESET_SUBJECT, noAccountResetText(origin));
+}
+
+export const SIGNIN_ALERT_SUBJECT = 'Someone entered your Ready Set Mail password';
+
+/** To an account's owner, once a day at most, after several wrong sign-in codes: whoever typed them knew the password. */
+export function signinAlertText(origin: string): string {
+  return `Hi,\n\nSomeone entered your Ready Set Mail password and then several wrong sign-in codes today. A sign-in code is only sent after the right password, so whoever it was knows your password. Change your password: use "Forgot your password?" on the sign-in page at ${origin}.\n\nIf it was you mistyping codes, changing your password is still a good idea.`;
+}
+
+export async function sendSigninAlert(env: AuthEnv, to: string, origin: string): Promise<boolean> {
+  return send(env, 'sign-in alert', to, SIGNIN_ALERT_SUBJECT, signinAlertText(origin));
 }
 
 /** Static diagnostic for an email that could not be sent: names the operation and the missing piece, never the code, recipient or provider error. */

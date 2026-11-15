@@ -188,12 +188,22 @@ describe('a login with no workspace can start its own', () => {
     const w = await world();
     const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
     const asked = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'chosen-password-1' } });
-    // the owner revokes the invite before the invitee types the code
-    const id = (await json(await call(w.env, 'GET', '/api/team/invites', { key: w.A.token }))).invites[0].id;
-    expect((await call(w.env, 'DELETE', `/api/team/invites/${id}`, { key: w.A.token })).status).toBe(200);
     const session = (await json(await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com')))).token as string;
+    // a login left without a workspace (its only membership gone)
+    w.db.sqlite.prepare("DELETE FROM memberships WHERE user_id = (SELECT id FROM users WHERE email = 'friend@example.com')").run();
     return { w, session };
   }
+
+  it('an invite revoked before its code is typed creates no account at all', async () => {
+    const w = await world();
+    const inv = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.A.token, body: { email: 'friend@example.com' } }));
+    const asked = await call(w.env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Friend', password: 'chosen-password-1' } });
+    const id = (await json(await call(w.env, 'GET', '/api/team/invites', { key: w.A.token }))).invites[0].id;
+    expect((await call(w.env, 'DELETE', `/api/team/invites/${id}`, { key: w.A.token })).status).toBe(200);
+    const done = await enterCode(w.env, pendingCookieOf(asked), await lastCodeFor(w.env, 'friend@example.com'));
+    expect(done.status).toBeGreaterThanOrEqual(400);
+    expect(w.rows("SELECT id FROM users WHERE email = 'friend@example.com'")).toEqual([]);
+  });
 
   it('POST /api/workspaces works for them, and then they are an ordinary owner', async () => {
     const { w, session } = await stranded();

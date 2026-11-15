@@ -47,7 +47,7 @@ describe('1. one password, typed once, confirmed by an emailed code', () => {
 			{ role: null, status: HOSTED, route: '/welcome/eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6ImFAYi5jIn0.sig' },
 		);
 		expect(await screen.findByRole('heading', { name: 'This link is no longer used' })).toBeInTheDocument();
-		expect(screen.getByText("If you already chose a password, sign in. If you didn't, create your account again with the same email and we'll send you a code.")).toBeInTheDocument();
+		expect(screen.getByText("If you already chose a password, sign in. If you didn't, reset your password: we'll email you a code and you'll choose one.")).toBeInTheDocument();
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 	});
 

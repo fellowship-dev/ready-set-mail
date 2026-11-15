@@ -50,10 +50,10 @@ describe.each(senders)('%s email logging', (op, sendMail) => {
     expectClean(out);
   });
 
-  it('a provider error that embeds the URL, token and recipient is swallowed and not logged', async () => {
+  it('a provider error that embeds the URL, token and recipient is reported as not sent, and not logged', async () => {
     const send = vi.fn().mockRejectedValue(new Error(`rejected ${RECIPIENT} body=${URL_} token=${TOKEN}`));
     const all = spies();
-    await expect(sendMail(envFor({ sender: true, send: { send } }))).resolves.toBeUndefined();
+    await expect(sendMail(envFor({ sender: true, send: { send } }))).resolves.toBe(false);
     const out = logged(all);
     expect(out).toContain(`[auth] ${op} email send failed`);
     expectClean(out);
