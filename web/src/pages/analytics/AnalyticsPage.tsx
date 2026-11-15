@@ -11,6 +11,7 @@ import { WindowPills } from '../../components/reports';
 import { ListSkeleton, LoadError, PageSkeleton, Section } from '../../components/states';
 import { READINESS_LABEL, fmtPct, useWorkspaceAnalytics, useDomainAnalytics, type WorkspaceAnalytics, type DomainAnalytics } from '../../lib/analytics';
 import { formatNumber } from '../../lib/format';
+import type { ReportVisibilityFields } from '../../lib/uncounted';
 import { DEFAULT_WINDOW, type WindowDays } from '../../lib/reports';
 import { useDomainId } from '../../app';
 import { useDomain } from '../../lib/queries';
@@ -72,11 +73,11 @@ function Body({ data, days }: { data: Data; days: number }) {
 			)}
 
 			<Section title="What to fix next" description="Ranked by how much of your mail each problem touches.">
-				<FixList fixes={data.fixes} messages={data.totals.messages} showDomain={workspace} />
+				<FixList fixes={data.fixes} messages={data.totals.messages} showDomain={workspace} visibility={data as ReportVisibilityFields} />
 			</Section>
 
 			<Section title="Pass rate trend" description={`Messages per ${days > 30 ? 'week' : 'day'}, passed and failed DMARC.`}>
-				<TrendChart trend={data.trend} days={days} />
+				<TrendChart trend={data.trend} days={days} visibility={data as ReportVisibilityFields} />
 			</Section>
 
 			<Section title="Sender inventory" description="Every source that sent mail as your domain.">

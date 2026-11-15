@@ -178,7 +178,7 @@ describe('OverviewPage: unknown is never "not found"', () => {
 	it('several DMARC records: receivers ignore them; this is a finding, not "not checked"', async () => {
 		page({ dmarc_policy: null, dmarc_issue: 'multiple' });
 		const r = await row('example.org');
-		expect(within(r).getByText('Public DNS shows several DMARC records at _dmarc.example.org, so receivers ignore all of them.')).toBeInTheDocument();
+		expect(within(r).getByText('There are several DMARC records at _dmarc.example.org, so receivers ignore all of them. Keep one and delete the others.')).toBeInTheDocument();
 		expect(within(r).getByText('Keep one DMARC record at _dmarc.example.org and delete the others')).toBeInTheDocument();
 		expect(within(r).getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level 0 of 2: Delivering');
 	});
@@ -186,7 +186,8 @@ describe('OverviewPage: unknown is never "not found"', () => {
 	it('an invalid DMARC record is called invalid even if SPF was never read', async () => {
 		page({ dmarc_policy: null, dmarc_issue: 'invalid', spf_record: null, dns_checked_at: null, dns_check_status: 'failed' });
 		const r = await row('example.org');
-		expect(within(r).getByText('The DMARC record at _dmarc.example.org has no valid p= policy, so receivers ignore it.')).toBeInTheDocument();
+		// Stored before the record's tags were kept (dmarc_p null): the RFC outcome without a valid rua=.
+		expect(within(r).getByText('At _dmarc.example.org, the DMARC record has no valid p= policy (none, quarantine or reject) and no valid rua=, so receivers ignore it. Set p= to none, quarantine or reject.')).toBeInTheDocument();
 	});
 
 	it('a domain that does not exist says so, with no level and never "Delivering"', async () => {

@@ -32,12 +32,13 @@ const page = (el: ReactElement, path: string, route: string, routes: Record<stri
 		<Routes>
 			<Route path={path} element={el} />
 		</Routes>,
-		{ route, routes: { 'GET /api/domains': domains, ...routes } },
+		// The report pages read the domain's summary for its report visibility (nothing left out unless a test says so).
+		{ route, routes: { 'GET /api/domains': domains, 'GET /api/domains/1/check-summary': { domain_id: 1, total_messages: 0 }, ...routes } },
 	);
 
 describe('ExplorePage', () => {
 	it('shows an empty state for no sources', async () => {
-		page(<ExplorePage />, '/domains/:id/explore', '/domains/1/explore', { 'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] } });
+		page(<ExplorePage />, '/domains/:id/explore', '/domains/1/explore', { 'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] }, 'GET /api/domains/1/stats': { domain: 'example.com', days: 30, stats: [] } });
 		expect(await screen.findByText('No sources in the last 30 days')).toBeInTheDocument();
 		expect(screen.getByText(/No DMARC reports arrived in this window/)).toBeInTheDocument();
 	});
@@ -102,6 +103,30 @@ describe('ReportBrowserPage', () => {
 		// Rows of another domain link to that domain, not the route's.
 		const links = screen.getAllByRole('link', { name: /2025/ });
 		expect(links.map((l) => l.getAttribute('href'))).toEqual(['/domains/1/reports/2025-10-09', '/domains/2/reports/2025-10-09']);
+	});
+
+	// Reports that reached the address and were not stored, or not processed: the empty list is not "no reports".
+	const DROPPED = { intake: { status: 'limited', limit: 'counted_storage_dropped', notice: 'x', dropped: [{ reporter: 'google', label: 'Google', since: '2026-11-14T03:12:00.000Z', last_at: '2026-11-14T05:00:00.000Z', messages: 3, text: 't' }], not_processed: { messages: 0, last_at: null, reasons: [] } } };
+	const NOT_PROCESSED = { intake: { status: 'not_processed', limit: null, notice: '2 reports received for this domain could not be processed', dropped: [], not_processed: { messages: 2, last_at: 1, reasons: [] } } };
+	it('an empty list after reports were dropped for storage says so, not "check back tomorrow"', async () => {
+		page(<ReportBrowserPage />, '/domains/:id/reports', '/domains/1/reports', { 'GET /api/reports': { reports: [] }, 'GET /api/domains/1/check-summary': { domain_id: 1, total_messages: 0, ...DROPPED } });
+		expect(await screen.findByText('No counted reports for example.com')).toBeInTheDocument();
+		expect(screen.getByText(/^Report storage limit reached; reports from Google since .+ were not stored\.$/)).toBeInTheDocument();
+		expect(screen.queryByText(/check back tomorrow/)).toBeNull();
+	});
+	it('an empty list after reports could not be processed says so', async () => {
+		page(<ReportBrowserPage />, '/domains/:id/reports', '/domains/1/reports', { 'GET /api/reports': { reports: [] }, 'GET /api/domains/1/check-summary': { domain_id: 1, total_messages: 0, ...NOT_PROCESSED } });
+		expect(await screen.findByText('2 reports received for this domain could not be processed.')).toBeInTheDocument();
+		expect(screen.queryByText('No reports for example.com yet')).toBeNull();
+	});
+	it('the day page after reports were dropped says so, not "No reports received"', async () => {
+		page(<ReportDetailPage />, '/domains/:id/reports/:date', '/domains/1/reports/2026-10-01', {
+			'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=none', cf_managed: false },
+			'GET /api/domains/1/reports': { date: '2026-10-01', domain: 'example.com', summary: { total: 0, passed: 0, failed: 0 }, sources: [] },
+			'GET /api/domains/1/check-summary': { domain_id: 1, total_messages: 0, ...DROPPED },
+		});
+		expect(await screen.findByText('No counted reports for this date')).toBeInTheDocument();
+		expect(screen.queryByText('No reports received for this date')).toBeNull();
 	});
 
 	it('explains an empty list', async () => {

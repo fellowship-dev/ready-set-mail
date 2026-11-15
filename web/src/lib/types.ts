@@ -249,6 +249,11 @@ export interface OnboardingStatus {
 }
 
 export interface DomainCheckSummary extends ReportVisibilityFields {
+  /**
+   * Hosted report intake, per domain (GET /api/domains/summaries): whether reports can be connected, and the server's
+   * reason and its kind when not. Null on a self-hosted instance; absent from /check-summary.
+   */
+  report_connect?: { can_connect: boolean; refusal: string | null; refusal_kind: 'unavailable' | 'hosted_records' | 'ownership' | 'operator_only' | null } | null;
   domain_id: number;
   domain: string;
   dmarc_policy: string | null;
@@ -258,7 +263,7 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   /** Unix seconds of the last attempt, and its result: 'ok' | 'failed' | 'nxdomain'. Null: never attempted. */
   dns_check_attempted_at: number | null;
   dns_check_status: string | null;
-  /** Why DMARC gave no usable policy: 'multiple' | 'invalid'. */
+  /** Why DMARC gave no usable policy: 'multiple' | 'invalid' (no valid p=) | 'invalid_sp' (an invalid sp=). */
   dmarc_issue: string | null;
   /** The organizational domain dmarc_policy was inherited from (the domain has no record of its own). */
   dmarc_inherited_from: string | null;

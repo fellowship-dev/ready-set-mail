@@ -97,6 +97,18 @@ export const unrecognisedCountedNotice = (n: number) =>
   n === 1 ? '1 report is from a sender we do not recognise; it is counted because this server counts every report.' : `${n} reports are from senders we do not recognise; they are counted because this server counts every report.`;
 
 export const AUTHSERV_NOTICE = 'No report can be counted until AUTHSERV_ID and AUTHSERV_HEADER are set.';
+/** The same state as a hosted customer reads it: the configuration is the operator's, not theirs. */
+export const AUTHSERV_CUSTOMER_NOTICE = 'Reports for this domain cannot be counted yet. This is on our side; there is nothing for you to do.';
+
+/**
+ * Why nothing can be counted, in the words of whoever reads it: the operator (and anyone on a self-hosted instance, who runs it) is
+ * told which settings are missing; a hosted customer is told it is on our side. `operator`: the caller runs this instance
+ * (TenantContext.operatorView, set by the router from isInstanceOwner). Null when reports can be counted.
+ */
+export function countingNote(tenant: Pick<TenantContext, 'env' | 'mode' | 'operatorView'> & { scope: { counting: CountingMode } }): string | null {
+  if (tenant.scope.counting === 'all' || authservConfigured(tenant.env)) return null;
+  return tenant.mode !== 'saas' || tenant.operatorView ? AUTHSERV_NOTICE : AUTHSERV_CUSTOMER_NOTICE;
+}
 
 /** "3 reports could not be processed" / "1 report could not be processed". */
 export const notProcessedNotice = (n: number) => `${n} ${n === 1 ? 'report' : 'reports'} received for this domain could not be processed`;
@@ -130,25 +142,33 @@ export function intakeView(failures: FailureRow[], usage: { addressMessagesToday
   };
 }
 
-/** Everything above for one domain: `since` (unix seconds) is the same window the numbers use. */
+/** Everything above for one domain: `since` (unix seconds) is the same window the numbers use. The one-domain case of reportVisibilityMany. */
 export async function reportVisibility(tenant: TenantContext, domainId: number, since: number, nowSeconds = Math.floor(Date.now() / 1000), by: 'period' | 'received' = 'period'): Promise<ReportVisibility> {
+  return (await reportVisibilityMany(tenant, { fromId: domainId, toId: domainId }, since, nowSeconds, by))(domainId);
+}
+
+const emptyUncounted = (): UncountedView => ({ reports: 0, messages: 0, latest_at: null, unknown: 0, unauthenticated: 0, by_reporter: [] });
+
+/**
+ * The visibility of every domain whose id is in `range` (a page of the overview, or one domain), from six statements whatever the
+ * number of domains (five in `all` counting mode): reports per reporter (unrecognised, uncounted, counted), drops, failures and the
+ * intake counters, each grouped by domain. Returns the view for a domain id (an id with nothing stored gets the empty view).
+ */
+export async function reportVisibilityMany(tenant: TenantContext, range: { fromId: number; toId: number }, since: number, nowSeconds = Math.floor(Date.now() / 1000), by: 'period' | 'received' = 'period'): Promise<(domainId: number) => ReportVisibility> {
   const counting = tenant.scope.counting;
-  const [unrecognised, uncounted, mix, failures, usage, drops] = await Promise.all([
-    tenant.scope.reports.unrecognised(domainId, since, by),
-    tenant.scope.reports.uncounted(domainId, since, by),
-    tenant.scope.reports.counted(domainId, since, by),
-    tenant.scope.intake.failures(domainId, day(nowSeconds - FAILURE_WINDOW_DAYS * DAY)),
-    tenant.scope.intake.usage(domainId, day(nowSeconds)),
-    tenant.scope.intake.drops(domainId, nowSeconds - FAILURE_WINDOW_DAYS * DAY),
+  const [reports, intake] = await Promise.all([
+    tenant.scope.reports.visibilityByDomain(range, since, by),
+    tenant.scope.intake.intakeByDomain(range, nowSeconds - FAILURE_WINDOW_DAYS * DAY, day(nowSeconds - FAILURE_WINDOW_DAYS * DAY), day(nowSeconds)),
   ]);
   const hosted = hostedEnabled(tenant.env);
-  return {
+  const counting_note = countingNote(tenant);
+  return (domainId) => ({
     report_counting: counting,
-    counting_note: counting !== 'all' && !authservConfigured(tenant.env) ? AUTHSERV_NOTICE : null,
-    unrecognised,
-    uncounted,
-    reporters: reporterMix(mix),
+    counting_note,
+    unrecognised: reports.unrecognised.get(domainId) ?? emptyUncounted(),
+    uncounted: reports.uncounted.get(domainId) ?? emptyUncounted(),
+    reporters: reporterMix(reports.counted.get(domainId) ?? []),
     // The caps only apply to hosted intake; self-host has no daily caps to hit.
-    intake: intakeView(failures, hosted ? usage : null, hosted ? intakeLimits(tenant.env) : null, drops),
-  };
+    intake: intakeView(intake.failures.get(domainId) ?? [], hosted ? intake.usage(domainId) : null, hosted ? intakeLimits(tenant.env) : null, intake.drops.get(domainId) ?? []),
+  });
 }

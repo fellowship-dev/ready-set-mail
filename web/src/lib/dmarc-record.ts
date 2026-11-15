@@ -2,6 +2,7 @@
 
 import { parseDmarcTags, readDmarcTag } from '@ready-set-mail/dns-checks/dmarc-tags';
 import { isReportAddress } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcRecordProblem } from '@ready-set-mail/dns-checks/dmarc-problem';
 
 /**
  * True when `rua` is a usable report address. A domain added before a reports domain was configured has an
@@ -47,6 +48,31 @@ export function buildRecommendedRecord(current: string | null, policy: string, r
 	}
 	return record;
 }
+
+/** True when a TXT value is a DMARC record (`v=DMARC1` first); anything else at _dmarc is ignored by receivers. */
+export function isDmarcTxt(record: string | null | undefined): boolean {
+	return !!record && /^\s*v\s*=\s*DMARC1\s*(;|$)/i.test(record);
+}
+
+/**
+ * Two records that say the same thing: every tag, names and values compared case-insensitively and without spaces
+ * (rua= addresses as a set). `p=Reject` and `p=reject` are the same record, so no no-op change is offered.
+ */
+export function sameDmarcRecord(a: string | null | undefined, b: string | null | undefined): boolean {
+	const norm = (r: string | null | undefined) =>
+		Object.entries(parseDmarcTags(r))
+			.map(([k, v]) => `${k}=${k === 'rua' || k === 'ruf' ? v.toLowerCase().split(',').map((x) => x.trim()).filter(Boolean).sort().join(',') : v.toLowerCase().replace(/\s+/g, '')}`)
+			.sort()
+			.join(';');
+	return !!a && !!b && norm(a) === norm(b);
+}
+
+/**
+ * What is wrong with a DMARC record as receivers apply it, in one plain sentence, or null when nothing is: the one shared
+ * rule (packages/dns-checks/src/dmarc-problem.ts, RFC 7489 section 6.6.3), so this page, the stored facts and the agent
+ * tools say the same thing.
+ */
+export { dmarcRecordProblem };
 
 /** The `p=` value of a record, lower-cased, or null. */
 export function parseDmarcPolicy(record: string | null): string | null {

@@ -23,7 +23,9 @@ export function snapshotFromPreview(p: ClaimPreview): DnsSnapshot {
     if (p.spf.lookup_count !== null) out.spf_lookup_count = p.spf.lookup_count;
   }
   // The record text the preview read is the governing record (single, valid) whenever it carries a policy: its tags too.
-  if (p.dmarc.status !== 'error') out.dmarc = { policy: p.dmarc.policy, issue: p.dmarc.issue, inherited_from: p.dmarc.inherited_from, pct: p.dmarc.pct, ...(p.dmarc.policy && p.dmarc.record ? governingTags(p.dmarc.record) : { p: null, sp: null, rua: null }) };
+  // A broken single record (no valid p=, an invalid sp=) keeps its tags too: what receivers apply instead, and the bad value.
+  const single = p.dmarc.record && (p.dmarc.policy || p.dmarc.issue === 'invalid' || p.dmarc.issue === 'invalid_sp');
+  if (p.dmarc.status !== 'error') out.dmarc = { policy: p.dmarc.policy, issue: p.dmarc.issue, inherited_from: p.dmarc.inherited_from, pct: p.dmarc.pct, ...(single ? governingTags(p.dmarc.record!) : { p: null, sp: null, rua: null }) };
   return out;
 }
 
