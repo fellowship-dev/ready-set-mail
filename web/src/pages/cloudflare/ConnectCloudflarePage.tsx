@@ -1,7 +1,7 @@
 import { Button, toast } from '@ready-set-mail/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { LoadError, PageSkeleton, ReadOnlyNotice } from '../../components/states';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { ApiError, api } from '../../lib/api';
@@ -29,10 +29,22 @@ const domainIdOf = (back: string): number | null => {
 	return m ? Number.parseInt(m[1]!, 10) : null;
 };
 
-/** `#/cloudflare/connect?back=`: connect and choose zones, link the domain being worked on, return to where the person was. */
+/** From the dashboard and the first-run screens the way in is the setup wizard (it adds the zones and ends on the dashboard). */
+export const intoWizard = (back: string): boolean => back === '/' || back.startsWith('/setup');
+
+/**
+ * `#/cloudflare/connect?back=`: connect and choose zones, link the domain being worked on, return to where the person was.
+ * A back of `/` or `/setup…` (the dashboard's claim card, the first screen) is the first run: it goes into the wizard instead.
+ */
 export function ConnectCloudflarePage() {
 	const [params] = useSearchParams();
 	const back = safeBack(params.get('back'));
+	// Before anything reads the OAuth return from the address bar: the wizard reads it.
+	if (intoWizard(back)) return <Navigate to="/setup/cloudflare" replace />;
+	return <ConnectAndReturn back={back} />;
+}
+
+function ConnectAndReturn({ back }: { back: string }) {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const conns = useCfConnections();

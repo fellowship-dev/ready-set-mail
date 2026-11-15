@@ -4,7 +4,8 @@ import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
-import { ClaimCard } from '../../components/domain/ClaimCard';
+import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
+import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
 import { GetStarted } from '../../components/GetStarted';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
@@ -220,6 +221,10 @@ export function OverviewPage() {
 						) : null}
 					</div>
 
+					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
+					{canWrite ? <CloudflareAttention /> : null}
+					<WaitingClaims claims={claims} canWrite={canWrite} />
+
 					{canWrite ? <GetStarted steps={steps} /> : null}
 
 					{empty && !canWrite ? (
@@ -244,22 +249,6 @@ export function OverviewPage() {
 						</section>
 					) : null}
 
-					{claims.length > 0 ? (
-						<section aria-labelledby="waiting-heading" className="space-y-4">
-							<div className="space-y-1">
-								<h2 id="waiting-heading" className="text-lg font-semibold tracking-tight">
-									Waiting for verification
-								</h2>
-								<p className="text-sm text-ink-2">
-									{/* Both modes show a live DNS preview on these cards, so "not monitored" must not read as "nothing to see". */}
-									Prove you own each one with a DNS record. Until then a domain is not monitored: there are no stored checks, stats or alerts, only a live look at its DNS.
-								</p>
-							</div>
-							{claims.map((c) => (
-								<ClaimCard key={c.id} claim={c} canWrite={canWrite} preview="lazy" />
-							))}
-						</section>
-					) : null}
 				</>
 			)}
 		</div>

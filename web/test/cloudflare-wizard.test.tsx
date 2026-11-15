@@ -212,14 +212,6 @@ describe('Cloudflare wizard: domains', () => {
 		await waitFor(() => expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'dmarc', domainIds: [1] }));
 	});
 
-	it('hosted: a full plan keeps what was added', async () => {
-		setup({ 'POST /api/domains': { __status: 403, body: { error: 'Your plan allows 1 domain.', code: 'plan_limit', limit: { kind: 'domains_per_workspace' } } } }, { mode: 'saas' });
-		await userEvent.click(await screen.findByRole('button', { name: 'Add 1 domain' }));
-		expect(await screen.findByText('Your plan allows 1 domain.')).toBeInTheDocument();
-		expect(screen.getByText('Not added: your plan is full.')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
-	});
-
 	it('self-host without a base domain asks where reports go and uses base-domain first', async () => {
 		const { calls } = setup(
 			{ 'GET /api/domains': { domains: [] }, 'POST /api/settings/base-domain': { ok: true, domain: 'a.example.com', domain_id: 1 } },
@@ -266,9 +258,9 @@ describe('Cloudflare wizard: resume', () => {
 		expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'zones', connectionId: 'c1' });
 	});
 
-	it('hosted has no Reports mailbox step', async () => {
+	it('hosted: two steps, connect and one that adds the domains', async () => {
 		renderApp(<Page />, { route: '/setup/cloudflare', status: { mode: 'saas' }, routes: { 'GET /api/cloudflare/connections': offer() } });
-		expect(await screen.findByText(/Step 1 of 5/)).toBeInTheDocument();
+		expect(await screen.findByText(/Step 1 of 2/)).toBeInTheDocument();
 	});
 });
 

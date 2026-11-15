@@ -1,4 +1,5 @@
 import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
+import { CloudflareSuggestions } from '../../components/domain/CloudflareSuggestions';
 import { Alert, Badge, Button, CheckResult, CheckResultList, FieldError, FieldHint, Input, Label, PageHeader, RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
@@ -201,6 +202,10 @@ export function AddDomainPage() {
 	// A prefilled domain that is not one of the listed zones is typed, not picked.
 	const zones = !manual && cf.zoneList.length > 0 && (input === '' || cf.zoneList.some((z) => z.name === input)) ? cf.zoneList : null;
 
+	// A name inside a connected, allowed zone is verified through it at once (the server proves it); anything else takes the DNS record.
+	const typed = normalizeDomain(input);
+	const inZone = typed ? cf.zoneList.find((z) => typed === z.name || typed.endsWith(`.${z.name}`))?.name ?? null : null;
+
 	const add = useMutation({
 		mutationFn: (domain: string) => api<AddDomainResult | PendingDomainResult>('/api/domains', { method: 'POST', body: { domain } }),
 		onSuccess: async (res, domain) => {
@@ -274,6 +279,7 @@ export function AddDomainPage() {
 						<Input id="domain-input" placeholder="yourcompany.com" value={input} onChange={(e) => setInput(e.target.value)} autoFocus autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={(add.isError && !planLimitOf(add.error)) || undefined} aria-describedby={add.isError && !planLimitOf(add.error) ? 'domain-error' : undefined} />
 					)}
 					{!cf.pending && !zones && cf.canConnect ? <ConnectCloudflareLink /> : null}
+					{inZone ? <FieldHint>{normalizeDomain(input)} is in your Cloudflare zone {inZone}, so it is verified on the spot.</FieldHint> : null}
 					{add.isError && !planLimitOf(add.error) ? <FieldError id="domain-error">{domainErrorMessage(add.error)}</FieldError> : null}
 					{add.isError && !planLimitOf(add.error) ? <DomainRefusalHelp error={add.error} /> : null}
 					{add.isError && planLimitOf(add.error) ? <PlanLimitNotice limit={planLimitOf(add.error)!} /> : null}
@@ -282,6 +288,8 @@ export function AddDomainPage() {
 					{add.isPending ? 'Setting up…' : 'Continue'}
 				</WriteButton>
 			</form>
+
+			<CloudflareSuggestions />
 
 			<p className="text-sm text-ink-2">
 				Adding many at once? <Link className="text-brand-ink underline underline-offset-4" to="/bulk-import">Import a list of domains</Link>, or{' '}

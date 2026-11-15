@@ -2,6 +2,7 @@ import { Button, LevelLadder, Skeleton, StatusLabel, cn } from '@ready-set-mail/
 import { RefreshCw } from 'lucide-react';
 import { useId } from 'react';
 import { Link } from 'react-router';
+import { accountLabel, useCfConnections } from '../../lib/cloudflare';
 import type { DomainVerdict } from '../../lib/verdict';
 import { TalkToMax } from '../TalkToMax';
 
@@ -31,7 +32,7 @@ export function DomainRow({
 	onRetry,
 	hideEvidence = false,
 }: {
-	domain: { id: number; domain: string };
+	domain: { id: number; domain: string; cf_account_id?: string | null };
 	/** Set for a subdomain listed under its parent. */
 	parent?: string;
 	/** Nesting depth under the nearest listed ancestor (0: a root). */
@@ -43,6 +44,7 @@ export function DomainRow({
 	hideEvidence?: boolean;
 }) {
 	const nameId = useId();
+	const account = accountLabel(useCfConnections(canWrite).data, domain.cf_account_id);
 	const page = `/domains/${domain.id}`;
 
 	if (!verdict) {
@@ -81,6 +83,7 @@ export function DomainRow({
 						<StatusLabel kind={verdict.status} />
 					</div>
 					{parent ? <p className="text-xs text-ink-2">Subdomain of {parent}</p> : null}
+					{account ? <p className="text-xs text-ink-2">Cloudflare account {account}</p> : null}
 				</div>
 				<LevelLadder level={verdict.level} className="self-start [grid-area:ladder] lg:pt-1" aria-label={`${domain.domain}: protection level`} />
 				<div className="min-w-0 space-y-1.5 [grid-area:body]">

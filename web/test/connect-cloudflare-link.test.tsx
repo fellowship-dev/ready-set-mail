@@ -27,6 +27,14 @@ describe('ConnectCloudflareLink', () => {
 		</Routes>
 	);
 
+	it('from the dashboard and the setup screens the link goes straight into the wizard', async () => {
+		for (const route of ['/', '/setup']) {
+			const { unmount } = renderApp(<Routes><Route path="*" element={<ConnectCloudflareLink />} /></Routes>, { route, role: 'owner' });
+			expect(await screen.findByRole('link', { name: 'Connect Cloudflare to write this for you' })).toHaveAttribute('href', '/setup/cloudflare');
+			unmount();
+		}
+	});
+
 	it('shows owners and admins a link that carries the current route', async () => {
 		for (const role of ['owner', 'admin'] as const) {
 			const { unmount } = renderApp(ui, { route: '/domains/5/setup?x=1', role });
@@ -55,6 +63,7 @@ describe('Connect Cloudflare page return path', () => {
 		renderApp(
 			<Routes>
 				<Route path="/cloudflare/connect" element={<ConnectCloudflarePage />} />
+				<Route path="/setup/cloudflare" element={<Where />} />
 				<Route path="*" element={<Where />} />
 			</Routes>,
 			{ route, routes },
@@ -95,8 +104,16 @@ describe('Connect Cloudflare page return path', () => {
 		expect(calls.some((c) => c.path === '/api/domains/5/connection')).toBe(false);
 	});
 
-	it('falls back to / when back is not an in-app path', async () => {
-		page(`/cloudflare/connect?back=${encodeURIComponent('//evil.example/x')}`, {
+	it('goes into the first-run wizard when back is the dashboard, a setup screen, or not an in-app path', async () => {
+		for (const back of ['/', '/setup', '/setup/cloudflare', '//evil.example/x']) {
+			const { unmount } = page(`/cloudflare/connect?back=${encodeURIComponent(back)}`, { 'GET /api/cloudflare/connections': offer() });
+			await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/cloudflare$/));
+			unmount();
+		}
+	});
+
+	it('keeps the link-and-return behaviour for a domain page and for Settings', async () => {
+		page('/cloudflare/connect?back=%2Fsettings', {
 			'GET /api/cloudflare/connections': offer(),
 			'POST /api/cloudflare/connections': { connection: conn() },
 			'GET /api/cloudflare/connections/c1/zones': { zones: [zone(1, true)] },
@@ -104,6 +121,6 @@ describe('Connect Cloudflare page return path', () => {
 		});
 		await connectWithToken();
 		await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/settings$/));
 	});
 });

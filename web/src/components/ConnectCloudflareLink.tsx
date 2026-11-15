@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router';
+import { connectCloudflarePath } from '../lib/cloudflare';
 import { useSession } from '../lib/session';
 
 /**
@@ -11,7 +12,7 @@ export function ConnectCloudflareLink({ className, children }: { className?: str
 	if (!canWrite) return null;
 	return (
 		<p className={className ?? 'text-sm'}>
-			<Link to={`/cloudflare/connect?back=${encodeURIComponent(pathname + search)}`} className="text-brand-ink underline underline-offset-4">
+			<Link to={connectCloudflarePath(pathname, search)} className="text-brand-ink underline underline-offset-4">
 				{children ?? 'Connect Cloudflare to write this for you'}
 			</Link>
 		</p>

@@ -104,7 +104,8 @@ describe('claim proof step', () => {
 		expect(screen.queryByRole('group', { name: 'DNS record to add' })).toBeNull();
 		expect(screen.queryByRole('button', { name: 'Verify' })).toBeNull();
 		await userEvent.click(screen.getByRole('button', { name: 'Connect Cloudflare' }));
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/cloudflare/connect?back=%2F'));
+		// From the dashboard the way in is the first-run wizard, which adds the zones and ends on the dashboard.
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/setup/cloudflare'));
 	});
 
 	it('"I\'ll add it myself" reveals the record and Verify', async () => {
