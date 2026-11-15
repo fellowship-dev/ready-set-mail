@@ -359,6 +359,11 @@ export interface AuthStatus {
   help_url?: string | null;
   /** False when the free email check cannot work here (hosted without a canary domain): its menu item is hidden. */
   email_check?: boolean;
+  /** Whether sign-in ends with an emailed 6-digit code, and why. */
+  signin_codes?: boolean;
+  signin_codes_reason?: 'hosted' | 'mail' | 'no_mail' | 'turned_off';
+  /** Self-host with codes on: the domain the code email is sent from (e.g. reports.example.com). */
+  signin_code_sender_domain?: string | null;
 }
 
 /** GET /api/keys: prefixes only, never the secret. */

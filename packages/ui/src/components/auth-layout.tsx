@@ -10,13 +10,15 @@ export interface AuthLayoutProps {
 	/** Product name next to the mark. */
 	brandName?: string;
 	className?: string;
+	/** A quiet line under the card (legal links, help). */
+	footer?: React.ReactNode;
 }
 
 /**
  * Sign-in / owner setup / reset frame. Phones: content starts at the top (keyboard-safe) and the card
  * runs edge to edge; from `sm` the card is centred and framed. One h1, the card title.
  */
-export function AuthLayout({ title, description, children, brandName = "Ready Set Mail", className }: AuthLayoutProps) {
+export function AuthLayout({ title, description, children, brandName = "Ready Set Mail", className, footer }: AuthLayoutProps) {
 	return (
 		<main className={cn("flex min-h-screen flex-col items-center bg-surface-0 px-0 py-8 text-ink-1 sm:justify-center sm:px-6 sm:py-14", className)}>
 			<div className="w-full max-w-md space-y-6">
@@ -33,6 +35,7 @@ export function AuthLayout({ title, description, children, brandName = "Ready Se
 						{children}
 					</CardContent>
 				</Card>
+				{footer ? <footer className="px-4 text-center text-xs text-ink-2 sm:px-0">{footer}</footer> : null}
 			</div>
 		</main>
 	);
