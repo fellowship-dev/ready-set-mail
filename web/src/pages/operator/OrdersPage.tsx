@@ -15,13 +15,24 @@ interface OperatorOrder extends Order {
 
 const key = ['operator-orders'] as const;
 
+const tone = (o: Order) => (o.status === 'failed' ? 'danger' : o.status === 'paid' || o.status === 'done' ? 'success' : o.status === 'started' ? 'brand' : 'neutral');
+
+function Line({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<div className="grid grid-cols-[6rem_1fr] gap-2">
+			<dt className="text-ink-2">{label}</dt>
+			<dd className="min-w-0 [overflow-wrap:anywhere]">{children}</dd>
+		</div>
+	);
+}
+
 /** The instance owner's orders, across workspaces. Refunds are made in the Stripe dashboard and arrive by webhook: there is no refund button. */
 export function OrdersPage() {
 	const q = useQuery({ queryKey: key, queryFn: () => api<{ orders: OperatorOrder[] }>('/api/operator/orders'), retry: false });
 	const forbidden = q.error instanceof ApiError && (q.error.status === 403 || q.error.status === 404);
 	return (
 		<div className="min-w-0 space-y-6">
-			<PageHeader title="Orders" description="Paid orders from every workspace. Instance owner only. Refunds are made in the Stripe dashboard." />
+			<PageHeader title="Orders" description="Orders from every workspace, newest first, whatever their status. Instance owner only. Refunds are made in the Stripe dashboard." />
 			{forbidden ? (
 				<Alert variant="info" title="Only the instance owner can see orders">
 					Orders are the operator's, not a workspace's. They are visible to the account in OWNER_EMAIL, on the hosted service when billing is on.
@@ -50,8 +61,31 @@ function OrdersTable({ orders }: { orders: OperatorOrder[] }) {
 	if (orders.length === 0) return <EmptyState title="No orders yet" description="A paid order appears here with who bought it, for which domain and what to do next." />;
 	return (
 		<>
-			<div className="relative max-w-full overflow-x-auto rounded-lg border border-line bg-surface-1">
-				<table className="w-full min-w-[56rem] text-left text-sm">
+			{/* Below sm: one card per order, everything visible without scrolling sideways. From sm up: the table. */}
+			<ul className="space-y-3 sm:hidden" aria-label="Orders">
+				{orders.map((o) => (
+					<li key={o.id} className="space-y-3 rounded-lg border border-line bg-surface-1 p-4">
+						<div className="flex flex-wrap items-center justify-between gap-2">
+							<Badge variant={tone(o)}>{STATUS_WORDS[o.status]}</Badge>
+							<span className="text-sm font-medium">{formatMoney(o.amount, o.currency)}</span>
+						</div>
+						<dl className="space-y-1.5 text-sm">
+							<Line label="Domain">{o.domain}</Line>
+							<Line label="Workspace">{o.workspace_name}</Line>
+							<Line label="Buyer">{o.buyer_email ?? '—'}</Line>
+							<Line label="Ordered">{orderDate(o.created_at)}</Line>
+							{o.status === 'pending' || o.status === 'paid' ? null : <Line label="Updated">{orderDate(statusDate(o))}</Line>}
+						</dl>
+						{o.next ? (
+							<Button size="sm" variant="secondary" onClick={() => setAsk({ order: o, to: o.next! })}>
+								{o.next === 'started' ? 'Mark started' : 'Mark done'}
+							</Button>
+						) : null}
+					</li>
+				))}
+			</ul>
+			<div className="relative hidden max-w-full overflow-x-auto rounded-lg border border-line bg-surface-1 sm:block">
+				<table className="w-full min-w-[48rem] text-left text-sm">
 					<thead className="border-b border-line text-xs uppercase text-ink-2">
 						<tr>
 							<th className="px-4 py-2 font-medium">Status</th>
@@ -70,7 +104,7 @@ function OrdersTable({ orders }: { orders: OperatorOrder[] }) {
 						{orders.map((o) => (
 							<tr key={o.id} className="border-b border-line align-top last:border-0">
 								<td className="px-4 py-2">
-									<Badge variant={o.status === 'failed' ? 'danger' : o.status === 'paid' || o.status === 'done' ? 'success' : o.status === 'started' ? 'brand' : 'neutral'}>{STATUS_WORDS[o.status]}</Badge>
+									<Badge variant={tone(o)}>{STATUS_WORDS[o.status]}</Badge>
 								</td>
 								<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.workspace_name}</td>
 								<td className="px-4 py-2 [overflow-wrap:anywhere]">{o.domain}</td>

@@ -360,3 +360,14 @@ describe('the instance owner\'s orders', () => {
 		expect(await screen.findByText('No orders yet')).toBeInTheDocument();
 	});
 });
+
+describe('the orders list on a narrow screen', () => {
+	it('also renders one card per order, with every detail and the action', async () => {
+		renderApp(<OrdersPage />, { status: { mode: 'saas' }, routes: { 'GET /api/operator/orders': { orders: [{ ...order({ status: 'paid', paid_at: 1_800_000_000 }), workspace_id: 'ws_a', workspace_name: 'Acme workspace', stripe_invoice_id: 'in_1', next: 'started' }] } } });
+		const list = within(await screen.findByRole('list', { name: 'Orders' }));
+		for (const t of ['Paid', '$149', 'example.com', 'Acme workspace', 'owner@example.com', 'Jan 15, 2027']) expect(list.getByText(t)).toBeInTheDocument();
+		expect(list.getByRole('button', { name: 'Mark started' })).toBeInTheDocument();
+		expect(screen.getByText(/whatever their status/)).toBeInTheDocument();
+		expect(document.body.textContent).not.toMatch(/Paid orders from/);
+	});
+});
