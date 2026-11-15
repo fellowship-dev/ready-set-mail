@@ -18,6 +18,7 @@ import {
   type Resolver,
 } from "@ready-set-mail/dns-checks";
 import { createToolsResolver } from "./resolver";
+import { quote, quoteValues } from "./text";
 import type { DkimResult, DkimSelectorResult, DmarcResult, Finding, Severity, SpfIssueView, SpfResult } from "./types";
 
 // Turns the vendored package's results into API payloads with plain-English findings.
@@ -32,7 +33,7 @@ const STRENGTH: Readonly<Record<string, number>> = { none: 0, quarantine: 1, rej
 function dmarcFindings(domain: string, record: DmarcRecord, inherited: boolean, recordDomain: string, spExplicit: boolean): Finding[] {
   const out: Finding[] = [];
   if (!record.valid) {
-    out.push(f("fail", "dmarc-invalid", `The DMARC record is not valid: ${record.issues.join("; ")}. Receivers will ignore it.`));
+    out.push(f("fail", "dmarc-invalid", `The DMARC record is not valid: ${record.issues.map(quoteValues).join("; ")}. Receivers will ignore it.`));
     return out;
   }
   if (record.policy === "none") {
@@ -178,7 +179,8 @@ const verdictOf = (q: AllQualifier | null): NonNullable<SpfResult["verdict"]> =>
 
 /** The plain sentence for one fatal analyzer issue. The analyzer's own text quotes RFC sections, so it never reaches a finding. */
 function fatalMessage(i: SpfIssueView, rootDomain: string, recordCount: number): string {
-  const target = i.domain;
+  // Names and messages here come from DNS text: quoted short and inert (text.ts).
+  const target = quote(i.domain);
   switch (i.code) {
     case "multiple-records": {
       const n = i.domain === rootDomain ? recordCount : Number(/publishes (\d+)/.exec(i.message)?.[1] ?? 0);
@@ -197,9 +199,9 @@ function fatalMessage(i: SpfIssueView, rootDomain: string, recordCount: number):
     case "redirect-no-record":
       return `redirect=${target} points at ${target}, which publishes no SPF record, so ${PERMERROR}.`;
     case "syntax":
-      return `${i.message}, so ${PERMERROR}. Fix or remove it.`;
+      return `${quoteValues(i.message)}, so ${PERMERROR}. Fix or remove it.`;
     default:
-      return i.message;
+      return quoteValues(i.message);
   }
 }
 
@@ -207,7 +209,7 @@ function fatalMessage(i: SpfIssueView, rootDomain: string, recordCount: number):
 function allFinding(e: EffectiveAll): Finding | null {
   if (!e.resolved) return null;
   const redirected = e.via.length > 0;
-  const lead = redirected ? `Your record hands over to ${e.via.join(" then ")} (redirect=), and that record ` : "";
+  const lead = redirected ? `Your record hands over to ${e.via.map(quote).join(" then ")} (redirect=), and that record ` : "";
   const who = redirected ? "it does" : "you did";
   switch (e.qualifier) {
     case "-":
@@ -271,7 +273,7 @@ export async function checkSpf(domain: string, rawResolver: Resolver = createToo
     if (i.code === "loop") {
       const path = /^SPF loop: (.*)$/.exec(i.message)?.[1] ?? "";
       const byRedirect = !!eff?.redirectLoop;
-      text = `Your SPF ${byRedirect ? "redirects" : "includes"} in a loop (${eff?.redirectLoop?.join(" → ") ?? path}), so ${PERMERROR}.`;
+      text = `Your SPF ${byRedirect ? "redirects" : "includes"} in a loop (${eff?.redirectLoop?.map(quote).join(" → ") ?? quote(path)}), so ${PERMERROR}.`;
     }
     fatalTexts.push(text);
     findings.push(f("fail", `spf-${i.code}`, text));
@@ -372,7 +374,7 @@ function selectorResult(l: DkimLookup): DkimSelectorResult {
     } else if (kind === "ed25519") {
       findings.push(f("info", "dkim-ed25519", "Ed25519 key. Not every receiver can verify these, so keep an RSA signature as well."));
     } else {
-      findings.push(f("warn", "dkim-key-type", `Unknown key type k=${kind}.`));
+      findings.push(f("warn", "dkim-key-type", `Unknown key type k=${quote(kind)}.`));
     }
     if ((tag(raw, "t") ?? "").toLowerCase().split(":").includes("y")) {
       findings.push(f("warn", "dkim-testing", "The key is in testing mode (t=y). Receivers may treat failures as if unsigned; remove t=y once DKIM works."));

@@ -13,7 +13,7 @@ Local dev database: `npm run migrate:local`.
 
 ## Public reports (0014)
 
-Migration `0014_public_reports.sql` is additive: one new table, `public_reports` (dated free-check reports at a private link, `src/public-reports/`). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
+Migration `0014_public_reports.sql` is additive: two new tables, `public_reports` (dated free-check reports at a private link, `src/public-reports/`) and `public_report_usage` (the running counters behind their storage budgets). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
 
 ## Reports connected at
 

@@ -109,15 +109,16 @@ describe('0014 public_reports', () => {
 	const MINE = '0014_public_reports.sql';
 	const before = () => migrationFiles()[migrationFiles().indexOf(MINE) - 1]!;
 
-	it('adds one empty table and leaves every existing table alone', () => {
+	it('adds two empty tables and leaves every existing table alone', () => {
 		const d = createTestD1();
 		applyMigrations(d.sqlite, { through: before() });
 		const tablesBefore = (d.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r) => r.name);
 		d.sqlite.prepare("INSERT INTO domains (domain, rua_address) VALUES ('acme.com', 'r@x')").run();
 		expect(applyMigrations(d.sqlite, { through: MINE })).toEqual([MINE]);
 		const tablesAfter = (d.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r) => r.name);
-		expect(tablesAfter.filter((t) => !tablesBefore.includes(t))).toEqual(['public_reports']);
+		expect(tablesAfter.filter((t) => !tablesBefore.includes(t))).toEqual(['public_reports', 'public_report_usage']);
 		expect(d.sqlite.prepare('SELECT COUNT(*) AS n FROM public_reports').get()).toEqual({ n: 0 });
+		expect(d.sqlite.prepare('SELECT COUNT(*) AS n FROM public_report_usage').get()).toEqual({ n: 0 });
 		expect(d.sqlite.prepare('SELECT domain FROM domains').all()).toEqual([{ domain: 'acme.com' }]);
 	});
 
@@ -132,11 +133,26 @@ describe('0014 public_reports', () => {
 			{ name: 'schema_version', type: 'INTEGER', nn: 1, pk: 0 },
 			{ name: 'source', type: 'TEXT', nn: 1, pk: 0 },
 			{ name: 'result_json', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'result_bytes', type: 'INTEGER', nn: 1, pk: 0 },
 			{ name: 'delete_token_hash', type: 'TEXT', nn: 1, pk: 0 },
 			{ name: 'dedupe_key', type: 'TEXT', nn: 0, pk: 0 },
 		]);
-		const ins = d.sqlite.prepare('INSERT INTO public_reports (id, domain, created_at, schema_version, source, result_json, delete_token_hash) VALUES (?, ?, 1, 1, ?, ?, ?)');
+		const ins = d.sqlite.prepare('INSERT INTO public_reports (id, domain, created_at, schema_version, source, result_json, result_bytes, delete_token_hash) VALUES (?, ?, 1, 1, ?, ?, 2, ?)');
 		ins.run('a'.repeat(22), 'acme.com', 'dmarc', '{}', 'h');
 		expect(() => ins.run('a'.repeat(22), 'acme.com', 'dmarc', '{}', 'h')).toThrow();
+	});
+
+	it('keeps the storage counters in one row with every column required', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: MINE });
+		const cols = d.sqlite.prepare("SELECT name, type, \"notnull\" AS nn, pk FROM pragma_table_info('public_report_usage') ORDER BY cid").all() as any[];
+		expect(cols).toEqual([
+			{ name: 'id', type: 'INTEGER', nn: 1, pk: 1 },
+			{ name: 'day', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'day_reports', type: 'INTEGER', nn: 1, pk: 0 },
+			{ name: 'day_bytes', type: 'INTEGER', nn: 1, pk: 0 },
+			{ name: 'total_reports', type: 'INTEGER', nn: 1, pk: 0 },
+			{ name: 'total_bytes', type: 'INTEGER', nn: 1, pk: 0 },
+		]);
 	});
 });

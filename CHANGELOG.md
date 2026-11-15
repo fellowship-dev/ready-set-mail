@@ -6,10 +6,6 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 
 ## [Unreleased]
 
-### Added
-
-- **Saved, dated domain reports.** With `PUBLIC_REPORTS_ENABLED=1`, `POST /api/public/reports` runs the free domain check and stores it as a report that anyone with its link can read (`GET /api/public/reports/:id`), and that its creator can delete with the token handed out once. Reports are kept until deleted. Run `npm run migrate` first (migration `0014`); limits and deletion are in [docs/data-retention.md](docs/data-retention.md#public-domain-reports). ([#169](https://github.com/fellowship-dev/ready-set-mail/pull/169))
-
 ## [2.0.0] - YYYY-MM-DD
 
 2.0 rebuilds Ready Set Mail (formerly Inbox Angel) around workspaces, a new dashboard, a one-command installer and agent access. <!-- @legacy-name: the product's earlier name -->
@@ -38,6 +34,7 @@ What does not carry over: **report history** (it stays in your export, a SQL dum
 
 ### Added
 
+- **Saved, dated domain reports.** With `PUBLIC_REPORTS_ENABLED=1`, `POST /api/public/reports` runs the free domain check and, when every lookup answered, stores it as a report that anyone with its link can read (`GET /api/public/reports/:id`) and that its creator can delete with the token handed out once. Reports are kept until deleted, within a storage budget (32 KiB a report, 50 MiB a day, 1 GiB in total by default) and per-client and per-network limits. Run `npm run migrate` first (migration `0014`); limits, budgets and deletion are in [docs/data-retention.md](docs/data-retention.md#public-domain-reports). ([#169](https://github.com/fellowship-dev/ready-set-mail/pull/169))
 - **Workspaces and teams.** One login can belong to several workspaces and switch between them. Owners invite people (also people who already have a login) as owner, admin or read-only member, and can transfer ownership, leave or delete a workspace. ([#107](https://github.com/fellowship-dev/ready-set-mail/pull/107), [#109](https://github.com/fellowship-dev/ready-set-mail/pull/109), [#115](https://github.com/fellowship-dev/ready-set-mail/pull/115), [#116](https://github.com/fellowship-dev/ready-set-mail/pull/116))
 - **Accounts.** Email and password sign-in, plus GitHub or Google sign-in when their client ids are set. ([#109](https://github.com/fellowship-dev/ready-set-mail/pull/109))
 - **Cloudflare-first onboarding.** After creating the owner you connect Cloudflare (a "Create the token in Cloudflare" link opens a pre-filled token form), pick zones and add domains; every DNS change is shown before it is written, a write Cloudflare did not confirm says "Written, not checked", and "I'll add DNS records myself" keeps the copy-and-paste path. When Email Routing rules cannot be read, the screen says why. ([#16](https://github.com/fellowship-dev/ready-set-mail/pull/16), [#163](https://github.com/fellowship-dev/ready-set-mail/pull/163), [#167](https://github.com/fellowship-dev/ready-set-mail/pull/167))

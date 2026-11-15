@@ -37,7 +37,7 @@ export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow
 export * from './heartbeat';
 export type { MtaStsMode } from './domain-config';
 export { globalQueries, type IpInfoRow } from './global';
-export { publicReportQueries, type NewPublicReport } from './public-reports';
+export { publicReportQueries, type NewPublicReport, type PublicReportBudget, type PublicReportUsage } from './public-reports';
 export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_BYTES, type RecordTuple, type StoreReportInput } from './report-store';
 export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimits, type SweepResult, type Tombstone } from './global-lifecycle';
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';

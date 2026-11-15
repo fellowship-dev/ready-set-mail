@@ -15,7 +15,8 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Raw report XML (and the raw JSON of TLS-RPT reports) | **30 days** self-hosted; **not stored** in hosted mode | `RAW_XML_RETENTION_DAYS` | `0` = never store. The parsed rows above are what the raw payload contained. After the window only the raw payload is removed. Hosted mode defaults to `0`. |
 | IP enrichment cache (`ip_info`: reverse DNS, ASN, organisation, country) | **30 days** | `RETENTION_IP_INFO_DAYS` | A global cache, not per workspace. |
 | Free-check results (`check_results`) | **30 days** | `RETENTION_CHECK_RESULTS_DAYS` | |
-| Public domain reports (`public_reports`: the checked domain, the time and what public DNS showed) | **until deleted** | | No automatic expiry, by decision; revisit only if storage becomes a real problem. Deleted with the report's delete token or by the operator on request (below). Not tied to a workspace. |
+| Public domain reports (`public_reports`: the checked domain, the time and what public DNS showed) | **until deleted** | | No automatic expiry, by decision, within a total storage budget (1 GiB by default, `PUBLIC_REPORTS_TOTAL_BYTES`; below). Deleted with the report's delete token or by the operator on request (below). Not tied to a workspace. |
+| Rate-limit counters (`auth_rate_limits`: sign-in and public reports, keyed by a keyed hash; for public reports the hash key changes every UTC day) | **about 2 days** after their window ends | | Swept now and then on writes and by the daily job. A counter, no address. |
 | Intake counters (`intake_usage`, `intake_quota`: messages and records per address, workspace and day) | **8 days** | `RETENTION_INTAKE_COUNTERS_DAYS` | Counters, no report content. |
 | "Reports we could not store" markers (`intake_failures`: a count per domain, day and reason) | **90 days** | `RETENTION_INTAKE_FAILURES_DAYS` | A counter, no report content. |
 | Aggregate reports that are stored but never counted (`reporter_tier` `unknown` or `unauthenticated`) | **30 days** | `RETENTION_UNCOUNTED_REPORTS_DAYS` (the earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` is still honoured when it is unset) | Stored but never counted. Not applied when `REPORT_COUNTING=all`, where they are the numbers. A reporter an owner later promotes becomes `counted` and keeps the normal window. |
@@ -51,16 +52,40 @@ records the privacy policy describes for the website and for sales prospecting.
 
 Running the website's domain checker stores a dated report (`POST /api/public/reports`, `src/public-reports/routes.ts`) that anyone with its
 link (`https://readysetmail.com/r/<id>`) can read. A row holds the checked domain, when it was checked, which checker made it, and the DNS
-results (at most 64 KiB); no IP address, no email and nothing else the visitor typed. A keyed hash of the client IP and domain is kept with
-the row so a repeat within a minute returns the same report; it is cleared when the next report is made after that minute, and at the latest
-by the daily job.
+results; no IP address, no email and nothing else the visitor typed. Only a complete check is stored: when any lookup failed or was cut
+short the answer is `503` and nothing is kept. A keyed hash of the client and the domain is kept with the row so a repeat within a minute
+returns the same report; it is cleared when the next report is made after that minute, and at the latest by the daily job, which clears
+these keys before anything else.
 
 * **Kept until deleted.** The daily job deletes no report; it only clears those de-duplication keys (`public_report_dedupe_keys` in its log line).
 * **Deleted by its creator:** `DELETE /api/public/reports/:id` with the delete token the creation answer handed out once (the site keeps it
   in the creator's browser and shows "Delete this report"). Only its SHA-256 is stored.
 * **Deleted on request** (anyone else, sent to the contact address in the privacy policy with the link): the operator runs
-  `wrangler d1 execute DB --remote --command "DELETE FROM public_reports WHERE id = '<id>'"`. The id is the last part of the link.
+  `wrangler d1 execute DB --remote --command "DELETE FROM public_reports WHERE id = '<id>'"`. The id is the last part of the link. The
+  storage counter catches up at the next daily job.
 * **Not in a workspace export or an account deletion:** a report belongs to no workspace and no account.
+
+### Storage budget
+
+The reports share the database with sign-in and report intake, so they have bounds. Defaults, each overridable with a positive integer:
+
+| Limit | Default | Setting | When it is reached |
+|---|---|---|---|
+| One report | 32 KiB (32,768 bytes; ordinary reports measure 6.4 to 8.4 KB) | `PUBLIC_REPORTS_MAX_REPORT_BYTES` | that report is refused (`413`) |
+| New reports a UTC day | 2,000 | `PUBLIC_REPORTS_DAILY_CAP` | `429` until the next UTC day |
+| New bytes a UTC day | 50 MiB (52,428,800 bytes) | `PUBLIC_REPORTS_DAILY_BYTES` | `429` until the next UTC day |
+| All stored reports | 1 GiB (1,073,741,824 bytes) | `PUBLIC_REPORTS_TOTAL_BYTES` | `503` "We cannot save more reports at the moment"; existing reports keep opening and can be deleted |
+
+At the defaults the total holds at least 32,768 reports (all at the 32 KiB maximum) and about 128,000 to 168,000 ordinary ones; the daily
+byte budget allows at least 1,600 maximum-size reports a day, and the daily cap of 2,000 ordinary ones uses at most about 17 MB.
+
+* The counters live in one row, `public_report_usage`: reports and bytes today, reports and bytes stored. A new report reserves its bytes
+  in one conditional statement, so concurrent requests cannot overshoot; it is checked (read only) before the request writes anything.
+  Deleting a report gives its bytes back. The daily job recounts the stored total from `public_reports`.
+* **At 80% of the total** the Worker logs `[public-reports] stored reports have reached 80% of PUBLIC_REPORTS_TOTAL_BYTES` once when a
+  report crosses it, and the daily job logs it every day while it holds (`public_reports_near_limit` in its log line). The instance
+  preflight (`GET /api/instance/preflight`) has a `public_reports` field (stored reports and bytes, the budget, the percent used,
+  `near_limit`) and a `public_reports` item from 80%.
 
 ## Deleting a workspace
 

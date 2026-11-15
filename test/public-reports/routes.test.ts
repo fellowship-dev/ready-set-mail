@@ -113,7 +113,7 @@ describe('POST /api/public/reports', () => {
   it('refuses a body that is not small JSON', async () => {
     const w = world();
     expect((await send(w.env, 'POST', '/api/public/reports', { raw: 'domain=acme.com' })).status).toBe(400);
-    expect((await send(w.env, 'POST', '/api/public/reports', { body: { domain: 'acme.com', pad: 'x'.repeat(3000) } })).status).toBe(400);
+    expect((await send(w.env, 'POST', '/api/public/reports', { body: { domain: 'acme.com', pad: 'x'.repeat(3000) } })).status).toBe(413);
   });
 
   it('normalises the name as the checker does: case and a leading www. are dropped', async () => {
@@ -159,17 +159,17 @@ describe('POST /api/public/reports', () => {
     expect(JSON.stringify(w.rows('SELECT * FROM public_reports'))).not.toContain(ip);
   });
 
-  it(`limits each client IP to ${PUBLIC_REPORT_LIMITS.perIpPerHour} an hour, counting the IP Cloudflare saw, not X-Forwarded-For`, async () => {
+  it(`limits each client IP to ${PUBLIC_REPORT_LIMITS.perClientPerHour} an hour, counting the IP Cloudflare saw, not X-Forwarded-For`, async () => {
     const w = world();
     const ip = '198.51.100.4';
     const codes: number[] = [];
-    for (let i = 0; i < PUBLIC_REPORT_LIMITS.perIpPerHour + 2; i++) {
+    for (let i = 0; i < PUBLIC_REPORT_LIMITS.perClientPerHour + 2; i++) {
       // A different domain each time (no de-duplication) and a different forged X-Forwarded-For.
       const res = await create(w.env, `d${i}.acme.com`, { ip, headers: { 'x-forwarded-for': `192.0.2.${i}` } });
       codes.push(res.status);
     }
-    expect(codes.slice(0, PUBLIC_REPORT_LIMITS.perIpPerHour).every((c) => c === 201)).toBe(true);
-    expect(codes.slice(PUBLIC_REPORT_LIMITS.perIpPerHour)).toEqual([429, 429]);
+    expect(codes.slice(0, PUBLIC_REPORT_LIMITS.perClientPerHour).every((c) => c === 201)).toBe(true);
+    expect(codes.slice(PUBLIC_REPORT_LIMITS.perClientPerHour)).toEqual([429, 429]);
     const limited = await create(w.env, 'acme.com', { ip });
     expect(limited.headers.get('retry-after')).toBe('3600');
     expect(limited.headers.get('access-control-allow-origin')).toBe(SITE); // the site can read the 429
@@ -186,7 +186,7 @@ describe('POST /api/public/reports', () => {
     const res = await create(w.env, 'other.com', { ip: '198.51.100.7' });
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBe('60');
-    expect(keys).toEqual(['public-report:198.51.100.7', 'public-report:198.51.100.7']);
+    expect(keys).toEqual(['public-report:ip4:198.51.100.7', 'public-report:ip4:198.51.100.7']);
   });
 
   it('stops at the daily cap for the whole instance with a plain "try again later"', async () => {
@@ -200,7 +200,7 @@ describe('POST /api/public/reports', () => {
     expect(w.rows('SELECT COUNT(*) AS n FROM public_reports')).toEqual([{ n: 2 }]);
   });
 
-  it(`refuses to store more than ${PUBLIC_REPORT_LIMITS.maxJsonBytes / 1024} KiB of results`, async () => {
+  it(`refuses to store more than ${PUBLIC_REPORT_LIMITS.maxReportBytes / 1024} KiB of results`, async () => {
     const big = `v=DKIM1; k=rsa; p=${'A'.repeat(2500)}`;
     installFakeDns({ ...ZONE, ...Object.fromEntries(COMMON_DKIM_SELECTORS.map((s) => [`${s}._domainkey.acme.com/TXT`, txt(big)])) });
     const w = world();
@@ -214,7 +214,7 @@ describe('POST /api/public/reports', () => {
     // Every name answers SERVFAIL from both resolvers.
     installFakeDns(new Proxy({}, { get: () => 'servfail' }) as Record<string, Rec>);
     const res = await create(w.env, 'acme.com');
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(503);
     expect(w.rows('SELECT * FROM public_reports')).toEqual([]);
   });
 });
@@ -328,5 +328,274 @@ describe('retention', () => {
     expect(w.rows('SELECT COUNT(*) AS n FROM public_reports WHERE dedupe_key IS NOT NULL')).toEqual([{ n: 1 }]);
     await runRetention(w.env, { now: () => Date.now() + 365 * 86_400_000 });
     expect(w.rows('SELECT id, dedupe_key FROM public_reports')).toEqual([{ id: made.id, dedupe_key: null }]);
+  });
+});
+
+// ── Review round 1: limits per network, budgets, completeness, rotating keys, logging, body size, hostile DNS text ──
+
+const usage = (w: ReturnType<typeof world>) => w.rows('SELECT * FROM public_report_usage')[0] ?? null;
+const rateRows = (w: ReturnType<typeof world>) => w.rows('SELECT key FROM auth_rate_limits').length;
+
+describe('GET /api/public/reports/status', () => {
+  it('says whether this instance makes reports, so the site claims "saved" only when it does', async () => {
+    for (const [v, enabled] of [['1', true], [undefined, false], ['0', false]] as const) {
+      const res = await send(world({ PUBLIC_REPORTS_ENABLED: v }).env, 'GET', '/api/public/reports/status');
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabled });
+      expect(res.headers.get('access-control-allow-origin')).toBe(SITE);
+    }
+  });
+});
+
+describe('limits per client and per network', () => {
+  it(`counts an IPv6 /64 as one client: 40 addresses in one /64 make ${PUBLIC_REPORT_LIMITS.perClientPerHour} reports, then 429`, async () => {
+    const w = world();
+    const codes: number[] = [];
+    for (let i = 1; i <= 40; i++) codes.push((await create(w.env, `d${i}.acme.com`, { ip: `2001:db8:1:2::${i.toString(16)}` })).status);
+    expect(codes.slice(0, PUBLIC_REPORT_LIMITS.perClientPerHour).every((c) => c === 201)).toBe(true);
+    expect(codes.slice(PUBLIC_REPORT_LIMITS.perClientPerHour)).toEqual(Array(40 - PUBLIC_REPORT_LIMITS.perClientPerHour).fill(429));
+    // The long and the short spelling of an address in the same /64 are the same client; the next /64 is another one.
+    expect((await create(w.env, 'x.acme.com', { ip: '2001:0db8:0001:0002:ffff:0000:0000:0001' })).status).toBe(429);
+    expect((await create(w.env, 'x.acme.com', { ip: '2001:db8:1:3::1' })).status).toBe(201);
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports')).toEqual([{ n: PUBLIC_REPORT_LIMITS.perClientPerHour + 1 }]);
+  });
+
+  it(`limits each IPv6 /48 and each IPv4 /24 to ${PUBLIC_REPORT_LIMITS.perNetworkPerHour} an hour and ${PUBLIC_REPORT_LIMITS.perNetworkPerDay} a day`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-14T01:00:00Z'));
+    const w = world();
+    const hour = PUBLIC_REPORT_LIMITS.perNetworkPerHour;
+    // One report from each of `hour` different /64s inside 2001:db8:5::/48.
+    let n = 0;
+    const v6 = async () => (await create(w.env, `v${++n}.acme.com`, { ip: `2001:db8:5:${n.toString(16)}::1` })).status;
+    const first: number[] = [];
+    for (let i = 0; i < hour; i++) first.push(await v6());
+    expect(first.every((c) => c === 201)).toBe(true);
+    const over = await create(w.env, 'over.acme.com', { ip: '2001:db8:5:ffff::1' });
+    expect(over.status).toBe(429);
+    expect(over.headers.get('retry-after')).toBe('3600');
+    expect((await create(w.env, 'elsewhere.acme.com', { ip: '2001:db8:6::1' })).status).toBe(201); // another /48
+    // The next hour the /48 may make another `hour`, which reaches the day's limit.
+    vi.setSystemTime(new Date('2026-11-14T02:30:00Z'));
+    const second: number[] = [];
+    for (let i = 0; i < PUBLIC_REPORT_LIMITS.perNetworkPerDay - hour - 1; i++) second.push(await v6());
+    expect(second.every((c) => c === 201)).toBe(true);
+    const dayOver = await create(w.env, 'day.acme.com', { ip: '2001:db8:5:fffe::1' });
+    expect(dayOver.status).toBe(429);
+    expect(dayOver.headers.get('retry-after')).toBe('86400');
+
+    // IPv4: four addresses in one /24 share its hourly limit.
+    const v4: number[] = [];
+    for (let i = 0; i < hour; i++) v4.push((await create(w.env, `w${i}.acme.com`, { ip: `192.0.2.${1 + (i % 4)}` })).status);
+    expect(v4.every((c) => c === 201)).toBe(true);
+    expect((await create(w.env, 'w-over.acme.com', { ip: '192.0.2.200' })).status).toBe(429);
+    expect((await create(w.env, 'w-other.acme.com', { ip: '192.0.3.1' })).status).toBe(201);
+  }, 60_000);
+
+  it('refuses a request without a usable client address instead of pooling it, and writes nothing', async () => {
+    const w = world();
+    for (const ip of ['', 'unknown', '999.1.1.1', '2001:db8::1::2', 'fe80::1%eth0']) {
+      const res = await create(w.env, 'acme.com', { ip });
+      expect(res.status, ip).toBe(400);
+    }
+    expect(rateRows(w)).toBe(0);
+    expect(w.rows('SELECT * FROM public_reports')).toEqual([]);
+  });
+
+  it('checks the daily cap before any write: past the cap, new addresses add no counter rows', async () => {
+    const w = world({ PUBLIC_REPORTS_DAILY_CAP: '1' });
+    expect((await create(w.env, 'acme.com')).status).toBe(201);
+    const before = rateRows(w);
+    for (let i = 0; i < 5; i++) expect((await create(w.env, `d${i}.acme.com`, { ip: `198.51.100.${50 + i}` })).status).toBe(429);
+    expect(rateRows(w)).toBe(before);
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports')).toEqual([{ n: 1 }]);
+  });
+
+  it('keys the counters and the dedupe hash with a key that changes every UTC day', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const w = world();
+    const ip = '203.0.113.77';
+    vi.setSystemTime(new Date('2026-11-14T23:59:00Z'));
+    const a = await (await create(w.env, 'acme.com', { ip })).json() as any;
+    const dayOne = w.rows("SELECT key FROM auth_rate_limits").map((r) => r.key);
+    const dedupeOne = w.rows('SELECT dedupe_key FROM public_reports')[0].dedupe_key;
+    vi.setSystemTime(new Date('2026-11-15T00:01:30Z'));
+    const b = await (await create(w.env, 'acme.com', { ip })).json() as any;
+    expect(b.id).not.toBe(a.id);
+    const dayTwo = w.rows("SELECT key FROM auth_rate_limits").map((r) => r.key).filter((k) => !dayOne.includes(k));
+    expect(dayTwo).toHaveLength(dayOne.length); // every key is new
+    expect(w.rows('SELECT dedupe_key FROM public_reports WHERE id = ?', b.id)[0].dedupe_key).not.toBe(dedupeOne);
+    expect(JSON.stringify(w.rows('SELECT * FROM auth_rate_limits'))).not.toContain(ip);
+  });
+});
+
+describe('storage budgets', () => {
+  it('counts bytes, refuses past the total with a plain 503 while existing reports still open, and gives bytes back on delete', async () => {
+    const w = world();
+    const first = await (await create(w.env, 'acme.com')).json() as any;
+    const bytes = new TextEncoder().encode(JSON.stringify(first.report)).length;
+    expect(usage(w)).toMatchObject({ total_reports: 1, total_bytes: bytes, day_reports: 1, day_bytes: bytes });
+    expect(w.rows('SELECT result_bytes FROM public_reports')).toEqual([{ result_bytes: bytes }]);
+    w.env.PUBLIC_REPORTS_TOTAL_BYTES = String(Math.floor(bytes * 1.5));
+    const full = await create(w.env, 'other.com');
+    expect(full.status).toBe(503);
+    expect(((await full.json()) as any).error).toBe('We cannot save more reports at the moment. Try again later.');
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports')).toEqual([{ n: 1 }]);
+    expect((await send(w.env, 'GET', `/api/public/reports/${first.id}`)).status).toBe(200);
+    expect((await send(w.env, 'DELETE', `/api/public/reports/${first.id}`, { body: { delete_token: first.delete_token } })).status).toBe(204);
+    expect(usage(w)).toMatchObject({ total_reports: 0, total_bytes: 0 });
+    expect((await create(w.env, 'other.com')).status).toBe(201);
+  });
+
+  it('stops at the daily byte budget with a 429 and at the per-report cap with a 413, both configurable', async () => {
+    const w = world();
+    const first = await (await create(w.env, 'acme.com')).json() as any;
+    const bytes = new TextEncoder().encode(JSON.stringify(first.report)).length;
+    w.env.PUBLIC_REPORTS_DAILY_BYTES = String(Math.floor(bytes * 1.5));
+    const daily = await create(w.env, 'other.com');
+    expect(daily.status).toBe(429);
+    expect(((await daily.json()) as any).error).toMatch(/today/);
+    const small = world({ PUBLIC_REPORTS_MAX_REPORT_BYTES: '1000' });
+    expect((await create(small.env, 'acme.com')).status).toBe(413);
+    expect(usage(small)).toBeNull();
+  });
+
+  it('says so at 80% of the total: one log line when a report crosses it, and the instance preflight', async () => {
+    const { instancePreflight } = await import('../../src/setup/preflight');
+    const w = world();
+    const first = await (await create(w.env, 'acme.com')).json() as any;
+    const bytes = new TextEncoder().encode(JSON.stringify(first.report)).length;
+    expect(logs.join('\n')).not.toContain('80%');
+    expect((await instancePreflight(w.env, SITE)).public_reports).toMatchObject({ enabled: true, stored_reports: 1, stored_bytes: bytes, total_budget_bytes: 1024 ** 3, near_limit: false });
+    w.env.PUBLIC_REPORTS_TOTAL_BYTES = String(Math.floor((bytes * 2) / 0.85));
+    expect((await create(w.env, 'other.com')).status).toBe(201);
+    expect(logs.filter((l) => l.includes('80% of PUBLIC_REPORTS_TOTAL_BYTES'))).toHaveLength(1);
+    const pre = await instancePreflight(w.env, SITE);
+    expect(pre.public_reports).toMatchObject({ stored_reports: 2, near_limit: true });
+    expect(pre.items.find((i) => i.id === 'public_reports')).toMatchObject({ severity: 'note', setting: 'PUBLIC_REPORTS_TOTAL_BYTES' });
+  });
+
+  it('keeps the daily cap exact under a parallel burst (one atomic counter, not a COUNT)', async () => {
+    const w = world({ PUBLIC_REPORTS_DAILY_CAP: '3' });
+    const codes = await Promise.all(Array.from({ length: 12 }, (_, i) => create(w.env, `p${i}.acme.com`, { ip: `198.51.100.${100 + i}` }).then((r) => r.status)));
+    expect(codes.filter((c) => c === 201)).toHaveLength(3);
+    expect(codes.filter((c) => c === 429)).toHaveLength(9);
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports')).toEqual([{ n: 3 }]);
+    expect(usage(w)).toMatchObject({ day_reports: 3, total_reports: 3 });
+  });
+});
+
+describe('only complete reports are stored', () => {
+  it.each([
+    ['one DKIM selector fails', { [`${COMMON_DKIM_SELECTORS[0]}._domainkey.acme.com/TXT`]: 'servfail' as Rec }],
+    ['the DMARC lookup fails', { '_dmarc.acme.com/TXT': 'servfail' as Rec }],
+    ['an SPF include fails', { 'acme.com/TXT': txt('v=spf1 include:mail.acme.com -all'), 'mail.acme.com/TXT': 'servfail' as Rec }],
+    ['the existence lookup fails', { 'acme.com/A': 'servfail' as Rec }],
+  ])('answers 503 and stores nothing when %s', async (_n, broken) => {
+    installFakeDns({ ...ZONE, ...broken });
+    const w = world();
+    const res = await create(w.env, 'acme.com');
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as any).error).toMatch(/no report was saved/);
+    expect(w.rows('SELECT * FROM public_reports')).toEqual([]);
+    expect(usage(w)).toBeNull();
+  });
+});
+
+describe('storage errors', () => {
+  it('logs a fixed sentence, never the bound values, and answers 503', async () => {
+    const w = world();
+    const real = w.env.DB;
+    w.env.DB = new Proxy(real, {
+      get(t, k) {
+        if (k === 'prepare') {
+          return (q: string) => {
+            const stmt = t.prepare(q);
+            if (!/insert into "public_reports"/i.test(q)) return stmt;
+            const failing = (args: unknown[]) => {
+              const fail = async () => { throw new Error(`D1_ERROR: Failed query: ${q} params: ${args.join(',')}`); };
+              return { bind: (...more: unknown[]) => failing(more), run: fail, all: fail, raw: fail, first: fail };
+            };
+            return failing([]);
+          };
+        }
+        const v = t[k];
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    const res = await create(w.env, 'secret-domain.acme.com');
+    expect(res.status).toBe(503);
+    const all = logs.join('\n');
+    expect(all).toContain('[public-reports] storage error while making a report');
+    expect(all).not.toMatch(/secret-domain|params|[0-9a-f]{32}/);
+    expect(usage(w)).toMatchObject({ total_reports: 0, total_bytes: 0 }); // the reservation was given back
+  });
+});
+
+describe('request bodies', () => {
+  const stream = (pulls: { n: number }, endless = true) => new ReadableStream<Uint8Array>({
+    pull(c) {
+      pulls.n++;
+      if (!endless) throw new Error('must not be read');
+      c.enqueue(new TextEncoder().encode(' '.repeat(1024)));
+    },
+  }, { highWaterMark: 0 }); // nothing is pulled until the body is read
+  const post = (env: any, body: ReadableStream<Uint8Array>, headers: Record<string, string> = {}) =>
+    handleApi(new Request(`${BASE}/api/public/reports`, { method: 'POST', body, duplex: 'half', headers: { 'cf-connecting-ip': freshIp(), origin: SITE, 'content-type': 'application/json', ...headers } } as RequestInit), env, ctx);
+
+  it('refuses a declared Content-Length over the cap without reading the body', async () => {
+    const w = world();
+    const pulls = { n: 0 };
+    const res = await post(w.env, stream(pulls, false), { 'content-length': String(10 * 1024 * 1024) });
+    expect(res.status).toBe(413);
+    expect(pulls.n).toBe(0);
+  });
+
+  it('stops reading an endless body at the cap', async () => {
+    const w = world();
+    const pulls = { n: 0 };
+    const res = await post(w.env, stream(pulls));
+    expect(res.status).toBe(413);
+    expect(pulls.n).toBeLessThan(10);
+  }, 5_000);
+});
+
+describe('hostile DNS text', () => {
+  it('stores no bidi or control character and quotes DNS text in sentences at most 64 characters', async () => {
+    const evil = `\u202Eevil\u0007${'x'.repeat(200)}`;
+    installFakeDns({ ...ZONE, '_dmarc.acme.com/TXT': txt(`v=DMARC1; p=${evil}`) });
+    const w = world();
+    const res = await create(w.env, 'acme.com');
+    expect(res.status).toBe(201);
+    const body = await res.json() as any;
+    const stored = w.rows('SELECT result_json FROM public_reports')[0].result_json as string;
+    for (const text of [stored, JSON.stringify(body.report)]) expect(text).not.toMatch(/[\u0000-\u001F\u007F-\u009F\u061C\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/);
+    expect(body.report.dmarc.record).toContain('[U+202E]evil[U+0007]'); // the record box shows what is there, made visible
+    const sentence = body.report.dmarc.findings.find((f: any) => f.code === 'dmarc-invalid').message as string;
+    const quoted = /"(.*)"/.exec(sentence)![1]!;
+    expect(Array.from(quoted).length).toBeLessThanOrEqual(64);
+    expect(quoted.endsWith('…')).toBe(true);
+    expect(quoted.startsWith('evil')).toBe(true);
+  });
+});
+
+describe('retention keeps the dedupe keys short-lived', () => {
+  it('clears them first, even when the run has a single statement to spend', async () => {
+    const w = world();
+    await create(w.env, 'acme.com');
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports WHERE dedupe_key IS NOT NULL')).toEqual([{ n: 1 }]);
+    const report = await runRetention(w.env, { now: () => Date.now() + 120_000, limits: { statements: 1 } });
+    expect(report.public_report_dedupe_keys).toBe(1);
+    expect(w.rows('SELECT COUNT(*) AS n FROM public_reports WHERE dedupe_key IS NOT NULL')).toEqual([{ n: 0 }]);
+  });
+
+  it('sweeps old rate-limit counters and recounts the stored bytes', async () => {
+    const w = world();
+    const made = await (await create(w.env, 'acme.com')).json() as any;
+    expect(rateRows(w)).toBeGreaterThan(0);
+    w.db.sqlite.prepare('UPDATE public_report_usage SET total_bytes = 1, total_reports = 9').run();
+    await runRetention(w.env, { now: () => Date.now() + 3 * 86_400_000 });
+    expect(rateRows(w)).toBe(0);
+    expect(usage(w)).toMatchObject({ total_reports: 1, total_bytes: new TextEncoder().encode(JSON.stringify(made.report)).length });
   });
 });

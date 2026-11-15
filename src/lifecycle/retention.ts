@@ -4,10 +4,13 @@
 // is idempotent, and logs one JSON line with the counts, which is also what runRetention returns. A failing
 // sweep is logged and the others still run. The whole run shares one statement budget (D1 caps queries per
 // invocation), so a big backlog is worked off over several days; truncated sweeps say so in the log line. Expired canary tokens are purged by src/hosted/cron.ts, as before.
+// The public reports' de-duplication keys go first, so a backlog elsewhere can never keep them past this run.
 
 import { lifecycleQueries, publicReportQueries, sweepLimits, type SweepResult } from '@ready-set-mail/db';
 import { retentionPolicy, type RetentionEnv } from './config';
 import { reportCounting } from '../dmarc/counting';
+import { SWEEP_BATCH, sweepExpiredRateLimits } from '../auth/rate-limit';
+import { storageBudget, type PublicReportEnv } from '../public-reports/limits';
 
 const DAY = 86400;
 const dayOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString().slice(0, 10);
@@ -21,7 +24,7 @@ export interface RetentionOptions {
 
 export type RetentionReport = Record<string, number | boolean | string>;
 
-export async function runRetention(env: RetentionEnv & { DB: D1Database }, opts: RetentionOptions = {}): Promise<RetentionReport> {
+export async function runRetention(env: RetentionEnv & PublicReportEnv & { DB: D1Database }, opts: RetentionOptions = {}): Promise<RetentionReport> {
   const now = Math.floor((opts.now ?? Date.now)() / 1000);
   const p = retentionPolicy(env);
   const q = lifecycleQueries(env.DB);
@@ -32,7 +35,16 @@ export async function runRetention(env: RetentionEnv & { DB: D1Database }, opts:
   const unauthCutoff = reportCounting(env) === 'all' ? undefined : ago(p.uncountedReportsDays);
 
   const report: RetentionReport = {};
+  const publicReports = publicReportQueries(env.DB);
   const sweeps: Array<[string, () => Promise<SweepResult>]> = [
+    // First, so it always gets a statement: public reports are kept until deleted, but their one-minute de-duplication keys (a keyed
+    // hash of the client and the domain) go every day at the latest.
+    ['public_report_dedupe_keys', async () => {
+      if (limits.budget.left <= 0) return { deleted: 0, truncated: true };
+      limits.budget.left -= 1;
+      const r = (await publicReports.clearDedupeBefore(now - 60)) as { meta?: { changes?: number } } | undefined;
+      return { deleted: Number(r?.meta?.changes ?? 0), truncated: false };
+    }],
     ['aggregate_reports', () => q.purgeAggregateReports(ago(p.reportsDays), limits, unauthCutoff)],
     ['tls_reports', () => q.purgeTlsReports(ago(p.tlsDays), limits)],
     // 0 days: raw XML is never stored, so clear anything still there
@@ -53,12 +65,27 @@ export async function runRetention(env: RetentionEnv & { DB: D1Database }, opts:
     ['intake_failures', () => q.purgeIntakeFailures(dayOf(ago(p.intakeFailureDays)), limits)],
     ['intake_drops', () => q.purgeIntakeDrops(ago(p.intakeFailureDays), limits)],
     ['reporter_candidates', () => q.purgeReporterCandidates(dayOf(ago(p.intakeFailureDays)), limits)],
-    // Public reports are kept until deleted; only their one-minute de-duplication keys (a keyed hash of IP and domain) go.
-    ['public_report_dedupe_keys', async () => {
+    // Rate-limit counters (sign-in and public reports) whose window ended more than two days ago; writes also sweep them now and then.
+    ['rate_limits', async () => {
+      let deleted = 0;
+      while (limits.budget.left > 0) {
+        limits.budget.left -= 1;
+        const n = await sweepExpiredRateLimits(env.DB, now * 1000);
+        deleted += n;
+        if (n < SWEEP_BATCH) return { deleted, truncated: false };
+      }
+      return { deleted, truncated: true };
+    }],
+    // Recount the public reports' stored bytes (repairs drift; counts reports the operator deleted by hand) and say when 80% is used.
+    ['public_report_usage', async () => {
       if (limits.budget.left <= 0) return { deleted: 0, truncated: true };
       limits.budget.left -= 1;
-      const r = (await publicReportQueries(env.DB).clearDedupeBefore(now - 60)) as { meta?: { changes?: number } } | undefined;
-      return { deleted: Number(r?.meta?.changes ?? 0), truncated: false };
+      const usage = await publicReports.recount();
+      if (usage && usage.total_bytes >= storageBudget(env).warnBytes) {
+        report.public_reports_near_limit = true;
+        console.warn('[public-reports] stored reports have reached 80% of PUBLIC_REPORTS_TOTAL_BYTES; new reports stop at 100%');
+      }
+      return { deleted: 0, truncated: false };
     }],
     // Last: recount a few workspaces' stored records (repairs drift, counts data stored before the counters existed).
     ['storage_reconciled', () => q.reconcileStorage(limits)],

@@ -2,7 +2,8 @@
 // verified account whose email is OWNER_EMAIL: without OWNER_EMAIL nobody can see this check (src/funnel/routes.ts isInstanceOwner). Workers have no startup hook, so the dashboard
 // asks for it (GET /api/instance/preflight, instance owner only). Every message names a setting and what it breaks;
 // none ever contains a configured value, so a secret cannot leak through it.
-import { forImplicitWorkspace } from '@ready-set-mail/db';
+import { forImplicitWorkspace, publicReportQueries } from '@ready-set-mail/db';
+import { storageBudget, type PublicReportEnv } from '../public-reports/limits';
 import type { BoundEnv } from '../index';
 import { mcpInstallation } from '../mcp/discovery';
 import { hasEncryptionKey } from '../connections/crypto';
@@ -13,7 +14,7 @@ import { reportIntakePreflightItems } from '../hosted/report-intake-check';
 
 export interface PreflightItem {
   /** Stable id for tests and the UI key. */
-  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections';
+  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections' | 'public_reports';
   /** `action`: something does not work until it is fixed. `note`: works, but worth knowing. */
   severity: 'action' | 'note';
   /** The setting(s) to change, by name. */
@@ -25,6 +26,37 @@ export interface Preflight {
   mode: 'self-host' | 'saas';
   agents: AgentAvailability;
   items: PreflightItem[];
+  /** Public reports' storage, present when creating them is on or any are stored (src/public-reports/limits.ts). */
+  public_reports?: PublicReportStorage;
+}
+
+export interface PublicReportStorage {
+  enabled: boolean;
+  stored_reports: number;
+  stored_bytes: number;
+  /** PUBLIC_REPORTS_TOTAL_BYTES as in effect. */
+  total_budget_bytes: number;
+  /** Whole percent of the total budget in use. */
+  used_percent: number;
+  /** True from 80% of the total budget; at 100% no new report is made. */
+  near_limit: boolean;
+}
+
+/** Public reports' storage against PUBLIC_REPORTS_TOTAL_BYTES; null when reports are off and none are stored. */
+export async function publicReportStorage(env: BoundEnv & PublicReportEnv): Promise<PublicReportStorage | null> {
+  const enabled = env.PUBLIC_REPORTS_ENABLED === '1';
+  const usage = await publicReportQueries(env.DB).usage();
+  if (!enabled && !usage?.total_reports) return null;
+  const budget = storageBudget(env);
+  const stored = usage?.total_bytes ?? 0;
+  return {
+    enabled,
+    stored_reports: usage?.total_reports ?? 0,
+    stored_bytes: stored,
+    total_budget_bytes: budget.totalBytes,
+    used_percent: Math.floor((stored / budget.totalBytes) * 100),
+    near_limit: stored >= budget.warnBytes,
+  };
 }
 
 export interface AgentAvailability {
@@ -133,5 +165,17 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
     items.push({ id: 'booking_link', severity: 'note', setting: 'BOOKING_URL', message: 'No booking link is set (BOOKING_URL, an http or https address), so the day-14 follow-up email, which offers a call, is held until there is one.' });
   }
 
-  return { mode: hosted ? 'saas' : 'self-host', agents: agentAvailability(env), items };
+  // Public reports share this database with sign-in and report intake, so their storage has a total budget; say when it is near.
+  const reports = await publicReportStorage(env);
+  if (reports?.near_limit) {
+    const full = reports.stored_bytes >= reports.total_budget_bytes;
+    items.push({
+      id: 'public_reports', severity: full ? 'action' : 'note', setting: 'PUBLIC_REPORTS_TOTAL_BYTES',
+      message: full
+        ? 'Stored public reports have used their whole storage budget, so no new report is made (existing ones still open). Delete reports or raise PUBLIC_REPORTS_TOTAL_BYTES.'
+        : `Stored public reports use ${reports.used_percent}% of their storage budget. At 100% no new report is made; delete reports or raise PUBLIC_REPORTS_TOTAL_BYTES.`,
+    });
+  }
+
+  return { mode: hosted ? 'saas' : 'self-host', agents: agentAvailability(env), items, ...(reports ? { public_reports: reports } : {}) };
 }

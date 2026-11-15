@@ -121,10 +121,11 @@ describe('runRetention (self-host defaults)', () => {
     const { db, s, n } = seed();
     const rep = s.prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end) VALUES (1, 'g', ?, ?, ?)");
     for (let i = 0; i < 10; i++) rep.run(`bulk-${i}`, ago(500), ago(499));
-    const first = await runRetention({ DB: db as any }, { now: clock, limits: { batch: 3, statements: 5 } });
-    expect(first).toMatchObject({ aggregate_reports: 6, aggregate_reports_truncated: true });
+    // 6 statements: the first always goes to the public reports' de-duplication keys, then two batches of 3 reports (records first)
+    const first = await runRetention({ DB: db as any }, { now: clock, limits: { batch: 3, statements: 6 } });
+    expect(first).toMatchObject({ public_report_dedupe_keys: 0, aggregate_reports: 6, aggregate_reports_truncated: true });
     expect(n("SELECT COUNT(*) n FROM aggregate_reports WHERE report_id LIKE 'bulk-%'")).toBe(5);
-    const second = await runRetention({ DB: db as any }, { now: clock, limits: { batch: 3, statements: 5 } });
+    const second = await runRetention({ DB: db as any }, { now: clock, limits: { batch: 3, statements: 6 } });
     expect(second.aggregate_reports).toBe(5); // the rest of the bulk rows
     expect(second.aggregate_reports_truncated).toBeUndefined();
     expect(n("SELECT COUNT(*) n FROM aggregate_reports WHERE report_id LIKE 'bulk-%'")).toBe(0);
@@ -221,7 +222,8 @@ describe('statement budget, big reports, far-future dates', () => {
     const ins = s.prepare("INSERT INTO report_records (report_id, source_ip, disposition) VALUES (1, ?, 'none')");
     for (let i = 0; i < 25; i++) ins.run(`10.0.0.${i}`);
     // 27 records on report 1, 10 per statement: three statements empty it, and the report itself waits for the next run
-    const first = await runRetention({ DB: db as any }, { now: clock, limits: { recordBatch: 10, statements: 4 } });
+    // (5 statements: the first goes to the public reports' de-duplication keys)
+    const first = await runRetention({ DB: db as any }, { now: clock, limits: { recordBatch: 10, statements: 5 } });
     expect(first.aggregate_reports_truncated).toBe(true);
     expect(n('SELECT COUNT(*) n FROM report_records WHERE report_id = 1')).toBe(0);
     expect(n('SELECT COUNT(*) n FROM aggregate_reports WHERE id = 1')).toBe(1); // records first, then the report

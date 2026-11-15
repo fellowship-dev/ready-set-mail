@@ -517,6 +517,15 @@ CREATE TABLE `products` (
 	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE TABLE `public_report_usage` (
+	`id` integer PRIMARY KEY NOT NULL,
+	`day` text NOT NULL,
+	`day_reports` integer NOT NULL,
+	`day_bytes` integer NOT NULL,
+	`total_reports` integer NOT NULL,
+	`total_bytes` integer NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `public_reports` (
 	`id` text PRIMARY KEY NOT NULL,
 	`domain` text NOT NULL,
@@ -524,6 +533,7 @@ CREATE TABLE `public_reports` (
 	`schema_version` integer NOT NULL,
 	`source` text NOT NULL,
 	`result_json` text NOT NULL,
+	`result_bytes` integer NOT NULL,
 	`delete_token_hash` text NOT NULL,
 	`dedupe_key` text
 );

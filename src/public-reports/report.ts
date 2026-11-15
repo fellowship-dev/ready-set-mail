@@ -4,6 +4,7 @@
 
 import { COMMON_DKIM_SELECTORS, SPF_LOOKUP_LIMIT, SPF_VOID_LIMIT } from '@ready-set-mail/dns-checks';
 import { checkDkim, checkDmarc, checkSpf, domainExists } from './check';
+import { inertDeep } from './text';
 import type { DkimResult, DmarcResult, SpfResult } from './types';
 
 export const REPORT_SCHEMA_VERSION = 1;
@@ -35,12 +36,28 @@ function timedOut(tool: ReportTool, domain: string): DmarcResult | SpfResult | D
   return { ...base, mode: 'scan', scanned: COMMON_DKIM_SELECTORS.length, foundCount: 0, failedCount: 0, selectors: [] };
 }
 
-/** True when not one of the three checks got an answer from DNS: such a report says nothing, so it is not stored. */
-export function nothingAnswered(r: PublicReportV1): boolean {
-  return r.dmarc.state === 'lookup-failed' && r.spf.state === 'lookup-failed' && r.dkim.state === 'lookup-failed';
+/** The resolver's answer when a check used up its DoH budget (resolver.ts). */
+const BUDGET_ERROR = 'too many DNS queries for one check';
+
+/**
+ * True only when every check finished: no lookup failed, none was cut short (`complete: false`, the deadline, the DoH budget) and the
+ * existence lookup answered. Only such a report is stored; anything less is a partial answer that would stay public for good.
+ */
+export function isComplete(r: PublicReportV1, existenceAnswered: boolean): boolean {
+  if (!existenceAnswered) return false;
+  for (const c of [r.dmarc, r.spf, r.dkim]) {
+    if (c.state === 'lookup-failed' || c.complete !== true) return false;
+  }
+  return !JSON.stringify(r).includes(BUDGET_ERROR);
 }
 
-export async function buildReport(domain: string, source: ReportTool, now: Date = new Date(), deadlineMs = REPORT_DEADLINE_MS): Promise<PublicReportV1> {
+export interface BuiltReport {
+  report: PublicReportV1;
+  /** isComplete(report): only then may it be stored. */
+  complete: boolean;
+}
+
+export async function buildReport(domain: string, source: ReportTool, now: Date = new Date(), deadlineMs = REPORT_DEADLINE_MS): Promise<BuiltReport> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), deadlineMs); });
   const settle = <T>(run: Promise<T>, fallback: () => T): Promise<T> =>
@@ -57,13 +74,15 @@ export async function buildReport(domain: string, source: ReportTool, now: Date 
   const checkedAt = now.toISOString();
   // As in the website's API: `domainExists: false` only on a clear NXDOMAIN for the name itself.
   const missing = exists === false ? { domainExists: false as const } : {};
-  return {
-    v: 1,
+  // DNS text is the domain owner's, so possibly hostile: no control or bidi character is stored as such (text.ts).
+  const report: PublicReportV1 = inertDeep({
+    v: 1 as const,
     domain,
     checkedAt,
     source,
-    dmarc: { ...dmarc, ...missing, tool: 'dmarc', checkedAt },
-    spf: { ...spf, ...missing, tool: 'spf', checkedAt },
-    dkim: { ...dkim, ...missing, tool: 'dkim', checkedAt },
-  };
+    dmarc: { ...dmarc, ...missing, tool: 'dmarc' as const, checkedAt },
+    spf: { ...spf, ...missing, tool: 'spf' as const, checkedAt },
+    dkim: { ...dkim, ...missing, tool: 'dkim' as const, checkedAt },
+  });
+  return { report, complete: isComplete(report, exists !== null) };
 }

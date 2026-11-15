@@ -1,5 +1,6 @@
 // CORS for the marketing site: the free-check endpoints and the public reports, and only for the origins in SITE_ORIGINS.
-// Nothing else is cross-origin callable, and cookies are never allowed on these calls (no credentials header).
+// CORS only decides which web pages may read these answers in a browser; it is not access control (any other client can call the
+// routes directly), so every limit lives in the routes themselves. Cookies are never allowed on these calls (no credentials header).
 
 import { siteOrigins, type FunnelEnv } from '../funnel/config';
 
