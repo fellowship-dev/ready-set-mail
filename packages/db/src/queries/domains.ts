@@ -79,8 +79,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 				// `freeing`: an unproven holder of this very name in another workspace, detached in the same transaction (see freeNameStatements).
 				const free = opts.freeing === undefined ? [] : freeNameStatements(opts.freeing, workspaceId, max);
 				// One conditional statement: the row is selected (so inserted) only while the workspace is under its cap.
-				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers)
-					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}
+				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, cf_connection_id)
+					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}, ${pv.cf_connection_id ?? null}
 					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`;
 				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
 				if (!productId) {
@@ -190,6 +190,7 @@ export function domainQueries(db: Db, workspaceId: string) {
 		/**
 		 * The proof of an EXISTING row made again (the "prove again" action): the row, its reports and everything else stay, only how it is proven
 		 * changes. `proof` for a zone proof (refused without its servers), none for a TXT or parent proof. Clears the lost-proof and suspicion marks.
+		 * A zone proof also links the row to the connection that proved it (`proof.cf_connection_id`); a TXT or parent proof leaves the link as it is.
 		 */
 		async restoreProof(id: number, verifiedVia: string, proof?: ZoneProofColumns): Promise<boolean> {
 			const row = await db.select({ domain: domains.domain }).from(domains).where(and(mine, live, eq(domains.id, id))).get();
