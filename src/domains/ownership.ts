@@ -10,10 +10,11 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
+import { claimLookups, isUnprovenRow, ProofIncompleteError, workspaceLifecycle, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
+import { cleanName, NEW_CLIENT_WORKSPACE } from '../auth/names';
 import { loadTenant } from '../tenancy/load';
 import { resolverFor } from '../dns/resolver';
 import { removeAuthRecord, removeHostedRecords } from './remove';
@@ -276,6 +277,27 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
  * Creates the pending claim when proof is needed; never inserts into `domains` (the caller does, on 'verified').
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
+  const admission = await admitDomainInner(tenant, domain);
+  if (admission.kind !== 'taken' && admission.kind !== 'limit') await nameClientWorkspace(tenant, domain);
+  return admission;
+}
+
+/**
+ * An agency's first workspace (src/auth/names.ts NEW_CLIENT_WORKSPACE) is named after the first client domain entered in it. Only
+ * a workspace still carrying that placeholder name is touched, once; whatever the person named it themselves is never renamed.
+ * Never fails the request it rides on.
+ */
+async function nameClientWorkspace(tenant: TenantContext, domain: string): Promise<void> {
+  if (getMode(tenant.env) !== 'saas') return;
+  try {
+    const lifecycle = workspaceLifecycle(tenant.db);
+    if ((await lifecycle.get(tenant.workspaceId))?.name === NEW_CLIENT_WORKSPACE) await lifecycle.rename(tenant.workspaceId, cleanName(domain));
+  } catch {
+    /* the name is a nicety */
+  }
+}
+
+async function admitDomainInner(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
   // Already ours and proven: the insert reports the duplicate. Ours but UNPROVEN (a proof that lapsed, a parent that left): not "existing", the proof
   // runs again below and, when it holds, restores the row in place (restoreInPlace), history and all. When it does not, a claim is opened for the TXT record.

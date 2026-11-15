@@ -30,3 +30,20 @@ export function defaultWorkspaceName(name: string, email: string): string {
   const domain = email.split('@')[1]?.toLowerCase().trim() ?? '';
   return cleanName(domain && !FREE_MAIL_DOMAINS.has(domain) ? `${domain} workspace` : 'My workspace');
 }
+
+/** What an agency's first workspace is called until its first client domain is added (it is then named after that domain). */
+export const NEW_CLIENT_WORKSPACE = 'New client';
+
+/**
+ * The name of the first workspace a sign-up makes, from what the person said about whose email they are setting up
+ * (src/auth/profile.ts):
+ *  - "My company's" and "Just looking around": the organization name they typed.
+ *  - "My clients'" (an agency or IT provider): the organization name is the agency's own name, kept on the account and not used
+ *    for a workspace; each client's workspace is named after its domain, so this first one waits for its first domain.
+ * Without a profile (a sign-up that skipped the question) it is `defaultWorkspaceName`.
+ */
+export function firstWorkspaceName(profile: { organization: string; whose_email: 'company' | 'clients' | 'looking' } | null, name: string, email: string): string {
+  if (!profile) return defaultWorkspaceName(name, email);
+  if (profile.whose_email === 'clients') return NEW_CLIENT_WORKSPACE;
+  return cleanName(profile.organization, MAX_NAME) || defaultWorkspaceName(name, email);
+}

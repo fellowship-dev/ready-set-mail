@@ -5,6 +5,7 @@ import {
   buildFreeCheckHtml,
   buildDnsAlertHtml,
   buildLetterHtml,
+  buildCodeEmailHtml,
 } from '../../src/email/html-templates';
 import { stepCopy, SEQUENCE_DAYS } from '../../src/funnel/copy';
 import type { DomainWeeklyStat, FailingSource } from '@ready-set-mail/db';
@@ -368,6 +369,7 @@ describe('default-brand HTML emails load nothing remote', () => {
     ['weekly digest', buildWeeklyDigestHtml({ recipientName: 'Ada', weekLabel: 'Jan 1', stats: [STAT_REJECT], sourcesByDomain: new Map(), ruaAddress: 'rua@r.example.test', reportsDomain: 'reports.example.test' })],
     ['free check', buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary, auth: AUTH_PASS, dns })],
     ['dns alert', buildDnsAlertHtml({ domain: 'acme.com', changes, reportsDomain: 'reports.example.test' })],
+    ['sign-in code', buildCodeEmailHtml({ code: '482190', sentence: 'Enter this code.', validity: 'It works for 10 minutes.', notes: ['Ignore it if not you.'], fine: ['Asked for from near Santiago, CL.'], footer: 'Ready Set Mail is operated by Fellowship.dev, Inc.' })],
     ['letter', buildLetterHtml({ title: 'Hi', blocks: ['Hello', { cta: { label: 'Go', url: 'https://example.test/' } }] })],
     ...sequence,
   ];

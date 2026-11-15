@@ -182,7 +182,9 @@ the pointer instructions name `h.<zone>` from config, so they must read the doma
 ## Trust model: who can do what
 
 **Sign-in codes.** Sign-up, sign-in, password reset and hosted invite acceptance end with a six-digit code emailed to the
-address (`src/auth/codes.ts`). Sign-up asks for the email and one password (and the bot check); sign-in asks for the email and
+address (`src/auth/codes.ts`). Sign-up is three screens: S1 asks for the email and one password (the bot check runs unseen on
+Continue and shows only if Cloudflare needs a click) and sends the code, S2 "Tell us about yourself" is filled in while the email
+travels, and S3 "Check your inbox" takes the code ([Sign-up screens](#sign-up-screens)); sign-in asks for the email and
 password and, only when the password is right, emails a code. Every sign-in needs a fresh code: there is no "remember this
 device". A reset asks for the email (and the bot check when the keys are set), then the code and a new password on one screen;
 saving signs in without a second code and ends every other session. Sign-in, sign-up and invite codes are sent before the
@@ -264,9 +266,15 @@ their own account, within the sign-up allowance.
 password was chosen, to reset the password (which sends a code); the token is not used. `POST /api/auth/welcome` and
 `POST /api/auth/resend-verification` answer `410` `link_retired`. An old reset link (`#/reset/<token>`) says to ask for a code.
 
-**Names.** Names typed before the address was proven are not kept: sign-up asks for no name, and verification sets the display
-name to the email address (the person can change it in Settings) and the sign-up workspace's name from the email's domain.
-Names are stored and shown without control or invisible format characters, at most 80 characters.
+**Names.** Names typed before the address was proven are not kept: the account does not exist until the code is right. S2's
+answers are held with the pending attempt (below) and applied by the right code: the display name is the name the person gave
+(else the email address, as before). The first workspace is named from the fork answer: "My company's" and "Just looking around"
+use the organization name; "My clients'" (an agency or IT provider) keeps the organization name as the agency's own name on the
+account (`/api/me` `agency_name`, the workspace switcher's heading) and calls the first workspace "New client" until the first
+client domain is entered in it, when it is renamed to that domain (once, only while it still carries that placeholder). Without
+S2's answers (the API skipped them) the old rule applies: the email's domain, or "My workspace" for free mail. Invited people are
+never asked. Names are stored and shown without control or invisible format characters, at most 80 characters (the organization
+name is bounded by the same number because it becomes a workspace name).
 
 **Sign-in throttle.** Besides the per-IP limits, wrong passwords are counted per address (a hash of it): after 10 in 15 minutes,
 attempts for that address answer `429` "Too many sign-in attempts for this address. Try again in N minutes, or reset your
@@ -284,7 +292,9 @@ account (an OAuth callback included). Existing users are never locked out by mis
 the check, since the page cannot render it; or by OAuth) and reset their password by code. The status says exactly that:
 `signup_open: false`, `signin_available: true`, `signup_unavailable_reason: bot_protection_not_configured`. When the keys are
 configured, sign-up, sign-in, reset requests and "Send a new code" pass the check; the pages render it with Turnstile's
-`interaction-only` appearance, under the fields and above the button, and the code screen shows it only after "Send a new code".
+`interaction-only` appearance. Sign-up S1 runs it with `execution: execute`, `size: flexible`, on Continue (one plain line, "One more check
+from Cloudflare, then we continue.", and the widget appear under the button only if Cloudflare needs a click); the code screen has no
+widget until "Not seeing it?" is opened, and then it runs when "Send a new code" is used. Other forms keep the check under the fields.
 OAuth logins link to an existing account only when both the local account's email and the provider's are verified, and an OAuth
 sign-up matches a pending invite only on a provider-verified email. OAuth sign-in does not ask for an emailed code (the provider
 proves the person). Code mail uses the platform sender (`from_email` setting of the default workspace) over `SEND_EMAIL`; without
@@ -301,6 +311,42 @@ be sent (it goes out after the answer), so the reset form does not tell anyone w
 link or the installer proof) opens the owner's session with no code. Self-host invites work as before. Settings → Account →
 Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason`
 (`hosted`, `mail`, `no_mail`, `turned_off`), and `GET /api/auth/codes` (signed in) says whether codes are on for the caller.
+
+#### Sign-up screens
+
+`#/signup` (S1), `#/signup/about` (S2), `#/signup/code` (S3): the URL holds the step and the server's pending attempt says which
+screen is right, so a reload, a returning tab or the back button never starts again at S1 while an attempt waits.
+
+* `POST /api/auth/signup` is unchanged in what it checks and answers (bot check, per-IP limit, the mail allowance, the same answer
+  for every address, "never says sent on a refused send"). It now runs when S1 is submitted, so the code email travels while S2 is
+  filled in.
+* `GET /api/auth/signup/pending` (the pending cookie; nothing is spent): `{ pending: false }`, or `{ pending: true, email, step:
+  "about" | "code", expires_in, lifetime_seconds, profile? }`. `step` is `code` once S2's answers are saved. Only the browser that
+  holds the attempt's cookie gets anything, and it only echoes what that browser typed; a decoy attempt (an address that already
+  has an account) answers the same way.
+* `POST /api/auth/signup/profile` saves S2's answers **on the pending attempt** (key `prof` in the attempt's JSON row in
+  `verifications`; no migration), with one conditional statement that touches nothing else in the row (not the try counter) and
+  ends with the attempt. Strict: `name` (required, at most 100 characters), `organization` (required, at most 80),
+  `whose_email` (`company`, `clients`, `looking`), `role` (optional: `founder`, `developer`, `it`, `marketing`, `agency`,
+  `other`), `heard_about` (optional, at most 200); over-long values and unknown enum values are refused, never cut; text is cleaned
+  like every name; unknown keys are never stored; bodies over 4 KiB are refused. It is profile text only: never an instruction or a
+  permission. No account exists at this point. A decoy attempt takes the answers too, so the answer says nothing about accounts.
+* The right code applies them **once**, in the same request that creates the account and its workspace: the display name, the
+  first workspace's name (above) and a row `account-profile:<user id>` in `verifications` (the same place `code-proven:` and
+  `device-epoch:` live; 20-year expiry; removed with the account). The right code deletes the attempt, so a replay finds nothing.
+  A new attempt (a new sign-up, "Start over") never inherits another's answers; only "Send a new code" from the same cookie carries
+  them over, with the password hash.
+* `POST /api/auth/signup/resend` ("Send a new code" on S3): the same attempt with a new code and a new handle (the old code stops
+  working). It needs the same bot check as sign-up, spends the same per-IP and per-address allowances and answers like sign-up. It
+  exists because a reload loses the password in the browser.
+* `POST /api/auth/signup/cancel` ("Wrong address? Start over"): drops the attempt and clears the cookie.
+* The lifetime is unchanged (10 minutes from S1's submit, `CODE_SECONDS`); S3 states `lifetime_seconds` from the server.
+
+The code email is HTML and plain text: the wordmark as text (no images), one sentence, the code alone in large selectable digits,
+how long it works and where to enter it, "If you didn't ask for this, you can ignore this email.", and, when `MAIL_REPLY_TO` is set
+(the mailbox the free-check report and the funnel already use), a Reply-To header and "Reply to this email and a person will
+answer." The approximate place the code was asked for from stays in the small print for every purpose (it is the cue the
+phishing-relay defence below relies on, and a relayed sign-up can pre-hijack an account); the password advice stays for sign-in.
 
 **Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
 button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to

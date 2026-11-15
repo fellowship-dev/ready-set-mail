@@ -80,6 +80,7 @@ import { checkForUpdate } from '../update-check';
 import { hostedServiceUrl } from '../hosted-service';
 import { globals } from '../db/scope';
 import { handleAuthRoute } from '../auth/routes';
+import { accountProfile } from '../auth/profile';
 import { handleAccessRoutes } from '../access/routes';
 import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleBillingRoutes } from '../billing/routes';
@@ -696,7 +697,11 @@ async function _handleApi(
   // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
   tenant.operatorView = instanceOwner;
   if (path === '/api/me' && method === 'GET') {
+    // What the person said on sign-up that the dashboard shows back: whose email they set up, and for an agency its name (the
+    // workspace switcher's heading). Never the free-text answers.
+    const profile = userBySession ? await accountProfile(env, userBySession.id) : null;
     return json({
+      ...(profile ? { whose_email: profile.whose_email, ...(profile.whose_email === 'clients' ? { agency_name: profile.organization } : {}) } : {}),
       instance_owner: instanceOwner,
       user: userBySession,
       role: workspace.role ?? 'member',

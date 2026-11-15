@@ -9,7 +9,22 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 interface TurnstileApi {
-	render(el: HTMLElement, opts: { sitekey: string; theme?: string; size?: string; appearance?: string; callback: (token: string) => void; 'expired-callback': () => void; 'error-callback': () => void }): string;
+	render(
+		el: HTMLElement,
+		opts: {
+			sitekey: string;
+			theme?: string;
+			size?: string;
+			appearance?: string;
+			execution?: string;
+			callback: (token: string) => void;
+			'expired-callback': () => void;
+			'error-callback': () => void;
+			'before-interactive-callback'?: () => void;
+			'after-interactive-callback'?: () => void;
+		},
+	): string;
+	execute(id: string): void;
 	reset(id: string): void;
 	remove(id: string): void;
 }
@@ -51,10 +66,16 @@ export type HumanCheck = {
 	widget: ReactNode;
 	/** The solved, unused token, if any. */
 	token: string | null;
-	/** True when the form may be submitted: no check configured, or a token is ready. */
+	/** True when the form may be submitted: no check configured, or a token is ready (always, when the check runs on submit). */
 	ready: boolean;
 	/** Call after each submit: a token is single use, so a fresh check starts. */
 	reset: () => void;
+	/**
+	 * `execution: 'execute'` only: run the check now (on the person's submit) and resolve with its token, or null when it did not
+	 * pass or could not load. Resolves null at once when this instance has no bot check. If Cloudflare needs a click, the widget
+	 * appears under the button (Turnstile's `interaction-only`) and this resolves when it is solved.
+	 */
+	run: () => Promise<string | null>;
 };
 
 /**
@@ -64,6 +85,12 @@ export type HumanCheck = {
 export interface HumanCheckOptions {
 	appearance?: 'always' | 'interaction-only';
 	size?: 'normal' | 'compact' | 'flexible';
+	/**
+	 * `render` (default): the check starts when the widget is drawn, and the form waits for its token.
+	 * `execute`: the check starts only when `run()` is called, which is what a form with several steps or a single submit wants
+	 * (Cloudflare's "Turnstile in multi-step forms": widget-configurations, `execution`).
+	 */
+	execution?: 'render' | 'execute';
 }
 
 /**
@@ -74,19 +101,44 @@ export interface HumanCheckOptions {
 export function useHumanCheck(siteKey: string | null | undefined, options: HumanCheckOptions = {}): HumanCheck {
 	const appearance = options.appearance ?? 'interaction-only';
 	const size = options.size ?? 'flexible';
+	const execution = options.execution ?? 'render';
 	const [token, setToken] = useState<string | null>(null);
 	const resetWidget = useRef<(() => void) | null>(null);
+	const control = useRef<RunControl>({ execute: null, waiter: null });
 	const reset = useCallback(() => {
 		setToken(null);
 		resetWidget.current?.();
 	}, []);
-	if (!siteKey) return { widget: null, token: null, ready: true, reset };
-	return { widget: <HumanCheckBox siteKey={siteKey} appearance={appearance} size={size} onToken={setToken} resetRef={resetWidget} hasToken={!!token} />, token, ready: !!token, reset };
+	const tokenRef = useRef<string | null>(null);
+	tokenRef.current = token;
+	const run = useCallback((): Promise<string | null> => {
+		if (tokenRef.current) return Promise.resolve(tokenRef.current);
+		return new Promise<string | null>((resolve) => {
+			control.current.waiter?.(null); // a run still waiting is superseded
+			control.current.waiter = resolve;
+			control.current.execute?.(); // not drawn yet: the widget runs it as soon as it is
+		});
+	}, []);
+	if (!siteKey) return { widget: null, token: null, ready: true, reset, run: () => Promise.resolve(null) };
+	return {
+		widget: <HumanCheckBox siteKey={siteKey} appearance={appearance} size={size} execution={execution} onToken={setToken} resetRef={resetWidget} control={control} hasToken={!!token} />,
+		token,
+		ready: execution === 'execute' || !!token,
+		reset,
+		run,
+	};
 }
 
-function HumanCheckBox({ siteKey, appearance, size, onToken, resetRef, hasToken }: { siteKey: string; appearance: string; size: string; onToken: (t: string | null) => void; resetRef: { current: (() => void) | null }; hasToken: boolean }) {
+/** What `run()` and the widget hand each other: the widget's execute call, and the caller waiting for its token. */
+interface RunControl {
+	execute: (() => void) | null;
+	waiter: ((token: string | null) => void) | null;
+}
+
+function HumanCheckBox({ siteKey, appearance, size, execution, onToken, resetRef, control, hasToken }: { siteKey: string; appearance: string; size: string; execution: 'render' | 'execute'; onToken: (t: string | null) => void; resetRef: { current: (() => void) | null }; control: { current: RunControl }; hasToken: boolean }) {
 	const box = useRef<HTMLDivElement>(null);
 	const [state, setState] = useState<'loading' | 'ready' | 'failed' | 'rejected'>('loading');
+	const [interactive, setInteractive] = useState(false);
 	const [attempt, setAttempt] = useState(0);
 
 	useEffect(() => {
@@ -96,14 +148,19 @@ function HumanCheckBox({ siteKey, appearance, size, onToken, resetRef, hasToken 
 		loadTurnstile().then(
 			(api) => {
 				if (gone || !box.current) return;
-				id = api.render(box.current, {
+				const widgetId = api.render(box.current, {
 					sitekey: siteKey,
 					theme: 'auto',
 					size,
 					appearance,
+					execution,
 					callback: (t) => {
 						setState('ready');
+						setInteractive(false);
 						onToken(t);
+						const waiter = control.current.waiter;
+						control.current.waiter = null;
+						waiter?.(t);
 					},
 					'expired-callback': () => {
 						onToken(null);
@@ -111,23 +168,45 @@ function HumanCheckBox({ siteKey, appearance, size, onToken, resetRef, hasToken 
 					},
 					'error-callback': () => {
 						onToken(null);
+						setInteractive(false);
 						setState('rejected');
+						const waiter = control.current.waiter;
+						control.current.waiter = null;
+						waiter?.(null);
 					},
+					'before-interactive-callback': () => setInteractive(true),
+					'after-interactive-callback': () => setInteractive(false),
 				});
-				resetRef.current = () => id && api.reset(id);
+				id = widgetId;
+				resetRef.current = () => {
+					api.reset(widgetId);
+					setState('ready');
+				};
+				if (execution === 'execute') {
+					control.current.execute = () => {
+						setState('ready');
+						api.execute(widgetId);
+					};
+					// A run asked for before the script loaded starts now.
+					if (control.current.waiter) control.current.execute();
+				}
 				setState('ready');
 			},
 			() => {
 				if (!gone) setState('failed');
+				const waiter = control.current.waiter;
+				control.current.waiter = null;
+				waiter?.(null);
 			},
 		);
 		return () => {
 			gone = true;
 			if (id && window.turnstile) window.turnstile.remove(id);
 			resetRef.current = null;
+			control.current.execute = null;
 			onToken(null);
 		};
-	}, [siteKey, attempt, onToken, resetRef]);
+	}, [siteKey, attempt, execution, onToken, resetRef, control]);
 
 	return (
 		<div className="space-y-1">
@@ -148,6 +227,13 @@ function HumanCheckBox({ siteKey, appearance, size, onToken, resetRef, hasToken 
 					</Button>
 					{' '}or reload the page.
 				</p>
+			) : execution === 'execute' ? (
+				// One plain line, only while Cloudflare is asking for a click.
+				interactive ? (
+					<p className="text-sm text-ink-2" role="status">
+						One more check from Cloudflare, then we continue.
+					</p>
+				) : null
 			) : !hasToken ? (
 				<p className="text-xs text-ink-2" aria-live="polite">
 					Waiting for the human check…

@@ -16,6 +16,7 @@ import { forWorkspace, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import type { AuthEnv } from './config';
 import { CODE_MINUTES, type CodePurpose } from './codes';
 import { mailFooter } from './legal';
+import { buildCodeEmailHtml } from '../email/html-templates';
 
 /** The platform's sender: the implicit workspace's from_email (set by the setup wizard), else derived from its base domain. */
 export async function senderAddress(env: AuthEnv): Promise<string | undefined> {
@@ -30,13 +31,13 @@ export async function mailReady(env: AuthEnv): Promise<boolean> {
 }
 
 /** Hands the message to the provider. True when it accepted it; false when it refused or nothing could be sent. */
-async function send(env: AuthEnv, operation: string, to: string, subject: string, body: string): Promise<boolean> {
+async function send(env: AuthEnv, operation: string, to: string, subject: string, body: string, extra: { html?: string; replyTo?: string } = {}): Promise<boolean> {
   const footer = mailFooter(env);
   const text = `${body}\n\nReady Set Mail${footer ? `\n${footer}` : ''}`;
   const from = await senderAddress(env);
   if (env.SEND_EMAIL && from) {
     try {
-      await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [to], subject, text });
+      await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [to], subject, text, ...(extra.html ? { html: extra.html } : {}), ...(extra.replyTo ? { replyTo: extra.replyTo } : {}) });
       return true;
     } catch {
       console.error(`[auth] ${operation} email send failed (provider error not logged)`);
@@ -49,12 +50,13 @@ async function send(env: AuthEnv, operation: string, to: string, subject: string
 
 export const codeSubject = (code: string): string => `${code} is your Ready Set Mail code`;
 
+/** The one sentence of the code email: what entering the code does. */
 const WHAT_FOR: Readonly<Record<CodePurpose, string>> = Object.freeze({
-  signup: 'confirm your email address and finish creating your Ready Set Mail account',
-  invite: 'confirm your email address and join the workspace you were invited to on Ready Set Mail',
-  signin: 'finish signing in to Ready Set Mail',
-  reset: 'reset your Ready Set Mail password',
-  confirm: 'confirm that Ready Set Mail sign-in codes reach you (once it is entered, every sign-in asks for a code)',
+  signup: 'Enter this code to finish creating your Ready Set Mail account.',
+  invite: 'Enter this code to join the workspace you were invited to on Ready Set Mail.',
+  signin: 'Enter this code to finish signing in to Ready Set Mail.',
+  reset: 'Enter this code to reset your Ready Set Mail password.',
+  confirm: 'Enter this code to confirm that Ready Set Mail sign-in codes reach you. Once it is entered, every sign-in asks for a code.',
 });
 
 /** Where the code was asked for, when Cloudflare knows it: an approximate place, from the network address. */
@@ -66,25 +68,44 @@ export function requestedFrom(request: Request): string | null {
   return city ? `${city}, ${country}` : country;
 }
 
-/** The code email's body (without the closing and footer). */
-export function codeEmailText(code: string, purpose: CodePurpose, origin: string, from: string | null): string {
-  const lines = [
-    'Hi,',
-    '',
-    `Use this code to ${WHAT_FOR[purpose]}:`,
-    '',
-    `    ${code}`,
-    '',
-    `It expires in ${CODE_MINUTES} minutes and works once, in the browser where you asked for it. Enter it only on ${origin}.`,
-  ];
-  if (from) lines.push('', `Asked for from near ${from} (approximate, from the network address).`);
-  lines.push('', "If you didn't ask for this, you can ignore this email; nobody can use it without the code.");
-  if (purpose === 'signin') lines.push('', 'A sign-in code is sent only after the right password. If you did not just sign in, change your password: "Forgot your password?" on the sign-in page.');
-  return lines.join('\n');
+/** Where replies to a code email go: MAIL_REPLY_TO, the same mailbox the free-check report and funnel mail use (src/funnel/config.ts). Null: no Reply-To. */
+export const codeReplyTo = (env: AuthEnv): string | null => (env as AuthEnv & { MAIL_REPLY_TO?: string }).MAIL_REPLY_TO?.trim() || null;
+
+interface CodeEmailParts { sentence: string; validity: string; notes: string[]; fine: string[] }
+
+/**
+ * What the code email says, once, for both its parts. Short on purpose: what the code does, how long it works and where it is
+ * entered (the anti-phishing line: only on this service's own address), what to do if nobody asked, and a way to reach a person
+ * (only when the instance has a Reply-To mailbox). The approximate place stays in the small print for every purpose: it is
+ * the cue that exposes a page relaying a code from somewhere else (docs/hosted.md, "Phishing relay").
+ */
+function codeEmailParts(purpose: CodePurpose, origin: string, from: string | null, replyTo: string | null): CodeEmailParts {
+  const notes = ["If you didn't ask for this, you can ignore this email."];
+  if (replyTo) notes.push('Something look wrong? Reply to this email and a person will answer.');
+  const fine: string[] = [];
+  if (from) fine.push(`Asked for from near ${from} (approximate, from the network address).`);
+  if (purpose === 'signin') fine.push('A sign-in code is sent only after the right password. If you did not just sign in, change your password: "Forgot your password?" on the sign-in page.');
+  return {
+    sentence: WHAT_FOR[purpose],
+    validity: `It works for ${CODE_MINUTES} minutes, once, in the browser where you asked for it. Enter it only on ${origin}.`,
+    notes, fine,
+  };
+}
+
+/** The code email's body as plain text (without the closing and footer). */
+export function codeEmailText(code: string, purpose: CodePurpose, origin: string, from: string | null, replyTo: string | null = null): string {
+  const p = codeEmailParts(purpose, origin, from, replyTo);
+  return [p.sentence, '', `    ${code}`, '', p.validity, '', ...p.notes.flatMap((n) => [n, '']), ...p.fine.flatMap((n) => [n, ''])].join('\n').trimEnd();
+}
+
+/** The same email as HTML: the wordmark as text, the code very large and selectable (no images, no links). */
+export function codeEmailHtml(env: AuthEnv, code: string, purpose: CodePurpose, origin: string, from: string | null, replyTo: string | null): string {
+  return buildCodeEmailHtml({ code, ...codeEmailParts(purpose, origin, from, replyTo), footer: mailFooter(env) });
 }
 
 export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purpose: CodePurpose, origin: string, from: string | null): Promise<boolean> {
-  return send(env, 'code', to, codeSubject(code), codeEmailText(code, purpose, origin, from));
+  const replyTo = codeReplyTo(env);
+  return send(env, 'code', to, codeSubject(code), codeEmailText(code, purpose, origin, from, replyTo), { html: codeEmailHtml(env, code, purpose, origin, from, replyTo), ...(replyTo ? { replyTo } : {}) });
 }
 
 export const SIGNUP_NOTICE_SUBJECT = 'Someone tried to create a Ready Set Mail account with your email';

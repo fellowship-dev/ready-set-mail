@@ -2,14 +2,13 @@ import { Alert, Button, Checkbox, FieldError, Input, Label } from '@ready-set-ma
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
-import { bindSignupDomainToEmail, readSignupDomain } from '../../lib/signup-intent';
 import { useSession } from '../../lib/session';
 import { TalkToMax } from '../../components/TalkToMax';
 import { CodeStep, needsCode, type CodeRequired } from './CodeStep';
+import { SignupFlow } from './SignupFlow';
 import { AuthLayout, Field } from './AuthLayout';
 import { useHumanCheck } from './Turnstile';
 import { PasswordInput } from './PasswordInput';
-import { TermsAgreement } from './LegalLinks';
 import { HostedAlternative } from '../../components/HostedAlternative';
 
 const PROVIDER_LABELS: Record<string, string> = { github: 'GitHub', google: 'Google' };
@@ -26,7 +25,7 @@ type Mode = 'setup' | 'signup' | 'signin';
 export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const { status, signedIn } = useSession();
 	const navigate = useNavigate();
-	const [creating, setCreating] = useState(initialMode === 'signup');
+	const creating = initialMode === 'signup';
 	const [name, setName] = useState('');
 	const [email, setEmail] = useState('');
 	const [password, setPassword] = useState('');
@@ -53,9 +52,11 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const hosted = status.mode === 'saas';
 	// The installer-proof screen is self-host only: the hosted service never asks a registrant for one.
 	const mode: Mode = !status.configured && !hosted ? 'setup' : creating && status.signup_open ? 'signup' : 'signin';
+	// Hosted sign-up is its own three screens (SignupFlow), each with its own address; the URL holds the step.
+	if (mode === 'signup') return <SignupFlow onSignIn={() => navigate('/')} />;
 	const registering = mode !== 'signin';
 	const providers = status.oauth_providers.filter((p) => p in PROVIDER_LABELS);
-	const endpoint = mode === 'setup' ? '/api/auth/setup' : mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
+	const endpoint = mode === 'setup' ? '/api/auth/setup' : '/api/auth/login';
 
 	/** Sign-up or sign-in, with a bot-check token; also what "Send a new code" repeats. */
 	async function request(token: string | null) {
@@ -74,14 +75,13 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	async function submit(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
 		setError('');
-		if (registering && password.length < 8) return setError('Password must be at least 8 characters.');
+		if (mode === 'setup' && password.length < 8) return setError('Password must be at least 8 characters.');
 		if (mode === 'setup') {
 			if (password !== confirm) return setError('Passwords do not match.');
 			if (bootstrapProof.length < 32) return setError('Installer proof must be at least 32 characters.');
 		}
 		setBusy(true);
 		try {
-			if (mode === 'signup') bindSignupDomainToEmail(email);
 			const res = await request(check.token);
 			setBootstrapProof('');
 			if (needsCode(res)) return setPending(res);
@@ -127,24 +127,14 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 		);
 	}
 
-	const requestedDomain = mode === 'signup' ? readSignupDomain() : null;
-	const title = mode === 'setup' ? 'Create your account' : mode === 'signup' ? 'Create an account' : 'Sign in';
+	const title = mode === 'setup' ? 'Create your account' : 'Sign in';
 	const description =
 		mode === 'setup'
 			? 'This creates the account that owns this instance. It needs the installer proof, a secret only the person who deployed it holds. There is no default password.'
-			: mode === 'signup'
-				? hosted
-					? 'See where your domains stand and what to fix, checked from live DNS.'
-					: 'Start monitoring your domains.'
-				: undefined;
+			: undefined;
 
 	return (
 		<AuthLayout title={title} description={description}>
-			{mode === 'signup' && requestedDomain ? (
-				<p className="text-sm text-ink-2">
-					You're adding <span className="font-mono [overflow-wrap:anywhere]">{requestedDomain}</span>. You'll confirm it after you verify your email.
-				</p>
-			) : null}
 			<form onSubmit={submit} className="space-y-4" noValidate={false}>
 				{mode === 'setup' ? <Field id="bootstrap-proof" label="Installer proof" hint="The BOOTSTRAP_SECRET value set on the Worker before its first start. The setup guide keeps it in a private file, such as ~/.config/ready-set-mail/bootstrap-proof. It works once. Never paste it into an agent chat."><Input id="bootstrap-proof" type="password" required minLength={32} autoComplete="off" value={bootstrapProof} onChange={e => setBootstrapProof(e.target.value)} /></Field> : null}
 				{/* Hosted sign-up asks for no name: one typed before the address is proven could be anyone's; Settings has it. */}
@@ -153,14 +143,14 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 						<Input id="name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Jane Smith" />
 					</Field>
 				) : null}
-				<Field id="email" label="Email" hint={mode === 'signup' ? "We'll email you a 6-digit code to confirm it." : registering ? (hosted ? 'Used to sign in.' : 'Used to sign in and to receive monitoring alerts.') : undefined}>
+				<Field id="email" label="Email" hint={registering ? 'Used to sign in and to receive monitoring alerts.' : undefined}>
 					<Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete={registering ? 'email' : 'username'} placeholder="you@yourcompany.com" aria-describedby={registering ? 'email-hint' : undefined} />
 				</Field>
 				<Field id="password" label="Password" hint={registering ? 'At least 8 characters.' : undefined}>
 					{mode === 'setup' ? (
 						<Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" aria-describedby="password-hint" />
 					) : (
-						<PasswordInput id="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={registering ? 8 : undefined} autoComplete={registering ? 'new-password' : 'current-password'} aria-describedby={registering ? 'password-hint' : undefined} />
+						<PasswordInput id="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" aria-describedby={registering ? 'password-hint' : undefined} />
 					)}
 				</Field>
 				{mode === 'setup' ? (
@@ -185,7 +175,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 				) : null}
 				{check.widget}
 				{error ? <FieldError>{error}</FieldError> : null}
-				{mode === 'signup' ? <TermsAgreement /> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={!check.ready}>
 					{mode === 'signin' ? 'Sign in' : 'Create account'}
 				</Button>
@@ -214,9 +203,9 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 
 			{status.configured && status.signup_open ? (
 				<p className="text-center text-sm text-ink-2">
-					{creating ? 'Already have an account?' : 'New here?'}{' '}
-					<button type="button" className="text-brand-ink underline underline-offset-4" onClick={() => { setCreating(!creating); setError(''); }}>
-						{creating ? 'Sign in' : 'Create an account'}
+					New here?{' '}
+					<button type="button" className="text-brand-ink underline underline-offset-4" onClick={() => navigate('/signup')}>
+						Create an account
 					</button>
 				</p>
 			) : null}
@@ -226,7 +215,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 				</Alert>
 			) : null}
 			{hosted && status.configured && !status.signup_open ? <TalkToMax className="text-center" lead="Want an account?" about="about your domains" /> : null}
-			{mode === 'signup' ? <TalkToMax className="text-center" lead="Questions first, or rather have someone set it up for you?" about="about your domains" /> : null}
 		</AuthLayout>
 	);
 }

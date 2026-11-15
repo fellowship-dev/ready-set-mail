@@ -13,12 +13,13 @@ import { cleanName, defaultWorkspaceName } from './names';
  * Names typed before the address was proven belong to whoever typed them (possibly someone who registered this address to
  * plant text in the real owner's dashboard). When an address is proven they are replaced: the display name by the email
  * address (or a name given at that moment), the workspace sign-up made (owned by this account alone) by one derived from that
- * name, else from the email's domain. Workspaces the account was invited into are not touched.
+ * name, else from the email's domain (or `workspaceNameOverride`: the sign-up's own answer, see names.ts firstWorkspaceName).
+ * Workspaces the account was invited into are not touched.
  */
-export async function resetUnprovenNames(db: D1Database, userId: string, email: string, name = ''): Promise<void> {
+export async function resetUnprovenNames(db: D1Database, userId: string, email: string, name = '', workspaceNameOverride?: string): Promise<void> {
   const given = cleanName(name);
   await db.prepare('UPDATE users SET name = ?1 WHERE id = ?2').bind(given || email, userId).run();
-  const workspaceName = defaultWorkspaceName(given, email);
+  const workspaceName = workspaceNameOverride ?? defaultWorkspaceName(given, email);
   for (const m of await authLookups(db).membershipsOf(userId)) {
     if (m.role !== 'owner') continue;
     // Only a workspace this account alone is in: the one sign-up made (an unproven account can have done nothing else).

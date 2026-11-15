@@ -30,6 +30,7 @@ import type { AuthEnv } from './config';
 import { authSecret } from './secret';
 import { d1RateLimitStorage } from './rate-limit';
 import { addressKey } from './welcome';
+import { readProfile, type SignupProfile } from './profile';
 
 /** `confirm`: a self-hosted user's test code (Settings), which turns sign-in codes on for them once entered. */
 export type CodePurpose = 'signup' | 'invite' | 'signin' | 'reset' | 'confirm';
@@ -147,12 +148,15 @@ export interface Attempt {
   invite?: string;
   /** Sign-up and invite: the terms version shown on the form, recorded at verification. */
   terms?: string;
+  /** Sign-up: the "about you" answers (profile.ts), saved after the form and applied only when this attempt's code is right. */
+  profile?: SignupProfile;
 }
 
-interface Stored { p: CodePurpose; u: string | null; n?: 1; e: string; c: string; t: number; pw?: string; inv?: string; terms?: string }
+interface Stored { p: CodePurpose; u: string | null; n?: 1; e: string; c: string; t: number; pw?: string; inv?: string; terms?: string; prof?: SignupProfile }
 
 /** The attempt as a decoy: it keeps the purpose and address, and can do nothing. */
-export const decoyOf = (a: Attempt): Attempt => ({ purpose: a.purpose, userId: null, email: a.email });
+/** (The S2 answers stay on it too: whether they were saved must look the same for every address.) */
+export const decoyOf = (a: Attempt): Attempt => ({ purpose: a.purpose, userId: null, email: a.email, ...(a.profile ? { profile: a.profile } : {}) });
 
 /**
  * Start an attempt: drop the one this browser held (if any), store the new one, and return its handle and code. A decoy
@@ -165,7 +169,7 @@ export async function startAttempt(env: AuthEnv, previousHandle: string | null, 
   const code = newCode();
   const stored: Stored = {
     p: a.purpose, u: a.userId, ...(a.userId === null && a.create ? { n: 1 as const } : {}), e: a.email, c: await codeMac(env, id, code), t: 0,
-    ...(a.passwordHash ? { pw: a.passwordHash } : {}), ...(a.invite ? { inv: a.invite } : {}), ...(a.terms ? { terms: a.terms } : {}),
+    ...(a.passwordHash ? { pw: a.passwordHash } : {}), ...(a.invite ? { inv: a.invite } : {}), ...(a.terms ? { terms: a.terms } : {}), ...(a.profile ? { prof: a.profile } : {}),
   };
   const stmts = [
     db.prepare("DELETE FROM verifications WHERE identifier LIKE 'signin-code:%' AND expires_at < ?1").bind(Math.floor(now / 1000)),
@@ -181,17 +185,31 @@ export async function dropAttempt(env: AuthEnv, handle: string): Promise<void> {
   await (env.DB as D1Database).prepare('DELETE FROM verifications WHERE identifier = ?1').bind(await identifierFor(handle)).run();
 }
 
-/** The live attempt behind a handle and how many tries it has had, without spending one (the limits need them). */
-export async function peekAttempt(env: AuthEnv, handle: string, now = Date.now()): Promise<(Attempt & { tries: number }) | null> {
-  const row = await (env.DB as D1Database).prepare('SELECT value FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(await identifierFor(handle), Math.floor(now / 1000)).first<{ value: string }>();
+/** The live attempt behind a handle, how many tries it has had and when it ends (unix seconds), without spending a try (the limits need them). */
+export async function peekAttempt(env: AuthEnv, handle: string, now = Date.now()): Promise<(Attempt & { tries: number; expiresAt: number }) | null> {
+  const row = await (env.DB as D1Database).prepare('SELECT value, expires_at FROM verifications WHERE identifier = ?1 AND expires_at >= ?2').bind(await identifierFor(handle), Math.floor(now / 1000)).first<{ value: string; expires_at: number }>();
   if (!row) return null;
   const s = JSON.parse(row.value) as Stored;
-  return { ...toAttempt(s), tries: s.t };
+  return { ...toAttempt(s), tries: s.t, expiresAt: row.expires_at };
 }
+
+/**
+ * Save the sign-up "about you" answers on the live sign-up attempt behind a handle (replacing earlier ones). One conditional
+ * statement: only a live, unexpired sign-up attempt takes them, the try count and everything else in the row stay as they are,
+ * and they end with the attempt. False: there is no such attempt (expired, replaced, another purpose).
+ */
+export async function saveAttemptProfile(env: AuthEnv, handle: string, profile: SignupProfile, now = Date.now()): Promise<boolean> {
+  const r = await (env.DB as D1Database).prepare("UPDATE verifications SET value = json_set(value, '$.prof', json(?3)) WHERE identifier = ?1 AND expires_at >= ?2 AND json_extract(value, '$.p') = 'signup'")
+    .bind(await identifierFor(handle), Math.floor(now / 1000), JSON.stringify(profile)).run();
+  return (r.meta.changes ?? 0) === 1;
+}
+
+/** "Wrong address? Start over": drop the attempt behind a handle. */
+export const cancelAttempt = dropAttempt;
 
 const toAttempt = (s: Stored): Attempt => ({
   purpose: s.p, userId: s.u, ...(s.n ? { create: true } : {}), email: s.e,
-  ...(s.pw ? { passwordHash: s.pw } : {}), ...(s.inv ? { invite: s.inv } : {}), ...(s.terms ? { terms: s.terms } : {}),
+  ...(s.pw ? { passwordHash: s.pw } : {}), ...(s.inv ? { invite: s.inv } : {}), ...(s.terms ? { terms: s.terms } : {}), ...(readProfile(s.prof) ? { profile: readProfile(s.prof)! } : {}),
 });
 
 export type CodeRefusal = 'code_expired' | 'code_wrong' | 'code_used_up';

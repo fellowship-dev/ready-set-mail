@@ -46,7 +46,7 @@ describe('password reset (by code)', () => {
     expect(mail.to).toEqual(['owner@example.com']);
     expect(mail.from).toEqual({ name: 'Ready Set Mail', email: 'noreply@reports.example.com' });
     expect(mail.subject).toMatch(/^\d{6} is your Ready Set Mail code$/);
-    expect(mail.text).toContain('Use this code to reset your Ready Set Mail password:');
+    expect(mail.text).toContain('Enter this code to reset your Ready Set Mail password.');
     expect(mail.text).not.toContain('#/reset/');
   });
 

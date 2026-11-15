@@ -53,13 +53,13 @@ describe('the code itself', () => {
     const code = await lastCodeFor(w.env, 'a@example.com');
     const mail = mailsTo(w.env, 'a@example.com').at(-1)!;
     expect(mail.subject).toBe(`${code} is your Ready Set Mail code`);
-    expect(mail.text).toContain('Use this code to confirm your email address and finish creating your Ready Set Mail account:');
-    expect(mail.text).toContain('It expires in 10 minutes');
-    expect(mail.text).toContain("If you didn't ask for this, you can ignore this email; nobody can use it without the code.");
+    expect(mail.text).toContain('Enter this code to finish creating your Ready Set Mail account.');
+    expect(mail.text).toContain('It works for 10 minutes, once, in the browser where you asked for it. Enter it only on https://ia.example.com.');
+    expect(mail.text).toContain("If you didn't ask for this, you can ignore this email.");
     expect(mail.text).toContain('Ready Set Mail is operated by Fellowship.dev, Inc. Privacy: https://readysetmail.com/privacy');
     expect(mail.text).not.toMatch(/#\/|token|\?/);
-    expect(codeEmailText('123456', 'signin', 'https://app.example', null)).toContain('Use this code to finish signing in to Ready Set Mail:');
-    expect(codeEmailText('123456', 'reset', 'https://app.example', null)).toContain('Use this code to reset your Ready Set Mail password:');
+    expect(codeEmailText('123456', 'signin', 'https://app.example', null)).toContain('Enter this code to finish signing in to Ready Set Mail.');
+    expect(codeEmailText('123456', 'reset', 'https://app.example', null)).toContain('Enter this code to reset your Ready Set Mail password.');
     expect(codeEmailText('123456', 'signup', 'https://app.example', 'Valdivia, CL')).toContain('Asked for from near Valdivia, CL');
   });
 });

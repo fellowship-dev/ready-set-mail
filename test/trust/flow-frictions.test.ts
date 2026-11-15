@@ -82,7 +82,7 @@ describe('1. the password is typed once, and the emailed code confirms it (the t
     expect(sent.from.name).toBe('Ready Set Mail');
     expect(sent.subject).toBe(codeSubject(code));
     expect(sent.text.startsWith(codeEmailText(code, 'signup', 'https://ia.example.com', null))).toBe(true);
-    expect(sent.text).toContain('It expires in 10 minutes');
+    expect(sent.text).toContain('It works for 10 minutes');
     expect(sent.text).not.toMatch(/Inbox ?Angel|next page|verify-email|#\//i);
     expect(mailsTo(w.env, 'a@example.com')).toHaveLength(1);
   });
