@@ -221,12 +221,14 @@ describe('HTML (KTD5)', () => {
     expect([...html.matchAll(/url\(([^)]*)\)/g)].every(x => x[1].startsWith('data:'))).toBe(true);
   });
 
-  it('uses the design system: navy/gold tokens, Geist, the halo-envelope mark, no sky blue', () => {
+  it('uses the design system: brand blue and navy tokens, Geist, the logo lockup, no gold and no sky blue', () => {
     const html = renderHtml(report(ACME));
-    expect(html).toContain('--brand:#0b1f3a');
-    expect(html).toContain('--accent:#fad172');
+    expect(html).toContain('--brand:#0647ff');
+    expect(html).toContain('--ink-1:#06194b');
+    expect(html).not.toContain('--accent');
     expect(html).toContain('Geist Mono Variable');
-    expect(html).toContain('<ellipse cx="50" cy="23" rx="19" ry="5.5"');
+    expect(html).toContain('viewBox="0 0 1526 347" class="mark" role="img" aria-label="Ready Set Mail"');
+    expect(html).toContain('fill="var(--logo-wordmark)"');
     for (const sky of ['#60a5fa', '#1d5bb5', '#93c5fd', '#eff6ff']) expect(html.toLowerCase()).not.toContain(sky);
   });
 

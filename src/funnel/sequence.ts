@@ -9,7 +9,7 @@ import { funnelQueries, globalQueries, type LeadRow } from '@ready-set-mail/db';
 import type { BoundEnv } from '../index';
 import { buildLetterHtml, buildLetterText } from '../email/html-templates';
 import type { CheckSummary } from '../email/report-formatter';
-import { DEFAULT_BRAND_COLOR } from '../tenancy/context';
+import { brandLockupUrl, DEFAULT_BRAND_COLOR } from '../tenancy/context';
 import { sendNonTransactional } from '../mail/compliance';
 import { funnelMailer, providerProblem, type Mailer } from '../mail/mailer';
 import { bookingUrl, funnelSender, postalAddress, publicBaseUrl, replyTo, sequenceEnabled, servicePrices } from './config';
@@ -99,7 +99,7 @@ export async function runOnboardingSequence(
         to: lead.email,
         subject: copy.subject,
         text: buildLetterText(copy.blocks),
-        html: buildLetterHtml({ title: copy.subject, blocks: copy.blocks, brand: { color: DEFAULT_BRAND_COLOR } }),
+        html: buildLetterHtml({ title: copy.subject, blocks: copy.blocks, brand: { color: DEFAULT_BRAND_COLOR, lockupUrl: brandLockupUrl(env) } }),
         replyTo: env.MAIL_REPLY_TO?.trim() || undefined,
         idempotencyKey: `lead-${lead.id}-step-${lead.step}`,
       }, { requireLink: true });

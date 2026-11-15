@@ -52,7 +52,7 @@ export function GetStarted({ steps }: { steps: Step[] }) {
 								aria-hidden
 								className={cn(
 									'mt-0.5 flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full px-1.5 font-mono text-xs font-semibold',
-									isCurrent ? 'bg-accent text-accent-fg' : 'border border-line-strong text-ink-2',
+									isCurrent ? 'bg-brand text-brand-fg' : 'border border-line-strong text-ink-2',
 								)}
 							>
 								{i + 1}

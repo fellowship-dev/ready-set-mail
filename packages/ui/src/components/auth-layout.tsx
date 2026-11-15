@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "../lib/cn.js";
 import { Card, CardContent } from "./card.js";
-import { LogoMark } from "./logo.js";
+import { LogoLockup, LogoMark } from "./logo.js";
 
 export interface AuthLayoutProps {
 	title: string;
@@ -21,8 +21,15 @@ export function AuthLayout({ title, description, children, brandName = "Ready Se
 		<main className={cn("flex min-h-screen flex-col items-center bg-surface-0 px-0 py-8 text-ink-1 sm:justify-center sm:px-6 sm:py-14", className)}>
 			<div className="w-full max-w-md space-y-6">
 				<div className="flex items-center justify-center gap-2.5 px-4 text-lg font-semibold tracking-tight sm:px-0">
-					<LogoMark className="size-9 shrink-0 rounded-md" />
-					{brandName}
+					{/* The default name is the logo lockup (mark plus wordmark); any other name is set beside the mark. */}
+					{brandName === "Ready Set Mail" ? (
+						<LogoLockup className="h-11 w-auto" />
+					) : (
+						<>
+							<LogoMark className="size-9 shrink-0" />
+							{brandName}
+						</>
+					)}
 				</div>
 				<Card className="rounded-none border-x-0 shadow-none sm:rounded-lg sm:border-x sm:shadow-lift">
 					<CardContent className="space-y-6 p-5 sm:p-8">

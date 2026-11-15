@@ -50,7 +50,7 @@ export const LevelLadder = React.forwardRef<HTMLDivElement, LevelLadderProps>(({
 							<p
 								className={cn(
 									"flex w-fit items-center gap-1 whitespace-nowrap rounded-full text-xs leading-5",
-									isCurrent ? "bg-accent px-1.5 font-semibold text-accent-fg" : reached ? "text-ink-1" : "text-ink-2",
+									isCurrent ? "bg-brand px-1.5 font-semibold text-brand-fg" : reached ? "text-ink-1" : "text-ink-2",
 								)}
 							>
 								{reached && !isCurrent ? <CheckCircle2 aria-hidden className="size-3.5 shrink-0 text-brand-ink" /> : null}

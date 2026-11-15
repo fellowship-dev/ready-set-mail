@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { Inbox, Settings } from "lucide-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	AppShell, AuthLayout, Button, Field, Input, CheckResult, CheckResultList, EmptyState, LevelCard, LogoMark, PageHeader, RecordBlock, Skeleton, Stat,
+	AppShell, AuthLayout, Button, Field, Input, CheckResult, CheckResultList, EmptyState, LevelCard, LogoLockup, LogoMark, MARK_PATHS, PageHeader, RecordBlock, Skeleton, Stat, WORDMARK_PATH,
 	StatGroup, StatusDot, Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow, Toaster, WorkspaceSwitcher, dismissToast, toast,
 } from "../src";
 import { expectNoViolations } from "./a11y";
@@ -81,14 +81,24 @@ describe("AuthLayout", () => {
 });
 
 describe("PageHeader / LogoMark", () => {
-	it("LogoMark keeps the website halo-envelope geometry", () => {
+	it("LogoMark draws the asset pack's icon: blue mailbox, red flag, no tile", () => {
 		const { container } = render(<LogoMark />);
 		const svg = container.querySelector("svg")!;
-		expect(svg).toHaveAttribute("viewBox", "0 0 100 100");
-		expect(svg.querySelector("rect")).toHaveAttribute("fill", "#0b1f3a");
-		const halo = svg.querySelector("ellipse")!;
-		expect([halo.getAttribute("cx"), halo.getAttribute("cy"), halo.getAttribute("rx"), halo.getAttribute("ry"), halo.getAttribute("stroke")]).toEqual(["50", "23", "19", "5.5", "#fad172"]);
-		expect(svg.querySelector("path")).toHaveAttribute("d", "M24 42 50 61 76 42");
+		expect(svg).toHaveAttribute("viewBox", "0 0 414 414");
+		expect(svg.querySelector("rect")).toBeNull();
+		expect([...svg.querySelectorAll("path")].map((p) => p.getAttribute("fill"))).toEqual(["#0647FF", "#FF252B"]);
+		expect(svg.querySelector("path")).toHaveAttribute("d", MARK_PATHS.body);
+	});
+	it("LogoLockup is named, follows the theme by default and pins either pack file on request", () => {
+		const { container, rerender } = render(<LogoLockup />);
+		expect(screen.getByRole("img", { name: "Ready Set Mail" })).toHaveAttribute("viewBox", "0 0 1526 347");
+		const wordmark = () => container.querySelectorAll("path")[2]!;
+		expect(wordmark()).toHaveAttribute("fill", "var(--logo-wordmark)");
+		expect(wordmark()).toHaveAttribute("d", WORDMARK_PATH);
+		rerender(<LogoLockup surface="light" />);
+		expect(wordmark()).toHaveAttribute("fill", "#06194B");
+		rerender(<LogoLockup surface="dark" />);
+		expect(wordmark()).toHaveAttribute("fill", "#FFFFFF");
 	});
 	it("renders one h1 with actions", () => {
 		render(<PageHeader title="Domain overview" description="d" actions={<Button>Act</Button>} />);

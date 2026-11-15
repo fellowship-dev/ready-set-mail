@@ -23,7 +23,19 @@ export function workerName(env: { WORKER_NAME?: string }): string {
   return env.WORKER_NAME || DEFAULT_WORKER_NAME;
 }
 
-export const DEFAULT_BRAND_COLOR = '#4F46E5';
+/** Brand blue (packages/ui tokens `brand`): the default colour of outbound HTML mail. */
+export const DEFAULT_BRAND_COLOR = '#0647FF';
+
+/**
+ * The Ready Set Mail lockup PNG for HTML mail (web/public/brand/png/lockup/lockup-light-640.png), served by this Worker's
+ * dashboard assets at its public origin (PUBLIC_BASE_URL, else BETTER_AUTH_URL). HTTPS only, or http on localhost for
+ * development; undefined without one, and the mail then sets the name in text.
+ */
+export function brandLockupUrl(env: { PUBLIC_BASE_URL?: string; BETTER_AUTH_URL?: string }): string | undefined {
+  const raw = (env.PUBLIC_BASE_URL || env.BETTER_AUTH_URL || '').trim().replace(/\/+$/, '');
+  const ok = /^https:\/\/[^\s/]+$/i.test(raw) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(raw);
+  return ok ? `${raw}/brand/png/lockup/lockup-light-640.png` : undefined;
+}
 
 export interface TenantSettings {
   baseDomain?: string;
@@ -39,8 +51,8 @@ export interface TenantSettings {
   brandColor: string;
 }
 
-/** Branding applied to outbound HTML mail. */
-export interface Brand { color: string; logoUrl?: string }
+/** Branding applied to outbound HTML mail. `logoUrl` is a workspace's own logo; `lockupUrl` the Ready Set Mail lockup. */
+export interface Brand { color: string; logoUrl?: string; lockupUrl?: string }
 
 export interface TenantInit {
   access?: import('../access/principal').AccessSubject;
@@ -98,7 +110,7 @@ export class TenantContext {
 
   get workerName(): string { return workerName(this.env); }
 
-  get brand(): Brand { return { color: this.settings.brandColor, logoUrl: this.settings.brandLogoUrl }; }
+  get brand(): Brand { return { color: this.settings.brandColor, logoUrl: this.settings.brandLogoUrl, lockupUrl: brandLockupUrl(this.env) }; }
 
   /** The Cloudflare client for this tenant, or null when no token is configured. */
   cf(): CfClient | null {

@@ -1,7 +1,7 @@
 import {
 	AppShell, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, CheckResult, CheckResultList, DropdownMenu,
 	DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, IconButton, LevelCard,
-	LogoMark, PageHeader, RecordBlock, Stat, StatGroup, toast, type NavSection,
+	LogoLockup, PageHeader, RecordBlock, Stat, StatGroup, toast, type NavSection,
 } from "@ready-set-mail/ui";
 import { Bell, FileText, Globe, LayoutDashboard, Plus, RefreshCw, Settings, User } from "lucide-react";
 import { SAMPLE_DOMAIN, SampleBanner } from "../sample";
@@ -23,8 +23,7 @@ export function DomainOverview() {
 		<AppShell
 			brand={
 				<>
-					<LogoMark className="size-8 shrink-0 rounded-md" />
-					<span className="truncate text-base font-bold tracking-tight">Ready Set Mail</span>
+					<LogoLockup className="h-9 w-auto shrink-0" />
 				</>
 			}
 			nav={nav}

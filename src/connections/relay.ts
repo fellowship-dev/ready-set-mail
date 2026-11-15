@@ -25,6 +25,7 @@
 
 import { b64url, unb64url } from './crypto';
 import { isSecureUrl, oauthConfig, redirectUri as configuredRedirect, type OAuthEnv } from './oauth';
+import { lightColors as c } from '../../packages/ui/src/tokens/tokens';
 
 export interface RelayEnv extends OAuthEnv {
   CF_OAUTH_RELAY_SECRET?: string;
@@ -117,9 +118,9 @@ function confirmPage(host: string, origin: string, fields: { state: string; code
   const h = escapeHtml(host);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>Connect Cloudflare to ${h}</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1rem;color:#111}
-.host{font:600 1.25rem ui-monospace,monospace;background:#fff4d6;border:2px solid #d99a00;padding:.6rem .8rem;border-radius:6px;word-break:break-all}
-button{font:inherit;padding:.6rem 1rem;border-radius:6px;border:0;background:#111;color:#fff;cursor:pointer}p.s{color:#555;font-size:.9rem}</style></head>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1rem;color:${c['ink-1']};background:${c['surface-1']}}
+.host{font:600 1.25rem ui-monospace,monospace;background:${c['warning-subtle']};border:2px solid ${c.warning};padding:.6rem .8rem;border-radius:6px;word-break:break-all}
+button{font:inherit;padding:.6rem 1rem;border-radius:6px;border:0;background:${c.brand};color:${c['brand-fg']};cursor:pointer}p.s{color:${c['ink-2']};font-size:.9rem}</style></head>
 <body><h1>Send your Cloudflare authorization to this site?</h1>
 <p>You just approved <strong>Ready Set Mail</strong> at Cloudflare. To finish, the authorization will be handed to:</p>
 <p class="host">${h}</p>

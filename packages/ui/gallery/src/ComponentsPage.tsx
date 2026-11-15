@@ -78,8 +78,8 @@ function Forms() {
 }
 
 const swatches = [
-	"surface-0", "surface-1", "surface-2", "surface-3", "ink-1", "ink-2", "ink-3", "brand", "brand-ink", "brand-subtle", "brand-fg",
-	"accent", "accent-subtle", "blush", "success", "success-subtle", "warning", "warning-subtle", "danger", "danger-subtle", "line", "line-strong",
+	"surface-0", "surface-1", "surface-2", "surface-3", "ink-1", "ink-2", "ink-3", "brand", "brand-hover", "brand-active", "brand-ink", "brand-subtle", "brand-fg",
+	"info", "info-subtle", "success", "success-subtle", "warning", "warning-subtle", "danger", "danger-subtle", "line", "line-strong",
 ] as const;
 
 export function ComponentsPage() {
@@ -87,7 +87,7 @@ export function ComponentsPage() {
 		<TooltipProvider>
 			<main className="mx-auto max-w-6xl space-y-12 px-4 py-8 sm:px-6">
 				<PageHeader
-					eyebrow={<span className="flex items-center gap-2"><LogoMark className="size-6 rounded-md" /> Ready Set Mail design system</span>}
+					eyebrow={<span className="flex items-center gap-2"><LogoMark className="size-6" /> Ready Set Mail design system</span>}
 					title="Component gallery"
 					description="Every component in light and dark. Sample data throughout."
 				/>
@@ -143,7 +143,7 @@ export function ComponentsPage() {
 							<CardFooter><Button size="sm" variant="secondary">Details</Button></CardFooter>
 						</Card>
 						<div className="flex flex-wrap gap-2">
-							<Badge>Neutral</Badge><Badge variant="brand">Brand</Badge><Badge variant="success">Pass</Badge>
+							<Badge>Neutral</Badge><Badge variant="brand">Brand</Badge><Badge variant="info">Note</Badge><Badge variant="success">Pass</Badge>
 							<Badge variant="warning">Warning</Badge><Badge variant="danger">Fail</Badge><Badge variant="outline">Sample</Badge>
 						</div>
 						<Alert variant="info" title="Info">Neutral guidance with a <a href="#/components">link</a>.</Alert>

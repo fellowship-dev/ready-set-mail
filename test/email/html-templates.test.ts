@@ -10,6 +10,7 @@ import type { CheckSummary } from '../../src/email/report-formatter';
 import type { DomainChange } from '../../src/monitor/check';
 import type { DnsCheckResult } from '../../src/email/dns-check';
 import type { AuthResultsHeader } from '../../src/email/parse-headers';
+import { brandLockupUrl, DEFAULT_BRAND_COLOR } from '../../src/tenancy/context';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -70,13 +71,13 @@ describe('buildWeeklyDigestHtml', () => {
   it('renders reject badge for reject policy', () => {
     const html = buildWeeklyDigestHtml(makeParams());
     expect(html).toContain('reject');
-    expect(html).toContain('#16a34a'); // green color for reject badge
+    expect(html).toContain('#147a3a'); // success token: reject badge
   });
 
   it('renders none badge for none policy', () => {
     const html = buildWeeklyDigestHtml(makeParams());
     expect(html).toContain('none');
-    expect(html).toContain('#dc2626'); // red color for none badge
+    expect(html).toContain('#b91c1c'); // danger token: none badge
   });
 
   it('shows pass/fail counts with percentages', () => {
@@ -143,19 +144,19 @@ describe('buildFreeCheckHtml', () => {
   it('shows green banner for protected status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('protected'), auth: AUTH_PASS, dns: DNS_FULL });
     expect(html).toContain('Protected');
-    expect(html).toContain('#16a34a');
+    expect(html).toContain('#147a3a');
   });
 
   it('shows orange banner for at_risk status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('at_risk'), auth: AUTH_PASS, dns: DNS_FULL });
     expect(html).toContain('At risk');
-    expect(html).toContain('#d97706');
+    expect(html).toContain('#aa4f08');
   });
 
   it('shows red banner for exposed status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('exposed'), auth: null, dns: DNS_FULL });
     expect(html).toContain('Exposed');
-    expect(html).toContain('#dc2626');
+    expect(html).toContain('#b91c1c');
   });
 
   it('shows PASS badges for all checks when protected', () => {
@@ -286,19 +287,19 @@ describe('buildDnsAlertHtml', () => {
   it('shows degraded badge in red', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('degraded');
-    expect(html).toContain('#dc2626');
+    expect(html).toContain('#b91c1c');
   });
 
   it('shows improved badge in green', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('improved');
-    expect(html).toContain('#16a34a');
+    expect(html).toContain('#147a3a');
   });
 
   it('shows changed badge in orange', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [changed], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('changed');
-    expect(html).toContain('#d97706');
+    expect(html).toContain('#aa4f08');
   });
 
   it('shows old and new values in change table', () => {
@@ -323,5 +324,40 @@ describe('buildDnsAlertHtml', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
     expect(html).toMatch(/^<!DOCTYPE html>/);
     expect(html).toContain('</html>');
+  });
+});
+
+// ── Shared layout: the logo ───────────────────────────────────
+
+describe('email header', () => {
+  const params = { fromEmail: 'user@acme.com', summary: { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary, auth: AUTH_PASS, dns: DNS_FULL };
+
+  it('shows the hosted lockup PNG on white when the instance has a public origin', () => {
+    const html = buildFreeCheckHtml({ ...params, brand: { color: '#0647FF', lockupUrl: 'https://app.example.test/brand/png/lockup/lockup-light-640.png' } });
+    expect(html).toContain('<img src="https://app.example.test/brand/png/lockup/lockup-light-640.png" alt="Ready Set Mail" width="176" height="40"');
+    expect(html).toContain('border-bottom:3px solid #0647FF');
+  });
+
+  it('sets the name in navy text without a public origin, and never uses SVG or data: images', () => {
+    const html = buildFreeCheckHtml(params);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('color:#06194b;font-size:16px;font-weight:700;">Ready Set Mail</span>');
+    expect(html).not.toMatch(/<svg|data:image/);
+  });
+
+  it("keeps a workspace's own logo on its coloured band", () => {
+    const html = buildFreeCheckHtml({ ...params, brand: { color: '#ff0000', logoUrl: 'https://logo.example.test/x.png', lockupUrl: 'https://app.example.test/l.png' } });
+    expect(html).toContain('background:#ff0000;padding:16px 24px;');
+    expect(html).toContain('src="https://logo.example.test/x.png"');
+    expect(html).not.toContain('https://app.example.test/l.png');
+  });
+
+  it('the lockup URL is the Worker\'s own public HTTPS origin, never plain http elsewhere', () => {
+    expect(brandLockupUrl({ PUBLIC_BASE_URL: 'https://mail.example.test/' })).toBe('https://mail.example.test/brand/png/lockup/lockup-light-640.png');
+    expect(brandLockupUrl({ BETTER_AUTH_URL: 'https://app.example.test' })).toBe('https://app.example.test/brand/png/lockup/lockup-light-640.png');
+    expect(brandLockupUrl({ BETTER_AUTH_URL: 'http://mail.example.test' })).toBeUndefined();
+    expect(brandLockupUrl({ BETTER_AUTH_URL: 'http://127.0.0.1:8787' })).toBe('http://127.0.0.1:8787/brand/png/lockup/lockup-light-640.png');
+    expect(brandLockupUrl({})).toBeUndefined();
+    expect(DEFAULT_BRAND_COLOR).toBe('#0647FF');
   });
 });

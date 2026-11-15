@@ -20,7 +20,7 @@ describe("Button", () => {
 		expect(b).toHaveClass("bg-brand", "text-brand-fg", "custom");
 		expect(ref.current).toBe(b);
 	});
-	it("primary uses navy text on the brand fill, never white", () => {
+	it("primary takes its label colour from the brand-fg token, not a literal white", () => {
 		render(<Button>Go</Button>);
 		expect(screen.getByRole("button")).not.toHaveClass("text-white");
 	});

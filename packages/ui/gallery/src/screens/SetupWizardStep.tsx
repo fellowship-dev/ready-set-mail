@@ -1,5 +1,5 @@
 import {
-	Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Checkbox, FieldHint, Input, Label, LogoMark,
+	Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Checkbox, FieldHint, Input, Label, LogoLockup,
 	RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn,
 } from "@ready-set-mail/ui";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
@@ -16,8 +16,7 @@ export function SetupWizardStep() {
 		<div className="min-h-screen bg-surface-0 text-ink-1">
 			<header className="border-b border-line bg-surface-1">
 				<div className="mx-auto flex h-16 max-w-3xl items-center gap-2 px-4 sm:px-6">
-					<LogoMark className="size-8 rounded-md" />
-					<span className="text-base font-bold tracking-tight">Ready Set Mail</span>
+					<LogoLockup className="h-8 w-auto" />
 					<span className="ml-auto text-sm text-ink-2">Setup</span>
 				</div>
 			</header>

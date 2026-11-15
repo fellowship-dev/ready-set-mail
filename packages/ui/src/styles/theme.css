@@ -13,15 +13,10 @@
 
   --color-brand: var(--brand);
   --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
   --color-brand-ink: var(--brand-ink);
   --color-brand-subtle: var(--brand-subtle);
   --color-brand-fg: var(--brand-fg);
-
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-fg: var(--accent-fg);
-  --color-accent-subtle: var(--accent-subtle);
-  --color-blush: var(--blush);
 
   --color-success: var(--success);
   --color-success-subtle: var(--success-subtle);
@@ -29,11 +24,14 @@
   --color-warning-subtle: var(--warning-subtle);
   --color-danger: var(--danger);
   --color-danger-subtle: var(--danger-subtle);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
 
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
   --color-control: var(--control-border);
   --color-focus: var(--focus);
+  --color-logo-wordmark: var(--logo-wordmark);
 
   --radius-sm: var(--r-sm);
   --radius-md: var(--r-md);

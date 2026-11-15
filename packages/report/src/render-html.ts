@@ -11,6 +11,7 @@ import type { BimiReadiness } from './bimi-readiness';
 import type { FixRecord } from './fixes';
 import { MIN_CONFIDENCE, planned, type ReportFinding, type ReportModel } from './model';
 import { tokenCss } from './tokens';
+import { lockupSvg } from '../../ui/src/components/logo-svg';
 
 export interface CallerBlock {
   id: string;
@@ -31,19 +32,15 @@ const SEV: Record<string, [string, string]> = { high: ['▲', 'High'], medium: [
 const STATE: Record<string, [string, string]> = { done: ['✓', 'Done'], todo: ['○', 'To do'], unknown: ['?', 'Could not check'] };
 const tag = (cls: string, [icon, word]: [string, string]) => `<span class="tag ${cls}"><span aria-hidden="true">${icon}</span> ${E(word)}</span>`;
 
-/** The halo-envelope mark (`LogoMark` in @ready-set-mail/ui): navy square, gold halo, gold envelope with a navy flap. */
-const LOGO = '<svg class="mark" viewBox="0 0 100 100" width="32" height="32" aria-hidden="true">'
-  + '<rect width="100" height="100" rx="12" fill="#0b1f3a"/>'
-  + '<ellipse cx="50" cy="23" rx="19" ry="5.5" fill="none" stroke="#fad172" stroke-width="4.5"/>'
-  + '<rect x="20" y="38" width="60" height="40" rx="5" fill="#fad172"/>'
-  + '<path d="M24 42 50 61 76 42" fill="none" stroke="#0b1f3a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/** The logo lockup (`LogoLockup` in @ready-set-mail/ui; web/public/brand/svg/lockup.svg): the wordmark follows the theme. */
+const LOGO = lockupSvg('light', ' class="mark" role="img" aria-label="Ready Set Mail"', 'var(--logo-wordmark)');
 
 const CSS = `
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--surface-0);color:var(--ink-1);font:16px/1.6 "Geist Variable",system-ui,-apple-system,sans-serif}
 main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}
 header.top{display:flex;align-items:center;gap:.75rem;padding:1rem 0;border-bottom:1px solid var(--line)}
-header.top .mark{flex:none}header.top .brand{font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+header.top .mark{flex:none;height:2.25rem;width:auto}header.top .brand{font-weight:600;letter-spacing:-.01em;white-space:nowrap}
 header.top .dom{margin-left:auto;color:var(--ink-3);font-size:.875rem;overflow-wrap:anywhere;text-align:right}
 h1,h2,h3{letter-spacing:-.015em;text-wrap:balance;overflow-wrap:anywhere}
 h1{font-size:1.75rem;line-height:1.2;font-weight:600;margin:2rem 0 .75rem}h2{font-size:1.125rem;font-weight:600;margin:2.5rem 0 .75rem}
@@ -172,7 +169,7 @@ export function renderHtml(m: ReportModel, { blocks = [] }: RenderHtmlOptions = 
     + "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'\">"
     + `<title>Email check for ${E(d)} · Ready Set Mail</title>`
     + `<style>${fontFace('Geist Variable', GEIST_SANS_WOFF2)}${fontFace('Geist Mono Variable', GEIST_MONO_WOFF2)}${tokenCss()}${CSS}</style></head><body><main>`
-    + `<header class="top">${LOGO}<span class="brand">Ready Set Mail</span><span class="dom">Email check · ${E(d)}</span></header>`
+    + `<header class="top">${LOGO}<span class="dom">Email check · ${E(d)}</span></header>`
     + body.join('')
     + `<footer>Prepared for ${E(d)} by Ready Set Mail. Read from public DNS only; nothing was logged into.${link} `
     + 'This page is private to whoever got the link, is not indexed, and has no trackers or analytics.</footer>'
