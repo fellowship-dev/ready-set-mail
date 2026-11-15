@@ -8,7 +8,8 @@ import { AuthBadge, BackLink, ProviderName, useRouteDomainId } from '../../compo
 import { LoadError, PageSkeleton, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
-import { useDnsCheck } from '../../lib/domain-queries';
+import { useCheckSummary, useDnsCheck } from '../../lib/domain-queries';
+import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
 import { explain, formatDayWithRelative, isFailing, passRate, type KnownPolicy, type LiveDmarc } from '../../lib/reports';
 import type { DayReport, ReportSource } from '../../lib/types';
@@ -102,6 +103,10 @@ export function ReportDetailPage() {
 		enabled: !Number.isNaN(id) && date !== '',
 	});
 
+	// "No reports received" only when none arrived: dropped, not processed or uncounted reports are said as such.
+	const summaryQ = useCheckSummary(id, !Number.isNaN(id));
+	const visibility = summaryQ.data;
+	const lost = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 	const name = q.data?.domain ?? domain?.domain;
 	const reportsOff = useReportsNotConnected(domain);
 	const record = dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null;
@@ -118,7 +123,7 @@ export function ReportDetailPage() {
 			</div>
 		);
 	}
-	if (q.isPending) {
+	if (q.isPending || summaryQ.isLoading) {
 		return (
 			<div className="space-y-6">
 				{header(formatDayWithRelative(date))}
@@ -151,7 +156,9 @@ export function ReportDetailPage() {
 		<div className="space-y-8">
 			{header(formatDayWithRelative(date))}
 
-			{summary.total === 0 ? (
+			{summary.total === 0 && lost ? (
+				<EmptyState title="No counted reports for this date" description={`${lost.replace(/\.?$/, '.')} Pick another day from the reports list.`} />
+			) : summary.total === 0 ? (
 				<EmptyState
 					title="No reports received for this date"
 					description="DMARC reports arrive daily from mail providers, usually a day late. Pick another day from the reports list."

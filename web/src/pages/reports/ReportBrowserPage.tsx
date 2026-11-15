@@ -9,7 +9,8 @@ import { api } from '../../lib/api';
 import { useDomain, useDomains } from '../../lib/queries';
 import { formatDayWithRelative, isoDay, passRate, plural, rateTone, type RateTone } from '../../lib/reports';
 import type { AggregateReport } from '../../lib/types';
-import { countingBasisNote, type ReportCounting } from '../../lib/uncounted';
+import { countingBasisNote, emptyReportsMessage, emptyReportsState, type ReportCounting } from '../../lib/uncounted';
+import { useCheckSummary, useDomainSummaries } from '../../lib/domain-queries';
 
 const TONE_TEXT: Record<RateTone, string> = { success: 'text-success', warning: 'text-warning', danger: 'text-danger' };
 
@@ -38,6 +39,12 @@ export function ReportBrowserPage() {
 	const domainOff = useReportsNotConnected(domain);
 	const workspaceOff = useWorkspaceReportsNotConnected();
 	const reportsOff = scope === 'domain' ? domainOff : workspaceOff;
+	// An empty list is "no reports" only when none arrived: reports dropped for storage, not processed or not counted are
+	// said as such (the server's visibility fields: this domain's summary, or for all domains any domain's).
+	const summary = useCheckSummary(id, scope === 'domain' && !Number.isNaN(id));
+	const batch = useDomainSummaries(scope === 'all');
+	const visibility = scope === 'domain' ? summary.data : [...(batch.data?.values() ?? [])].find((s) => emptyReportsState(0, s) !== 'none');
+	const lost = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 
 	return (
 		<div className="space-y-6">
@@ -62,10 +69,12 @@ export function ReportBrowserPage() {
 
 			{reportsOff ? (
 				<ReportsNotConnected domain={filterName} domainId={scope === 'domain' ? domain?.id : undefined} />
-			) : loading ? (
+			) : loading || (visible.length === 0 && (scope === 'domain' ? summary.isLoading : batch.isLoading)) ? (
 				<ListSkeleton rows={5} label="Loading reports" />
 			) : q.isError ? (
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load reports" />
+			) : visible.length === 0 && lost ? (
+				<EmptyState title={filterName ? `No counted reports for ${filterName}` : 'No counted reports'} description={lost.replace(/\.?$/, '.')} />
 			) : visible.length === 0 ? (
 				<EmptyState
 					title={filterName ? `No reports for ${filterName} yet` : 'No reports yet'}
