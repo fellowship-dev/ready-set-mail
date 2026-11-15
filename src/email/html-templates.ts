@@ -327,12 +327,12 @@ export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
 <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:16px;">
 <tr style="background:${c['surface-0']};font-weight:600;"><td>Field</td><td>Was</td><td>Now</td><td>Status</td></tr>`;
 
-  for (const c of p.changes) {
+  for (const ch of p.changes) {
     body += `<tr style="border-top:1px solid ${c.line};">
-<td><strong>${esc(c.field)}</strong></td>
-<td style="font-size:13px;color:${c['ink-2']};">${esc(c.was || '(not set)')}</td>
-<td style="font-size:13px;">${esc(c.now || '(removed)')}</td>
-<td>${severityBadge(c.severity)}</td>
+<td><strong>${esc(ch.field)}</strong></td>
+<td style="font-size:13px;color:${c['ink-2']};">${esc(ch.was || '(not set)')}</td>
+<td style="font-size:13px;">${esc(ch.now || '(removed)')}</td>
+<td>${severityBadge(ch.severity)}</td>
 </tr>`;
   }
 

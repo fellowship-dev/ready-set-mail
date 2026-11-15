@@ -1,10 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { iconSvg, LOGO_COLORS, lockupSvg } from "../src/components/logo-svg";
 import { darkColors, lightColors } from "../src/tokens/tokens";
 
-const brand = (rel: string) => readFileSync(new URL(`../../../web/public/brand/${rel}`, import.meta.url), "utf8");
+// A path, not `new URL(template, import.meta.url)`: Vite rewrites that pattern as an asset import.
+const brandDir = join(dirname(fileURLToPath(import.meta.url)), "../../../web/public/brand");
+const brand = (rel: string) => readFileSync(join(brandDir, rel), "utf8");
 
 /** The logo data the components draw is the asset pack, exactly: rebuilding the three SVG files from it gives the same bytes. */
 describe("logo data matches the brand asset pack", () => {

@@ -8,7 +8,7 @@
      #0647FF in light mode and a lighter blue in dark mode (#0647FF is too dark for text on the dark surfaces).
    - Brand navy #06194B is the ink for headings and strong text in light mode. Every neutral (surfaces, muted text,
      borders) is re-hued to the navy's hue (223.5deg), keeping the lightness and saturation of the previous set.
-   - Brand red #FF252B lives ONLY inside the logo (components/logo-svg.ts). It is not a token: never a UI colour.
+   - The logo's red lives ONLY inside the logo (components/logo-svg.ts). It is not a token: never a UI colour.
    - Status colours keep their meaning and stay apart from the brand: success green, warning amber, danger red (a
      darker crimson than the logo's red), and info teal (not the brand blue, so a note never looks like an action).
    - --logo-wordmark is the lockup's wordmark: navy on light surfaces, white on dark (lockup.svg / lockup-dark.svg).
