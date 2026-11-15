@@ -308,6 +308,7 @@ describe('threat 4: lockout', () => {
       const s = await signup(w.env, 'a@example.com', 'attacker-pass-1');
       for (let i = 0; i < CODE_MAX_TRIES; i++) await enterCode(w.env, pendingCookieOf(s), '000000', { ip: ip() });
     }
+    await flushBackground(); // reset codes go out after their answers: let them land before the sign-in code
     expect((await me(w.env, await loginWithCode(w.env, 'a@example.com', 'a-password-1'))).status).toBe(200);
   });
 

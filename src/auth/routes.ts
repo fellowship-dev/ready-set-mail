@@ -240,7 +240,7 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  */
 async function answerWithCode(
   env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
-  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean } = {},
+  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
@@ -253,7 +253,11 @@ async function answerWithCode(
   if (opts.afterAnswer) {
     // Reset: the code goes out after the answer, and an address with no account is mailed nothing, so both answers follow the
     // same database work and return the same body at the same time. The cost: during a mail outage a reset looks sent.
+    // Nothing for a real account starts until AFTER_ANSWER_MS after the answer: work started before it is sent (the audit row,
+    // the mail call) shares the isolate with the response and makes a known address measurably slower.
     if (mailing) ctx.waitUntil((async () => {
+      await new Promise(resolve => setTimeout(resolve, AFTER_ANSWER_MS));
+      opts.onAfterAnswer?.();
       if (!(await sendCodeEmail(env, attempt.email, code, attempt.purpose, origin, requestedFrom(request))) && attempt.userId) {
         auditCodeNotSent(env, ctx, request, { id: attempt.userId, email: attempt.email }, attempt.purpose);
       }
@@ -275,6 +279,9 @@ async function answerWithCode(
   out.headers.append('set-cookie', pendingCookie(handle, secure));
   return out;
 }
+
+/** How long after a reset answer its background work (audit, code mail) starts. */
+const AFTER_ANSWER_MS = 50;
 
 /** The answer when a code (or the notice standing in for one) could not be handed to the mail provider: the same for every address. */
 function notSent(): Response {
@@ -738,15 +745,16 @@ export async function handleAuthRoute(
     const email = body.email.toLowerCase().trim();
     if (!EMAIL_RE.test(email)) return err('invalid email', 400);
     const user = await globalQueries(env.DB).users.byEmail(email);
-    if (user) auditUser(env, ctx, user.id, {
+    // Audited after the answer, with the code mail (see answerWithCode), so a known address does no extra work before it.
+    const audit = user ? () => auditUser(env, ctx, user.id, {
       actor_id: user.id, actor_email: user.email, actor_type: 'user',
       action: 'auth.password_reset', resource_type: 'user', resource_id: user.id, resource_name: user.email,
       meta: { phase: 'requested' },
-    });
+    }) : undefined;
     // A browser that signed in to this account before has its own reset allowance: a stranger who spends the address's cannot
     // spend it. An address with no account is mailed nothing; the code to a real account goes out after the answer.
     const device = !!user && (await knownDevice(env, request, user.id));
-    return answerWithCode(env, request, ctx, { purpose: 'reset', userId: user?.id ?? null, email }, { pool: device ? 'reset-device' : 'reset', afterAnswer: true });
+    return answerWithCode(env, request, ctx, { purpose: 'reset', userId: user?.id ?? null, email }, { pool: device ? 'reset-device' : 'reset', afterAnswer: true, onAfterAnswer: audit });
   }
 
   // ── POST /api/auth/reset — the emailed reset code and a new password, in the browser that asked ──
