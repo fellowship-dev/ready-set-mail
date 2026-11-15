@@ -92,6 +92,8 @@ export function OverviewPage() {
 	const list = useDomains();
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
+	// Waiting for proof: pending claims, and domains held but unproven (a name with both counts once).
+	const waiting = new Set([...claims.map((c) => c.domain), ...domains.filter(isUnproven).map((d) => d.domain)]).size;
 	const [exporting, setExporting] = useState(false);
 	const listId = useId();
 	const hostedMode = useHosted();
@@ -140,13 +142,13 @@ export function OverviewPage() {
 	// Every domain has a row at any depth (a sub-subdomain under its nearest listed ancestor).
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
-	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), claims.length);
+	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), waiting);
 	// In the rows' order, so the first-answer list's "Fix …" opens the first row that needs it.
 	const at = ordered.map((r) => domains.indexOf(r.d));
 	const steps = getStartedSteps({
 		hosted: hostedMode,
 		domains: at.map((k) => domains[k]!),
-		claims: claims.length,
+		claims: waiting,
 		summaries: at.map((k) => summaryOf(domains[k]!)),
 		verdicts: at.map((k) => verdicts[k] ?? null),
 		reports: at.map((k) => totals[k]),

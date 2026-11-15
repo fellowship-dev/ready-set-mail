@@ -43,6 +43,9 @@ describe('overview', () => {
 		expect(alert.textContent).toContain('Your report history stays');
 		expect(alert.textContent).not.toMatch(/remove it|add it again/i); // no advice to remove first
 		expect(screen.queryByTestId('proof-lost-2')).toBeNull(); // a proven domain says nothing
+		// the workspace answer and the first-answer list do not claim every domain is proven
+		expect(screen.getByTestId('am-i-done').textContent).toMatch(/waiting for proof/);
+		expect(text()).not.toContain('Ownership is proven for every domain you added');
 		await userEvent.click(screen.getByRole('button', { name: 'Prove again' }));
 		await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/prove')).toBe(true));
 	});

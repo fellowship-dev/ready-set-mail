@@ -32,7 +32,7 @@ export function ProofLost({ domain, canWrite }: { domain: Pick<Domain, 'id' | 'd
 					{lapsed
 						? "no longer shows the Cloudflare proof it was added with (the zone moved, or its name servers changed)."
 						: 'was never proven in this workspace.'}{' '}
-					Reports for it are not accepted until it is proven again. What is stored stays, and nothing is removed.
+					Reports for this domain are not accepted until it is proven again. What is stored stays, and nothing is removed.
 				</p>
 				{claim ? (
 					<ClaimCard claim={claim} canWrite={canWrite} />
