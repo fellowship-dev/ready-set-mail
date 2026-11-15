@@ -71,11 +71,11 @@ export function useReportIntakeEnabled(): boolean {
  * domain page decide each domain the same way without a single-domain screen loading the whole batch.
  * `pending` while it loads. No refusal on a self-hosted instance, or when the summary could not be loaded.
  */
-export function useReportsRefusal(domainId: number): { pending: boolean; refusal: ReportsRefusal | null } {
+export function useReportsRefusal(domainId: number, enabled = true): { pending: boolean; refusal: ReportsRefusal | null } {
 	// Self-hosted: no hosted report intake, so nothing is refused (the server sends report_connect null there).
 	const hosted = useHosted();
-	const summary = useCheckSummary(domainId, hosted);
-	if (!hosted) return { pending: false, refusal: null };
+	const summary = useCheckSummary(domainId, hosted && enabled);
+	if (!hosted || !enabled) return { pending: false, refusal: null };
 	if (summary.isPending) return { pending: true, refusal: null };
 	return { pending: false, refusal: reportsRefusalOf(summary.data) };
 }

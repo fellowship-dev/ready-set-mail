@@ -32,7 +32,7 @@ export function ReportsStep({ status, onNext }: StepProps) {
 				</Badge>
 			}
 		>
-			<ReportsNotConnected domain={status.domain} />
+			<ReportsNotConnected domain={status.domain} refusalId={status.domain_id} />
 			<StepNav onNext={onNext} nextLabel="Go to dashboard" showSkip={false} />
 		</StepCard>
 	);
