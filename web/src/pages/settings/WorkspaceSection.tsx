@@ -7,31 +7,34 @@ import { useSession } from '../../lib/session';
 import { switchToWorkspace, useDeleteWorkspace, useLeaveWorkspace, useRenameWorkspace, useWorkspaces } from '../../lib/workspaces';
 import { Field } from '../auth/AuthLayout';
 
-/** Name, rename (owners), leave, delete (owners): for the workspace that is open. */
-export function WorkspaceSection() {
-	const { me, role } = useSession();
+/** The open workspace, whether it can be left or deleted (only when there is another one to land in), and where to go after. */
+export function useCurrentWorkspace() {
+	const { me } = useSession();
 	const workspaces = useWorkspaces(!!me?.user);
 	const current = workspaces.data?.find((w) => w.id === me?.workspace_id);
+	const others = (workspaces.data ?? []).filter((w) => w.id !== current?.id);
+	const goElsewhere = () => (others[0] ? switchToWorkspace(others[0].id) : (window.location.hash = '#/'));
+	return { current, others, goElsewhere };
+}
+
+/** Name and rename (owners) for the workspace that is open. Leaving and deleting it are in the danger zone. */
+export function WorkspaceSection() {
+	const { me, role } = useSession();
+	const { current, others } = useCurrentWorkspace();
 	if (!me?.user || !current) return null;
 	const isOwner = role === 'owner';
-	const others = (workspaces.data ?? []).filter((w) => w.id !== current.id);
-	const goElsewhere = () => (others[0] ? switchToWorkspace(others[0].id) : (window.location.hash = '#/'));
 
 	return (
 		<Section title="Workspace" description="Its domains, reports, members and Cloudflare connections belong to it, not to you.">
 			<Card>
-				<CardContent className="space-y-4 py-4">
+				<CardContent className="space-y-4">
 					{isOwner ? <RenameForm id={current.id} name={current.name} /> : <p className="text-sm">{current.name}</p>}
 					<p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
 						Your role here: {role ? <Badge variant="brand">{role}</Badge> : null} · {current.member_count} {current.member_count === 1 ? 'member' : 'members'}
 					</p>
+					{others.length === 0 ? <p className="text-sm text-ink-2">This is your only workspace, so it cannot be left or deleted.</p> : null}
 				</CardContent>
 			</Card>
-			<div className="flex flex-wrap gap-2">
-				{others.length > 0 ? <LeaveButton id={current.id} name={current.name} then={goElsewhere} /> : null}
-				{isOwner && others.length > 0 ? <DeleteButton id={current.id} name={current.name} then={goElsewhere} /> : null}
-			</div>
-			{others.length === 0 ? <p className="text-sm text-ink-2">This is your only workspace, so it cannot be left or deleted.</p> : null}
 		</Section>
 	);
 }
@@ -44,24 +47,26 @@ function RenameForm({ id, name }: { id: string; name: string }) {
 		if (value.trim() && value.trim() !== name) rename.mutate(value.trim());
 	}
 	return (
-		<form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+		<form onSubmit={submit} className="grid max-w-xl gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
 			<Field id="workspace-rename" label="Workspace name">
-				<Input id="workspace-rename" maxLength={80} value={value} onChange={(e) => setValue(e.target.value)} className="w-72 max-w-full" />
+				<Input id="workspace-rename" maxLength={80} value={value} onChange={(e) => setValue(e.target.value)} />
 			</Field>
-			<Button type="submit" variant="secondary" loading={rename.isPending} disabled={!value.trim() || value.trim() === name}>
-				Rename
-			</Button>
-			{rename.isError ? <FieldError>{errorMessage(rename.error)}</FieldError> : null}
+			<div>
+				<Button type="submit" variant="secondary" loading={rename.isPending} disabled={!value.trim() || value.trim() === name}>
+					Rename
+				</Button>
+			</div>
+			{rename.isError ? <FieldError className="sm:col-span-2">{errorMessage(rename.error)}</FieldError> : null}
 		</form>
 	);
 }
 
-function LeaveButton({ id, name, then }: { id: string; name: string; then: () => void }) {
+export function LeaveButton({ id, name, then }: { id: string; name: string; then: () => void }) {
 	const [open, setOpen] = useState(false);
 	const leave = useLeaveWorkspace(id, then);
 	return (
 		<>
-			<Button variant="secondary" onClick={() => setOpen(true)}>
+			<Button variant="danger" onClick={() => setOpen(true)}>
 				Leave workspace
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
@@ -85,7 +90,7 @@ function LeaveButton({ id, name, then }: { id: string; name: string; then: () =>
 	);
 }
 
-function DeleteButton({ id, name, then }: { id: string; name: string; then: () => void }) {
+export function DeleteButton({ id, name, then }: { id: string; name: string; then: () => void }) {
 	const [open, setOpen] = useState(false);
 	const [typed, setTyped] = useState('');
 	const domains = useDomains();
