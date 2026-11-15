@@ -40,11 +40,27 @@ export async function enterMailedCode(page: Page, inst: HostedInstance, before: 
 	await page.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!);
 }
 
-/** Sign up on a hosted instance through the screens and land in the app (the setup screen, a workspace with no domain yet). */
+/** The first screen after sign-up (S4): the domain question, or the agency's. */
+export const s4Heading = (page: Page) => page.getByRole('heading', { name: /^(Which domain do you send email from\?|Add your first client's domain)$/ });
+
+/** S4: type the domain and press Check. The result and the choice appear in place. */
+export async function enterDomain(page: Page, domain: string) {
+	await page.getByLabel(/^(Domain|Client's domain)$/).fill(domain);
+	await page.getByRole('button', { name: `Check ${domain}` }).click();
+	await expect(page.getByTestId('dns-result')).toContainText(domain, { timeout: 60_000 });
+}
+
+/** Cloudflare's token path on the fake (it has no consent screen): paste a token and Connect. */
+export async function connectWithToken(page: Page) {
+	await page.getByLabel('Cloudflare API token').fill('e2e-fake-token-not-a-real-secret-0000');
+	await page.getByRole('button', { name: 'Connect', exact: true }).click();
+}
+
+/** Sign up on a hosted instance through the screens and land on S4, a workspace with no domain yet. */
 export async function signUp(page: Page, inst: HostedInstance, email: string, about: AboutYou = {}) {
 	const before = mailedCodes(inst).length;
 	await fillSignUp(page, inst, email);
 	await fillAbout(page, about);
 	await enterMailedCode(page, inst, before);
-	await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
+	await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
 }

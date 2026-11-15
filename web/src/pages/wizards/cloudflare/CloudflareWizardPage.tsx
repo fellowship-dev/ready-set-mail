@@ -20,6 +20,7 @@ import {
 	type CfWizardProgress,
 } from '../../../lib/cloudflare';
 import { fetchPlan, markWizardState, pendingWrites } from '../../../lib/dns-plan';
+import { REVIEW_PATH, reviewDone } from '../../../lib/first-run';
 import { useHosted, useSession } from '../../../lib/session';
 import { ConnectStep } from './ConnectStep';
 import { ImportStep } from './ImportStep';
@@ -103,7 +104,11 @@ export function CloudflareWizardPage() {
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
 		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
 	} else if (hosted && connection && progress.step !== 'done') {
-		body = <ImportStep key={connection.id} connection={connection} onDone={(note) => { clearProgress(workspace); navigate('/', { replace: true, state: note ? { imported: note } : undefined }); }} />;
+		body = <ImportStep key={connection.id} connection={connection} onDone={(note) => {
+			clearProgress(workspace);
+			// First run: Cloudflare returned with domains, so the review comes next (C2). Later connections, and an import that added nothing, go to the dashboard.
+			navigate(note?.ok && !reviewDone(workspace) ? REVIEW_PATH : '/', { replace: true, state: note ? { imported: note } : undefined });
+		}} />;
 	} else if (progress.step === 'zones' && connection) {
 		body = <ZonesStep connection={connection} taken={(conns.data?.connections ?? []).filter((c) => c.id !== connection.id).flatMap((c) => c.zones.map((z) => z.id))} onNext={() => go('domains')} />;
 	} else if (progress.step === 'domains' && connection) {

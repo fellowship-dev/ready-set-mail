@@ -52,7 +52,7 @@ describe('hosted wizard: connected, then every zone is added', () => {
 				'POST /api/cloudflare/connections/c1/import': done({ imported: [{ domain: 'one.com', domain_id: 1 }, { domain: 'two.org', domain_id: 2 }], accounts: [{ id: 'a1', name: 'Example Co' }] }),
 			},
 		});
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
 		const imp = calls.filter((c) => c.path.endsWith('/import'));
 		expect(imp).toHaveLength(1);
 		expect(imp[0]!.body).toEqual({}); // no zone ids: everything, as the server decides
@@ -74,7 +74,7 @@ describe('hosted wizard: connected, then every zone is added', () => {
 				'POST /api/cloudflare/connections/c1/import': () => (++n === 1 ? done({ imported: [{ domain: 'a.com', domain_id: 1 }], more: 1, accounts: [{ id: 'a1', name: 'Example Co' }] }) : done({ imported: [{ domain: 'b.com', domain_id: 2 }] })),
 			},
 		});
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
 		expect(calls.filter((c) => c.path.endsWith('/import'))).toHaveLength(2);
 		expect(screen.getByTestId('note')).toHaveTextContent('Added 2 domains from Example Co. Nothing in your DNS was changed.');
 	});
@@ -100,7 +100,7 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		expect(screen.getByRole('button', { name: 'Add 3 domains' })).toBeDisabled();
 		await userEvent.click(boxes[2]!);
 		await userEvent.click(screen.getByRole('button', { name: 'Add 2 domains' }));
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
 		expect(calls.filter((c) => c.path.endsWith('/import')).at(-1)!.body).toEqual({ zone_ids: ['z0', 'z1'] });
 	});
 
@@ -123,7 +123,7 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		let n = 0;
 		renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: { 'GET /api/cloudflare/connections': offer([conn()]), 'POST /api/cloudflare/connections/c1/import': () => (++n === 1 ? { __status: 502, body: { error: 'Cloudflare did not answer' } } : done({ imported: [{ domain: 'a.com', domain_id: 1 }] })) } });
 		await userEvent.click(await screen.findByRole('button', { name: /try again/i }));
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
 	});
 
 	it('self-host keeps the zone list, the domain step and the DNS plan', async () => {

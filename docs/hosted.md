@@ -348,6 +348,32 @@ how long it works and where to enter it, "If you didn't ask for this, you can ig
 answer." The approximate place the code was asked for from stays in the small print for every purpose (it is the cue the
 phishing-relay defence below relies on, and a relayed sign-up can pre-hijack an account); the password advice stays for sign-in.
 
+#### First run (hosted): S4, C2 and the first-day card
+
+After the code, a person who can write lands on **S4** (`#/setup`, no domain yet; with a domain they land on the dashboard). One screen: the
+domain (cold: "Which domain do you send email from?"; an agency: "Add your first client's domain", which names the first client workspace after
+it; from the website checker: "Domain: x · Not this domain?" and a Check button, never added on its own), one line of what public DNS says
+(`GET /api/domains/claims/:id/preview` for a domain still to be proven, `/api/domains/:id/onboarding-status` for one already proven), and the setup
+choice by who hosts DNS (`web/src/lib/dns-host.ts`, `GET /api/domains/dns-host`): Cloudflare name servers: "Connect Cloudflare" is the only
+primary (or "Continue with <account>" when an active connection already holds the zone); the records path, "I'll add the records myself", is a
+quiet secondary. Any other host, or one we cannot tell, or Cloudflare name servers on an instance that cannot connect Cloudflare (no
+`TOKEN_ENCRYPTION_KEY`, no OAuth or token path): the existing record path in place, with the provider named, and no message about Cloudflare. The hosted
+dashboard never shows "Cloudflare can't be connected" or a server command. Self-host does not show S4: its first run is the home-base setup.
+
+**C2** (`#/setup/review`) follows Cloudflare's return (and "Continue with <account>"): the oldest or chosen first-run domain's DMARC change from the same
+plan the Cloudflare wizard writes from (`POST /api/onboarding/dns-plan`, `dns-apply`): what is there now, what will be written, one "Apply N change(s)", the
+note "Not changed: SPF and DKIM", "Also in <account>: N more domains, added and watched. Nothing was written to them.", then the dashboard. The report
+address in the record is main's rule: the hosted address when `HOSTED_CONNECT_REPORTS` admits the workspace (`all`, or `owner` and this is the owner's),
+else the record is written without one and the screen shows the server's own sentence ("Reports are not connected for this workspace. …"). A later
+visit to the dashboard returns to C2 once per tab while Cloudflare is connected, the first domain was proven through it and its DMARC record does not yet
+name our address, until C2 was applied or skipped.
+
+**D1** replaces "Get to your first answer": one card for that domain, from what the server knows (proof, `report_connect`, the stored `dmarc_rua`, the
+report totals, the domain's age): waiting for proof; waiting for the report address in DMARC (with "Review the change" when Cloudflare is connected);
+"Your first reports are on their way" (records live, no report yet); "No reports yet" after 3 days; reports that cannot reach this workspace (no promise of
+reports, the server's reason, DNS still checked daily); the first reports (once, then the normal overview). "Test a real email" opens the Email check where
+it can work. What blocks progress (a domain waiting for proof, a Cloudflare connection that stopped, a domain that needs action) still comes first.
+
 **Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
 button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to
 `https://readysetmail.com` in hosted mode). The acceptance is stored on the account when the code proves the address

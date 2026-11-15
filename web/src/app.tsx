@@ -9,7 +9,12 @@ import { PageSkeleton } from './components/states';
 import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
+import { focusDomainOf, REVIEW_PATH, reviewDone } from './lib/first-run';
+import { useCfConnections } from './lib/cloudflare';
+import { useCheckSummary } from './lib/domain-queries';
+import { useDomains } from './lib/queries';
 import { AuthPage } from './pages/auth/AuthPage';
+import { ReviewPage } from './pages/setup/ReviewPage';
 import { OwnerSetupPage } from './pages/setup/OwnerSetupPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
@@ -61,6 +66,31 @@ function SetupRedirect({ children }: { children: ReactNode }) {
 	if (status && status.has_domain === false && canWrite && pathname === '/' && !sessionStorage.getItem(key)) {
 		sessionStorage.setItem(key, '1');
 		return <Navigate to="/setup" replace />;
+	}
+	return <ReviewRedirect>{children}</ReviewRedirect>;
+}
+
+/**
+ * Hosted, someone who can write, opening the dashboard with Cloudflare connected and the first domain's DMARC record not yet
+ * naming our report address: the review (C2) is where they left off. Once per tab, and never after the review was applied or
+ * skipped. Everything it reads is already cached by the dashboard, or one cheap request.
+ */
+function ReviewRedirect({ children }: { children: ReactNode }) {
+	const { status, canWrite, me } = useSession();
+	const { pathname } = useLocation();
+	const hosted = status?.mode === 'saas';
+	const workspace = me?.workspace_id ?? '';
+	const flag = `rsm_review_redirected:${workspace}`;
+	const eligible = hosted && canWrite && pathname === '/' && !!workspace && !reviewDone(workspace) && !sessionStorage.getItem(flag);
+	const domains = useDomains();
+	const conns = useCfConnections(eligible);
+	const first = focusDomainOf(domains.data ?? [], workspace || null);
+	const summary = useCheckSummary(first?.id ?? 0, eligible && !!first);
+	const connected = !!conns.data?.connections.some((c) => c.status === 'active' && !c.implicit);
+	// Only when the read says so: a summary that has not arrived, or a record that already names our address, leaves the dashboard alone.
+	if (eligible && connected && first && summary.data && !!first.cf_account_id && summary.data.dmarc_rua !== 1) {
+		sessionStorage.setItem(flag, '1');
+		return <Navigate to={REVIEW_PATH} replace />;
 	}
 	return <>{children}</>;
 }
@@ -162,6 +192,7 @@ function AppRoutes() {
 			<Route element={<Gate><Outlet /></Gate>}>
 				<Route path="setup" element={<Wizard><SetupWizardPage /></Wizard>} />
 				<Route path="setup/cloudflare" element={<Wizard><CloudflareWizardPage /></Wizard>} />
+				<Route path="setup/review" element={<Wizard><ReviewPage /></Wizard>} />
 				<Route path="cloudflare/connect" element={<Wizard><ConnectCloudflarePage /></Wizard>} />
 				<Route path="onboarding" element={<Navigate to="/setup" replace />} />
 				<Route path="domains/:id/setup" element={<WizardFor render={() => <SetupWizardPage />} />} />

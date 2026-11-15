@@ -15,6 +15,7 @@ import type { WizardState, WizardStepState } from '../../lib/types';
 import { DkimStep } from './setup/DkimStep';
 import { DmarcStep } from './setup/DmarcStep';
 import { FirstScreen } from './cloudflare/FirstScreen';
+import { SetupDomain } from '../setup/SetupDomain';
 import { setupKeys, useOnboardingStatus, useWizardState } from './setup/hooks';
 import { ReportsStep } from './setup/ReportsStep';
 import { RoutingStep } from './setup/RoutingStep';
@@ -69,6 +70,7 @@ function Frame({ title, subtitle, skipTo, wizard, current, children, progress = 
 /** No domain id in the URL: if a domain exists, continue with the first one; if not, this is a fresh instance. */
 function EntryFlow() {
 	const hosted = useHosted();
+	const { canWrite } = useSession();
 	const domains = useDomains();
 	const qc = useQueryClient();
 	const navigate = useNavigate();
@@ -77,7 +79,10 @@ function EntryFlow() {
 	if (domains.isPending) return <PageSkeleton label="Checking for domains" />;
 	if (domains.isError) return <LoadError error={domains.error} onRetry={() => void domains.refetch()} title="Could not check your domains" />;
 	const first = domains.data[0];
-	if (first) return <Navigate to={`/domains/${first.id}/setup/1`} replace />;
+	// Hosted: the first run is S4 and C2, then the dashboard. The per-domain wizard stays reachable by its own address.
+	if (first) return <Navigate to={hosted ? '/' : `/domains/${first.id}/setup/1`} replace />;
+	// Hosted, someone who can write: S4, one screen (the domain, what public DNS says, how to set it up). Self-host and read-only members keep the home-base setup.
+	if (hosted && canWrite) return <SetupDomain />;
 
 	return (
 		<Frame title="Let's set up Ready Set Mail" subtitle={`0 of ${hosted ? 4 : 5} steps complete`} skipTo="/" wizard={DEFAULT_WIZARD} current={0} progress={showProgress}>

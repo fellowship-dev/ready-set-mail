@@ -1,6 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+beforeEach(() => localStorage.clear());
 import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { fail, renderApp, type Handler } from './render';
 
@@ -107,7 +109,7 @@ describe('OverviewPage: one row per domain that answers "am I done?"', () => {
 		renderOverview({ role: 'member', routes });
 		const bare = await row('bare.org');
 		await waitFor(() => expect(within(bare).getByRole('link', { name: 'Publish an SPF record for bare.org' })).toHaveAttribute('href', '/domains/3'));
-		expect(screen.queryByRole('region', { name: 'Get to your first answer' })).not.toBeInTheDocument();
+		expect(screen.queryByTestId('first-day')).not.toBeInTheDocument();
 	});
 
 	it('says done, with its scope, only when every domain is verified', async () => {
@@ -248,80 +250,140 @@ describe('OverviewPage: unknown is never "not found"', () => {
 	});
 });
 
-describe('OverviewPage: get to a first answer', () => {
-	it('an empty workspace teaches the first step, with one action and no Cloudflare detour', async () => {
+const justNow = () => Math.floor(Date.now() / 1000) - 600;
+const dayCard = () => screen.findByTestId('first-day');
+const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+describe('OverviewPage: the first day (D1), where the stepper used to be', () => {
+	it('the old "Get to your first answer" stepper is gone', async () => {
 		renderOverview({ routes: { 'GET /api/domains': { domains: [] } } });
-		expect(await screen.findByText('Nothing to check yet: this workspace has no domains.')).toBeInTheDocument();
-		const list = screen.getByRole('region', { name: 'Get to your first answer' });
-		expect(within(list).getByText('0 of 3 done')).toBeInTheDocument();
-		expect(within(list).getByText(/Adding it changes nothing in its DNS/)).toBeInTheDocument();
-		expect(within(list).getByRole('link', { name: 'Add a domain' })).toHaveAttribute('href', '/setup');
-		expect(screen.queryByRole('link', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
-	});
-
-	it('shows each step from data, and disappears once all are done', async () => {
-		const routes = (sum: Record<string, unknown>, st: object) => ({
-			'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none' })] },
-			'GET /api/domains/1/check-summary': summary(1, 'example.com', sum),
-			'GET /api/domains/1/stats': st,
-		});
-		const first = renderOverview({ routes: routes({ dmarc_policy: null, spf_record: null, dns_checked_at: null, dns_check_attempted_at: null, dns_check_status: null }, noReports) });
-		const list = await screen.findByRole('region', { name: 'Get to your first answer' });
-		await waitFor(() => expect(within(list).getByText('1 of 4 done')).toBeInTheDocument());
-		expect(within(list).getByRole('link', { name: 'Open example.com' })).toHaveAttribute('href', '/domains/1');
-		expect(within(list).getByText(/not been read from DNS yet/)).toBeInTheDocument();
-		first.unmount();
-
-		renderOverview({ routes: routes({ dmarc_policy: 'none' }, stats(97)) });
-		await screen.findByText(/^Not yet:/);
+		await screen.findByText('Nothing to check yet: this workspace has no domains.');
 		expect(screen.queryByRole('region', { name: 'Get to your first answer' })).not.toBeInTheDocument();
 	});
 
-	it('waiting for reports is its own state, not a fake tick', async () => {
-		renderOverview({
-			routes: {
-				'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none' })] },
-				'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: 'none' }),
-				'GET /api/domains/1/stats': noReports,
-			},
-		});
-		const list = await screen.findByRole('region', { name: 'Get to your first answer' });
-		await waitFor(() => expect(within(list).getByText('3 of 4 done')).toBeInTheDocument());
-		const step = within(list).getByText('Receive DMARC reports').closest('li')!;
-		expect(step).toHaveAttribute('data-state', 'waiting');
-		expect(within(step).getByText('Waiting')).toBeInTheDocument();
+	it('an empty workspace: one action, no Cloudflare detour', async () => {
+		renderOverview({ routes: { 'GET /api/domains': { domains: [] } } });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'Add the domain you send email from' })).toBeInTheDocument();
+		expect(within(card).getByText(/Adding it changes nothing in its DNS/)).toBeInTheDocument();
+		expect(within(card).getByRole('link', { name: 'Add a domain' })).toHaveAttribute('href', '/setup');
+		expect(screen.queryByRole('link', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
 	});
 
-	// One rule for the order: what blocks progress or needs the person comes before "Get to your first answer".
-	const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+	const routesFor = (dom: Record<string, unknown>, sum: Record<string, unknown>, st: object = noReports) => ({
+		'GET /api/domains': { domains: [domain(1, 'example.com', dom)] },
+		'GET /api/domains/1/check-summary': summary(1, 'example.com', sum),
+		'GET /api/domains/1/stats': st,
+	});
 
-	it('a domain that needs attention is listed before the stepper', async () => {
-		renderOverview({
-			routes: {
-				'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: null })] },
-				'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: null, spf_record: null, ...checked }),
-				'GET /api/domains/1/stats': noReports,
-			},
-		});
+	it('records live, no report yet: "Your first reports are on their way", with the timeline and Test a real email', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'Your first reports are on their way' })).toBeInTheDocument();
+		expect(within(card).getByText(/about once a day\. We'll email owner@example\.com when the first one arrives\./)).toBeInTheDocument();
+		const items = within(card).getAllByRole('listitem');
+		expect(items).toHaveLength(3);
+		expect(items[0]).toHaveTextContent('Done: Report address in DMARC');
+		expect(items[1]).toHaveTextContent('Waiting: First report · usually within 24 to 48 hours');
+		expect(items[2]).toHaveTextContent('Later: See every service that sends as example.com, then fix SPF and DKIM');
+		expect(within(card).getByRole('link', { name: 'Test a real email' })).toHaveAttribute('href', '/check');
+		expect(card.querySelector('.text-danger, [role="alert"]')).toBeNull(); // nothing has failed on day one
+	});
+
+	it('waiting for records: the DMARC record does not name our address yet, with the way to add it', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 0 }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: "Waiting for the report address in example.com's DMARC record" })).toBeInTheDocument();
+		expect(within(card).getByRole('link', { name: 'See what to add' })).toHaveAttribute('href', '/domains/1');
+		expect(within(card).queryByText('Your first reports are on their way')).toBeNull();
+	});
+
+	it('the change was applied but public DNS does not show it yet: says so, no review link, no promise of reports', async () => {
+		localStorage.setItem('rsm_review_done:ws_default', 'applied');
+		renderOverview({ routes: routesFor({ created_at: justNow(), cf_account_id: 'acc1' }, { dmarc_rua: 0 }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: "Written to Cloudflare: waiting for public DNS to show example.com's new record" })).toBeInTheDocument();
+		expect(within(card).queryByRole('link', { name: 'Review the change' })).toBeNull();
+		expect(within(card).getByRole('link', { name: 'Open example.com' })).toHaveAttribute('href', '/domains/1');
+		expect(within(card).queryByText(/first reports are on their way/i)).toBeNull();
+	});
+
+	it('waiting for records, Cloudflare connected: the action is the review', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), cf_account_id: 'acc1', rua_address: '' }, { dmarc_rua: 0, report_connect: { can_connect: true, refusal: null, refusal_kind: null } }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('link', { name: 'Review the change' })).toHaveAttribute('href', '/setup/review');
+	});
+
+	it('first report arrived: said once, then the card goes away', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow() }, { dmarc_policy: 'reject' }, stats(14, 14)) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'First reports for example.com' })).toBeInTheDocument();
+		expect(within(card).getByText(/14 messages reported, 100% passed DMARC/)).toBeInTheDocument();
+		await userEvent.setup().click(within(card).getByRole('button', { name: 'Got it' }));
+		expect(screen.queryByTestId('first-day')).toBeNull();
+		expect(localStorage.getItem('rsm_first_report_seen:ws_default')).toBe('1');
+	});
+
+	it('nothing after 3 days: says why reports may not have come and what to check', async () => {
+		renderOverview({ routes: routesFor({ created_at: 1700000000 }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'No reports yet for example.com' })).toBeInTheDocument();
+		expect(within(card).getByText(/Reports only come when mail has been sent from the domain\. If it has, check that _dmarc still names our address\./)).toBeInTheDocument();
+		expect(within(card).getByRole('link', { name: 'Test a real email' })).toBeInTheDocument();
+	});
+
+	it('hosted, reports not allowed for this workspace (HOSTED_CONNECT_REPORTS): no "reports on their way", the server\'s own reason, DNS checks only', async () => {
+		const refusal = 'Reports are only connected for the workspaces of the person who runs this service.';
+		renderOverview({ routes: routesFor({ created_at: justNow(), rua_address: '' }, { dmarc_rua: 0, report_connect: { can_connect: false, refusal, refusal_kind: 'operator_only' } }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'example.com is checked from public DNS' })).toBeInTheDocument();
+		expect(within(card).getByText(new RegExp(`DMARC reports can't reach this workspace yet.*${refusal}`))).toBeInTheDocument();
+		expect(within(card).queryByText(/first reports are on their way/i)).toBeNull();
+		expect(within(card).queryByText(/We'll email/)).toBeNull();
+		expect(within(card).getByRole('link', { name: 'Test a real email' })).toBeInTheDocument();
+	});
+
+	it('hosted, reports allowed (HOSTED_CONNECT_REPORTS=all or the owner): the same domain waits for its record, not for reports', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), rua_address: '' }, { dmarc_rua: 0, report_connect: { can_connect: true, refusal: null, refusal_kind: null } }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: /Waiting for the report address/ })).toBeInTheDocument();
+	});
+
+	it('Test a real email is not offered where the Email check cannot work', async () => {
+		renderOverview({ status: { email_check: false }, routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
+		const card = await dayCard();
+		expect(within(card).queryByRole('link', { name: 'Test a real email' })).toBeNull();
+	});
+
+	it('members never see the first-day card', async () => {
+		renderOverview({ role: 'member', routes: routesFor({ created_at: justNow() }, {}) });
+		await screen.findByText(/^Done|^Not yet/);
+		expect(screen.queryByTestId('first-day')).toBeNull();
+	});
+
+	// One rule for the order: what blocks progress or needs the person comes before the first-day card.
+	it('a domain that needs attention is listed before the card', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
 		const r = await row('example.com');
 		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
-		const stepper = await screen.findByRole('region', { name: 'Get to your first answer' });
-		expect(before(screen.getByRole('region', { name: 'Your domains' }), stepper)).toBe(true);
+		const card = await dayCard();
+		expect(before(screen.getByRole('region', { name: 'Your domains' }), card)).toBe(true);
 	});
 
-	it('a domain waiting for proof comes before the stepper, and the stepper stays first while nothing needs anyone', async () => {
+	it('a domain waiting for proof comes before the card, and the card stays first while nothing needs anyone', async () => {
 		const claim = { id: 5, domain: 'acme.io', status: 'pending', txt_name: '_readysetmail.acme.io', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null };
-		const routes = {
-			'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none' })], pending_claims: [claim] },
-			'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: 'none' }),
-			'GET /api/domains/1/stats': noReports,
-			'GET /api/domains/claims/5/preview': fail(502),
-		};
-		renderOverview({ routes });
-		const stepper = await screen.findByRole('region', { name: 'Get to your first answer' });
-		expect(before(screen.getByRole('region', { name: 'Waiting for verification' }), stepper)).toBe(true);
-		// the row is gathering evidence: nobody has to act, so the stepper leads the list
-		expect(before(stepper, screen.getByRole('region', { name: 'Your domains' }))).toBe(true);
+		renderOverview({
+			routes: {
+				'GET /api/domains': { domains: [domain(1, 'example.com', { dmarc_policy: 'none', created_at: justNow() })], pending_claims: [claim] },
+				'GET /api/domains/1/check-summary': summary(1, 'example.com', { dmarc_policy: 'none' }),
+				'GET /api/domains/1/stats': noReports,
+				'GET /api/domains/claims/5/preview': fail(502),
+			},
+		});
+		const card = await dayCard();
+		expect(before(screen.getByRole('region', { name: 'Waiting for verification' }), card)).toBe(true);
+		// the row is gathering evidence: nobody has to act, so the card leads the list
+		expect(before(card, screen.getByRole('region', { name: 'Your domains' }))).toBe(true);
 	});
 
 	it('a member in an empty workspace is told who adds domains, with no action', async () => {
@@ -353,8 +415,9 @@ describe('OverviewPage: pending ownership claims keep the lazy DNS preview', () 
 		expect(within(section).getByRole('button', { name: 'Check public DNS' })).toBeInTheDocument();
 		expect(calls.some((c) => c.path.includes('/claims/5/preview'))).toBe(false);
 		expect(screen.getByText('Not yet: 1 domain is waiting for proof that it is yours.')).toBeInTheDocument();
-		const step = within(screen.getByRole('region', { name: 'Get to your first answer' })).getByText('Prove it is yours').closest('li')!;
-		expect(within(step).getByText(/Its live level from public DNS is visible before proof/)).toBeInTheDocument();
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: 'Waiting for the DNS record that proves acme.com' })).toBeInTheDocument();
+		expect(within(card).getByText(/Its live DNS result is visible before then/)).toBeInTheDocument();
 	});
 });
 
@@ -373,13 +436,13 @@ describe('OverviewPage: every counted domain has a row, at any depth', () => {
 });
 
 describe('OverviewPage: verified domains first, then the ones waiting', () => {
-	it('puts "Waiting for verification" first, above the first-answer list and the domains', async () => {
+	it('puts "Waiting for verification" first, above the first-day card and the domains', async () => {
 		const claim = { id: 5, domain: 'acme.com', status: 'pending', txt_name: '_readysetmail.acme.com', txt_value: 'v=1', created_at: 1700000000, last_checked_at: null, last_error: null };
 		renderOverview({ routes: { 'GET /api/domains': { domains: [domain(1, 'example.com')], pending_claims: [claim] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com'), 'GET /api/domains/1/stats': stats(99) } });
 		const verified = await screen.findByRole('region', { name: 'Your domains' });
 		const waiting = await screen.findByRole('region', { name: 'Waiting for verification' });
 		expect(waiting.compareDocumentPosition(verified) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		const ladder = screen.queryByRole('region', { name: 'Get to your first answer' });
-		if (ladder) expect(waiting.compareDocumentPosition(ladder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		const card = screen.queryByTestId('first-day');
+		if (card) expect(waiting.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

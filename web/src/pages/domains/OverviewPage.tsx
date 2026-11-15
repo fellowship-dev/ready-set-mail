@@ -9,12 +9,13 @@ import { CloudflareAttention } from '../../components/domain/CloudflareAttention
 import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
-import { GetStarted } from '../../components/GetStarted';
+import { FirstDayCard, firstReportSeen } from '../../components/FirstDay';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
-import { getStartedSteps } from '../../lib/get-started';
+import { firstDay } from '../../lib/first-day';
+import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
@@ -86,7 +87,7 @@ function AddDomainButton() {
 
 export function OverviewPage() {
 	const qc = useQueryClient();
-	const { canWrite } = useSession();
+	const { canWrite, me, status } = useSession();
 	const removed = (useLocation().state as RemovedState | null)?.removed;
 	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
@@ -146,18 +147,6 @@ export function OverviewPage() {
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
 	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), waiting);
-	// In the rows' order, so the first-answer list's "Fix …" opens the first row that needs it.
-	const at = ordered.map((r) => domains.indexOf(r.d));
-	const steps = getStartedSteps({
-		hosted: hostedMode,
-		domains: at.map((k) => domains[k]!),
-		claims: waiting - lostProof,
-		lostProof,
-		summaries: at.map((k) => summaryOf(domains[k]!)),
-		verdicts: at.map((k) => verdicts[k] ?? null),
-		reports: at.map((k) => totals[k]),
-	});
-
 	async function exportPdf() {
 		setExporting(true);
 		try {
@@ -192,7 +181,12 @@ export function OverviewPage() {
 	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
 	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
 	const needsAttention = verdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
-	const stepper = canWrite ? <GetStarted steps={steps} /> : null;
+	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.
+	const focus = focusDomainOf(domains, me?.workspace_id ?? null);
+	const dayState = canWrite
+		? firstDay({ domain: focus, claims, summary: focus ? summaryOf(focus) : undefined, arrivedSeen: firstReportSeen(me?.workspace_id ?? null), applied: reviewOutcome(me?.workspace_id ?? null) === 'applied' })
+		: null;
+	const stepper = dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
 		<div className="space-y-6">

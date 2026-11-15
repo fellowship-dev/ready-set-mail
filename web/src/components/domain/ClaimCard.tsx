@@ -45,7 +45,7 @@ function verifyFailure(e: unknown): string {
  * A domain that is not ours to monitor yet: add this TXT record to prove ownership, then Verify.
  * `pending` has no reports, stats or DNS: only the claim exists. `lost` can only be removed.
  */
-export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, preview }: { claim: DomainClaim; onVerified?: (domain: Domain, info: { resumed: boolean }) => void; onRemoved?: () => void; canWrite?: boolean; /** Show what public DNS says about the domain: `true` loads it now, `'lazy'` waits for a click. */ preview?: boolean | 'lazy' }) {
+export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, preview, recordsOnly = false }: { claim: DomainClaim; /** The first run's S4 already offered Cloudflare and the person chose the record: show the record path, with the provider named, and no second Cloudflare offer. */ recordsOnly?: boolean; onVerified?: (domain: Domain, info: { resumed: boolean }) => void; onRemoved?: () => void; canWrite?: boolean; /** Show what public DNS says about the domain: `true` loads it now, `'lazy'` waits for a click. */ preview?: boolean | 'lazy' }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const { pathname, search } = useLocation();
@@ -93,7 +93,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const onCloudflare = isCloudflareHost(provider);
 	// An active connection whose allowed zone contains the domain: the server accepts that as proof, so Verify needs no record.
 	const covering = onCloudflare && (conns.data?.connections ?? []).some((c) => c.status === 'active' && c.zones.some((z) => claim.domain === z.name || claim.domain.endsWith(`.${z.name}`)));
-	const cloudflareFirst = !lost && onCloudflare && (covering || canConnect);
+	const cloudflareFirst = !lost && !recordsOnly && onCloudflare && (covering || canConnect);
 	/** "I'll add it myself": the record, for someone who would rather not connect Cloudflare. */
 	const [manual, setManual] = useState(false);
 	const showRecord = !lost && (!cloudflareFirst || manual);

@@ -7,7 +7,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { enterMailedCode, fillAbout, fillSignUp, mailedCodes, type HostedInstance } from './support/signup';
+import { enterMailedCode, fillAbout, fillSignUp, mailedCodes, s4Heading, type HostedInstance } from './support/signup';
 
 interface Instance extends HostedInstance { stop(): Promise<void>; d1(sql: string): Array<Record<string, unknown>> }
 const nativeImport = new Function('u', 'return import(u)') as (u: string) => Promise<{ startInstance(o: Record<string, unknown>): Promise<Instance> }>;
@@ -72,7 +72,7 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 			await page.getByLabel('6-digit code').pressSequentially(wrong);
 			await expect(page.getByText("That code isn't right. Check the latest email.")).toBeVisible();
 			await page.getByLabel('6-digit code').fill(`${right.slice(0, 3)} ${right.slice(3)}`);
-			await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
+			await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
 
 			// The account and the first workspace took the answers
 			const me = (await (await page.request.get(`${inst.url}/api/me`)).json()) as { user: { name: string; email: string }; whose_email: string; agency_name?: string };
@@ -132,7 +132,7 @@ test('an agency: the organization name is the agency (not a workspace), the firs
 		await fillSignUp(page, inst, 'sam@northside-it.com');
 		await fillAbout(page, { name: 'Sam Ortiz', organization: 'Northside IT', whose: "My clients' (I'm an agency or IT provider)" });
 		await enterMailedCode(page, inst, before);
-		await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
+		await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
 		const me = (await (await page.request.get(`${inst.url}/api/me`)).json()) as { agency_name?: string; whose_email?: string };
 		expect(me).toMatchObject({ whose_email: 'clients', agency_name: 'Northside IT' });
 		const { workspaces } = (await (await page.request.get(`${inst.url}/api/workspaces`)).json()) as { workspaces: Array<{ name: string }> };
