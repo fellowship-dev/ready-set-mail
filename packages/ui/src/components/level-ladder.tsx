@@ -46,14 +46,14 @@ export const LevelLadder = React.forwardRef<HTMLDivElement, LevelLadderProps>(({
 					const isCurrent = level === l.level;
 					return (
 						<div key={l.level} className="flex items-center gap-2 @min-[22rem]:block @min-[22rem]:space-y-1.5">
-							<div className={cn("h-2 w-10 shrink-0 rounded-full @min-[22rem]:w-auto", reached ? "bg-brand-ink" : level === null ? "border border-dashed border-ink-3" : "bg-surface-3")} />
+							<div className={cn("h-1 w-10 shrink-0 rounded-full @min-[22rem]:w-auto", reached ? "bg-ink-3" : level === null ? "border border-dashed border-ink-3" : "bg-surface-3")} />
 							<p
 								className={cn(
 									"flex w-fit items-center gap-1 whitespace-nowrap rounded-full text-xs leading-5",
-									isCurrent ? "bg-brand px-1.5 font-semibold text-brand-fg" : reached ? "text-ink-1" : "text-ink-2",
+									isCurrent ? "border border-ink-3 px-1.5 font-semibold text-ink-1" : reached ? "text-ink-1" : "text-ink-2",
 								)}
 							>
-								{reached && !isCurrent ? <CheckCircle2 aria-hidden className="size-3.5 shrink-0 text-brand-ink" /> : null}
+								{reached && !isCurrent ? <CheckCircle2 aria-hidden className="size-3.5 shrink-0 text-ink-2" /> : null}
 								{l.name}
 							</p>
 						</div>

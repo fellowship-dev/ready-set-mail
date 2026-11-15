@@ -59,6 +59,14 @@ describe("brand colours stay where they belong", () => {
 		// halo gold, its hover and tint, the dark gold tint, blush
 		expect(hits(/#(?:fad172|f5c04a|fef7e3|ffe09a|332c1d|2a2210|fca0a4)\b/i, () => false)).toEqual([]);
 	});
+	it("a filled brand surface is an action or a selection, never a state (DESIGN.md, The Action-Fill Rule)", () => {
+		// Unprefixed bg-brand / bg-brand-ink (state variants such as data-[state=checked]: are controls and allowed).
+		const fill = /(?<![\w:-])bg-brand(?:-ink)?(?![\w-])/;
+		const allowed = (f: string) =>
+			/\/components\/(?:button-variants\.ts|app-shell\.tsx)$/.test(f) || // primary button, skip link
+			/\/wizard\/WizardProgress\.tsx$/.test(f) || /\/screens\/SetupWizardStep\.tsx$/.test(f); // wizard progress toward an action
+		expect(hits(fill, allowed)).toEqual([]);
+	});
 	it("no accent or blush utility: they are not tokens any more", () => {
 		expect(hits(/\b(?:bg|text|border|ring|fill|stroke|outline)-(?:accent|blush)\b|var\(--(?:accent|blush)/, () => false)).toEqual([]);
 	});

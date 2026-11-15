@@ -150,7 +150,9 @@ export const contrastPairs: ReadonlyArray<{ fg: ColorToken; bg: ColorToken; min:
 	{ fg: "brand", bg: "surface-0", min: 3, note: "primary fill / switch / checkbox on page" },
 	{ fg: "brand", bg: "surface-1", min: 3, note: "primary fill / switch / checkbox on card" },
 	{ fg: "brand", bg: "surface-2", min: 3, note: "primary fill / switch / checkbox on raised" },
-	{ fg: "brand-ink", bg: "surface-3", min: 3, note: "progress fill on its empty track" },
+	{ fg: "ink-3", bg: "surface-3", min: 3, note: "reached level / rollout bar on its empty track" },
+	{ fg: "ink-3", bg: "surface-1", min: 3, note: "current level outline on card" },
+	{ fg: "brand-ink", bg: "surface-3", min: 3, note: "wizard progress fill on its empty track" },
 	{ fg: "logo-wordmark", bg: "surface-0", min: 4.5, note: "lockup wordmark on page" },
 	{ fg: "logo-wordmark", bg: "surface-1", min: 4.5, note: "lockup wordmark on card / header" },
 ];
