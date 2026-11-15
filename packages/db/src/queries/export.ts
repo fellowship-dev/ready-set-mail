@@ -37,7 +37,7 @@ export const EXPORT_COLUMNS = {
 export const EXPORT_EXCLUDED = {
 	workspaces: [],
 	memberships: ['workspace_id', 'user_id'],
-	users: ['password_hash', 'role', 'session_token', 'created_at', 'email_verified', 'image', 'updated_at'],
+	users: ['password_hash', 'role', 'session_token', 'created_at', 'email_verified', 'image', 'updated_at', 'terms_accepted_at', 'terms_version'],
 	invites: ['token', 'workspace_id'],
 	api_keys: ['workspace_id', 'key_hash'],
 	settings: ['workspace_id'],

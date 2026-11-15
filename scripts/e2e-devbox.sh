@@ -14,7 +14,10 @@
 #     registers a client), from a temporary copy of wrangler.jsonc whose rate limits are raised so a fast run
 #     is not throttled (wrangler.jsonc itself is not changed);
 #   - Playwright with one worker; the first sign-in's cookies are saved to a private file and reused by the
-#     file's later tests, so the product's per-IP sign-in limit is never met.
+#     file's later tests, so the product's per-IP sign-in limit is never met;
+#   - E2E_MAIL_LOG is the Worker's log, where the local send_email simulation records each message's subject: a
+#     sign-in that asks for the emailed code (once a spec gives the instance a sender address) reads it there.
+#     A fresh instance has no sender address, so sign-in is the password alone until then.
 # It ends with a per-spec summary and exits non-zero when any test failed. Every Worker's process group is
 # stopped and every temporary file removed, also on Ctrl-C.
 set -euo pipefail
@@ -120,7 +123,7 @@ for spec in "${SPECS[@]}"; do
 
   set +e
   TMPDIR="$WORK/tmp" E2E_BASE_URL="$ORIGIN" E2E_IGNORE_HTTPS_ERRORS=1 E2E_PERSIST_TO="$RUN/d1" \
-    E2E_OPERATOR_FILE="$RUN/operator.json" E2E_SESSION_FILE="$RUN/session.json" \
+    E2E_OPERATOR_FILE="$RUN/operator.json" E2E_SESSION_FILE="$RUN/session.json" E2E_MAIL_LOG="$RUN/wrangler.log" \
     PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN/results.json" \
     npx playwright test --workers=1 --reporter=list,json --output="$RUN/test-results" "$spec"
   [ $? -eq 0 ] || FAILED=1

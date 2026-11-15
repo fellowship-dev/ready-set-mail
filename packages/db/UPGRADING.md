@@ -22,6 +22,10 @@ Migration `0011_reports_connected_at.sql` is additive: one nullable `domains.rep
 
 Migration `0012_dmarc_enforcement.sql` is additive: nullable `domains.dmarc_p`, `domains.dmarc_sp` and `domains.dmarc_rua` columns (the governing DMARC record's p=, sp= and whether it sends reports here); the existing `domains.dmarc_pct` column is now written by each DNS check. Apply it before serving the new Worker (the schema guard requires it). Until a domain is read from DNS again its enforcement level is shown as not known yet.
 
+## Terms acceptance
+
+Migration `0013_terms_acceptance.sql` is additive: nullable `users.terms_accepted_at` and `users.terms_version` columns, set when a hosted account's emailed code proves its address after the sign-up form showed the terms. Apply it before serving the new Worker (the schema guard requires it). Existing accounts and self-hosted accounts stay NULL. Sign-in codes use the existing `verifications` table; no other table changes.
+
 ## Settled claims
 
 Migration `0009_claim_settled.sql` is additive: two nullable `domain_claims` columns (`settled_at`, `settled_domain_id`). Apply it before serving the new Worker (the schema guard requires it). Existing claims stay open.
