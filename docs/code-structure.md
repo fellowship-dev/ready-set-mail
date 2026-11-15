@@ -89,6 +89,10 @@ Everything one request (or one cron workspace) needs is built per request and th
 
 One Ready Set Mail workspace holds several Cloudflare connections; each domain is linked to the one that manages its zone. `crypto.ts` seals tokens (AES-GCM, versioned key id), `oauth.ts` is the PKCE protocol and signed state, `service.ts` stores, refreshes, restricts (zone allow-list) and revokes, `routes.ts` is `/api/cloudflare/*` and `PUT /api/domains/:id/connection`, `relay.ts` is the optional self-host redirect relay (inert unless configured). `TenantContext.cfFor(domain)` is how the rest of the Worker gets a client. See [cloudflare-oauth.md](cloudflare-oauth.md).
 
+### `src/billing/` — Hosted billing (Stripe)
+
+Only active with `MODE=saas` + `SAAS_ENABLED=1` and Stripe configured; see [billing.md](billing.md). `config.ts` (settings, pinned API version, test-only base URL), `stripe-client.ts` (plain-fetch `StripeClient`, key private like `CfClient`), `price.ts` (the price by lookup key, cached in D1), `service.ts` (customer, card, Checkout, portal, purchase), `orders.ts` (the one state machine), `sync.ts` (re-read Stripe and move an order), `webhook.ts` (`POST /api/stripe/webhook`), `routes.ts` (`/api/billing/*`, `/api/operator/orders*`; mounted once in `src/api/router.ts`), `reconcile.ts` (daily job), `notify.ts` (audit and the owner's email), `preflight.ts`. The fake Stripe is `e2e/support/fake-stripe.mjs`.
+
 ### `src/hosted/` — Hosted (SaaS) intake and records
 
 Only active with `MODE=saas` + `SAAS_ENABLED=1`; see [hosted.md](hosted.md). `intake.ts` routes `rua+<token>@` / `tls-rpt+<token>@` mail to the token's workspace (no default-workspace fallback), `canary.ts` handles the anonymous `check+<token>@`, `records.ts` is the name-guarded writer for `*.h.<zone>`, `zones.ts` tracks the 3,500-record quota and is the shard seam, `pointers.ts` verifies the customer's CNAME/SPF pointers, `service.ts` + `routes.ts` are `/api/domains/:id/hosted`, `cron.ts` is the daily zone diff.

@@ -7,6 +7,7 @@ import { apiKeyQueries } from './api-keys';
 import { analyticsQueries } from './analytics';
 import { auditQueries } from './audit';
 import { baseDomainQueries } from './base-domain';
+import { billingQueries } from './billing';
 import { claimQueries } from './claims';
 import { connectionQueries } from './connections';
 import { removalQueries } from './removals';
@@ -42,6 +43,7 @@ export { publicReportQueries, type NewPublicReport, type PublicReportBudget, typ
 export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_BYTES, type RecordTuple, type StoreReportInput } from './report-store';
 export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimits, type SweepResult, type Tombstone } from './global-lifecycle';
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';
+export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow } from './billing';
 export { funnelQueries, hashEmail, type LeadRow } from './funnel';
 
 /**
@@ -80,6 +82,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		removals: removalQueries(d, workspaceId),
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
+		billing: billingQueries(d, workspaceId),
 		heartbeat: () => heartbeatStats(d, workspaceId),
 	};
 }

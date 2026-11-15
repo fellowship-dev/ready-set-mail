@@ -26,6 +26,8 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Invites | **30 days after they expire** (used or not) | `RETENTION_INVITES_DAYS` | |
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
+| Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
+| Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
 | Failed Cloudflare revocations of deleted workspaces | retried daily until they succeed, at most **30 days** | | See below. The sealed token is deleted with the row; giving up is logged and written to the audit log. |
 
 Backups: deleted data can remain in Cloudflare D1 Time Travel restore points until they roll off. Check the retention of your D1 plan; we state
@@ -87,6 +89,10 @@ byte budget allows at least 1,600 maximum-size reports a day, and the daily cap 
   preflight (`GET /api/instance/preflight`) has a `public_reports` field (stored reports and bytes, the budget, the percent used,
   `near_limit`) and a `public_reports` item from 80%.
 
+## Billing records
+
+Hosted billing (see [billing.md](billing.md)) keeps one row per purchase in `billing_orders`: the workspace id and a snapshot of its name, the domain name, the buyer's email, the amount and currency, the Stripe ids (customer, invoice, payment intent, charge) and the status and dates. These are **accounting records**, so they have no foreign key to the workspace or the domain and **survive deleting either**; the workspace name and domain name in the row are snapshots, taken when the order was made. They are kept for **seven years** from the order's creation (the accounting period assumed for Fellowship), then deleted by the daily job. The buyer's email is part of the accounting record and is not erased on request while it must be kept; Stripe holds its own copy under Stripe's terms. No card number, brand or last four is ever stored by Ready Set Mail (the card is read from Stripe when someone looks at Settings). The Stripe Customer is not deleted by Ready Set Mail, not even when the workspace is deleted. The binding rows of "add a card" sessions (`billing_checkout_sessions`) are deleted with the workspace and in any case after 30 days. Billing exists on the hosted service only; a self-hosted instance stores none of this.
+
 ## Deleting a workspace
 
 `DELETE /api/workspaces/:id` (owners; `?confirm=<name>` when it has domains). In order:
@@ -98,7 +104,7 @@ byte budget allows at least 1,600 maximum-size reports a day, and the daily cap 
    so the daily job can retry; the tombstone is written *before* the connection is deleted, and if it cannot be written (or the connections cannot be listed) the deletion stops with `502 revoke_failed` and nothing more is removed.
    The tombstone is deleted on success, and given up after 30 days (logged and recorded in the audit log under the deleted workspace's id).
    **Pasted API tokens cannot be revoked from here**: the response says how many there were (`cloudflare.pasted_tokens`) and the owner must revoke them in the Cloudflare dashboard.
-4. All workspace data is deleted, and people who belonged only to this workspace are deleted with it.
+4. All workspace data is deleted, and people who belonged only to this workspace are deleted with it. **Billing orders are not**: they stay as accounting records ([Billing records](#billing-records)), and the Stripe Customer is left alone.
 
 ## Deleting an account
 
@@ -117,7 +123,7 @@ The instance workspace of a self-hosted install is never deleted this way.
 ## Data export
 
 `GET /api/workspaces/:id/export` (owners) returns everything the workspace holds as JSON: members, domains, reports and records, TLS reports, settings,
-audit log, invites, API-key metadata, Cloudflare connection metadata and per-domain configuration. It never includes password hashes, tokens, key hashes,
+audit log, invites, API-key metadata, Cloudflare connection metadata, per-domain configuration and the workspace's billing orders (hosted). It never includes password hashes, tokens, key hashes,
 sealed Cloudflare tokens, secret settings or raw report payloads. Use it to answer subject-access and portability requests.
 The dashboard has a button in Settings → Danger zone.
 Columns are listed explicitly (a new column is not exported until it is added to the list), and the file is streamed a page at a time. A workspace with more than 250,000 rows in its big tables is refused with `413 export_too_large`; a background export is a planned follow-up.

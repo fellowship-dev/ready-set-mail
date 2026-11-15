@@ -21,6 +21,7 @@ import { flattenSource } from './spf';
 import { discoverMxHosts } from '../email/mta-sts';
 import { nextPolicyId } from './service';
 import { recheckZoneProofs } from '../domains/proof-recheck';
+import { runBillingJob } from '../billing/reconcile';
 
 export const HOSTED_CRON = '0 11 * * *';
 
@@ -175,6 +176,7 @@ export async function runHostedCron(event: ScheduledController, env: BoundEnv, _
     ['MTA-STS MX refresh', () => refreshHostedMtaStsMx(env)],
     ['pointer verification', () => verifyAllPointers(env)],
     ['zone proof re-check', () => recheckZoneProofs(env)],
+    ['billing reconcile', () => runBillingJob(env)],
     ['canary purge', () => globalQueries(env.DB).canary.purgeExpired(Math.floor(Date.now() / 1000))],
   ] as const) {
     try { await job(); } catch (e) { console.error(`[hosted] ${name} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : e); }
