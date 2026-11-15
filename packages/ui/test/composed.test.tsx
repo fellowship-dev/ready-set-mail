@@ -270,7 +270,7 @@ describe("LevelCard", () => {
 		const bar = screen.getByRole("progressbar", { name: "Protection level" });
 		expect(bar).toHaveAttribute("aria-valuenow", String(filled));
 		expect(bar).toHaveAttribute("aria-valuetext", `Level ${level} of 2: ${name}`);
-		expect(container.querySelectorAll(".bg-brand-ink")).toHaveLength(filled);
+		expect(container.querySelectorAll(".bg-ink-3")).toHaveLength(filled); // reached rungs: calm ink, not the brand fill
 		await expectNoViolations(container);
 	});
 	it("findings carry icon + text status, not colour alone", () => {

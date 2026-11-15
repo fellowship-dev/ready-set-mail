@@ -64,6 +64,7 @@ describe("brand colours stay where they belong", () => {
 		const fill = /(?<![\w:-])bg-brand(?:-ink)?(?![\w-])/;
 		const allowed = (f: string) =>
 			/\/components\/(?:button-variants\.ts|app-shell\.tsx)$/.test(f) || // primary button, skip link
+			f.endsWith("/styles/theme.css") || // a comment naming the utilities
 			/\/wizard\/WizardProgress\.tsx$/.test(f) || /\/screens\/SetupWizardStep\.tsx$/.test(f); // wizard progress toward an action
 		expect(hits(fill, allowed)).toEqual([]);
 	});
