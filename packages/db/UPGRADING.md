@@ -11,6 +11,10 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
+## Public reports (0014)
+
+Migration `0014_public_reports.sql` is additive: two new tables, `public_reports` (dated free-check reports at a private link, `src/public-reports/`) and `public_report_usage` (the running counters behind their storage budgets). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
+
 ## Domains with an invalid sp=
 
 No migration. From 2.0 a DMARC record whose `sp=` is not `none`, `quarantine` or `reject` is read as RFC 7489 section 6.6.3 says: receivers treat the whole record as `p=none` (or ignore it without a valid `rua=`). Earlier builds stored such a record by its `p=` (`p=reject; sp=bogus` as `reject`), so the stored rows cannot tell these domains apart. To list them on a live instance before or after upgrading, read every record name the instance has checked and test each live record (read-only):
