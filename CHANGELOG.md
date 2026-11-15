@@ -6,6 +6,10 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 
 ## [Unreleased]
 
+### Added
+
+- **Saved, dated domain reports.** With `PUBLIC_REPORTS_ENABLED=1`, `POST /api/public/reports` runs the free domain check and stores it as a report that anyone with its link can read (`GET /api/public/reports/:id`), and that its creator can delete with the token handed out once. Reports are kept until deleted. Run `npm run migrate` first (migration `0014`); limits and deletion are in [docs/data-retention.md](docs/data-retention.md#public-domain-reports). ([#169](https://github.com/fellowship-dev/ready-set-mail/pull/169))
+
 ## [2.0.0] - YYYY-MM-DD
 
 2.0 rebuilds Ready Set Mail (formerly Inbox Angel) around workspaces, a new dashboard, a one-command installer and agent access. <!-- @legacy-name: the product's earlier name -->
