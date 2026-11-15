@@ -10,6 +10,8 @@ import { CopyField } from '../../components/domain/CopyField';
 import { DnsRecords } from '../../components/domain/DnsRecords';
 import { DnsTools } from '../../components/domain/DnsTools';
 import { DoThisNext } from '../../components/domain/DoThisNext';
+import { FixOffer } from '../../components/billing/FixOffer';
+import { hasSomethingToFix } from '../../lib/billing';
 import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
 import { FailingSources } from '../../components/domain/FailingSources';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
@@ -376,6 +378,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				canWrite={canWrite}
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
 			/>
+			{/* An offer, not a nag: once, below the steps, never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
+			<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 
 			{/* A name that does not resolve has nothing to host. */}

@@ -11,10 +11,11 @@ import { getMode } from '../tenancy/mode';
 import { bookingUrl, helpUrl, sequenceEnabled } from '../funnel/config';
 import { intakeSetupFindings } from '../reports/auth-status';
 import { reportIntakePreflightItems } from '../hosted/report-intake-check';
+import { billingPreflight } from '../billing/preflight';
 
 export interface PreflightItem {
   /** Stable id for tests and the UI key. */
-  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections' | 'public_reports';
+  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections' | 'public_reports' | 'billing';
   /** `action`: something does not work until it is fixed. `note`: works, but worth knowing. */
   severity: 'action' | 'note';
   /** The setting(s) to change, by name. */
@@ -28,6 +29,15 @@ export interface Preflight {
   items: PreflightItem[];
   /** Public reports' storage, present when creating them is on or any are stored (src/public-reports/limits.ts). */
   public_reports?: PublicReportStorage;
+  /** Hosted billing: not configured (off), misconfigured with the reason, or configured (and whether the price resolves). Never a value. Present on the hosted service, or where a STRIPE_* setting exists. */
+  billing?: BillingPreflight;
+}
+
+export interface BillingPreflight {
+  state: 'off' | 'configured' | 'misconfigured';
+  reason?: string;
+  livemode?: boolean;
+  price?: 'ok' | 'misconfigured' | 'unreachable';
 }
 
 export interface PublicReportStorage {
@@ -177,5 +187,9 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
     });
   }
 
-  return { mode: hosted ? 'saas' : 'self-host', agents: agentAvailability(env), items, ...(reports ? { public_reports: reports } : {}) };
+  // Hosted billing (src/billing/preflight.ts): configured, not configured, or misconfigured with the reason.
+  const billing = await billingPreflight(env);
+  items.push(...billing.items);
+
+  return { mode: hosted ? 'saas' : 'self-host', agents: agentAvailability(env), items, ...(reports ? { public_reports: reports } : {}), ...(billing.status ? { billing: billing.status } : {}) };
 }

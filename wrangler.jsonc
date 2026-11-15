@@ -93,6 +93,8 @@
 	//   MAX_DOMAINS_PER_WORKSPACE  domains one workspace may hold (default 10)
 	// A refused request answers 403 with code "plan_limit"; BOOKING_URL (https only) is offered as the way to ask for more.
 
+	// Hosted billing (MODE=saas only, docs/billing.md): secrets STRIPE_SECRET_KEY (a restricted rk_ key) and STRIPE_WEBHOOK_SECRET; optional STRIPE_PRICE_LOOKUP_KEY. Off unless both secrets are set.
+
 	// Hosted intake: three tiers (docs/hosted.md). A report is COUNTED only when the receiving mail server authenticated the sender (AUTHSERV_ID +
 	// AUTHSERV_HEADER; nothing is authenticated until both are set, and the Worker logs the authserv-id it sees: {"evt":"intake_authserv"}) AND the sender is in
 	// the known-reporter registry (src/dmarc/known-reporters.ts; extend with INTAKE_KNOWN_REPORTERS, switch entries off with INTAKE_KNOWN_REPORTERS_DISABLE).

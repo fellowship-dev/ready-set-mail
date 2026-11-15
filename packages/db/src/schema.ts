@@ -44,7 +44,9 @@ export const workspaces = sqliteTable('workspaces', {
 	id: text('id').primaryKey(),
 	name: text('name').notNull(),
 	created_at: integer('created_at').notNull().default(now),
-});
+	/** The workspace's Stripe Customer (hosted billing, 0016): one card per workspace. Created on first need, cleared when Stripe says it was deleted. */
+	stripe_customer_id: text('stripe_customer_id'),
+}, (t) => [uniqueIndex('idx_workspaces_stripe_customer').on(t.stripe_customer_id)]);
 
 export const memberships = sqliteTable(
 	'memberships',
@@ -808,6 +810,8 @@ export const GLOBAL_TABLES = {
 	leads: 'free-check senders in the onboarding sequence: platform marketing data, not tenant data',
 	suppression: 'hashed addresses that must not get non-transactional mail, honoured platform-wide',
 	intake_quota: 'instance-wide intake counters per scope and day; a counter, no tenant content',
+	billing_events: 'Stripe events already seen, by event id (webhook idempotency); no workspace is known when one arrives, no tenant content',
+	billing_price_cache: 'the Stripe price an offer resolves to, instance-wide',
 } as const;
 
 /** Tables that must carry an `workspace_id` column. */
@@ -838,6 +842,8 @@ export const WORKSPACE_OWNED_TABLES = [
 	'intake_drops',
 	'intake_failures',
 	'reporter_candidate_days',
+	'billing_orders',
+	'billing_checkout_sessions',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1015,3 +1021,101 @@ export const metricObservations = sqliteTable('metric_observations', {
  metric: text('metric').notNull(), period_start: text('period_start').notNull(), period_end: text('period_end').notNull(),
  source_id: text('source_id').notNull(), payload: text('payload').notNull(),
 }, t => [primaryKey({ columns: [t.connection_id,t.domain_id,t.metric,t.period_start,t.period_end,t.source_id] })]);
+
+// ── Billing (0016) ──────────────────────────────────────────
+
+export const ORDER_STATUSES = ['pending', 'paid', 'started', 'done', 'refunded', 'failed', 'canceled'] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+/** A one-time purchase (hosted billing). An accounting record: no foreign key to the workspace or domain, so it survives deleting either. */
+export const billingOrders = sqliteTable(
+	'billing_orders',
+	{
+		id: text('id').primaryKey(),
+		workspace_id: text('workspace_id').notNull(),
+		workspace_name: text('workspace_name').notNull(),
+		domain_id: integer('domain_id'),
+		domain_name: text('domain_name').notNull(),
+		offer: text('offer').notNull(),
+		stripe_price_id: text('stripe_price_id').notNull(),
+		/** Minor units of `currency`. */
+		amount: integer('amount').notNull(),
+		/** What Stripe collected for the invoice (can be less than `amount` after a credit balance or coupon); NULL until paid. */
+		amount_paid: integer('amount_paid'),
+		currency: text('currency').notNull(),
+		status: text('status', { enum: ORDER_STATUSES }).notNull().default('pending'),
+		stripe_customer_id: text('stripe_customer_id'),
+		stripe_invoice_id: text('stripe_invoice_id'),
+		stripe_payment_intent_id: text('stripe_payment_intent_id'),
+		stripe_charge_id: text('stripe_charge_id'),
+		hosted_invoice_url: text('hosted_invoice_url'),
+		amount_refunded: integer('amount_refunded').notNull().default(0),
+		buyer_user_id: text('buyer_user_id'),
+		buyer_email: text('buyer_email'),
+		failure_code: text('failure_code'),
+		failure_message: text('failure_message'),
+		note: text('note'),
+		owner_notified_at: integer('owner_notified_at'),
+		/** When the instance owner was emailed that this order needs a look (a paid invoice that is not what we sold; a payment for a closed order). Once. */
+		operator_alerted_at: integer('operator_alerted_at'),
+		created_at: integer('created_at').notNull().default(now),
+		updated_at: integer('updated_at').notNull().default(now),
+		paid_at: integer('paid_at'),
+		started_at: integer('started_at'),
+		done_at: integer('done_at'),
+		refunded_at: integer('refunded_at'),
+		failed_at: integer('failed_at'),
+	},
+	(t) => [
+		uniqueIndex('idx_billing_orders_open').on(t.workspace_id, t.domain_name, t.offer).where(sql`${t.status} IN ('pending', 'paid', 'started')`),
+		uniqueIndex('idx_billing_orders_invoice').on(t.stripe_invoice_id).where(sql`${t.stripe_invoice_id} IS NOT NULL`),
+		index('idx_billing_orders_charge').on(t.stripe_charge_id),
+		index('idx_billing_orders_workspace').on(t.workspace_id, t.created_at),
+		index('idx_billing_orders_status').on(t.status, t.created_at),
+	],
+);
+
+/** Stripe events already seen. status: processing, done, ignored, failed. */
+export const billingEvents = sqliteTable(
+	'billing_events',
+	{
+		id: text('id').primaryKey(),
+		type: text('type').notNull(),
+		status: text('status').notNull().default('processing'),
+		attempts: integer('attempts').notNull().default(1),
+		outcome: text('outcome'),
+		received_at: integer('received_at').notNull().default(now),
+		updated_at: integer('updated_at').notNull().default(now),
+	},
+	(t) => [index('idx_billing_events_received').on(t.received_at)],
+);
+
+/** A Stripe Checkout (setup) session bound to the workspace and user that started it. `ref` is ours and exists before Stripe is called. */
+export const billingCheckoutSessions = sqliteTable(
+	'billing_checkout_sessions',
+	{
+		ref: text('ref').primaryKey(),
+		stripe_session_id: text('stripe_session_id'),
+		workspace_id: text('workspace_id').notNull(),
+		user_id: text('user_id').notNull(),
+		purpose: text('purpose').notNull(),
+		return_path: text('return_path').notNull(),
+		stripe_customer_id: text('stripe_customer_id').notNull(),
+		status: text('status').notNull().default('open'),
+		created_at: integer('created_at').notNull().default(now),
+		completed_at: integer('completed_at'),
+	},
+	(t) => [
+		uniqueIndex('idx_billing_checkout_stripe').on(t.stripe_session_id).where(sql`${t.stripe_session_id} IS NOT NULL`),
+		index('idx_billing_checkout_workspace').on(t.workspace_id),
+	],
+);
+
+/** The Stripe price an offer resolves to by lookup key. */
+export const billingPriceCache = sqliteTable('billing_price_cache', {
+	lookup_key: text('lookup_key').primaryKey(),
+	price_id: text('price_id').notNull(),
+	amount: integer('amount').notNull(),
+	currency: text('currency').notNull(),
+	fetched_at: integer('fetched_at').notNull(),
+});

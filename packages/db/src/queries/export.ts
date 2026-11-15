@@ -13,7 +13,7 @@ import { getDb, type DbLike } from '../client';
 type Row = Record<string, unknown>;
 
 export const EXPORT_COLUMNS = {
-	workspaces: ['id', 'name', 'created_at'],
+	workspaces: ['id', 'name', 'created_at', 'stripe_customer_id'],
 	memberships: ['role', 'created_at'],
 	users: ['id', 'email', 'name', 'last_login_at'],
 	invites: ['email', 'role', 'invited_by', 'created_at', 'expires_at', 'used_at'],
@@ -30,6 +30,7 @@ export const EXPORT_COLUMNS = {
 	monitor_subscriptions: ['id', 'email', 'domain', 'spf_record', 'dmarc_policy', 'dmarc_pct', 'dmarc_record', 'active', 'last_checked_at', 'created_at', 'confirmed_at'],
 	spf_flatten_config: ['domain_id', 'enabled', 'cf_record_id', 'canonical_record', 'flattened_record', 'ip_count', 'lookup_count', 'last_flattened_at', 'last_error', 'created_at', 'updated_at'],
 	mta_sts_config: ['domain_id', 'enabled', 'mode', 'mx_hosts', 'max_age', 'policy_id', 'mta_sts_record_id', 'tls_rpt_record_id', 'cname_record_id', 'last_error', 'created_at', 'updated_at'],
+	billing_orders: ['id', 'domain_id', 'domain_name', 'offer', 'stripe_price_id', 'amount', 'amount_paid', 'currency', 'status', 'stripe_customer_id', 'stripe_invoice_id', 'stripe_payment_intent_id', 'stripe_charge_id', 'amount_refunded', 'buyer_user_id', 'buyer_email', 'failure_code', 'failure_message', 'note', 'created_at', 'updated_at', 'paid_at', 'started_at', 'done_at', 'refunded_at', 'failed_at'],
 	hosted_domains: ['domain_id', 'hosted_id', 'zone_key', 'dmarc_record_id', 'spf_record_id', 'mta_sts_txt_record_id', 'mta_sts_host_record_id', 'tls_rpt_record_id', 'spf_source', 'dmarc_pointer', 'spf_pointer', 'mta_sts_pointer', 'tls_rpt_pointer', 'pointers_checked_at', 'created_at'],
 } as const;
 
@@ -53,6 +54,7 @@ export const EXPORT_EXCLUDED = {
 	spf_flatten_config: ['workspace_id'],
 	mta_sts_config: ['workspace_id'],
 	hosted_domains: ['workspace_id'],
+	billing_orders: ['workspace_id', 'workspace_name', 'hosted_invoice_url', 'owner_notified_at', 'operator_alerted_at'],
 } as const;
 
 /** Setting keys that hold no secret. Anything else (e.g. turnstile_secret_key) is not exported. */
@@ -97,6 +99,7 @@ export function exportQueries(dbLike: DbLike, workspaceId: string) {
 			spf_flatten_config: () => all(sql`SELECT ${C('spf_flatten_config')} FROM spf_flatten_config WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
 			mta_sts_config: () => all(sql`SELECT ${C('mta_sts_config')} FROM mta_sts_config WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
 			hosted_domains: () => all(sql`SELECT ${C('hosted_domains')} FROM hosted_domains WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
+			billing_orders: () => all(sql`SELECT ${C('billing_orders')} FROM billing_orders WHERE workspace_id = ${workspaceId} ORDER BY created_at, id`),
 		},
 
 		/** Large tables: rows with id > `after`, ascending. */

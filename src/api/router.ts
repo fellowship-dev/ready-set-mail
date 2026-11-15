@@ -82,6 +82,7 @@ import { globals } from '../db/scope';
 import { handleAuthRoute } from '../auth/routes';
 import { handleAccessRoutes } from '../access/routes';
 import { handleGoogleMetricRoutes } from '../metrics/routes';
+import { handleBillingRoutes } from '../billing/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
@@ -625,6 +626,10 @@ async function _handleApi(
 
   const metricsResponse = await handleGoogleMetricRoutes(request, env, ctx);
   if (metricsResponse) return metricsResponse;
+
+  // Hosted billing: /api/billing/*, POST /api/stripe/webhook, /api/operator/orders* (404 unless billing is on; src/billing/routes.ts).
+  const billingResponse = await handleBillingRoutes(request, env, ctx, resolver);
+  if (billingResponse) return billingResponse;
 
   // All /api/* routes require auth
   if (!path.startsWith('/api/')) {

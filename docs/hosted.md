@@ -69,6 +69,7 @@ In `wrangler.jsonc` `vars` (or the dashboard):
 | `RETENTION_UNCOUNTED_REPORTS_DAYS` | `30` | days a report of tier `unknown` or `unauthenticated` is kept, swept by the one daily `0 4 * * *` cron. Not applied when `REPORT_COUNTING=all` (there those reports are the numbers). The earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` (when it covered only unauthenticated reports) is still honoured when the new one is unset. A reporter an owner promotes later becomes tier `counted` and leaves this sweep (the sweep and the budgets read `reporter_tier`, never the identity) |
 | `RETENTION_INTAKE_COUNTERS_DAYS`, `RETENTION_INTAKE_FAILURES_DAYS` | `8`, `90` | how long the daily counters and the "could not be processed" markers are kept |
 | `HOSTED_MAX_DOMAINS_PER_WORKSPACE` | `10` | optional: domains per workspace that may use hosted records (enabling more answers 429) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_LOOKUP_KEY` | unset | optional: in-app purchase of "Fix one domain" (restricted key, webhook signing secret, price lookup key `rsm_fix_one_domain`). Billing is off, with no offer and no routes, unless both secrets are set; see [billing.md](billing.md) |
 
 A report's `policy_published` domain must be the token's domain or a subdomain of it; it is filed under the token's domain, or under the subdomain's own row if the same workspace has that subdomain as a verified domain. Each stored report also records whether its
 email passed DMARC-aligned authentication for the reporting organisation (`reporter_auth`: `pass`, `fail` or `none`).

@@ -62,6 +62,11 @@ export interface Env {
   CF_OAUTH_REDIRECT_URI?: string;    // default: <origin>/api/cloudflare/oauth/callback
   CF_OAUTH_RELAY_URL?: string;       // self-host: send the OAuth redirect through this relay (e.g. https://connect.readysetmail.com)
   CF_OAUTH_RELAY_SECRET?: string;    // secret, relay deployment only: signs the relay state; setting it turns this Worker into the relay
+  // Hosted billing (MODE=saas + SAAS_ENABLED=1), see docs/billing.md. Billing is off unless both secrets are set.
+  STRIPE_SECRET_KEY?: string;        // secret: a RESTRICTED Stripe key (rk_live_ / rk_test_); a full sk_ key is refused (preflight says so)
+  STRIPE_WEBHOOK_SECRET?: string;    // secret: whsec_… signing secret of the webhook endpoint (POST /api/stripe/webhook)
+  STRIPE_PRICE_LOOKUP_KEY?: string;  // lookup key of the one-time "Fix one domain" price (default rsm_fix_one_domain)
+  STRIPE_API_BASE?: string;          // testing only: a local fake Stripe, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
   // Worker config (vars in wrangler.jsonc)
   WORKER_NAME?: string;          // defaults to "ready-set-mail-worker"
   MODE?: string;                 // "selfhost" (default) | "saas"

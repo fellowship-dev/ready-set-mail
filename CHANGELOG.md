@@ -6,6 +6,10 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 
 ## [Unreleased]
 
+### Added
+
+- **Buy "Fix one domain" in the app (hosted).** A workspace owner can add a card through Stripe-hosted Checkout (one card, one Stripe Customer per workspace; nobody types a card number into Ready Set Mail) and buy the $149 "Fix one domain" work for a domain with something to fix, paid in advance and refundable in full until the written done note. The charge is a Stripe Invoice (the buyer gets Stripe's invoice and receipt), keyed per order so a double click charges once; the order is marked paid only by Stripe's signed webhook, which re-reads the invoice. The instance owner is emailed for each paid order and has an Orders list with Mark started and Mark done; refunds are made in the Stripe dashboard and arrive by webhook. Off unless `STRIPE_SECRET_KEY` (a restricted key; a full `sk_` key is refused) and `STRIPE_WEBHOOK_SECRET` are set; self-host has none of it. Migration `0016` (run `npm run migrate` first; see [packages/db/UPGRADING.md](packages/db/UPGRADING.md#billing-0016)); setup, permissions, webhook and threat model: [docs/billing.md](docs/billing.md). A payment that still needs the buyer's bank (3-D Secure) stays pending until it is finished; a paid invoice for our line is booked even when a credit balance made it less than the price (the instance owner is emailed when a paid invoice is not what was sold, or a payment arrives for a closed order); the confirm step always states the price with its currency and the server refuses a price other than the one shown.
+
 ## [2.0.0] - 2026-11-15
 
 2.0 rebuilds Ready Set Mail (formerly Inbox Angel) around workspaces, a new dashboard, a one-command installer and agent access. <!-- @legacy-name: the product's earlier name -->

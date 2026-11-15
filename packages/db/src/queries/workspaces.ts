@@ -7,7 +7,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { batchStatements, getDb, type DbLike } from '../client';
 import { changesOf } from './plan-limit';
 import {
-	apiKeys, auditLog, aggregateReports, cloudflareConnectionBlockedZones, cloudflareConnectionZones, cloudflareConnections,
+	apiKeys, auditLog, aggregateReports, billingCheckoutSessions, cloudflareConnectionBlockedZones, cloudflareConnectionZones, cloudflareConnections,
 	domains, hostedDomains, intakeTokens, invites, memberships, monitorSubscriptions, mtaStsConfig, reportRecords, settings,
 	spfFlattenConfig, tlsReports, workspaces, type MembershipRole,
 } from '../schema';
@@ -132,6 +132,8 @@ export function workspaceLifecycle(dbLike: DbLike) {
 				db.delete(invites).where(eq(invites.workspace_id, workspaceId)),
 				db.delete(auditLog).where(eq(auditLog.workspace_id, workspaceId)),
 				db.delete(apiKeys).where(eq(apiKeys.workspace_id, workspaceId)),
+				// Orders are accounting records and stay; the bindings of card sessions hold nothing worth keeping (docs/data-retention.md).
+				db.delete(billingCheckoutSessions).where(eq(billingCheckoutSessions.workspace_id, workspaceId)),
 				db.delete(memberships).where(eq(memberships.workspace_id, workspaceId)),
 				db.delete(workspaces).where(eq(workspaces.id, workspaceId)),
 			]),

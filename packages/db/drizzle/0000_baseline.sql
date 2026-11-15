@@ -138,6 +138,79 @@ CREATE TABLE `auth_rate_limits` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `auth_rate_limits_key_unique` ON `auth_rate_limits` (`key`);--> statement-breakpoint
+CREATE TABLE `billing_checkout_sessions` (
+	`ref` text PRIMARY KEY NOT NULL,
+	`stripe_session_id` text,
+	`workspace_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`purpose` text NOT NULL,
+	`return_path` text NOT NULL,
+	`stripe_customer_id` text NOT NULL,
+	`status` text DEFAULT 'open' NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`completed_at` integer
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_billing_checkout_stripe` ON `billing_checkout_sessions` (`stripe_session_id`) WHERE "billing_checkout_sessions"."stripe_session_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX `idx_billing_checkout_workspace` ON `billing_checkout_sessions` (`workspace_id`);--> statement-breakpoint
+CREATE TABLE `billing_events` (
+	`id` text PRIMARY KEY NOT NULL,
+	`type` text NOT NULL,
+	`status` text DEFAULT 'processing' NOT NULL,
+	`attempts` integer DEFAULT 1 NOT NULL,
+	`outcome` text,
+	`received_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_billing_events_received` ON `billing_events` (`received_at`);--> statement-breakpoint
+CREATE TABLE `billing_orders` (
+	`id` text PRIMARY KEY NOT NULL,
+	`workspace_id` text NOT NULL,
+	`workspace_name` text NOT NULL,
+	`domain_id` integer,
+	`domain_name` text NOT NULL,
+	`offer` text NOT NULL,
+	`stripe_price_id` text NOT NULL,
+	`amount` integer NOT NULL,
+	`amount_paid` integer,
+	`currency` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`stripe_customer_id` text,
+	`stripe_invoice_id` text,
+	`stripe_payment_intent_id` text,
+	`stripe_charge_id` text,
+	`hosted_invoice_url` text,
+	`amount_refunded` integer DEFAULT 0 NOT NULL,
+	`buyer_user_id` text,
+	`buyer_email` text,
+	`failure_code` text,
+	`failure_message` text,
+	`note` text,
+	`owner_notified_at` integer,
+	`operator_alerted_at` integer,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`paid_at` integer,
+	`started_at` integer,
+	`done_at` integer,
+	`refunded_at` integer,
+	`failed_at` integer
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_billing_orders_open` ON `billing_orders` (`workspace_id`,`domain_name`,`offer`) WHERE "billing_orders"."status" IN ('pending', 'paid', 'started');--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_billing_orders_invoice` ON `billing_orders` (`stripe_invoice_id`) WHERE "billing_orders"."stripe_invoice_id" IS NOT NULL;--> statement-breakpoint
+CREATE INDEX `idx_billing_orders_charge` ON `billing_orders` (`stripe_charge_id`);--> statement-breakpoint
+CREATE INDEX `idx_billing_orders_workspace` ON `billing_orders` (`workspace_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_billing_orders_status` ON `billing_orders` (`status`,`created_at`);--> statement-breakpoint
+CREATE TABLE `billing_price_cache` (
+	`lookup_key` text PRIMARY KEY NOT NULL,
+	`price_id` text NOT NULL,
+	`amount` integer NOT NULL,
+	`currency` text NOT NULL,
+	`fetched_at` integer NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `canary_tokens` (
 	`token_hash` text PRIMARY KEY NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
@@ -718,5 +791,8 @@ CREATE TABLE `workspace_storage` (
 CREATE TABLE `workspaces` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
-	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`stripe_customer_id` text
 );
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_workspaces_stripe_customer` ON `workspaces` (`stripe_customer_id`);

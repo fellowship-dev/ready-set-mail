@@ -10,6 +10,7 @@ import { setTheme, useTheme } from '../../lib/theme';
 import { Field } from '../auth/AuthLayout';
 import { DangerZone } from './DangerZone';
 import { WorkspaceSection } from './WorkspaceSection';
+import { BillingSection } from './BillingSection';
 import { AgentConnectionsSection } from './AgentConnectionsSection';
 import { MetricConnectionsSection } from './MetricConnectionsSection';
 import { CloudflareSection } from './CloudflareSection';
@@ -113,6 +114,8 @@ export function SettingsPage() {
 			</Section>
 
 			<WorkspaceSection />
+
+			<BillingSection />
 
 			<CloudflareSection />
 			<AgentConnectionsSection />

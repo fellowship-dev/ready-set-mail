@@ -32,6 +32,12 @@ function https(raw: string | undefined): string | null {
   }
 }
 
+/** The marketing site's origin (SITE_URL, else the hosted default), hosted only. The terms and refund policy links are `<origin>/terms` and `<origin>/refund-policy`. */
+export function siteOrigin(env: AuthEnv): string | null {
+  const site = isSaas(env) ? (https((env as LegalEnv).SITE_URL) ?? HOSTED_SITE_URL) : null;
+  return site ? new URL(site).origin : null;
+}
+
 export function legal(env: AuthEnv): Legal {
   const e = env as LegalEnv;
   const saas = isSaas(env);
