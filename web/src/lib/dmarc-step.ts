@@ -1,5 +1,6 @@
-import { dmarcSteps, hostedInForce, policyInForce, publicSuffixParent, type DmarcEvidence, type DmarcStep, type PolicyInForce, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
-import { hasReportAddress } from './dmarc-record';
+import { dmarcSteps, hostedInForce, policyInForce, publicSuffixParent, type DmarcEvidence, type DmarcStep, type PolicyInForce, type ReportsRefusal, type StepWho } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcEvidenceFor, reportsRefusalOf as refusalOfConnect } from '@ready-set-mail/dns-checks/dmarc-evidence';
+import { storageDropNotice, type ReportVisibilityFields } from './uncounted';
 import type { Domain, DomainCheckSummary } from './types';
 
 /**
@@ -23,9 +24,33 @@ export function forceFor(name: string, s: Pick<DomainCheckSummary, 'dmarc_policy
 	return policyInForce(name, s, opts.read);
 }
 
-/** Report evidence for one domain: without a reports address no pass share is used (old totals are not a current claim). */
-export function evidenceFor(domain: Pick<Domain, 'rua_address'>, reports: { total: number; passed: number; days: number } | null | undefined, suffixParent?: string | null): DmarcEvidence {
-	return { reportsAddress: hasReportAddress(domain.rua_address), ruaAddress: domain.rua_address, reports: reports ? { total: reports.total, passed: reports.passed, days: reports.days } : reports, suffixParent: suffixParent ?? null };
+/**
+ * Report evidence for one domain, from the ONE builder the agent tools use too (packages/dns-checks/src/dmarc-evidence.ts):
+ * the dashboard only localises the time in a dropped-report sentence. `extra.visibility`: the server's report-visibility
+ * fields; `extra.alignment`: the governing record's adkim=/aspf=, read live; `extra.reportsRefusal`: from `report_connect`.
+ */
+export function evidenceFor(
+	domain: Pick<Domain, 'rua_address'>,
+	reports: { total: number; passed: number; days: number } | null | undefined,
+	suffixParent?: string | null,
+	extra: { visibility?: ReportVisibilityFields | null; alignment?: DmarcEvidence['alignment']; reportsRefusal?: ReportsRefusal | null } = {},
+): DmarcEvidence {
+	return dmarcEvidenceFor({
+		ruaAddress: domain.rua_address,
+		reports,
+		suffixParent,
+		visibility: extra.visibility,
+		alignment: extra.alignment,
+		reportsRefusal: extra.reportsRefusal ?? null,
+		dropText: (d) => storageDropNotice(d),
+	});
+}
+
+export type { ReportsRefusal };
+
+/** Why reports cannot be connected for a domain, from the server's per-domain answer in its summary (null: they can, or not known). */
+export function reportsRefusalOf(s: Pick<DomainCheckSummary, 'report_connect'> | null | undefined): ReportsRefusal | null {
+	return refusalOfConnect(s?.report_connect);
 }
 
 /** Where a step happens, as a dashboard link. A change at a listed parent opens the parent's page. */

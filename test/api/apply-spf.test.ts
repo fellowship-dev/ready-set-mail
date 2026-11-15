@@ -80,7 +80,13 @@ function mockFetch(searchResult: unknown[], cfSuccess = true): ReturnType<typeof
       result: { id: 'dns-rec-new' },
       ...(cfSuccess ? {} : { errors: [{ message: 'CF error' }] }),
     }), { status: 200 }));
-  vi.stubGlobal('fetch', fetchMock);
+  // The route counts the record's DNS lookups (the shared judgement) before it writes: DoH answers "no data" here, so the
+  // Cloudflare calls above stay the first and second calls of fetchMock.
+  vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (/dns-query|\/resolve\?/.test(url)) return new Response(JSON.stringify({ Status: 0 }), { status: 200, headers: { 'content-type': 'application/dns-json' } });
+    return fetchMock(input, init);
+  }));
   return fetchMock;
 }
 
