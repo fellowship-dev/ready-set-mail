@@ -43,6 +43,8 @@ export interface DnsResponse {
   hasCname?: boolean;
   /** DNS RCODE when one was received. */
   rcode?: number;
+  /** The server set the TC bit: the answer is cut short and lists only some of the records. Never a complete answer. */
+  truncated?: boolean;
   /** Human-readable reason, set when status === 'error'. */
   error?: string;
 }
@@ -119,7 +121,8 @@ export function classifyDohBody(body: unknown, type: DnsRecordType): DnsResponse
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return errorResponse('malformed DoH response: not a JSON object');
   }
-  const b = body as { Status?: unknown; Answer?: unknown };
+  const b = body as { Status?: unknown; Answer?: unknown; TC?: unknown };
+  const truncated = b.TC === true ? { truncated: true } : {};
   if (typeof b.Status !== 'number' || !Number.isInteger(b.Status)) {
     return errorResponse('malformed DoH response: missing Status');
   }
@@ -131,7 +134,7 @@ export function classifyDohBody(body: unknown, type: DnsRecordType): DnsResponse
   }
   if (rcode !== 0) return errorResponse(`DNS ${RCODE_NAMES[rcode] ?? `RCODE ${rcode}`}`, rcode);
 
-  if (b.Answer === undefined || b.Answer === null) return { status: 'nodata', answers: [], rcode };
+  if (b.Answer === undefined || b.Answer === null) return { status: 'nodata', answers: [], rcode, ...truncated };
   if (!Array.isArray(b.Answer)) return errorResponse('malformed DoH response: Answer is not an array', rcode);
 
   const wanted = RECORD_TYPE_CODES[type];
@@ -152,7 +155,7 @@ export function classifyDohBody(body: unknown, type: DnsRecordType): DnsResponse
       data: e.data,
     });
   }
-  return answers.length > 0 ? { status: 'ok', answers, rcode } : { status: 'nodata', answers: [], rcode };
+  return answers.length > 0 ? { status: 'ok', answers, rcode, ...truncated } : { status: 'nodata', answers: [], rcode, ...truncated };
 }
 
 export function createResolver(options: ResolverOptions = {}): Resolver {

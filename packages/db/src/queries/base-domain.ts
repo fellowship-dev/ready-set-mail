@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { domains, settings } from '../schema';
 import { sql } from 'drizzle-orm';
-import { PlanLimitError, changesOf, freeNameStatements } from './plan-limit';
+import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
 
 /**
  * The wizard's first step as one batch: the domain row (when new) and the derived settings (base domain,
@@ -26,8 +26,9 @@ export function baseDomainQueries(db: Db, workspaceId: string) {
 
 	return {
 		/** Returns the new domain's id, or null when the workspace already had the domain. */
-		async apply(d: { domain: string; rua_address: string; verified_via?: string; settings: Record<string, string> }, opts: { maxDomains?: number; freeing?: number } = {}): Promise<number | null> {
+		async apply(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns; settings: Record<string, string> }, opts: { maxDomains?: number; freeing?: number } = {}): Promise<number | null> {
 			const existing = await db.select({ id: domains.id }).from(domains).where(and(eq(domains.workspace_id, workspaceId), isNull(domains.evicted_at), eq(domains.domain, d.domain))).get();
+			const pv = existing ? {} as ReturnType<typeof proofValues> : proofValues(d.domain, d.verified_via, d.proof); // a zone proof without its servers is refused before anything is written
 			const parts = d.domain.split('.');
 			let parentId: number | null = null;
 			if (!existing && parts.length > 2) {
@@ -41,10 +42,10 @@ export function baseDomainQueries(db: Db, workspaceId: string) {
 			const max = opts.maxDomains;
 			const capped = !existing && max !== undefined;
 			const domainInsert = capped
-				? sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via)
-					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}
+				? sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers)
+					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}
 					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`
-				: db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via });
+				: db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
 			// Under a cap the settings follow the domain: written only when the workspace has the (live) domain row.
 			const upsertIfDomain = (key: string, value: string) =>
 				sql`INSERT OR REPLACE INTO settings (workspace_id, key, value) SELECT ${workspaceId}, ${key}, ${value}

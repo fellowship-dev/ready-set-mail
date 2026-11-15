@@ -113,10 +113,10 @@ import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
-import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
-import { DomainServiceError, assertDomainRoom, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
-import { PlanLimitError } from '@ready-set-mail/db';
+import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
+import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
 import { planLimitResponse } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
@@ -759,10 +759,14 @@ async function _handleApi(
       try {
         const settings: Record<string, string> = rd && fe ? { base_domain: domain, reports_domain: rd, from_email: fe, ...forgetZone } : {};
         // Hosted with the domain already in the workspace: there is nothing to write (no settings, no row).
-        created = hostedMode && (await tenant.scope.domains.getByName(domain))
+        const own = hostedMode ? await tenant.scope.domains.getByName(domain) : null;
+        // Hosted, the domain is ours but unproven and was just proven again: restored in place, its history intact.
+        if (own?.verified_via === 'legacy' && admission.via !== 'existing') await restoreInPlace(tenant, own, admission.via, { id: userBySession?.id, email: userBySession?.email });
+        created = own
           ? null
-          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
       } catch (e: any) {
+        if (e instanceof ProofIncompleteError) return json(proofIncomplete(domain).body, 409);
         if (e instanceof PlanLimitError) return planLimitResponse(env, 'domains_per_workspace', e.max);
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
@@ -842,12 +846,27 @@ async function _handleApi(
         return json(added, 200);
       }
       if (claim.settled_at !== null) return err('claim not found', 404); // it became a domain that has since been removed
-      await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending
+      if (!(await tenant.scope.domains.getByName(claim.domain))) await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A row the workspace has (unproven) takes no new place.
       const outcome = await verifyClaim(tenant, claim);
       if (outcome.kind === 'taken') return json({ error: 'another workspace has already verified this domain', code: 'domain_taken', claim: claimView({ ...claim, status: 'lost' }) }, 409);
       if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, ...(outcome.code ? { code: outcome.code } : {}), claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);
       const result = await commitVerifiedDomain(tenant, claim.domain, outcome.via, userBySession?.email, ctx, userBySession?.id);
       return json(result, result.resumed ? 200 : 201);
+    }
+    // POST /api/domains/:id/prove — "prove again": the proof of an existing, unproven domain re-run on the SAME row (zone through any current connection of
+    // the workspace, or the TXT record). When it holds the row is restored in place, report history intact. Otherwise a claim shows the TXT record.
+    const proveMatch = path.match(/^\/api\/domains\/(\d+)\/prove$/);
+    if (proveMatch && method === 'POST') {
+      const id = parseInt(proveMatch[1], 10);
+      const row = await tenant.scope.domains.getById(id);
+      if (!row) {
+        const gone = await tenant.scope.domains.getEvictedById(id);
+        if (gone) return json({ error: EVICTED_NOTICE(gone.evicted_name ?? gone.domain, gone.evicted_at ?? 0), code: 'domain_taken' }, 409);
+        return err('domain not found', 404);
+      }
+      if (row.verified_via !== 'legacy') return json({ ...(await resumeExistingDomain(tenant, row.domain)), restored: false });
+      const result = await enrollDomain(tenant, row.domain, userBySession?.email, ctx, userBySession?.id);
+      return json(result, 'pending' in result ? 202 : 200);
     }
     // GET /api/domains/summaries — check-summary for every domain of the workspace in one request (?after=<id>&limit=<n>, by id)
     if (path === '/api/domains/summaries' && method === 'GET') {
@@ -1175,7 +1194,10 @@ async function _handleApi(
       // Hosted, reports not connected yet but connectable, and Apply via Cloudflare is there: the address that write would carry, so the record shown is
       // the record written. It is NOT the domain's report address: `rua_address` stays what is stored (empty until the reports are connected), because
       // a record pasted by hand with that address would be refused at intake, the domain never having been connected. Only the apply connects it.
-      const reportWrite = domain.rua_address?.trim() || !tenant.hasCloudflare() ? null : await reportAddressForWrite(tenant, domain);
+      // Only when that Apply can actually run for THIS domain: a connection exists AND it manages the domain's zone (the domain is linked to it). With Cloudflare
+      // connected for other zones only, Apply cannot write the record or connect the reports, so no report address is named anywhere.
+      const applyReaches = tenant.hasCloudflare() && await tenant.cfFor(domain.domain).then(() => true, () => false);
+      const reportWrite = domain.rua_address?.trim() || !applyReaches ? null : await reportAddressForWrite(tenant, domain);
       return json({
         domain_id: domain.id,
         domain: domain.domain,

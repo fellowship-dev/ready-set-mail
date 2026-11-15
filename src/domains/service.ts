@@ -1,7 +1,7 @@
-import { PlanLimitError, claimLookups, type DomainRow } from '@ready-set-mail/db';
+import { PlanLimitError, ProofIncompleteError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
-import { admitDomain, claimView, freeingFor, settleClaims, type VerifiedVia } from './ownership';
+import { EVICTED_KEEP_DAYS, admitDomain, claimView, freeingFor, proofColumns, restoreInPlace, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
 import { track } from '../telemetry';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
@@ -46,6 +46,13 @@ export async function assertDomainRoom(tenant: TenantContext): Promise<void> {
   const max = domainCap(tenant);
   if (max !== undefined && (await tenant.scope.domains.list()).length >= max) throw planLimitError(tenant, max);
 }
+
+/** What the holder of a name that another workspace proved is told (by the email, and by "prove again" on the old row): the new holder keeps it, the history stays read-only. */
+export const EVICTED_NOTICE = (domain: string, evictedAtSeconds: number) =>
+  `${domain} now belongs to another workspace that proved it controls it, and it keeps it. Your report history for ${domain} stays here, read-only and available to export, until ${new Date((evictedAtSeconds + EVICTED_KEEP_DAYS * 86400) * 1000).toISOString().slice(0, 10)}, then it is deleted.`;
+
+/** The Cloudflare proof could not be kept whole (no zone or name servers recorded): the add fails and the TXT record is the way. */
+export const proofIncomplete = (domain: string) => new DomainServiceError(`Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, 409, { error: `Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, code: 'proof_incomplete' });
 
 export interface EnrollmentOptions { productId?: string }
 
@@ -100,7 +107,7 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
 /** The domain, when this workspace already has it live: the answer for a repeat of something that already worked. Null otherwise. */
 export async function resumeExistingDomain(tenant: TenantContext, domain: string, options: EnrollmentOptions = {}) {
   const existing = await tenant.scope.domains.getByName(domain);
-  if (!existing) return null;
+  if (!existing || existing.verified_via === 'legacy') return null; // an unproven row is not "already worked": it still has to be proven (restoreInPlace)
   await assertExistingProductMapping(tenant, existing, options);
   return { ...enrollmentView(existing, tenant.settings.reportsDomain), resumed: true as const };
 }
@@ -114,7 +121,9 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   const existing = await tenant.scope.domains.getByName(domain);
   if (existing) {
     await assertExistingProductMapping(tenant, existing, options);
-    return { ...enrollmentView(existing, rdomain), resumed: true };
+    // Unproven and now proven again: restored in place, its report history intact (not a new row, not a plain "already added").
+    const restored = existing.verified_via === 'legacy' ? await restoreInPlace(tenant, existing, via, { id: actorId, email: userEmail }).catch((e) => { throw e instanceof ProofIncompleteError ? proofIncomplete(domain) : e; }) : null;
+    return { ...enrollmentView(restored ?? existing, rdomain), resumed: true, ...(restored ? { restored: true } : {}) };
   }
 
   // Fixed rua address — routing is by XML policy_domain, not by address encoding
@@ -123,7 +132,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   // Insert domain row — no DNS writes here; all DNS changes require explicit user action
   let domainId: number;
   try {
-    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via }, options.productId, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via, proof: proofColumns(tenant, domain, via) }, options.productId, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
     domainId = result.meta.last_row_id as number;
   } catch (e: any) {
     if (e instanceof PlanLimitError) {
@@ -132,6 +141,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
       if (raced) return raced;
       throw planLimitError(tenant, e.max);
     }
+    if (e instanceof ProofIncompleteError) throw proofIncomplete(domain);
     if (e?.message?.includes('UNIQUE')) {
       // Concurrent replay may have won the insert; only resume a row in this workspace.
       const raced = await tenant.scope.domains.getByName(domain);

@@ -32,7 +32,7 @@ export * from './team';
 export * from './api-keys';
 export type { CfConnectionInfo, CfConnectionZone } from './connections';
 export { authLookups } from './auth';
-export { PlanLimitError } from './plan-limit';
+export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns } from './plan-limit';
 export { workspaceLifecycle, type WorkspaceSummary } from './workspaces';
 export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow, TOKEN_ROTATION_GRACE_SECONDS, type QuotaLimits, type QuotaResult, type QuotaScope, type FailureRow, type IntakeTarget, type HostedDomainRow, type PointerStatus } from './intake';
 export * from './heartbeat';

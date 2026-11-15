@@ -13,7 +13,7 @@ export function makeEnv(db: TestDb = createMigratedD1(), extra: Record<string, u
   db.sqlite.prepare("INSERT OR IGNORE INTO settings (workspace_id, key, value) VALUES ('ws_default', 'from_email', 'noreply@reports.example.com')").run();
   // Hosted sign-up is closed without a Turnstile secret and site key; tests send the token 'ok' (see test/setup-files/turnstile.ts).
   const turnstile = extra.MODE === 'saas' ? { TURNSTILE_SECRET_KEY: 'test-turnstile-secret', TURNSTILE_SITE_KEY: 'test-turnstile-site' } : {};
-  return { BOOTSTRAP_SECRET: 'test-only-installer-proof-32-characters-minimum', DB: db as unknown as D1Database, CLOUDFLARE_ACCOUNT_ID: '', CLOUDFLARE_ZONE_ID: '', CLOUDFLARE_API_TOKEN: '', ...turnstile, ...extra } as unknown as Env;
+  return { BOOTSTRAP_SECRET: 'test-only-installer-proof-32-characters-minimum', DB: db as unknown as D1Database, CLOUDFLARE_ACCOUNT_ID: '', CLOUDFLARE_ZONE_ID: '', CLOUDFLARE_API_TOKEN: '', PROOF_CONFIRM_DELAY_MS: '0', ...turnstile, ...extra } as unknown as Env;
 }
 
 let ipCounter = 0;

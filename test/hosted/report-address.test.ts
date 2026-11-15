@@ -283,7 +283,7 @@ describe('who may connect, and for what', () => {
     expect((await w.connect(4)).res.status).toBe(404); // evicted
     const legacy = await w.connect(3);
     expect(legacy.res.status).toBe(403);
-    expect(legacy.body.error).toBe('Ownership of legacy-a.com is not proven in this workspace. Remove it and add it again to prove that you control it, then connect reports.');
+    expect(legacy.body.error).toBe('Ownership of legacy-a.com is not proven in this workspace. Use "Prove again" on the domain\'s page to prove that you control it (your report history stays), then connect reports.');
     expect(await w.status(3)).toMatchObject({ can_connect: false, refusal: expect.stringMatching(/prove that you control it/) });
     expect(w.rows('SELECT id, rua_address FROM domains WHERE id IN (3, 4)')).toEqual([{ id: 3, rua_address: '' }, { id: 4, rua_address: '' }]);
   });

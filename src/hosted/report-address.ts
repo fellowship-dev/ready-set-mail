@@ -93,7 +93,7 @@ type Refusal = { kind: ReportConnectRefusal; reason: string };
  * `workspaceMay` (HOSTED_CONNECT_REPORTS for the workspace). Each is asked only when the checks before it passed.
  */
 async function refusalFrom(domain: ProofFacts, proven: () => boolean | Promise<boolean>, workspaceMay: () => boolean | Promise<boolean>): Promise<Refusal | null> {
-  if (domain.verified_via === 'legacy') return { kind: 'ownership', reason: `Ownership of ${domain.domain} is not proven in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
+  if (domain.verified_via === 'legacy') return { kind: 'ownership', reason: `Ownership of ${domain.domain} is not proven in this workspace. Use "Prove again" on the domain's page to prove that you control it (your report history stays), then connect reports.` };
   if (!(await proven())) return { kind: 'ownership', reason: `${domain.domain} was added through a parent domain that is no longer in this workspace. Remove it and add it again to prove that you control it, then connect reports.` };
   if (!(await workspaceMay())) return { kind: 'operator_only', reason: 'On this server, only the operator\'s workspaces can connect reports.' };
   return null;

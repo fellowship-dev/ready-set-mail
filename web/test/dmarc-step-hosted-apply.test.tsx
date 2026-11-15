@@ -55,6 +55,15 @@ describe('setup step 4 on hosted', () => {
 		expect(copyButtons().length).toBeGreaterThan(0); // the record to paste, without an address
 	});
 
+	it('with Cloudflare connected but the domain\'s zone not in it, the step names no report address anywhere, not even in "Add rua=": that Apply cannot connect reports', async () => {
+		// what the server sends when a connection exists but the domain is not linked to it: Cloudflare available, nothing offered
+		step4(base({ 'GET /api/domains/1/onboarding-status': { ...onboarding(true, true), offered_rua_address: null, dmarc: { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none; rua=mailto:someone@else.example', effective: { policy: 'none', inherited_from: null, issue: null, record: 'v=DMARC1; p=none; rua=mailto:someone@else.example' } } } }));
+		await screen.findByText('DMARC policy');
+		expect(text()).not.toContain(ADDR);
+		expect(text()).not.toMatch(/Add rua=/);
+		expect(text()).not.toContain(`rua=mailto:${ADDR}`);
+	});
+
 	for (const found of [false, true]) {
 		it(`without Cloudflare, ${found ? 'a record that already lists our address' : 'no record'}: the step says reports are not connected, offers no record with our address and no Copy of one`, async () => {
 			step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false, found) }));

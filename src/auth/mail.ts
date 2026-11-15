@@ -118,7 +118,7 @@ function unsent(operation: string, env: AuthEnv): void {
 /** Tells a workspace's owners that a domain was taken from it because another workspace proved it controls the domain. */
 export async function sendEvictionNotice(env: AuthEnv, to: string[], domain: string, keepDays: number): Promise<void> {
   if (to.length === 0) return;
-  const body = `Hi,\n\n${domain} was registered in your Ready Set Mail workspace before domain ownership was verified. Another workspace has now proven that it controls ${domain} (by a DNS record or through its Cloudflare zone), so ${domain} has been removed from yours: monitoring, hosted records and alerts for it have stopped.\n\nYour report history for ${domain} stays available to export for ${keepDays} days, then it is deleted.\n\nIf ${domain} really is yours, add it again and publish the TXT record Ready Set Mail shows you at _readysetmail.${domain}; if you believe this is a mistake, reply to this email.`;
+  const body = `Hi,\n\n${domain} was registered in your Ready Set Mail workspace before domain ownership was verified. Another workspace has now proven that it controls ${domain} (by a DNS record or through its Cloudflare zone), so ${domain} has been removed from yours: monitoring, hosted records and alerts for it have stopped.\n\nYour report history for ${domain} stays available to export for ${keepDays} days, then it is deleted.\n\n${domain} now belongs to that workspace and it keeps it. If ${domain} really is yours, reply to this email and we will look into it.`;
   const footer = mailFooter(env);
   const text = `${body}\n\nReady Set Mail${footer ? `\n${footer}` : ''}`;
   const from = await senderAddress(env);
@@ -136,12 +136,12 @@ export async function sendEvictionNotice(env: AuthEnv, to: string[], domain: str
 }
 
 /** Tells a workspace's owners that a domain's Cloudflare proof no longer holds, so it is not accepted as theirs until proven again. */
-export async function sendProofLostNotice(env: AuthEnv, to: string[], domain: string, why: 'delegation' | 'cloudflare'): Promise<void> {
+export async function sendProofLostNotice(env: AuthEnv, to: string[], domain: string, why: 'delegation' | 'cloudflare', keepDays = 30): Promise<void> {
   if (to.length === 0) return;
   const reason = why === 'delegation'
     ? `${domain} no longer points to the Cloudflare name servers it pointed to when you proved it (in Cloudflare, or by Cloudflare's own nameserver records). It may have moved to another DNS provider or another Cloudflare account.`
     : `Cloudflare no longer serves the zone of ${domain} as an active, full zone in the account that proved it.`;
-  const body = `Hi,\n\n${reason}\n\nSo Ready Set Mail can no longer treat ${domain} as proven to be yours: DMARC reports sent to Ready Set Mail for it are not accepted, and if another workspace proves it controls ${domain}, ${domain} moves to that workspace.\n\nIf ${domain} is still yours, remove it and add it again, connecting the Cloudflare account that holds its zone or publishing the TXT record Ready Set Mail shows you at _readysetmail.${domain}. Your report history stays until then.`;
+  const body = `Hi,\n\n${reason}\n\nSo Ready Set Mail can no longer treat ${domain} as proven to be yours: DMARC reports sent to Ready Set Mail for it are not accepted until it is proven again. Reports already stored stay, and nothing is removed.\n\nIf ${domain} is still yours, open it in Ready Set Mail (on the overview and on its own page it says "Proof lost: prove it is still yours") and choose "Prove again". That re-checks every Cloudflare connection of your workspace, or the TXT record Ready Set Mail shows you at _readysetmail.${domain}, and restores the domain as it was, with its report history. Please do not remove it first.\n\nIf another workspace proves it controls ${domain} before you do, ${domain} moves to that workspace and it keeps it; your report history for ${domain} stays with you, read-only, to export for ${keepDays} days.`;
   const footer = mailFooter(env);
   const text = `${body}\n\nReady Set Mail${footer ? `\n${footer}` : ''}`;
   const from = await senderAddress(env);

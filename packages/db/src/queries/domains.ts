@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { cloudflareConnections, domains, productDomains } from '../schema';
-import { PlanLimitError, changesOf, freeNameStatements } from './plan-limit';
+import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
 
 export type DomainRow = typeof domains.$inferSelect;
 
@@ -38,6 +38,11 @@ export function domainQueries(db: Db, workspaceId: string) {
 			return db.select().from(domains).where(and(mine, live, eq(domains.id, id))).get().then((r) => r ?? null);
 		},
 
+		/** A row of this workspace that lost its name to another workspace's proof (detached, hidden; its reports stay for export until the retention job purges it). */
+		getEvictedById(id: number) {
+			return db.select().from(domains).where(and(mine, isNotNull(domains.evicted_at), eq(domains.id, id))).get().then((r) => r ?? null);
+		},
+
 		list() {
 			return db.select().from(domains).where(and(mine, live)).orderBy(asc(domains.id)).all();
 		},
@@ -56,7 +61,7 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * transaction. D1 serialises writes, so concurrent inserts cannot exceed the cap: the margin is exactly 0. A refusal
 		 * throws PlanLimitError and writes nothing (the product mapping, if any, selects the new row and so inserts nothing either).
 		 */
-		async insert(d: { domain: string; rua_address: string; verified_via?: string }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
+		async insert(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
 			// Auto-detect parent: strip the leftmost label and check if the apex exists
 			const parts = d.domain.split('.');
 			let parentId: number | null = null;
@@ -68,15 +73,16 @@ export function domainQueries(db: Db, workspaceId: string) {
 					.get();
 				if (parent) parentId = parent.id;
 			}
+			const pv = proofValues(d.domain, d.verified_via, d.proof); // before anything is written: a zone proof without its servers is refused
 			try {
 				const max = opts.maxDomains;
 				// `freeing`: an unproven holder of this very name in another workspace, detached in the same transaction (see freeNameStatements).
 				const free = opts.freeing === undefined ? [] : freeNameStatements(opts.freeing, workspaceId, max);
 				// One conditional statement: the row is selected (so inserted) only while the workspace is under its cap.
-				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via)
-					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}
+				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers)
+					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}
 					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`;
-				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via });
+				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
 				if (!productId) {
 					if (!capped) return free.length ? (await batchStatements(db, [...free, insert]))[free.length] : await insert.run();
 					const res = (await batchStatements(db, [...free, capped]))[free.length];
@@ -181,9 +187,17 @@ export function domainQueries(db: Db, workspaceId: string) {
 			return db.update(domains).set({ rollout_rec_policy: policy, rollout_rec_pct: pct, updated_at: touch as any }).where(and(mine, eq(domains.id, id))).run();
 		},
 
-		/** How a domain was proven through a Cloudflare zone: the account and zone Cloudflare named, and when (unix seconds). */
-		setCloudflareProof(id: number, p: { cf_account_id: string | null; cf_zone_id: string; verified_at: number; cf_zone_name: string; cf_name_servers: string[] }) {
-			return db.update(domains).set({ cf_account_id: p.cf_account_id, cf_zone_id: p.cf_zone_id, verified_at: p.verified_at, cf_zone_name: p.cf_zone_name, cf_name_servers: JSON.stringify([...p.cf_name_servers].sort()), proof_checked_at: null, proof_lost_at: null }).where(and(mine, eq(domains.id, id))).run();
+		/**
+		 * The proof of an EXISTING row made again (the "prove again" action): the row, its reports and everything else stay, only how it is proven
+		 * changes. `proof` for a zone proof (refused without its servers), none for a TXT or parent proof. Clears the lost-proof and suspicion marks.
+		 */
+		async restoreProof(id: number, verifiedVia: string, proof?: ZoneProofColumns): Promise<boolean> {
+			const row = await db.select({ domain: domains.domain }).from(domains).where(and(mine, live, eq(domains.id, id))).get();
+			if (!row) return false;
+			const pv = proofValues(row.domain, verifiedVia, proof);
+			const zone = verifiedVia === 'cloudflare' ? pv : { cf_account_id: null, cf_zone_id: null, verified_at: null, cf_zone_name: null, cf_name_servers: null };
+			const r = await db.update(domains).set({ ...zone, verified_via: verifiedVia, proof_checked_at: null, proof_lost_at: null, proof_suspected_at: null, updated_at: touch as any }).where(and(mine, live, eq(domains.id, id))).run();
+			return (r.meta.changes ?? 0) > 0;
 		},
 
 		/** Link a domain to one of this workspace's Cloudflare connections (null unlinks). False: no such domain or connection. */

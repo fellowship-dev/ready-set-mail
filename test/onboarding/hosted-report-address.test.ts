@@ -175,6 +175,17 @@ describe('the apply-dmarc route (the per-domain Apply) on hosted', () => {
     expect(b.offered_rua_address).toBeNull();
   });
 
+  it('with Cloudflare connected but the domain\'s zone not in it, no report address is offered: that Apply cannot write the record or connect the reports', async () => {
+    const w = await setup();
+    w.db.sqlite.prepare('UPDATE domains SET cf_connection_id = NULL WHERE id = 1').run(); // a connection exists, for other zones; this domain is not linked to it
+    w.cf.doh['_dmarc.a-corp.com'] = ['v=DMARC1; p=none; rua=mailto:someone-else@example.net'];
+    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
+    expect(s).toMatchObject({ cf_available: true, rua_address: '', offered_rua_address: null });
+    expect(JSON.stringify(s)).not.toContain(ADDRESS);
+    const linked = await json(await w.api(w.A.token, 'GET', '/api/domains/2/onboarding-status')); // the linked one still offers it
+    expect(linked.offered_rua_address).toBe(ADDRESS);
+  });
+
   it('without Cloudflare nothing is offered, even when the record already lists our address: the domain was never connected', async () => {
     const w = await world({ INTAKE_DOMAIN: INTAKE, HOSTED_CONNECT_REPORTS: 'all' });
     w.db.sqlite.prepare("UPDATE domains SET verified_via = 'txt', rua_address = '' WHERE id = 3").run(); // B's domain: proven, no Cloudflare, not connected

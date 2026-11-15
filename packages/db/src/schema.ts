@@ -123,6 +123,9 @@ export const domains = sqliteTable(
 		/** Unix seconds public DNS last confirmed the delegation (daily job), and when it stopped matching (the row became unproven, 'legacy'). */
 		proof_checked_at: integer('proof_checked_at'),
 		proof_lost_at: integer('proof_lost_at'),
+		/** Unix seconds the daily job last looked at the row whatever came of it (its queue is oldest-first by this), and when a re-check first saw the proof not hold (withdrawn only when a read 24 hours later agrees). */
+		proof_attempted_at: integer('proof_attempted_at'),
+		proof_suspected_at: integer('proof_suspected_at'),
 		/** Set when a legacy holder lost the name to a proven claim: the row is detached (renamed, hidden) and purged after 30 days (0005). */
 		evicted_at: integer('evicted_at'),
 		evicted_name: text('evicted_name'),

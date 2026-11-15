@@ -166,19 +166,44 @@ undo it: the domain is still verified and watched, and changing its DNS needs a 
 ### A zone proof is re-checked
 
 A proof says who controlled the zone when it was made; domains are sold and zones move. `domains.cf_zone_name` and `domains.cf_name_servers` keep the zone's name and the name
-servers public DNS delegated it to at the proof (`src/domains/proof-recheck.ts`).
+servers public DNS delegated it to at the proof (`src/domains/proof-recheck.ts`). **A zone proof is never written without them**: the insert refuses a row verified through Cloudflare that has no zone and no
+servers (the add fails with `proof_incomplete` and the TXT record is the way).
+
+**A lapse is confirmed before the proof is withdrawn.** One empty answer, an NXDOMAIN or a subset of the name servers is a glitch until it is seen twice, so:
+
+* a **truncated** (TC) answer is unknown, never "different";
+* the **daily job** stores the first differing read as `proof_suspected_at` and withdraws the proof only when a read at least **24 hours** after it differs again; a read that matches clears the suspicion. NXDOMAIN for the
+  zone name twice, a day apart, is a real lapse. A lookup that fails is no read at all;
+* for a **rival claim**, where waiting a day would lock out a legitimate new owner, the same request reads twice, `PROOF_CONFIRM_DELAY_MS` (2000 ms) apart, and both reads must show the lapse. Where one of the
+  holder's tokens still works, Cloudflare's own answer must agree: public DNS alone differing while Cloudflare still serves the zone active and full in that account withdraws nothing (the daily job decides then).
+  Cloudflare saying the zone is gone, not active, or in another account counts as the holder's lapse, also on two reads.
 
 * **When another workspace proves the name** (TXT, or a zone of its own), the zone-verified holder of that name, of a parent or of a child first shows it still holds it: public DNS must
   still delegate the zone to the stored servers (same rule as above: zone-owned answers, equal sets) and, where one of its tokens still works, Cloudflare must still serve the zone,
-  `active` and `full`, in the account that proved it (a zone that is gone or in another account fails). A holder that fails becomes **unproven** (`verified_via` `legacy`, `proof_lost_at`), which is
+  `active` and `full`, in the account that proved it. A holder whose lapse is confirmed becomes **unproven** (`verified_via` `legacy`, `proof_lost_at`), which is
   what the existing eviction rule keys on: the new proof then wins, the holder's row is detached and its owners are emailed and audited. A revoked token alone changes nothing, and a lookup that
   fails or a Cloudflare that cannot be reached is not an answer: the holder keeps the name and the new owner tries again. A holder that has just shown it holds the name (10 minutes) is not asked again.
-* **Daily** (the hosted cron, 11:00 UTC, `zone proof re-check`): every zone-verified domain's zone is asked of public DNS. A delegation that no longer matches (different servers, NXDOMAIN, no NS)
+* **Daily** (the hosted cron, 11:00 UTC, `zone proof re-check`): every zone-verified domain's zone is asked of public DNS. A delegation that no longer matches (different servers, NXDOMAIN, no NS), confirmed as above,
   makes the domain unproven: **intake stops accepting its reports** (the fixed address and its token addresses), the workspace's owners are emailed plainly (`domain.proof_lost` in their audit log), and
-  its subdomains admitted through it follow it down. To get it back the owner removes the domain and adds it again, through Cloudflare or the TXT record. Proofs made before the servers were kept are not
-  downgraded for the missing record; the job records their servers when Cloudflare and public DNS agree.
-* **Cost.** One D1 read for the batch, then one DNS-over-HTTPS query per distinct zone among at most `RECHECK_PER_RUN` (200) domains, 5 at a time: at most 200 subrequests a run, one query shared by all domains of a zone
-  (plus one Cloudflare read for each proof that has no stored servers yet). Oldest check first, never-checked first, so a larger fleet is covered over several days. The hosted service needs Workers Paid (10,000 subrequests).
+  its subdomains admitted through it follow it down.
+* **Cost.** One D1 read for the batch and one UPDATE marking it attempted, then one DNS-over-HTTPS query per distinct zone among at most `RECHECK_PER_RUN` (200) domains, 5 at a time: at most 200 subrequests a run, one query shared by all domains of a zone
+  (plus one Cloudflare read for each proof that has no stored servers yet). The queue is ordered by `proof_attempted_at`, oldest first, never-attempted first, and **every row the job takes is marked attempted whatever came of it**
+  (a verdict, a failed lookup, nothing to compare with), so a larger fleet is covered over several days and rows whose lookups never answer rotate to the back instead of holding the head of the queue. The hosted service needs Workers Paid (10,000 subrequests).
+
+### The way back: Prove again
+
+A holder that lost its proof (a zone moved between its own Cloudflare accounts, a delegation that changed) keeps the **same domain row** and all its history. The overview and the domain page say
+**"Proof lost: prove it is still yours"** with a **Prove again** action (`POST /api/domains/:id/prove`; adding the same name again does the same). It re-runs the proof on the existing row: the zone through any current Cloudflare
+connection of the workspace, or the TXT record (a claim is opened and its Verify restores the row). When it holds the row is restored in place (`domain.proof_restored` in the audit log): same id, stored reports, settings and report address.
+Reports are refused while the domain is unproven; the ones stored stay. Nothing needs to be removed first (removing deletes the history).
+If another workspace proves the name first, that workspace keeps it: the old row is detached, its report history stays with its workspace, read-only, for 30 days (export), and Prove again on it answers that
+(`409 domain_taken`).
+
+### Proofs from release 2.0.0
+
+The 2.0.0 claim Verify button (`provenByCloudflare`, `POST /api/domains` and `POST /api/domains/claims/:id/verify`) stored `verified_via = 'cloudflare'` and nothing else: no zone, no servers, so there is nothing to compare with public DNS. Such a row
+counts as **unproven against another workspace**: a claim alone moves nothing, but a completed proof of the name by that workspace (TXT, or a zone with the exact delegation) takes it, and the holder keeps its history read-only. When
+one of the holder's connections still works, a rival claim or the daily job records the zone, account and servers if Cloudflare and public DNS agree, and from then on it is an ordinary row. With no working token nothing is recorded: today's DNS could be the new owner's.
 
 ### What an eviction does
 

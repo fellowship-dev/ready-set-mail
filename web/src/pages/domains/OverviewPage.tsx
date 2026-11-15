@@ -6,6 +6,7 @@ import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
 import type { ImportedNote } from '../../lib/cloudflare';
 import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
+import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
 import { GetStarted } from '../../components/GetStarted';
@@ -229,8 +230,9 @@ export function OverviewPage() {
 					</div>
 
 					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
+					<ProofLostList domains={domains} canWrite={canWrite} />
 					{canWrite ? <CloudflareAttention /> : null}
-					<WaitingClaims claims={claims} canWrite={canWrite} />
+					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain))} canWrite={canWrite} />
 
 					{!needsAttention && stepper}
 

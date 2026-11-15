@@ -3,6 +3,12 @@ import { classifyDohBody, createResolver, decodeTxtData } from '../src/doh';
 import { fakeResolver, resp } from './helpers';
 
 describe('classifyDohBody', () => {
+  it('a set TC bit marks the answer truncated (it lists only some of the records), on ok and on nodata; no TC, no flag', () => {
+    const a = [{ name: 'z.com.', type: 2, data: 'a.ns.example.' }];
+    expect(classifyDohBody({ Status: 0, TC: true, Answer: a }, 'NS')).toMatchObject({ status: 'ok', truncated: true });
+    expect(classifyDohBody({ Status: 0, TC: true }, 'NS')).toMatchObject({ status: 'nodata', truncated: true });
+    expect(classifyDohBody({ Status: 0, TC: false, Answer: a }, 'NS')).not.toHaveProperty('truncated');
+  });
   it('NXDOMAIN → nxdomain', () => {
     expect(classifyDohBody({ Status: 3 }, 'TXT').status).toBe('nxdomain');
   });

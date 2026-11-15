@@ -8,6 +8,10 @@
 --                        it to at the proof. A rival proof of the name and the daily re-check compare public DNS with them: a domain whose zone moved
 --                        away no longer matches and stops counting as proven. NULL on proofs made before they were kept.
 -- domains.proof_checked_at  unix seconds the daily job last saw the delegation still matching.
+-- domains.proof_attempted_at  unix seconds the daily job last LOOKED at the row, whatever came of it (a verdict, a failed lookup, nothing to compare).
+--                        The job's queue is ordered by it, oldest first, so rows that never give a verdict cannot hold the head of the queue.
+-- domains.proof_suspected_at  unix seconds a re-check first saw the proof NOT hold. One read is never enough to withdraw a proof: the daily job
+--                        withdraws it only when a second read, at least 24 hours later, differs again. Cleared when a read matches.
 -- domains.proof_lost_at  unix seconds the proof was withdrawn (verified_via became 'legacy', so intake stops accepting the domain's reports).
 -- cloudflare_connection_zones.cf_account_name  the account's name as Cloudflare returned it with the zone list, so Settings can name an account
 --                        without calling Cloudflare. One grant can cover several accounts: the account is a property of the zone, not of the connection.
@@ -20,6 +24,8 @@ ALTER TABLE domains ADD COLUMN cf_zone_name TEXT;
 ALTER TABLE domains ADD COLUMN cf_name_servers TEXT;
 ALTER TABLE domains ADD COLUMN proof_checked_at INTEGER;
 ALTER TABLE domains ADD COLUMN proof_lost_at INTEGER;
+ALTER TABLE domains ADD COLUMN proof_attempted_at INTEGER;
+ALTER TABLE domains ADD COLUMN proof_suspected_at INTEGER;
 ALTER TABLE cloudflare_connection_zones ADD COLUMN cf_account_name TEXT;
 CREATE TABLE removed_domains (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

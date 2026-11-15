@@ -258,6 +258,8 @@ CREATE TABLE `domains` (
 	`cf_name_servers` text,
 	`proof_checked_at` integer,
 	`proof_lost_at` integer,
+	`proof_attempted_at` integer,
+	`proof_suspected_at` integer,
 	`evicted_at` integer,
 	`evicted_name` text,
 	`dns_checked_at` integer,

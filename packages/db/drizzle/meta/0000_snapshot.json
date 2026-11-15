@@ -1824,6 +1824,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "proof_attempted_at": {
+          "name": "proof_attempted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "proof_suspected_at": {
+          "name": "proof_suspected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "evicted_at": {
           "name": "evicted_at",
           "type": "integer",

@@ -138,8 +138,10 @@ describe('finding 1: a zone proof is re-checked when another workspace proves th
   });
 });
 
+const DAY_MS = 86_400_000;
+const NOW = () => Math.floor(Date.now() / 1000);
+
 describe('finding 1: the daily re-check of zone-verified domains', () => {
-  const NOW = () => Math.floor(Date.now() / 1000);
 
   it('a delegation that no longer matches downgrades the domain: intake refuses it, the workspace is told, the audit says so', async () => {
     const s = await setup({ 'sold.com': {} });
@@ -152,7 +154,9 @@ describe('finding 1: the daily re-check of zone-verified domains', () => {
     expect(await reportTarget(s, 'sold.com')).not.toBeNull();
 
     s.w.cf.ns['sold.com'] = ['ns1.elsewhere.test']; // the domain was delegated somewhere else
-    const out = await recheckZoneProofs(s.w.env);
+    expect(await recheckZoneProofs(s.w.env)).toMatchObject({ checked: 1, downgraded: 0, suspected: 1 }); // one read is a suspicion, not a lapse
+    expect(s.domainsOf(s.C.ws)[0].verified_via).toBe('cloudflare');
+    const out = await recheckZoneProofs(s.w.env, { now: () => Date.now() + DAY_MS }); // the same answer a day later is
     expect(out).toMatchObject({ checked: 1, downgraded: 1 });
 
     expect(s.domainsOf(s.C.ws)[0]).toMatchObject({ verified_via: 'legacy', evicted_at: null });
@@ -193,15 +197,15 @@ describe('finding 1: the daily re-check of zone-verified domains', () => {
   it('only zone-verified domains are asked about, one NS query per zone, oldest check first, at most RECHECK_PER_RUN per run', async () => {
     const s = await setup({ 'one.com': {}, 'two.org': {}, 'three.net': {} });
     await s.imp(await s.connect());
-    s.w.db.sqlite.prepare("UPDATE domains SET proof_checked_at = 100 WHERE domain = 'two.org'").run();
-    s.w.db.sqlite.prepare("UPDATE domains SET proof_checked_at = 50 WHERE domain = 'three.net'").run();
+    s.w.db.sqlite.prepare("UPDATE domains SET proof_attempted_at = 100 WHERE domain = 'two.org'").run();
+    s.w.db.sqlite.prepare("UPDATE domains SET proof_attempted_at = 50 WHERE domain = 'three.net'").run();
     s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES (?, 'txt-only.com', '', 'txt')").run(s.C.ws);
     const asked: string[] = [];
     const prev = globalThis.fetch;
     vi.stubGlobal('fetch', async (input: any, init?: any) => { const u = new URL(String(input.url ?? input)); if (u.searchParams.get('type') === 'NS') asked.push(u.searchParams.get('name')!); return prev(input, init); });
     const out = await recheckZoneProofs(s.w.env, { limit: 2 });
     expect(out.checked).toBe(2);
-    expect(asked.sort()).toEqual(['one.com', 'three.net']); // never checked first, then the oldest; the TXT domain is not one of them
+    expect(asked.sort()).toEqual(['one.com', 'three.net']); // never attempted first, then the oldest attempt; the TXT domain is not one of them
     expect(RECHECK_PER_RUN).toBeGreaterThanOrEqual(100);
   });
 
@@ -215,7 +219,8 @@ describe('finding 1: the daily re-check of zone-verified domains', () => {
     expect(await recheckZoneProofs(s.w.env)).toMatchObject({ checked: 2, downgraded: 0 });
     expect(asked).toEqual(['one.com']);
     s.w.cf.ns['one.com'] = ['ns1.elsewhere.test'];
-    expect(await recheckZoneProofs(s.w.env)).toMatchObject({ downgraded: 2 });
+    expect(await recheckZoneProofs(s.w.env)).toMatchObject({ downgraded: 0, suspected: 2 });
+    expect(await recheckZoneProofs(s.w.env, { now: () => Date.now() + DAY_MS })).toMatchObject({ downgraded: 2 });
   });
 
   it('a domain verified through Cloudflare before the servers were kept is never downgraded for the missing record', async () => {
@@ -231,6 +236,7 @@ describe('finding 1: the daily re-check of zone-verified domains', () => {
     const s = await setup({ 'sold.com': {} });
     await soldDomain(s);
     s.w.cf.ns['sold.com'] = ['ns1.elsewhere.test'];
+    s.w.db.sqlite.prepare('UPDATE domains SET proof_suspected_at = ? WHERE workspace_id = ?').run(NOW() - 2 * 86400, s.C.ws); // first seen two days ago
     const { runHostedCron, HOSTED_CRON } = await import('../../src/hosted/cron');
     await runHostedCron({ cron: HOSTED_CRON } as ScheduledController, s.w.env, { waitUntil() {} } as unknown as ExecutionContext);
     expect(s.domainsOf(s.C.ws)[0].verified_via).toBe('legacy');

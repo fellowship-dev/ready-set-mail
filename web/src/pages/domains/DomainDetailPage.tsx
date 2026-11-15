@@ -10,6 +10,7 @@ import { CopyField } from '../../components/domain/CopyField';
 import { DnsRecords } from '../../components/domain/DnsRecords';
 import { DnsTools } from '../../components/domain/DnsTools';
 import { DoThisNext } from '../../components/domain/DoThisNext';
+import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
 import { FailingSources } from '../../components/domain/FailingSources';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
@@ -365,6 +366,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				}
 			/>
 			<ReadOnlyNotice />
+			{/* First: nothing else on this page is trusted until the name is proven again. */}
+			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}

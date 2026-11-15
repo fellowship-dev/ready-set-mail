@@ -10,7 +10,7 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, type DomainClaimRow, type DomainRow } from '@ready-set-mail/db';
+import { claimLookups, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
@@ -69,7 +69,7 @@ function newToken(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
+export const within = (domain: string, zone: string): boolean => domain === zone || domain.endsWith(`.${zone}`);
 
 /** What a Cloudflare zone proof establishes, kept in the audit entry of the domain it admitted (action `domain.proof`). */
 export interface CloudflareProof {
@@ -268,7 +268,10 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
-  if (await tenant.scope.domains.getByName(domain)) return { kind: 'verified', via: 'existing' }; // already ours: the insert reports the duplicate
+  // Already ours and proven: the insert reports the duplicate. Ours but UNPROVEN (a proof that lapsed, a parent that left): not "existing", the proof
+  // runs again below and, when it holds, restores the row in place (restoreInPlace), history and all. When it does not, a claim is opened for the TXT record.
+  const own = await tenant.scope.domains.getByName(domain);
+  if (own && own.verified_via !== 'legacy') return { kind: 'verified', via: 'existing' };
 
   await reassessZoneHolders(tenant, domain); // a holder whose zone moved away stops counting as the owner
   if (await claimLookups(tenant.db).ownedByOther(domain, tenant.workspaceId)) return { kind: 'taken' };
@@ -342,20 +345,44 @@ export async function settleClaims(tenant: TenantContext, domain: string): Promi
 }
 
 // A Cloudflare proof is made by admitDomain / verifyClaim and committed by whichever caller inserts the row (the API, bulk import,
-// the agent tools), always followed by settleClaims. The proof waits on the request's tenant until settleClaims writes it down.
+// the agent tools), always followed by settleClaims. The proof waits on the request's tenant until the insert takes it with the row.
 function keepProof(tenant: TenantContext, domain: string, proof: CloudflareProof): void {
   tenant.cloudflareProofs.set(domain, proof);
 }
 
 /**
- * How a domain was proven through Cloudflare: the account, zone and time on the domain row (domains.cf_account_id, cf_zone_id, verified_at) and the
- * whole record in the audit log (action `domain.proof`, the detail in after_value): method, Cloudflare account, zone id and name, connection, time. It is a record of what was true then: revoking the token later does not undo it.
+ * The zone proof the insert of `domain` must carry when it is verified through Cloudflare, written WITH the row (domains.cf_account_id, cf_zone_id,
+ * verified_at, cf_zone_name, cf_name_servers). A zone proof without its name servers cannot be re-checked, so none is ever written: the proof is missing
+ * or has no servers and the add fails (ProofIncompleteError, 409 `proof_incomplete`; the TXT record is the way). Release 2.0.0 could write such a row.
+ */
+export function proofColumns(tenant: TenantContext, domain: string, via: VerifiedVia | string | undefined): ZoneProofColumns | undefined {
+  if (via !== 'cloudflare') return undefined;
+  const proof = tenant.cloudflareProofs.get(domain);
+  if (!proof || proof.name_servers.length === 0) throw new ProofIncompleteError(domain);
+  return { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at, cf_zone_name: proof.zone_name, cf_name_servers: proof.name_servers };
+}
+
+/**
+ * An unproven row of this workspace was proven again (a lapsed zone proof through any current connection, a TXT record, a parent): the row is restored
+ * IN PLACE: same id, its reports, checks and settings untouched, only how it is proven changes. Returns the row, or null when it was not unproven.
+ */
+export async function restoreInPlace(tenant: TenantContext, existing: DomainRow, via: VerifiedVia, actor?: { id?: string; email?: string }): Promise<DomainRow | null> {
+  if (existing.verified_via !== 'legacy' || via === 'existing') return null;
+  const proof = proofColumns(tenant, existing.domain, via);
+  if (!(await tenant.scope.domains.restoreProof(existing.id, via, proof))) return null;
+  await settleClaims(tenant, existing.domain);
+  logAudit(tenant, { actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user', action: 'domain.proof_restored', resource_type: 'domain', resource_id: String(existing.id), resource_name: existing.domain, meta: { via, history_kept: true } });
+  return tenant.scope.domains.getById(existing.id);
+}
+
+/**
+ * How a domain was proven through Cloudflare, in the audit log (action `domain.proof`, the detail in after_value): method, Cloudflare account, zone id
+ * and name, connection, time. The columns on the domain row came with the insert (proofColumns). A record of what was true then: revoking the token later does not undo it.
  */
 async function recordProof(tenant: TenantContext, domainId: number, domain: string): Promise<void> {
   const proof = tenant.cloudflareProofs.get(domain);
   if (!proof) return;
   tenant.cloudflareProofs.delete(domain);
-  await tenant.scope.domains.setCloudflareProof(domainId, { cf_account_id: proof.cf_account_id, cf_zone_id: proof.zone_id, verified_at: proof.at, cf_zone_name: proof.zone_name, cf_name_servers: proof.name_servers });
   logAudit(tenant, { actor_type: 'system', action: 'domain.proof', resource_type: 'domain', resource_id: String(domainId), resource_name: domain, after_value: proof });
 }
 
