@@ -205,7 +205,11 @@ describe('B2: a stranger cannot stop the owner from using a reset or sign-up cod
       for (let i = 0; i < 5; i++) await enterCode(h.env, c, '000000');
     }
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 3601_000); // the next hour's sign-up mail; the day's wrong-code budget is spent
+    vi.setSystemTime(Date.now() + 3601_000); // the next hour: new sign-up mail, but the day's wrong-code budget is spent
+    const c = pendingCookieOf(await signup('stranger-pass-1'));
+    const answers: number[] = [];
+    for (let i = 0; i < 5; i++) answers.push((await enterCode(h.env, c, '000000')).status);
+    expect(answers).toEqual([400, 429, 429, 429, 429]); // only the first try on a new code is compared
     const mine = await signup('the-owners-pass-1');
     const done = await enterCode(h.env, pendingCookieOf(mine), await lastCodeFor(h.env, 'new@example.com'));
     expect(done.status).toBe(200);
