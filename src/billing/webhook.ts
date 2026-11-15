@@ -181,14 +181,14 @@ async function dispatch(d: BillingDeps, event: StripeEvent): Promise<Handled> {
 }
 
 /** PaymentIntent states in which the payment is still the buyer's (or the bank's) to finish. */
-const WAITING_INTENT = new Set(['requires_action', 'requires_confirmation', 'processing']);
+const isWaitingIntent = (status: unknown): boolean => status === 'requires_action' || status === 'requires_confirmation' || status === 'processing';
 
 /** True when an open payment of the invoice (its expanded PaymentIntent) is still waiting on the buyer or the bank. */
 function waitingOnBuyer(inv: StripeObject): boolean {
   const list = (inv.payments as { data?: Array<{ status?: string; payment?: { payment_intent?: unknown } }> } | undefined)?.data ?? [];
   return list.some((p) => {
     const pi = p.payment?.payment_intent;
-    return p.status !== 'canceled' && !!pi && typeof pi === 'object' && WAITING_INTENT.has(String((pi as { status?: unknown }).status));
+    return p.status !== 'canceled' && !!pi && typeof pi === 'object' && isWaitingIntent((pi as { status?: unknown }).status);
   });
 }
 

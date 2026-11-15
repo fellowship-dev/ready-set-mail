@@ -30,7 +30,7 @@ export const EXPORT_COLUMNS = {
 	monitor_subscriptions: ['id', 'email', 'domain', 'spf_record', 'dmarc_policy', 'dmarc_pct', 'dmarc_record', 'active', 'last_checked_at', 'created_at', 'confirmed_at'],
 	spf_flatten_config: ['domain_id', 'enabled', 'cf_record_id', 'canonical_record', 'flattened_record', 'ip_count', 'lookup_count', 'last_flattened_at', 'last_error', 'created_at', 'updated_at'],
 	mta_sts_config: ['domain_id', 'enabled', 'mode', 'mx_hosts', 'max_age', 'policy_id', 'mta_sts_record_id', 'tls_rpt_record_id', 'cname_record_id', 'last_error', 'created_at', 'updated_at'],
-	billing_orders: ['id', 'domain_id', 'domain_name', 'offer', 'stripe_price_id', 'amount', 'currency', 'status', 'stripe_customer_id', 'stripe_invoice_id', 'stripe_payment_intent_id', 'stripe_charge_id', 'amount_refunded', 'buyer_user_id', 'buyer_email', 'failure_code', 'failure_message', 'note', 'created_at', 'updated_at', 'paid_at', 'started_at', 'done_at', 'refunded_at', 'failed_at'],
+	billing_orders: ['id', 'domain_id', 'domain_name', 'offer', 'stripe_price_id', 'amount', 'amount_paid', 'currency', 'status', 'stripe_customer_id', 'stripe_invoice_id', 'stripe_payment_intent_id', 'stripe_charge_id', 'amount_refunded', 'buyer_user_id', 'buyer_email', 'failure_code', 'failure_message', 'note', 'created_at', 'updated_at', 'paid_at', 'started_at', 'done_at', 'refunded_at', 'failed_at'],
 	hosted_domains: ['domain_id', 'hosted_id', 'zone_key', 'dmarc_record_id', 'spf_record_id', 'mta_sts_txt_record_id', 'mta_sts_host_record_id', 'tls_rpt_record_id', 'spf_source', 'dmarc_pointer', 'spf_pointer', 'mta_sts_pointer', 'tls_rpt_pointer', 'pointers_checked_at', 'created_at'],
 } as const;
 
