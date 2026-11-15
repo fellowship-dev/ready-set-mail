@@ -11,8 +11,10 @@ const DISMISS_KEY = 'ia_update_dismissed';
 interface VersionInfo {
 	current: string;
 	latest: string | null;
+	status?: 'newer' | 'same' | 'older' | 'unknown' | 'off';
 	update_available: boolean;
 	release_url: string;
+	upgrade_url?: string;
 }
 
 /**
@@ -24,7 +26,8 @@ export function Banners() {
 	const [dismissed, setDismissed] = useState(() => sessionStorage.getItem(DISMISS_KEY) === '1');
 	const version = useQuery({ queryKey: ['version'], queryFn: () => api<VersionInfo>('/api/version'), staleTime: 3_600_000, retry: false });
 	const custom = status?.custom_domain && window.location.hostname !== status.custom_domain ? status.custom_domain : null;
-	const update = version.data?.update_available && !dismissed ? version.data : null;
+	// Only a newer PUBLISHED release (the Worker compares semantic versions against GitHub's latest release).
+	const update = version.data?.update_available && version.data.latest && !dismissed ? version.data : null;
 
 	return (
 		<div className="space-y-3 empty:hidden">
@@ -44,8 +47,16 @@ export function Banners() {
 						<span>
 							You are on v{update.current}.{' '}
 							<a href={update.release_url} target="_blank" rel="noreferrer">
-								View release
+								Release notes
 							</a>
+							{update.upgrade_url ? (
+								<>
+									{' · '}
+									<a href={update.upgrade_url} target="_blank" rel="noreferrer">
+										How to upgrade
+									</a>
+								</>
+							) : null}
 						</span>
 						<IconButton
 							label="Dismiss update notice"
