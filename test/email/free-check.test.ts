@@ -458,9 +458,7 @@ describe('handleFreeCheck: replies reach the operator, links use SITE_URL', () =
     const b = run({ BETTER_AUTH_URL: 'https://app.worker.example' }, true);
     await b.done;
     expect(b.sent[0].text).not.toContain('app.worker.example');
-    // The worker's origin only serves the logo image in the header; nothing links to it.
-    expect(b.sent[0].html).not.toMatch(/href="https?:\/\/app\.worker\.example/);
-    expect(b.sent[0].html).toContain('<img src="https://app.worker.example/brand/png/lockup/lockup-light-640.png"');
+    expect(b.sent[0].html).not.toContain('app.worker.example');
     expect(b.sent[0].text).not.toMatch(/https?:\/\//);
   });
 

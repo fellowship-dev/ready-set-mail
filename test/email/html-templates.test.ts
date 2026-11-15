@@ -4,13 +4,15 @@ import {
   buildWeeklyDigestHtml,
   buildFreeCheckHtml,
   buildDnsAlertHtml,
+  buildLetterHtml,
 } from '../../src/email/html-templates';
+import { stepCopy, SEQUENCE_DAYS } from '../../src/funnel/copy';
 import type { DomainWeeklyStat, FailingSource } from '@ready-set-mail/db';
 import type { CheckSummary } from '../../src/email/report-formatter';
 import type { DomainChange } from '../../src/monitor/check';
 import type { DnsCheckResult } from '../../src/email/dns-check';
 import type { AuthResultsHeader } from '../../src/email/parse-headers';
-import { brandLockupUrl, DEFAULT_BRAND_COLOR } from '../../src/tenancy/context';
+import { DEFAULT_BRAND_COLOR } from '../../src/tenancy/context';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -332,32 +334,50 @@ describe('buildDnsAlertHtml', () => {
 describe('email header', () => {
   const params = { fromEmail: 'user@acme.com', summary: { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary, auth: AUTH_PASS, dns: DNS_FULL };
 
-  it('shows the hosted lockup PNG on white when the instance has a public origin', () => {
-    const html = buildFreeCheckHtml({ ...params, brand: { color: '#0647FF', lockupUrl: 'https://app.example.test/brand/png/lockup/lockup-light-640.png' } });
-    expect(html).toContain('<img src="https://app.example.test/brand/png/lockup/lockup-light-640.png" alt="Ready Set Mail" width="176" height="40"');
-    expect(html).toContain('border-bottom:3px solid #0647FF');
-  });
-
-  it('sets the name in navy text without a public origin, and never uses SVG or data: images', () => {
+  it('sets the name as navy text on a light cell, with the brand rule under it, and no image', () => {
     const html = buildFreeCheckHtml(params);
     expect(html).not.toContain('<img');
-    expect(html).toContain('color:#06194b;font-size:16px;font-weight:700;">Ready Set Mail</span>');
+    expect(html).toContain('background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;');
+    expect(html).toMatch(/color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/i);
     expect(html).not.toMatch(/<svg|data:image/);
   });
 
   it("keeps a workspace's own logo on its coloured band", () => {
-    const html = buildFreeCheckHtml({ ...params, brand: { color: '#ff0000', logoUrl: 'https://logo.example.test/x.png', lockupUrl: 'https://app.example.test/l.png' } });
+    const html = buildFreeCheckHtml({ ...params, brand: { color: '#ff0000', logoUrl: 'https://logo.example.test/x.png' } });
     expect(html).toContain('background:#ff0000;padding:16px 24px;');
     expect(html).toContain('src="https://logo.example.test/x.png"');
     expect(html).not.toContain('https://app.example.test/l.png');
   });
 
-  it('the lockup URL is the Worker\'s own public HTTPS origin, never plain http elsewhere', () => {
-    expect(brandLockupUrl({ PUBLIC_BASE_URL: 'https://mail.example.test/' })).toBe('https://mail.example.test/brand/png/lockup/lockup-light-640.png');
-    expect(brandLockupUrl({ BETTER_AUTH_URL: 'https://app.example.test' })).toBe('https://app.example.test/brand/png/lockup/lockup-light-640.png');
-    expect(brandLockupUrl({ BETTER_AUTH_URL: 'http://mail.example.test' })).toBeUndefined();
-    expect(brandLockupUrl({ BETTER_AUTH_URL: 'http://127.0.0.1:8787' })).toBe('http://127.0.0.1:8787/brand/png/lockup/lockup-light-640.png');
-    expect(brandLockupUrl({})).toBeUndefined();
+  it('the default brand colour is the brand blue', () => {
     expect(DEFAULT_BRAND_COLOR).toBe('#0647FF');
+  });
+});
+
+// ── No remote resources in any default-brand email ────────────
+
+describe('default-brand HTML emails load nothing remote', () => {
+  const dns = DNS_FULL;
+  const summary = { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary;
+  const changes: DomainChange[] = [{ field: 'dmarc', was: 'p=none', now: 'p=reject', severity: 'improved' } as DomainChange];
+  const sequence = SEQUENCE_DAYS.map((_, i) => {
+    const copy = stepCopy(i, { domain: 'acme.com', summary, bookingUrl: 'https://cal.example.test/x', prices: {} });
+    return [`funnel step ${i}`, buildLetterHtml({ title: copy.subject, blocks: copy.blocks, brand: { color: DEFAULT_BRAND_COLOR } })] as const;
+  });
+  const emails: (readonly [string, string])[] = [
+    ['weekly digest', buildWeeklyDigestHtml({ recipientName: 'Ada', weekLabel: 'Jan 1', stats: [STAT_REJECT], sourcesByDomain: new Map(), ruaAddress: 'rua@r.example.test', reportsDomain: 'reports.example.test' })],
+    ['free check', buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary, auth: AUTH_PASS, dns })],
+    ['dns alert', buildDnsAlertHtml({ domain: 'acme.com', changes, reportsDomain: 'reports.example.test' })],
+    ['letter', buildLetterHtml({ title: 'Hi', blocks: ['Hello', { cta: { label: 'Go', url: 'https://example.test/' } }] })],
+    ...sequence,
+  ];
+
+  it.each(emails)('%s', (_name, html) => {
+    expect(html).not.toMatch(/<img[^>]*\ssrc\s*=\s*["']?https?:/i);
+    expect(html).not.toMatch(/url\(\s*["']?https?:/i);
+    expect(html).not.toMatch(/<link\b/i);
+    expect(html).not.toMatch(/@import/i);
+    expect(html).not.toMatch(/<svg|data:image/i);
+    expect(html).toMatch(/font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/);
   });
 });

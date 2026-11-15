@@ -27,6 +27,11 @@ describe("logo data matches the brand asset pack", () => {
  * Brand rules that a later change could quietly break (DESIGN.md, "Logo and brand colours"): the logo's red #FF252B is used
  * only inside the logo, and the retired gold/blush brand colours do not come back. Scans everything the product ships.
  */
+// bg-brand, bg-brand-ink, -hover and -active, with or without a variant prefix (hover:, data-[state=open]:, md:, ...).
+const FILL = /(?<![\w-])bg-brand(?:-ink|-hover|-active)?(?![\w-])/;
+// The same fills written as CSS: background / background-color / backgroundColor set to var(--brand), --brand-ink, ...
+const INLINE_FILL = /background(?:-?[cC]olor)?["']?\s*:\s*["'`]?var\(--(?:color-)?brand(?:-ink|-hover|-active)?\)/;
+
 describe("brand colours stay where they belong", () => {
 	const roots = ["../src/", "../gallery/src/", "../../../web/src/", "../../../web/index.html", "../../../src/", "../../report/src/"];
 	const exts = /\.(css|ts|tsx|js|jsx|mjs|html|svg)$/;
@@ -60,13 +65,38 @@ describe("brand colours stay where they belong", () => {
 		expect(hits(/#(?:fad172|f5c04a|fef7e3|ffe09a|332c1d|2a2210|fca0a4)\b/i, () => false)).toEqual([]);
 	});
 	it("a filled brand surface is an action or a selection, never a state (DESIGN.md, The Action-Fill Rule)", () => {
-		// Unprefixed bg-brand / bg-brand-ink (state variants such as data-[state=checked]: are controls and allowed).
-		const fill = /(?<![\w:-])bg-brand(?:-ink)?(?![\w-])/;
-		const allowed = (f: string) =>
-			/\/components\/(?:button-variants\.ts|app-shell\.tsx)$/.test(f) || // primary button, skip link
-			f.endsWith("/styles/theme.css") || // a comment naming the utilities
-			/\/wizard\/WizardProgress\.tsx$/.test(f) || /\/screens\/SetupWizardStep\.tsx$/.test(f); // wizard progress toward an action
-		expect(hits(fill, allowed)).toEqual([]);
+		// Each exception names the one use it allows, as a pattern removed from its file before the scan, so a second,
+		// forbidden fill in the same file or on the same line still fails.
+		const exceptions: [RegExp, RegExp][] = [
+			[/\/components\/button-variants\.ts$/, /primary: "bg-brand text-brand-fg hover:bg-brand-hover active:bg-brand-active"/g], // primary button
+			[/\/components\/app-shell\.tsx$/, /rounded-md bg-brand px-4 py-2/g], // skip link
+			[/\/components\/app-shell\.tsx$/, /before:bg-brand-ink/g], // the marker on the selected navigation item (aria-current)
+			[/\/components\/(?:checkbox|switch|radio-group|segmented[\w-]*)\.tsx$/, /data-\[state=(?:checked|indeterminate)\]:bg-brand(?![\w-])/g], // checked controls
+			[/\/(?:wizard\/WizardProgress|screens\/SetupWizardStep)\.tsx$/, /(?:isCurrent|state === "current") \? ["']bg-brand["']/g], // wizard progress, current step (the gallery mock mirrors it)
+			[/\/styles\/theme\.css$/, /border-line, bg-brand,/g], // a comment naming the utilities
+			[/\/styles\/base\.css$/, /::selection\s*\{[^}]*\}/g], // the text-selection highlight
+			[/\/src\/mcp\/consent\.ts$/, /\.primary(?::hover)?\{background:var\(--brand(?:-hover)?\)/g], // the consent page's primary button
+		];
+		const strip = (f: string, text: string) =>
+			exceptions.reduce((t, [file, re]) => (file.test(f) ? t.replace(re, (m) => m.replace(/[^\n]/g, " ")) : t), text);
+		const found = files.flatMap((f) =>
+			strip(f, readFileSync(f, "utf8")).split("\n").flatMap((line, i) => (FILL.test(line) || INLINE_FILL.test(line) ? [`${f}:${i + 1}`] : [])),
+		);
+		expect(found).toEqual([]);
+	});
+	it("the fill patterns catch what they should and nothing else", () => {
+		for (const bad of ["hover:bg-brand", "group-hover:bg-brand-ink", "data-[x]:bg-brand-ink", "md:bg-brand", "bg-brand-hover", "active:bg-brand-active", "bg-brand", "bg-brand/90"]) {
+			expect(FILL.test(bad), bad).toBe(true);
+		}
+		for (const bad of ["background-color: var(--brand)", "background:var(--brand-hover)", "background: var(--color-brand)", "backgroundColor: 'var(--brand)'"]) {
+			expect(INLINE_FILL.test(bad), bad).toBe(true);
+		}
+		for (const ok of ["bg-brand-subtle", "hover:bg-brand-subtle", "bg-brand-fg", "text-brand-ink", "border-brand", "ring-brand", "hover:text-brand-ink"]) {
+			expect(FILL.test(ok), ok).toBe(false);
+		}
+		for (const ok of ["background: var(--brand-subtle)", "background:var(--brand-fg)", "color: var(--brand)", "border-color:var(--brand)"]) {
+			expect(INLINE_FILL.test(ok), ok).toBe(false);
+		}
 	});
 	it("no accent or blush utility: they are not tokens any more", () => {
 		expect(hits(/\b(?:bg|text|border|ring|fill|stroke|outline)-(?:accent|blush)\b|var\(--(?:accent|blush)/, () => false)).toEqual([]);

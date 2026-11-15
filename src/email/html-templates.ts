@@ -51,17 +51,16 @@ function pct(n: number, total: number): string {
 function htmlLayout(title: string, bodyHtml: string, brand: Brand): string {
   const accent = esc(brand.color);
   const logo = brand.logoUrl;
-  // A workspace's own logo keeps its coloured band. Otherwise the Ready Set Mail lockup on white, as a hosted PNG: mail
-  // clients drop SVG and data: images (Gmail, Outlook), so the PNG is served by this Worker (web/public/brand); without a
-  // public origin the name is set in text. The brand colour stays as the rule under the header.
+  // A workspace's own logo keeps its coloured band. Otherwise the header is the wordmark as plain text: no remote
+  // images (many clients block them and every open would hit the instance), no SVG or web font. The light background and
+  // the navy text are set as a pair, so a client that forces dark mode inverts both and the contrast holds, and the name
+  // still reads with images blocked. The brand colour stays as the rule under the header.
   const header = logo
     ? `<tr><td style="background:${accent};padding:16px 24px;">
     <span style="color:#fff;font-size:16px;font-weight:700;"><img src="${esc(logo)}" alt="Ready Set Mail" style="height:32px;vertical-align:middle;margin-right:8px;">Ready Set Mail</span>
   </td></tr>`
     : `<tr><td style="background:${c['surface-1']};padding:16px 24px;border-bottom:3px solid ${accent};">
-    ${brand.lockupUrl
-      ? `<img src="${esc(brand.lockupUrl)}" alt="Ready Set Mail" width="176" height="40" style="display:block;width:176px;height:40px;border:0;">`
-      : `<span style="color:${c['ink-1']};font-size:16px;font-weight:700;">Ready Set Mail</span>`}
+    <span style="color:${c['ink-1']};font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>`;
 
   return `<!DOCTYPE html>

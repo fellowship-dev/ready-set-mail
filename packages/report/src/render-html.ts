@@ -56,7 +56,7 @@ h3{font-size:1rem;font-weight:600;margin:0 0 .35rem}p{margin:.4rem 0}.muted{colo
 .rec dl{margin:0;display:grid;grid-template-columns:4.5rem 1fr;gap:.15rem .75rem;font-size:.875rem;padding-right:5rem}.rec dt{color:var(--ink-3)}.rec dd{margin:0;overflow-wrap:anywhere}
 code,.mono{font-family:"Geist Mono Variable",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;overflow-wrap:anywhere}
 .rec code.val{display:block;white-space:pre-wrap;color:var(--ink-1)}
-button.copy{position:absolute;top:.5rem;right:.5rem;font:inherit;font-size:.8rem;font-weight:600;background:var(--brand);color:var(--brand-fg);border:0;border-radius:.375rem;padding:.25rem .6rem;cursor:pointer}
+button.copy{position:absolute;top:.5rem;right:.5rem;font:inherit;font-size:.8rem;font-weight:600;background:var(--surface-1);color:var(--ink-1);border:1px solid var(--line-strong);border-radius:.375rem;padding:.25rem .6rem;cursor:pointer}
 button.copy:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 ol.steps{padding-left:1.25rem;margin:.5rem 0}ol.steps li{margin:.35rem 0}
 .ev{margin:.4rem 0;padding-left:.75rem;border-left:3px solid var(--line-strong);font-size:.85rem;color:var(--ink-2);overflow-wrap:anywhere}

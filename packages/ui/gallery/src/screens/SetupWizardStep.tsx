@@ -29,7 +29,7 @@ export function SetupWizardStep() {
 							const state = i < current ? "done" : i === current ? "current" : "todo";
 							return (
 								<li key={label} aria-current={state === "current" ? "step" : undefined} className="space-y-1.5">
-									<div className={cn("h-1.5 rounded-full", state === "todo" ? "bg-surface-3" : "bg-brand-ink")} />
+									<div className={cn("h-1.5 rounded-full", state === "done" ? "bg-success" : state === "current" ? "bg-brand" : "bg-line-strong")} />
 									<p className={cn("flex items-center gap-1 text-xs sm:text-sm", state === "current" ? "font-semibold text-ink-1" : "text-ink-2")}>
 										{state === "done" ? <Check aria-hidden className="size-3.5 text-success" /> : <span className="tabular-nums">{i + 1}.</span>}
 										{label}
