@@ -111,6 +111,26 @@ describe('apply-spf record validation', () => {
     expect(buildSpfRecord(extractIncludes(live), existingQualifier(live), extractOtherMechanisms(live))).toBe('v=spf1 include:a.test -all');
   });
 
+  // ptr: the route reads the live record and applies the wizard's rule: a ptr it already has may stay, a new one is refused.
+  const applyConfirmed = (record: string) => new Request('https://x.test/api/domains/1/apply-spf', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'k' }, body: JSON.stringify({ record, confirm_overwrite: true }),
+  });
+  it('applies a provider added to a live record that already uses ptr, keeping the ptr', async () => {
+    cf.seed('zone-acme', { type: 'TXT', name: 'acme.com', content: 'v=spf1 ptr include:a.test ~all' });
+    const live = 'v=spf1 ptr include:a.test ~all';
+    const proposal = buildSpfRecord([...extractIncludes(live), '_spf.google.com'], existingQualifier(live), extractOtherMechanisms(live));
+    const res = await handleApi(applyConfirmed(proposal), makeEnv(), ctx);
+    expect(res.status).toBe(200);
+    expect(cf.records.get('zone-acme')).toEqual([expect.objectContaining({ content: 'v=spf1 include:a.test include:_spf.google.com ptr ~all' })]);
+  });
+  it('refuses a record that adds ptr, also over a live record without one, and writes nothing', async () => {
+    cf.seed('zone-acme', { type: 'TXT', name: 'acme.com', content: 'v=spf1 include:a.test ~all' });
+    const res = await handleApi(applyConfirmed('v=spf1 include:a.test ptr ~all'), makeEnv(), ctx);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/must not use ptr/);
+    expect(cf.calls.filter((c) => c.method !== 'GET')).toHaveLength(0);
+  });
+
   it('refuses a record past the lookup limit with the shared judgement (10 allowed, 11 refused)', async () => {
     const eleven = 'v=spf1 ' + Array.from({ length: 11 }, (_, i) => `a:h${i}.acme.com`).join(' ') + ' -all';
     const res = await handleApi(apply(eleven), makeEnv(), ctx);

@@ -1,6 +1,9 @@
 import { StatusDot, cn } from '@ready-set-mail/ui';
 import { hasReportAddress } from '../lib/dmarc-record';
 import { useDomains } from '../lib/queries';
+import { useDomainSummaries } from '../lib/domain-queries';
+import { reportsRefusalOf } from '../lib/dmarc-step';
+import { useReportsRefusal } from '../lib/report-address';
 import { useHosted } from '../lib/session';
 import { HELP_PRIORITY, TalkToMax } from './TalkToMax';
 import { ConnectReports } from './reports/ConnectReports';
@@ -27,7 +30,40 @@ export function useWorkspaceReportsNotConnected(): boolean {
  * person to talk to. Status "unknown" (dashed circle), never a pass: without reports nobody can say every sender passes.
  * With `domainId` (one domain) and report intake on, it also offers Connect reports (ConnectReports `bare`: the action only).
  */
-export function ReportsNotConnected({ domain, domainId, className }: { domain?: string; domainId?: number; className?: string }) {
+/** Reports cannot come to this server for the domain at all (another workspace runs report intake here, or there is none). */
+const cannotCome = (kind: string | undefined) => kind === 'operator_only' || kind === 'unavailable';
+
+/**
+ * Why reports cannot be connected: for one domain from its own summary (`report_connect`), for the workspace when every
+ * domain gives the same "cannot come here" answer. Null while unknown or when they can be connected.
+ */
+function useRefusal(id: number | undefined) {
+	const hosted = useHosted();
+	const one = useReportsRefusal(id ?? 0, id !== undefined);
+	const batch = useDomainSummaries(id === undefined && hosted);
+	if (id !== undefined) return one.refusal;
+	const rows = [...(batch.data?.values() ?? [])].map((s) => reportsRefusalOf(s));
+	return rows.length > 0 && rows.every((r) => cannotCome(r?.kind)) ? rows[0]! : null;
+}
+
+export function ReportsNotConnected({ domain, domainId, refusalId, className }: { domain?: string; domainId?: number; /** The domain whose refusal decides the wording, when no Connect action is shown (setup). */ refusalId?: number; className?: string }) {
+	const refusal = useRefusal(refusalId ?? domainId);
+	if (refusal && cannotCome(refusal.kind)) {
+		// The domain page's words (the shared rule's check-senders step): nothing suggests that reports could be connected.
+		const who = domain ? <strong className="font-mono font-medium text-ink-1 [overflow-wrap:anywhere]">{domain}</strong> : 'your domains';
+		return (
+			<section aria-label="Reports" className={cn('space-y-2 rounded-lg border border-line bg-surface-2 p-4 sm:p-5', className)} data-testid="reports-not-connected" data-refusal={refusal.kind}>
+				<StatusDot status="unknown" label="Reports are not available" className="font-semibold" />
+				<p className="text-sm text-ink-2">
+					Reports are not available for {who}, so nobody here can confirm that every service sending as {domain ? 'it' : 'them'} passes: pass rates, failing senders and whether
+					it is safe to enforce cannot be shown. Check each service that sends as {domain ? 'it' : 'your domains'} (your mail provider, newsletter, invoicing and support tools)
+					before you tighten the policy.
+				</p>
+				<p className="text-sm text-ink-2">Still checked from live DNS: your SPF, DKIM and DMARC records, each domain&apos;s level, and the exact records to fix.</p>
+				<TalkToMax priority={HELP_PRIORITY.reportsNotConnected} lead="Want reports for your domains?" about="about reports" />
+			</section>
+		);
+	}
 	return (
 		<section aria-label="Reports" className={cn('space-y-2 rounded-lg border border-line bg-surface-2 p-4 sm:p-5', className)} data-testid="reports-not-connected">
 			<StatusDot status="unknown" label="Reports not connected yet" className="font-semibold" />
