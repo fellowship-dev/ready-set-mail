@@ -12,6 +12,8 @@ export const badgeVariants = cva(
 				success: "border-success/40 bg-success-subtle text-success",
 				warning: "border-warning/40 bg-warning-subtle text-warning",
 				danger: "border-danger/40 bg-danger-subtle text-danger",
+				// Notes and information: teal, never the brand blue, so a note does not read as an action or a selection.
+				info: "border-info/40 bg-info-subtle text-info",
 				outline: "border-line-strong bg-transparent text-ink-2",
 			},
 		},

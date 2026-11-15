@@ -119,7 +119,7 @@ describe('consent page', () => {
    expect(html).toContain('prefers-color-scheme:dark');
    expect(html).toContain('Geist Variable');
    expect(html).not.toMatch(/gradient/i);
-   expect(html).toContain('<svg viewBox="0 0 100 100"');
+   expect(html).toContain('viewBox="0 0 1526 347" role="img" aria-label="Ready Set Mail"'); // the logo lockup
   }
   expect(PAGE_CSP).not.toContain('script-src');
   expect(PAGE_CSP).toContain("default-src 'none'");

@@ -1,5 +1,5 @@
 import {
-	Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Checkbox, FieldHint, Input, Label, LogoMark,
+	Alert, Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Checkbox, FieldHint, Input, Label, LogoLockup,
 	RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn,
 } from "@ready-set-mail/ui";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
@@ -16,8 +16,7 @@ export function SetupWizardStep() {
 		<div className="min-h-screen bg-surface-0 text-ink-1">
 			<header className="border-b border-line bg-surface-1">
 				<div className="mx-auto flex h-16 max-w-3xl items-center gap-2 px-4 sm:px-6">
-					<LogoMark className="size-8 rounded-md" />
-					<span className="text-base font-bold tracking-tight">Ready Set Mail</span>
+					<LogoLockup className="h-8 w-auto" />
 					<span className="ml-auto text-sm text-ink-2">Setup</span>
 				</div>
 			</header>
@@ -30,7 +29,7 @@ export function SetupWizardStep() {
 							const state = i < current ? "done" : i === current ? "current" : "todo";
 							return (
 								<li key={label} aria-current={state === "current" ? "step" : undefined} className="space-y-1.5">
-									<div className={cn("h-1.5 rounded-full", state === "todo" ? "bg-surface-3" : "bg-brand-ink")} />
+									<div className={cn("h-1.5 rounded-full", state === "done" ? "bg-success" : state === "current" ? "bg-brand" : "bg-line-strong")} />
 									<p className={cn("flex items-center gap-1 text-xs sm:text-sm", state === "current" ? "font-semibold text-ink-1" : "text-ink-2")}>
 										{state === "done" ? <Check aria-hidden className="size-3.5 text-success" /> : <span className="tabular-nums">{i + 1}.</span>}
 										{label}

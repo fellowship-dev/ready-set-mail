@@ -6,7 +6,7 @@ export type Severity = 'good' | 'info' | 'warning' | 'error' | 'unknown';
 
 const META = {
 	good: { label: 'All good', variant: 'success', Icon: CheckCircle2 },
-	info: { label: 'Info', variant: 'brand', Icon: Info },
+	info: { label: 'Info', variant: 'info', Icon: Info },
 	warning: { label: 'Needs attention', variant: 'warning', Icon: AlertTriangle },
 	error: { label: 'Action required', variant: 'danger', Icon: XCircle },
 	unknown: { label: 'Lookup failed', variant: 'neutral', Icon: CircleHelp },

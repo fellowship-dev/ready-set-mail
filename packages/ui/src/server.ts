@@ -12,6 +12,7 @@ export * from "./components/empty-state.js";
 export * from "./components/input.js";
 export * from "./components/level-card.js";
 export * from "./components/logo.js";
+export * from "./components/logo-svg.js";
 export * from "./components/page-header.js";
 export * from "./components/skeleton.js";
 export * from "./components/stat.js";

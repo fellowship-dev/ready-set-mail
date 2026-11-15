@@ -25,7 +25,7 @@ function Progress({ r }: { r: RolloutNext }) {
 				className="flex gap-1"
 			>
 				{Array.from({ length: r.total_steps }, (_, i) => (
-					<div key={i} className={cn('h-2 flex-1 rounded-full', i < step ? 'bg-brand-ink' : 'bg-surface-3')} />
+					<div key={i} className={cn('h-2 flex-1 rounded-full', i < step ? 'bg-ink-3' : 'bg-surface-3')} />
 				))}
 			</div>
 			<div className="flex flex-wrap justify-between gap-x-4 text-sm text-ink-2">

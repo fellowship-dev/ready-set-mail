@@ -85,8 +85,8 @@ export const STATUS_BADGE: Record<StatusKind, NonNullable<BadgeProps["variant"]>
 	improve: "warning",
 	unknown: "neutral",
 	verified: "success",
-	note: "brand",
-	prepared: "brand",
+	note: "info",
+	prepared: "info",
 	approval: "warning",
 	gathering: "neutral",
 };
@@ -96,7 +96,7 @@ const TONE_TEXT: Record<Tone, string> = {
 	warning: "text-warning",
 	neutral: "text-ink-2",
 	success: "text-success",
-	info: "text-brand-ink",
+	info: "text-info",
 };
 
 export function StatusIcon({ kind, className }: { kind: StatusKind; className?: string }) {

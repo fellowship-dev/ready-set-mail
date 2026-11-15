@@ -1,4 +1,4 @@
-import { AppShell, Button, EmptyState, IconButton, LogoMark, PageHeader, type NavSection } from "@ready-set-mail/ui";
+import { AppShell, Button, EmptyState, IconButton, LogoLockup, PageHeader, type NavSection } from "@ready-set-mail/ui";
 import { Bell, FileText, Globe, LayoutDashboard, Plus, Settings, User } from "lucide-react";
 
 const nav: NavSection[] = [
@@ -19,8 +19,7 @@ export function DomainEmpty() {
 		<AppShell
 			brand={
 				<>
-					<LogoMark className="size-8 shrink-0 rounded-md" />
-					<span className="truncate text-base font-bold tracking-tight">Ready Set Mail</span>
+					<LogoLockup className="h-9 w-auto shrink-0" />
 				</>
 			}
 			nav={nav}

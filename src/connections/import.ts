@@ -15,7 +15,7 @@
 import { isPublicSuffix } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
-import { admitByZone } from '../domains/ownership';
+import { admitByZone, within } from '../domains/ownership';
 import { DomainServiceError, commitVerifiedDomain, domainCap, planLimitError } from '../domains/service';
 import { ConnectionInputError } from './service';
 import { getMode } from '../tenancy/mode';
@@ -63,8 +63,7 @@ export async function verifyPendingClaims(tenant: TenantContext, caller: Caller,
     const r = await admitByZone(tenant, claim.domain);
     if (r.kind !== 'verified') continue;
     try {
-      const added = await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined);
-      await linkToConnection(tenant, added.domain.id, claim.domain, caller);
+      await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined); // linked to the proving connection (proofColumns)
       done.push(claim.domain);
       held++;
     } catch (e) {
@@ -74,26 +73,16 @@ export async function verifyPendingClaims(tenant: TenantContext, caller: Caller,
   return done;
 }
 
-/** Link a domain to the connection whose zone proved it (the first one that does), unless it already has a working link. */
-async function linkToConnection(tenant: TenantContext, domainId: number, domain: string, caller: Caller, connectionId?: string): Promise<void> {
+/**
+ * Self-host only: link an imported domain to the connection it came from, unless it already has a working link. On the hosted service the zone proof
+ * links the row as it is written (proofColumns in src/domains/ownership.ts), the same for every path.
+ */
+async function linkToConnection(tenant: TenantContext, domainId: number, domain: string, caller: Caller, target: string): Promise<void> {
   const row = await tenant.scope.domains.getById(domainId);
-  if (!row) return;
-  const target = connectionId ?? (await auditedConnectionFor(tenant, domainId));
-  if (!target || row.cf_connection_id === target) return;
+  if (!row || row.cf_connection_id === target) return;
   if (row.cf_connection_id && (await tenant.scope.connections.get(row.cf_connection_id))?.status === 'active') return;
   if (!(await tenant.scope.domains.setConnection(domainId, target))) return;
   logAudit(tenant, { actor_id: caller.id ?? null, actor_email: caller.email ?? null, actor_type: 'user', action: 'domain.cf_connection', resource_type: 'cf_connection', resource_id: String(domainId), resource_name: domain, before_value: { connection_id: row.cf_connection_id }, after_value: { connection_id: target } });
-}
-
-/** The connection a just-made proof came from: the proof is on the domain row's connection when the import made it, else the first active connection that allows the zone. */
-async function auditedConnectionFor(tenant: TenantContext, domainId: number): Promise<string | null> {
-  const row = await tenant.scope.domains.getById(domainId);
-  if (!row?.cf_zone_id) return null;
-  for (const c of await tenant.scope.connections.list()) {
-    if (c.status !== 'active') continue;
-    if ((await tenant.scope.connections.zones(c.id)).some(z => z.zone_id === row.cf_zone_id)) return c.id;
-  }
-  return null;
 }
 
 export async function importZones(tenant: TenantContext, connectionId: string, input: { zoneIds?: string[] }, caller: Caller, ctx?: ExecutionContext): Promise<ImportResult> {
@@ -144,7 +133,7 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
     if (admitted.kind === 'unproven') { failed.add(z.id); result.skipped.push({ domain: z.name, reason: NOT_PROVEN }); continue; }
     try {
       const added = await commitVerifiedDomain(tenant, z.name, admitted.via, caller.email ?? undefined, ctx, caller.id ?? undefined);
-      await linkToConnection(tenant, added.domain.id, z.name, caller, connectionId);
+      if (!saas) await linkToConnection(tenant, added.domain.id, z.name, caller, connectionId);
       result.imported.push({ domain: z.name, domain_id: added.domain.id });
       result.accounts.push({ id: z.cfAccountId ?? null, name: z.cfAccountName ?? null });
     } catch (e) {
@@ -166,9 +155,14 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   return result;
 }
 
-/** Zones of the workspace's working connections that are not domains of it yet (removed ones included): what Add domain offers. */
+/**
+ * Zones of the workspace's working connections that are not domains of it yet (removed ones included): what Add domain offers. A zone on the
+ * connection's saved allow-list whose name is a pending claim is not offered as new: that claim is verified on the next overview load
+ * (autoVerifyClaims). A claimed zone that is not on the list is offered: Add imports, verifies and links it.
+ */
 export async function suggestedZones(tenant: TenantContext): Promise<{ connection_id: string; account_id: string | null; account_name: string | null; zone_id: string; name: string; removed: boolean }[]> {
   const have = new Set((await tenant.scope.domains.list()).map(d => d.domain.toLowerCase()));
+  const claimed = new Set((await tenant.scope.claims.list()).filter(c => c.status === 'pending').map(c => c.domain.toLowerCase()));
   const removed = await tenant.scope.removals.names();
   const out: Awaited<ReturnType<typeof suggestedZones>> = [];
   const seen = new Set<string>();
@@ -177,10 +171,74 @@ export async function suggestedZones(tenant: TenantContext): Promise<{ connectio
     let zones: Awaited<ReturnType<typeof tenant.connections.availableZones>>;
     try { zones = await tenant.connections.availableZones(c.id); } catch { continue; } // an unreadable connection suggests nothing
     for (const z of zones) {
-      if (isPublicSuffix(z.name) || have.has(z.name) || seen.has(z.name)) continue;
+      if (isPublicSuffix(z.name) || have.has(z.name) || seen.has(z.name) || (z.allowed && claimed.has(z.name))) continue;
       seen.add(z.name);
       out.push({ connection_id: c.id, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null, zone_id: z.id, name: z.name, removed: removed.has(z.name) });
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * At most one automatic live check per pending claim per this interval. A check that fails is nearly always a delegation still moving (name servers
+ * being changed at the registrar), which takes minutes to hours: an hour bounds the cost, while the claim's Verify button stays for an immediate retry.
+ */
+export const CLAIM_AUTOCHECK_SECONDS = 3600;
+/** At most this many claims are checked by one request (the ones whose last automatic check is oldest, never checked first). */
+export const CLAIM_AUTOCHECKS_PER_REQUEST = 5;
+/** settings key `<prefix><claim id>:` holds the unix time until which that claim is not checked automatically again (the trailing ':' keeps id 1 apart from 12). */
+export const CLAIM_AUTOCHECK_PREFIX = 'cf_claim_autocheck:';
+const autocheckKey = (claimId: number) => `${CLAIM_AUTOCHECK_PREFIX}${claimId}:`;
+
+/**
+ * Pending claims inside a zone on an active connection's SAVED allow-list (cloudflare_connection_zones), verified and linked to the proving connection
+ * when the domain list loads (GET /api/domains), with no click. Only owners and admins trigger it (the caller checks): members are read-only.
+ *  - The saved list only says a live check is worth making; it is never the proof. admitByZone is, unchanged (the live server-side check: active,
+ *    full, in the connection's account, DNS edit, public name servers equal the zone's; the conflict, unproven-row, public-suffix and label-boundary rules).
+ *  - Nothing here writes the allow-list. A claim whose zone is visible but not on the list stays pending (Add domain imports it with a click).
+ *  - Cost: at most CLAIM_AUTOCHECKS_PER_REQUEST claims per request, each at most once per CLAIM_AUTOCHECK_SECONDS (the next allowed time is stored
+ *    before the check, through settings.claim, so two loads at once cannot both check one claim). Per claim checked: one Cloudflare zone read per
+ *    matching allowed zone (normally one) and one public NS lookup; the rival re-check any proof makes (holders of the name in other workspaces, on
+ *    their own cooldown); and, when it verifies, the first DNS read adding a domain makes. A load with no matching claim costs no outgoing request.
+ * Returns the names verified.
+ */
+export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ctx?: ExecutionContext, nowSeconds = Math.floor(Date.now() / 1000)): Promise<string[]> {
+  if (getMode(tenant.env) !== 'saas') return [];
+  const claims = (await tenant.scope.claims.list()).filter(c => c.status === 'pending' && c.settled_at === null);
+  if (claims.length === 0) return [];
+  const conns = (await tenant.scope.connections.list()).filter(c => c.status === 'active');
+  if (conns.length === 0) return [];
+  const saved: string[] = [];
+  for (const c of conns) for (const z of await tenant.scope.connections.zones(c.id)) if (!isPublicSuffix(z.zone_name)) saved.push(z.zone_name.toLowerCase());
+  const candidates = claims.filter(c => saved.some(z => within(c.domain.toLowerCase(), z)));
+  if (candidates.length === 0) return [];
+
+  // Due: never checked, or its interval is over. Oldest check first, at most CLAIM_AUTOCHECKS_PER_REQUEST.
+  const next = await tenant.scope.settings.getMany(candidates.map(c => autocheckKey(c.id)));
+  const due = candidates
+    .map(c => ({ claim: c, until: Number(next.get(autocheckKey(c.id)) ?? 0) }))
+    .filter(x => x.until <= nowSeconds)
+    .sort((a, b) => a.until - b.until || a.claim.id - b.claim.id)
+    .slice(0, CLAIM_AUTOCHECKS_PER_REQUEST);
+
+  const cap = domainCap(tenant);
+  let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
+  const done: string[] = [];
+  for (const { claim } of due) {
+    if (cap !== undefined && held >= cap) break; // a full plan: nothing is checked, nothing verified, nobody evicted
+    const key = autocheckKey(claim.id);
+    await tenant.scope.settings.deleteExpired(key, nowSeconds);
+    if (!(await tenant.scope.settings.claim(key, String(nowSeconds + CLAIM_AUTOCHECK_SECONDS)))) continue; // another request took it
+    const r = await admitByZone(tenant, claim.domain);
+    if (r.kind !== 'verified') continue;
+    try {
+      await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined); // linked to the proving connection (proofColumns)
+      done.push(claim.domain);
+      held++;
+    } catch (e) {
+      if (!(e instanceof DomainServiceError)) throw e; // a full plan leaves the claim as it was
+    }
+  }
+  if (done.length) tenant.invalidate();
+  return done;
 }

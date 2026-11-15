@@ -23,7 +23,7 @@ ToastViewport.displayName = "ToastViewport";
 export type ToastVariant = "info" | "success" | "warning" | "danger";
 
 const variantClasses: Record<ToastVariant, string> = {
-	info: "[&_svg.ia-toast-icon]:text-brand-ink",
+	info: "[&_svg.ia-toast-icon]:text-info",
 	success: "[&_svg.ia-toast-icon]:text-success",
 	warning: "[&_svg.ia-toast-icon]:text-warning",
 	danger: "[&_svg.ia-toast-icon]:text-danger",

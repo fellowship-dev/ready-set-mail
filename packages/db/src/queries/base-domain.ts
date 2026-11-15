@@ -42,8 +42,8 @@ export function baseDomainQueries(db: Db, workspaceId: string) {
 			const max = opts.maxDomains;
 			const capped = !existing && max !== undefined;
 			const domainInsert = capped
-				? sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers)
-					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}
+				? sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, cf_connection_id)
+					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}, ${pv.cf_connection_id ?? null}
 					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`
 				: db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
 			// Under a cap the settings follow the domain: written only when the workspace has the (live) domain row.

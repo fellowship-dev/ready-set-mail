@@ -42,7 +42,9 @@ Hosted: sign up, prove you own a domain and see from live DNS where it stands an
 ## Brand Commitments
 Name (Max, 2026-11-13): **Ready Set Mail**, formerly Inbox Angel. The repository is `fellowship-dev/ready-set-mail` and the website's is `fellowship-dev/ready-set-mail-website`; the old GitHub URLs redirect.
 
-Shared with the Ready Set Mail website (readysetmail.com): the name; the personality **Calm · Competent · Honest** (friendly, technical when needed); the palette roles (navy `#0B1F3A`, halo gold `#FAD172`, blush `#FCA0A4`; see DESIGN.md); Geist Sans and Geist Mono; the halo-envelope `LogoMark`; WCAG AA.
+Shared with the Ready Set Mail website (readysetmail.com): the name; the personality **Calm · Competent · Honest** (friendly, technical when needed); the palette roles (brand blue `#0647FF` for action, navy `#06194B` ink; the logo's red `#FF252B` only inside the logo; see DESIGN.md, "Logo and brand colours"); Geist Sans and Geist Mono; the mailbox logo (`LogoLockup` and `LogoMark`, files in `web/public/brand/`); WCAG AA.
+
+Brand (Max, 2026-11-15): the new logo, a blue mailbox with a raised red flag beside the lowercase wordmark "readysetmail", replaced the navy/gold halo-envelope; the colours follow it. Status colours keep their meaning and never borrow the brand: notes are teal, the danger red is never decorative, and no gold or yellow comes back outside the warning status.
 
 - The voice names the email, not the protocol ("signup emails", "password reset"), then SPF/DKIM/DMARC.
 - Never promises inbox placement; separates authentication (fixable, verifiable) from reputation (takes weeks).

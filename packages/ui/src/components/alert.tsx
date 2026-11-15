@@ -6,7 +6,7 @@ import { cn } from "../lib/cn.js";
 const alertVariants = cva("relative flex gap-3 rounded-lg border p-4 text-sm", {
 	variants: {
 		variant: {
-			info: "border-brand-ink/30 bg-brand-subtle text-ink-1 [&>svg]:text-brand-ink",
+			info: "border-info/40 bg-info-subtle text-ink-1 [&>svg]:text-info",
 			success: "border-success/40 bg-success-subtle text-ink-1 [&>svg]:text-success",
 			warning: "border-warning/40 bg-warning-subtle text-ink-1 [&>svg]:text-warning",
 			danger: "border-danger/40 bg-danger-subtle text-ink-1 [&>svg]:text-danger",

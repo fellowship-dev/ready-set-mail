@@ -5,20 +5,20 @@ export type TokenSet = Readonly<Record<string, string>>;
 
 export const REPORT_TOKENS: { light: TokenSet; dark: TokenSet } = {
   light: {
-    'surface-0': '#f7f8fa', 'surface-1': '#ffffff', 'surface-2': '#eff2f6',
-    'ink-1': '#0b1f3a', 'ink-2': '#526175', 'ink-3': '#5d6d82',
-    brand: '#0b1f3a', 'brand-ink': '#0b1f3a', 'brand-subtle': '#e8eef5', 'brand-fg': '#ffffff',
-    accent: '#fad172', 'accent-fg': '#0b1f3a', 'accent-subtle': '#fef7e3',
+    'surface-0': '#f7f8fa', 'surface-1': '#ffffff', 'surface-2': '#eff1f6',
+    'ink-1': '#06194b', 'ink-2': '#525c75', 'ink-3': '#5d6782',
+    brand: '#0647ff', 'brand-hover': '#063edb', 'brand-ink': '#0647ff', 'brand-subtle': '#ebf0ff', 'brand-fg': '#ffffff',
     success: '#147a3a', 'success-subtle': '#ecfdf3', warning: '#aa4f08', 'warning-subtle': '#fff7e6', danger: '#b91c1c', 'danger-subtle': '#fef2f2',
-    line: '#d7dfe8', 'line-strong': '#b8c5d4', focus: '#0b1f3a',
+    info: '#076a7e', 'info-subtle': '#e9f8fb',
+    line: '#d7dce8', 'line-strong': '#b8c0d4', focus: '#0647ff', 'logo-wordmark': '#06194b',
   },
   dark: {
-    'surface-0': '#0b1220', 'surface-1': '#142238', 'surface-2': '#1c2e47',
-    'ink-1': '#f4f7fb', 'ink-2': '#a8b5c7', 'ink-3': '#8a9bb1',
-    brand: '#fad172', 'brand-ink': '#fad172', 'brand-subtle': '#332c1d', 'brand-fg': '#0b1f3a',
-    accent: '#fad172', 'accent-fg': '#0b1f3a', 'accent-subtle': '#2a2210',
+    'surface-0': '#0b1120', 'surface-1': '#141e38', 'surface-2': '#1c2847',
+    'ink-1': '#f4f6fb', 'ink-2': '#a8b1c7', 'ink-3': '#8a95b1',
+    brand: '#2e64ff', 'brand-hover': '#0647ff', 'brand-ink': '#82a3ff', 'brand-subtle': '#112660', 'brand-fg': '#ffffff',
     success: '#4ade80', 'success-subtle': '#0f2a1a', warning: '#fbbf24', 'warning-subtle': '#2a2110', danger: '#f87171', 'danger-subtle': '#2c1416',
-    line: '#33465f', 'line-strong': '#50647e', focus: '#fad172',
+    info: '#3cc2dd', 'info-subtle': '#0e2a31',
+    line: '#333f5f', 'line-strong': '#505d7e', focus: '#82a3ff', 'logo-wordmark': '#ffffff',
   },
 };
 
