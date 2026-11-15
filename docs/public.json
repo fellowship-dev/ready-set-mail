@@ -1,0 +1,24 @@
+{
+  "$comment": "Which docs the website (fellowship-dev/ready-set-mail-website) renders, read from a release tag at build time: docs/releasing.md#website. Only paths under `public` are published. `internal` lists docs that must never be published, even though they are in this public repository. A doc in neither list is not published; add it to one of them when you add it. `section` publishes only that heading's section of the file.",
+  "version": 1,
+  "public": [
+    { "slug": "changelog", "title": "Changelog", "path": "CHANGELOG.md" },
+    { "slug": "self-hosting", "title": "Self-hosting", "path": "docs/self-hosting.md" },
+    { "slug": "permissions", "title": "Cloudflare permissions", "path": "docs/self-hosting.md", "section": "Permissions" },
+    { "slug": "upgrading", "title": "Upgrading", "path": "packages/db/UPGRADING.md" },
+    { "slug": "agents", "title": "For coding agents", "path": "docs/coding-agents.md" },
+    { "slug": "agent-operations", "title": "Agents, product credentials and source metrics", "path": "docs/agent-operations.md" },
+    { "slug": "agent-plugin", "title": "Agent plugin setup", "path": "plugins/ready-set-mail/SETUP.md" },
+    { "slug": "workspaces", "title": "Workspaces", "path": "docs/workspaces.md" },
+    { "slug": "data-retention", "title": "Data retention and deletion", "path": "docs/data-retention.md" }
+  ],
+  "internal": [
+    { "path": "docs/cloudflare-oauth.md", "reason": "operator setup of the OAuth client and relay; split out a public part before publishing any of it" },
+    { "path": "docs/email-funnel.md", "reason": "the hosted service's lead and email funnel" },
+    { "path": "docs/hosted.md", "reason": "hosted service operator parts; split out the customer part before publishing any of it" },
+    { "path": "PRODUCT.md", "reason": "product strategy" },
+    { "path": "DESIGN.md", "reason": "design notes" },
+    { "path": "QUALITY_SCORE.md", "reason": "internal quality tracking" },
+    { "path": "tools/audit-fleet/README.md", "reason": "internal audit tooling" }
+  ]
+}

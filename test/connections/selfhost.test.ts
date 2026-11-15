@@ -44,6 +44,19 @@ describe('self-host: the env token keeps working', () => {
     expect((await s.api('PUT', '/api/domains/1/connection', { connection_id: 'env' })).status).toBe(200);
   });
 
+  it('a connection whose token sees more than 5000 zones: 502 cf_list_incomplete on the zone list, not a 500', async () => {
+    const s = await selfhost({ TOKEN_ENCRYPTION_KEY: `k1:${KEY}` });
+    s.cf.validTokens = new Set(['env-tok-0123456789', 'tok-pasted-1234567890abcdef']);
+    const added = await (await s.api('POST', '/api/cloudflare/connections', { token: 'tok-pasted-1234567890abcdef', label: 'Wide' })).json() as any;
+    const inner = s.cf.fetch as unknown as (i: unknown, init?: RequestInit) => Promise<Response>;
+    vi.stubGlobal('fetch', async (i: unknown, init?: RequestInit) => new URL(String(i)).pathname === '/client/v4/zones'
+      ? new Response(JSON.stringify({ success: true, result: [], result_info: { page: 1, per_page: 50, count: 0, total_count: 5001, total_pages: 101 } }), { status: 200 })
+      : inner(i, init));
+    const res = await s.api('GET', `/api/cloudflare/connections/${added.connection.id}/zones`);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'Cloudflare returned more zones than Ready Set Mail can read at once (5000). Limit the token to the zones you want to manage.', code: 'cf_list_incomplete' });
+  });
+
   it('without an env token there is no implicit connection', async () => {
     const s = await selfhost({ CLOUDFLARE_API_TOKEN: '' });
     const list = await (await s.api('GET', '/api/cloudflare/connections')).json() as any;
