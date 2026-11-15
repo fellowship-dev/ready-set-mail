@@ -17,7 +17,7 @@ import {
 import { CopyField } from '../domain/CopyField';
 import { ConfirmDialog } from '../domain/ConfirmDialog';
 import { RadioCard } from '../wizard/RadioCard';
-import { inheritedCoverage, keptEnforcement, offerEnforcement, recordFor } from '../../lib/dmarc-coverage';
+import { inheritedCoverage, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { parseDmarcTags } from '../../lib/dmarc-record';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 
@@ -357,7 +357,7 @@ function InheritedOwnRecord({ plan, domain, address }: { plan: Extract<ReportAdd
 					</>
 				) : null}
 			</p>
-			<RecordToPublish replace={false} name={plan.own.name} value={recordFor(e, address)} />
+			<RecordToPublish replace={false} name={plan.own.name} value={offeredDmarcRecord(null, coverage, address) ?? ''} />
 		</div>
 	);
 }

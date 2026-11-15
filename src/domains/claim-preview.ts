@@ -20,7 +20,7 @@ export interface ClaimPreview {
   /** `error`: the lookup failed, so nothing is known. `missing`: DNS answered that there is no record. */
   spf: { status: 'found' | 'missing' | 'error'; record: string | null; lookup_count: number | null; over_limit: boolean };
   /** The policy that applies to the domain (inherited from the organizational domain when it has no record of its own); `issue`: a record exists but gives no policy. */
-  dmarc: { status: 'found' | 'missing' | 'error'; policy: string | null; issue: 'multiple' | 'invalid' | null; inherited_from: string | null; record: string | null; /** pct= of the record that applies (100 when absent); null without a usable record. */ pct: number | null };
+  dmarc: { status: 'found' | 'missing' | 'error'; policy: string | null; issue: 'multiple' | 'invalid' | 'invalid_sp' | null; inherited_from: string | null; record: string | null; /** pct= of the record that applies (100 when absent); null without a usable record. */ pct: number | null };
   /** `not_found` means none of the `scanned` common selectors: not that the domain has no DKIM. `wildcard`: every name answered with the same TXT record, so nothing can be said about which selectors exist. */
   dkim: { status: 'found' | 'not_found' | 'wildcard' | 'error'; selectors: string[]; scanned: number; failed: number };
   mx: { status: 'found' | 'none' | 'error' };

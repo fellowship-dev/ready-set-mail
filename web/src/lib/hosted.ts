@@ -84,6 +84,17 @@ export function useHostedInfo(domainId: number): HostedStatus | null {
 }
 
 /**
+ * The hosted status as a level or step reads it. `pending` while hosted records are on and this domain's status has not
+ * answered yet: the overview waits then (no verdict), and so must the domain page, or a hosted domain is briefly judged
+ * as self-managed.
+ */
+export function useHostedLevelInput(domainId: number): { pending: boolean; info: HostedStatus | null } {
+	const configEnabled = useHostedConfig();
+	const q = useHostedStatus(domainId);
+	return { pending: configEnabled && q.isPending, info: q.data?.enabled ? q.data : null };
+}
+
+/**
  * Writes. The one-time intake addresses go to `onAddresses` (component state) and are NOT returned, so they never
  * sit in the mutation cache; the cache only ever holds the status.
  */

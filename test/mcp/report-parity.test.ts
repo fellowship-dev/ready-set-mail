@@ -50,4 +50,30 @@ describe('MCP DMARC step: the same rule and inputs as the dashboard', () => {
   expect(suffix!.next_step!.why).toMatch(/gov\.uk is a public suffix, so its DMARC record does not apply to www\.gov\.uk/);
   expect(JSON.stringify(suffix)).not.toContain('rua@reports.example.net');
  });
+
+ // The dashboard's builder (web/src/lib/dmarc-step.ts evidenceFor) is a thin call to the same dmarcEvidenceFor, so the agent
+ // must reach the dashboard's step for the same inputs: a hosted customer who may not connect reports, and reports that
+ // arrived but were not counted.
+ it('a domain whose reports cannot be connected gets the dashboard\'s "Check each service" step, not "Connect reports"', async () => {
+  const { dmarcNextStep } = await import('../../src/mcp/tools/index');
+  const row = { dns_checked_at: NOW, dmarc_policy: 'none', dmarc_issue: null, dmarc_inherited_from: null, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 0, total_messages: 0, pass_messages: 0 };
+  const tenant = { scope: { reports: { checkSummary: async () => row }, domains: { getById: async () => null } } };
+  const refused = { can_connect: false, refusal: "On this server, only the operator's workspaces can connect reports.", refusal_kind: 'operator_only' as const };
+  const r = await dmarcNextStep(tenant, { id: 1, domain: 'cust.example', rua_address: '' }, NOW, { reportConnect: async () => refused, visibility: async () => null });
+  expect(r!.next_step).toMatchObject({ key: 'check-senders', do: 'Check each service that sends as cust.example, then move to p=quarantine' });
+  expect(JSON.stringify(r)).not.toContain('Connect reports so senders can be confirmed');
+ });
+
+ it('reports that arrived but were not counted are named, never "No reports arrived"', async () => {
+  const { dmarcNextStep } = await import('../../src/mcp/tools/index');
+  const row = { dns_checked_at: NOW, dmarc_policy: 'none', dmarc_issue: null, dmarc_inherited_from: null, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1, total_messages: 0, pass_messages: 0 };
+  const tenant = { scope: { reports: { checkSummary: async () => row }, domains: { getById: async () => null } } };
+  const visibility = { counting_note: null, uncounted: { reports: 2, unknown: 2, unauthenticated: 0 }, intake: { status: 'ok' as const, notice: null, dropped: [] } };
+  const r = await dmarcNextStep(tenant, { id: 1, domain: 'a.example', rua_address: 'rua@reports.example.net' }, NOW, { reportConnect: async () => null, visibility: async () => visibility });
+  expect(r!.next_step!.why).toContain('No counted reports yet. 2 reports from senders we do not recognise are not counted.');
+  expect(r!.next_step!.why).not.toContain('No reports arrived');
+  const dropped = { counting_note: null, uncounted: { reports: 0 }, intake: { status: 'limited' as const, notice: 'x', dropped: [{ label: 'Google', since: '2026-11-14T03:12:00.000Z', text: 'Report storage limit reached; reports from Google since 2026-11-14 03:12 UTC were not stored' }] } };
+  const d = await dmarcNextStep(tenant, { id: 1, domain: 'a.example', rua_address: 'rua@reports.example.net' }, NOW, { reportConnect: async () => null, visibility: async () => dropped });
+  expect(d!.next_step!.why).toContain('Report storage limit reached; reports from Google since 2026-11-14 03:12 UTC were not stored');
+ });
 });

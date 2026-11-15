@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { Link } from 'react-router';
 import { fmtPct, SEVERITY_LABEL, type Fix } from '../../lib/analytics';
 import { formatNumber } from '../../lib/format';
+import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
 
 const VARIANT = { high: 'danger', medium: 'warning', low: 'outline' } as const;
 
@@ -10,7 +11,9 @@ const VARIANT = { high: 'danger', medium: 'warning', low: 'outline' } as const;
  * What to fix next, most impactful first: the sender, the share it touches, and the change to make.
  * `messages` is how many reported messages the list was built from: with none, there is no evidence either way.
  */
-export function FixList({ fixes, messages, showDomain }: { fixes: Fix[]; messages: number; showDomain?: boolean }) {
+export function FixList({ fixes, messages, showDomain, visibility }: { fixes: Fix[]; messages: number; showDomain?: boolean; /** The period's report visibility (emptyReportsState). */ visibility?: ReportVisibilityFields | null }) {
+	const notCounted = fixes.length === 0 && messages === 0 && emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
+	if (notCounted) return <EmptyState title="No counted reports for this period" description={`Fixes are ranked from counted DMARC reports. ${notCounted}`} />;
 	if (fixes.length === 0 && messages === 0) {
 		return <EmptyState title="No reports for this period" description="Fixes are ranked from DMARC reports, and none arrived in this window. Check that your DMARC record sends reports here; the domain page shows the record." />;
 	}
