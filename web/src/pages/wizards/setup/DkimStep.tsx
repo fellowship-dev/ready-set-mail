@@ -1,5 +1,6 @@
 import { Button, CheckResult, CheckResultList } from '@ready-set-mail/ui';
 import { ExternalLink, RefreshCw } from 'lucide-react';
+import { DnsHostLine } from '../../../components/domain/DnsHostLine';
 import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepNav } from '../../../components/wizard/StepNav';
@@ -44,6 +45,7 @@ export function DkimStep({ status, onNext, onSkip, onRetry, retrying }: StepProp
 
 	return (
 		<StepCard title="DKIM signing" badge={<SeverityBadge severity={severity} />}>
+			<DnsHostLine domain={status.domain} />
 			{groups.length > 0 ? (
 				<section aria-label="Signing providers" className="space-y-2">
 					<p className="text-sm text-ink-2">{plural(groups.length, 'signing provider')} detected.</p>

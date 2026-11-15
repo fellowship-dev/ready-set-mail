@@ -47,6 +47,8 @@ export interface Env {
   GOOGLE_POSTMASTER_CLIENT_ID?: string;
   GOOGLE_POSTMASTER_CLIENT_SECRET?: string;
   // Cloudflare (secrets — set via wrangler secret put)
+  CLOUDFLARE_API_BASE_URL?: string;  // testing only: a local fake Cloudflare, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
+  DOH_BASE_URL?: string;  // testing only: a local fake DoH server, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
   CLOUDFLARE_API_TOKEN?: string; // EMAIL token: email routing + DNS writes
   // Cloudflare connections (docs/cloudflare-oauth.md)
   TOKEN_ENCRYPTION_KEY?: string;     // secret: AES-256 key(s) for stored Cloudflare tokens, `kid:base64,…` (first seals); `openssl rand -base64 32`
@@ -144,6 +146,8 @@ export const coreWorker = Object.freeze({
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // OAuth relay deployment (CF_OAUTH_RELAY_SECRET set): stateless, needs no database. Inert everywhere else.
     if (relayEnabled(env) && isRelayPath(new URL(request.url).pathname)) return handleRelay(request, env);
+    // /relay/* runs the Worker first (wrangler.jsonc) and belongs to the relay deployment only: anywhere else it does not exist.
+    if (new URL(request.url).pathname.startsWith('/relay/')) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
     // Machine-readable summary for agents (llmstxt.org). Needs no database, so it also answers before setup.
     if (new URL(request.url).pathname === '/llms.txt' && (request.method === 'GET' || request.method === 'HEAD')) return llmsTxt(env, request.method === 'HEAD');
     if (!env.DB) return setupPage(env);

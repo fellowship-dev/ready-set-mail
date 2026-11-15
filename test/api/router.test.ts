@@ -305,19 +305,28 @@ describe('BASE_DOMAIN lazy init', () => {
 // ── DELETE /api/domains/:id ───────────────────────────────────
 
 describe('DELETE /api/domains/:id', () => {
-  it('returns 204 when domain exists', async () => {
+  it('returns ok with nothing kept when domain exists', async () => {
     const env = makeEnv();
     seedDomain(env, { id: 5, domain: 'acme.com', dns_record_id: null });
     const res = await handleApi(req('DELETE', '/api/domains/5'), env, ctx);
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, kept: [] });
     expect(rows(env, 'SELECT id FROM domains')).toEqual([]);
+  });
+
+  it('does not call deprovisionDomain for a domain whose authorisation record the product did not create (no dns_record_id)', async () => {
+    const env = makeEnv();
+    seedDomain(env, { id: 6, domain: 'adopted.com', dns_record_id: null });
+    vi.mocked(dnsMod.deprovisionDomain).mockClear();
+    await handleApi(req('DELETE', '/api/domains/6'), env, ctx);
+    expect(dnsMod.deprovisionDomain).not.toHaveBeenCalled();
   });
 
   it('calls deprovisionDomain when dns_record_id is set', async () => {
     const env = makeEnv();
     seedDomain(env, { id: 5, domain: 'acme.com', dns_record_id: 'cf-rec-abc' });
     await handleApi(req('DELETE', '/api/domains/5'), env, ctx);
-    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc');
+    expect(dnsMod.deprovisionDomain).toHaveBeenCalledWith(expect.anything(), 'cf-rec-abc', 'acme.com');
   });
 
   it('returns 404 when domain not found', async () => {
@@ -389,6 +398,18 @@ describe('GET /api/reports', () => {
     const res = await handleApi(req('GET', '/api/reports?limit=999'), env, ctx);
     const body = await res.json() as any;
     expect(body.reports).toHaveLength(100);
+  });
+
+  it('treats a limit that is not a number as the default, and clamps one below 1', async () => {
+    const env = makeEnv();
+    seedDomain(env, { id: 1, domain: 'acme.com' });
+    const ins = env.DB.sqlite.prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end) VALUES (1, 'g', ?, 1, 2)");
+    for (let i = 0; i < 40; i++) ins.run(`r${i}`);
+    for (const [q, n] of [['abc', 30], ['', 30], ['NaN', 30], ['0', 1], ['-5', 1], ['7', 7]] as const) {
+      const res = await handleApi(req('GET', `/api/reports?limit=${q}`), env, ctx);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).reports).toHaveLength(n);
+    }
   });
 });
 

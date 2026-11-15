@@ -40,7 +40,7 @@ export function mockApi(routes: Record<string, unknown | Handler>) {
 		calls.push({ method, path, body, headers });
 		const hit = routes[`${method} ${path}`] ?? routes[`${method} ${url.pathname}`];
 		if (hit === undefined) throw new Error(`unmocked request: ${method} ${path}`);
-		const out = typeof hit === 'function' ? (hit as Handler)({ method, path, body, headers }) : hit;
+		const out = await (typeof hit === 'function' ? (hit as Handler)({ method, path, body, headers }) : hit);
 		if (out instanceof Response) return out;
 		if (out && typeof out === 'object' && '__status' in out) {
 			const { __status, ...rest } = out as { __status: number; body?: unknown };

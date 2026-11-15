@@ -60,6 +60,17 @@ export function claimLookups(dbLike: DbLike) {
 				.where(and(eq(domains.domain, domain), ne(domains.workspace_id, workspaceId), ne(domains.verified_via, 'legacy'))).get().then((r) => !!r);
 		},
 		/**
+		 * Does another workspace hold a verified domain that is a parent or a child of `domain` (not the name itself)? A Cloudflare
+		 * zone alone must not prove a name next to someone else's verified one. Plain string comparison: no LIKE, `_` is a wildcard there.
+		 */
+		relatedOwnedByOther(domain: string, workspaceId: string): Promise<boolean> {
+			return db.select({ id: domains.id }).from(domains /* workspace-scope-exempt: ownership of related names is global */)
+				.where(and(
+					ne(domains.workspace_id, workspaceId), ne(domains.verified_via, 'legacy'), isNull(domains.evicted_at),
+					sql`(substr(${domain}, -(length(${domains.domain}) + 1)) = '.' || ${domains.domain} OR substr(${domains.domain}, -(length(${domain}) + 1)) = '.' || ${domain})`,
+				)).get().then((r) => !!r);
+		},
+		/**
 		 * The unproven (`legacy`) holder of `domain` in another workspace, if any: what a proven claim evicts.
 		 */
 		findLegacyHolder(domain: string, winnerWorkspaceId: string): Promise<{ domainId: number; workspaceId: string } | null> {

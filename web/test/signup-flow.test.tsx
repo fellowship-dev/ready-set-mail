@@ -19,6 +19,9 @@ beforeEach(() => {
 const OPEN = { signup_open: true } as const;
 const LINE = /You're adding .* You'll confirm it after you verify your email\./;
 
+/** The server's own Cloudflare token: connected, so the zone list is asked for. */
+const ENV_TOKEN = { 'GET /api/cloudflare/connections': { connections: [{ id: 'env', label: 'Server', auth_type: 'token', status: 'active', zones: [], scopes: [], implicit: true }], oauth: { available: false, scopes: [], via_relay: false }, token_paste: false, encryption_configured: false } };
+
 describe('AuthPage initialMode="signup"', () => {
 	it('opens on the create-account form when sign-up is open', async () => {
 		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN });
@@ -114,13 +117,13 @@ describe('DomainStep prefill', () => {
 		const { calls } = renderApp(<DomainStep onDomainSet={() => {}} />, { routes: { 'GET /api/zones': fail(400) } });
 		await userEvent.type(await screen.findByLabelText('Main domain'), 'https://x.com/path');
 		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-		expect(await screen.findByText('Enter a valid domain like yourdomain.com')).toBeInTheDocument();
+		expect(await screen.findByText('Enter a domain like yourdomain.com, without https:// or a path.')).toBeInTheDocument();
 		expect(calls.some((c) => c.method === 'POST')).toBe(false);
 	});
 
 	it('a prefilled domain that is not in the Cloudflare zone list switches to the typed input', async () => {
 		rememberSignupDomain('acme.io');
-		renderApp(<DomainStep onDomainSet={() => {}} />, { routes: { 'GET /api/zones': { zones: [{ id: 'z1', name: 'other.com', status: 'active' }] } } });
+		renderApp(<DomainStep onDomainSet={() => {}} />, { routes: { ...ENV_TOKEN, 'GET /api/zones': { zones: [{ id: 'z1', name: 'other.com', status: 'active' }] } } });
 		const input = (await screen.findByLabelText('Main domain')) as HTMLInputElement;
 		await waitFor(() => expect(input.tagName).toBe('INPUT'));
 		expect(input.value).toBe('acme.io');
@@ -128,7 +131,7 @@ describe('DomainStep prefill', () => {
 
 	it('a prefilled domain that is in the zone list is selected in the list', async () => {
 		rememberSignupDomain('acme.io');
-		renderApp(<DomainStep onDomainSet={() => {}} />, { routes: { 'GET /api/zones': { zones: [{ id: 'z1', name: 'acme.io', status: 'active' }] } } });
+		renderApp(<DomainStep onDomainSet={() => {}} />, { routes: { ...ENV_TOKEN, 'GET /api/zones': { zones: [{ id: 'z1', name: 'acme.io', status: 'active' }] } } });
 		await waitFor(() => expect(screen.getByRole('combobox')).toHaveTextContent('acme.io'));
 	});
 
@@ -198,7 +201,7 @@ describe('AddDomainPage prefill', () => {
 
 	it('shows the typed input when the prefilled domain is not one of the zones', async () => {
 		rememberSignupDomain('acme.io');
-		renderApp(<AddDomainPage />, { routes: { 'GET /api/zones': { zones: [{ id: 'z1', name: 'other.com', status: 'active' }] } } });
+		renderApp(<AddDomainPage />, { routes: { ...ENV_TOKEN, 'GET /api/zones': { zones: [{ id: 'z1', name: 'other.com', status: 'active' }] } } });
 		const input = (await screen.findByLabelText('Your domain')) as HTMLInputElement;
 		await waitFor(() => expect(input.tagName).toBe('INPUT'));
 		expect(input.value).toBe('acme.io');

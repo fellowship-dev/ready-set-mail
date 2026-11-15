@@ -5,7 +5,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { Section } from '../../components/states';
 import { api, errorMessage } from '../../lib/api';
-import { useSession, useWorkspaceId } from '../../lib/session';
+import { useHosted, useSession, useWorkspaceId } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
 interface Product {
     id: string;
@@ -70,6 +70,7 @@ async function copy(value: string) {
 }
 export function AgentConnectionsSection() {
     const { role } = useSession();
+    const hosted = useHosted();
     const workspace = useWorkspaceId();
     const qc = useQueryClient();
     const connections = useQuery({ queryKey: ['agent-connections', workspace], queryFn: () => api<{
@@ -84,17 +85,17 @@ export function AgentConnectionsSection() {
     catch (e) {
         setError(errorMessage(e));
     } }
-    return <Section title="Agents and product access" description="Connect interactive agents with browser consent, or issue a finite credential for an unattended product.">
+    return <Section title={hosted ? 'Agents' : 'Agents and product access'} description={hosted ? 'Let an AI agent look at your domains, with your approval.' : 'Connect interactive agents with browser consent, or issue a finite credential for an unattended product.'}>
   <Card><CardContent className="space-y-4 p-5 min-w-0">
    <p className="text-sm text-ink-2">New to agents? <Link to="/agents" className="text-brand-ink underline underline-offset-4">Agents</Link> explains what they can do here and gives you a first question to ask.</p>
-   <Field id="mcp-endpoint" label="This installation's MCP endpoint"><Input id="mcp-endpoint" readOnly value={endpoint}/></Field>
-   <Button className="max-w-full h-auto min-h-10 whitespace-normal break-words py-2" variant="secondary" onClick={() => void copy(endpoint)}>Copy MCP endpoint</Button>
-   <ol className="list-decimal pl-5 text-sm text-ink-2 space-y-1"><li>Install the Ready Set Mail plugin and set this HTTPS endpoint.</li><li>Reload your client so its MCP tools become available.</li><li>Sign in to this installation and approve exact resources, actions and expiry.</li><li>Call whoami, then request a domain health report. Installation alone does not establish a connection.</li></ol>
+   <Field id="mcp-endpoint" label={hosted ? 'Agent address' : "This installation's MCP endpoint"}><Input id="mcp-endpoint" readOnly value={endpoint}/></Field>
+   <Button className="max-w-full h-auto min-h-10 whitespace-normal break-words py-2" variant="secondary" onClick={() => void copy(endpoint)}>{hosted ? 'Copy agent address' : 'Copy MCP endpoint'}</Button>
+   {hosted ? <ol className="list-decimal pl-5 text-sm text-ink-2 space-y-1"><li>In your AI agent, add Ready Set Mail and paste the agent address above.</li><li>Restart the agent so it picks up Ready Set Mail.</li><li>Sign in here when asked and approve which domains it may see, what it may do and for how long.</li><li>Ask it for a health report on one of your domains. Adding it is not enough: it is connected once you approve.</li></ol> : <ol className="list-decimal pl-5 text-sm text-ink-2 space-y-1"><li>Install the Ready Set Mail plugin and set this HTTPS endpoint.</li><li>Reload your client so its MCP tools become available.</li><li>Sign in to this installation and approve exact resources, actions and expiry.</li><li>Call whoami, then request a domain health report. Installation alone does not establish a connection.</li></ol>}
    <h3 className="font-semibold">Your browser-authorized agents</h3>
    {connections.isPending ? <p>Loading connections…</p> : connections.isError ? <FieldError>{errorMessage(connections.error)}</FieldError> : !connections.data.connections.length ? <p className="text-sm text-ink-2">No authorized agents yet.</p> : connections.data.connections.map(c => <div key={c.principalId} className="border-t border-line pt-3 break-words"><p className="font-medium">{c.name}</p><p className="text-sm text-ink-2">{c.workspaceName ? `Workspace ${cleanName(c.workspaceName)}` : 'Workspace'} · Created {timestamp(c.createdAt)} · Expires {timestamp(c.expiresAt)} · Last used {c.lastUsedAt === undefined ? 'Not recorded' : timestamp(c.lastUsedAt)}</p>{c.revoked ? <p>Revoked</p> : <Button className="max-w-full h-auto min-h-10 whitespace-normal break-words py-2" size="sm" variant="danger" onClick={() => void revoke(c.principalId)}>Revoke {c.name}</Button>}</div>)}
    {error && <FieldError>{error}</FieldError>}
   </CardContent></Card>
-  {role === 'owner' ? <ProductAccess key={workspace}/> : <p className="text-sm text-ink-2">Only a workspace owner can manage products and service credentials.</p>}
+  {hosted ? null : role === 'owner' ? <ProductAccess key={workspace}/> : <p className="text-sm text-ink-2">Only a workspace owner can manage products and service credentials.</p>}
  </Section>;
 }
 function ProductAccess() {

@@ -14,7 +14,8 @@ test('first-run setup, add the first domain, see its records', async ({ page }) 
 
 	// A brand-new instance has no domain: straight into the setup wizard.
 	const domains = page.getByRole('heading', { name: 'Domains', level: 1 });
-	const wizard = page.getByRole('heading', { name: "What's your main domain?" });
+	// The first screen is now "Let's set up Ready Set Mail" (Cloudflare card + the manual form).
+	const wizard = page.getByRole('heading', { name: "What's your main domain?" }).or(page.getByRole('heading', { name: "Let's set up Ready Set Mail" }));
 	await expect(domains.or(wizard)).toBeVisible();
 	if (await wizard.isVisible()) {
 		await page.getByPlaceholder('yourdomain.com').fill(DOMAIN);

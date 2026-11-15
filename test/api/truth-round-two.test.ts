@@ -89,6 +89,16 @@ describe('onboarding-status: Cloudflare-zone DKIM records are DKIM-shaped', () =
   });
 });
 
+describe('onboarding-status: the DKIM scan reads every page of the zone', () => {
+  it('finds a selector that sits beyond the first 100 TXT records', async () => {
+    for (let i = 0; i < 120; i++) cf.seed('zone-acme', { type: 'TXT', name: `filler${i}.acme.com`, content: `"note ${i}"` });
+    cf.seed('zone-acme', { type: 'TXT', name: 'late._domainkey.acme.com', content: '"v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOC"' });
+    const body = await (await handleApi(get('/api/domains/1/onboarding-status'), makeEnv('r@reports.test.com', 'tok'), ctx)).json() as any;
+    expect(body.dkim.source).toBe('cf');
+    expect(body.dkim.selectors.map((s: any) => s.name)).toEqual(['late._domainkey.acme.com']);
+  });
+});
+
 describe('review item 8: report addresses compare case-insensitively', () => {
   it('dns-check and onboarding-status see our address in another letter case', async () => {
     cf.doh['_dmarc.acme.com'] = ['v=DMARC1; p=none; rua=mailto:RUA@Reports.Test.com'];

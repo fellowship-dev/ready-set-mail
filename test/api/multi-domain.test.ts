@@ -52,7 +52,7 @@ describe('GET /api/zones', () => {
     const env = makeEnv();
     const mockZones = [{ id: 'z1', name: 'example.com', status: 'active' }];
 
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: mockZones }), { status: 200 }));
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: mockZones, result_info: { page: 1, per_page: 50, count: 1, total_count: 1, total_pages: 1 } }), { status: 200 }));
 
     const res = await handleApi(req('GET', '/api/zones'), env, ctx);
     expect(res.status).toBe(200);
@@ -65,6 +65,14 @@ describe('GET /api/zones', () => {
     const env = { ...makeEnv(), CLOUDFLARE_API_TOKEN: undefined };
     const res = await handleApi(req('GET', '/api/zones'), env, ctx);
     expect(res.status).toBe(400);
+  });
+
+  it('more than 5000 zones: 502 cf_list_incomplete with a plain sentence, not an internal server error', async () => {
+    const env = makeEnv();
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true, result: [], result_info: { page: 1, per_page: 50, count: 0, total_count: 5001, total_pages: 101 } }), { status: 200 }));
+    const res = await handleApi(req('GET', '/api/zones'), env, ctx);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'Cloudflare returned more zones than Ready Set Mail can read at once (5000). Limit the token to the zones you want to manage.', code: 'cf_list_incomplete' });
   });
 
   it('returns 502 when CF API reports failure', async () => {

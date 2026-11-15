@@ -58,7 +58,7 @@ export async function signIn(page: Page) {
  if (trace && (typeof trace === 'string' ? trace !== 'off' : trace.mode !== 'off')) throw new Error('Operator E2E authentication requires Playwright tracing off');
  if (await reuseSavedSession(page)) {
   await page.goto('/');
-  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" })).or(page.getByRole('heading', { name: "Let's set up Ready Set Mail" }))).toBeVisible();
   return;
  }
  const operator = operatorCredentials();
@@ -82,5 +82,5 @@ export async function signIn(page: Page) {
  const file = process.env.E2E_SESSION_FILE;
  if (file) writeFileSync(file, JSON.stringify({ cookies: (await page.context().storageState()).cookies }), { mode: 0o600 });
  await page.goto('/');
- await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" }))).toBeVisible();
+ await expect(page.getByRole('navigation', { name: 'Main' }).or(page.getByRole('heading', { name: "What's your main domain?" })).or(page.getByRole('heading', { name: "Let's set up Ready Set Mail" }))).toBeVisible();
 }

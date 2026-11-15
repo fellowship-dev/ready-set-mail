@@ -14,8 +14,9 @@
 
 import { MtaStsMode } from '../db/types';
 import type { TenantContext } from '../tenancy/context';
-import { CfNotFoundError, cfErrorText, type CfDnsRecordInput } from '../tenancy/cf-client';
+import { CfNotFoundError, cfErrorText, type CfDnsRecordInput, type DnsDeleteExpect } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
+import { fromDeleted, keptFromError, type DnsRemoval } from '../dns/removal';
 import {
   buildPolicyFile,
   createResolver,
@@ -102,18 +103,6 @@ async function createDnsRecord(
   return created.id;
 }
 
-/** Patch a TXT record that lives in `domain`'s zone. */
-export async function patchCfDnsRecord(
-  tenant: TenantContext,
-  domain: string,
-  recordId: string,
-  content: string,
-  audit?: MtaStsAuditOpts & { beforeContent?: string },
-): Promise<void> {
-  const auditPayload = audit ? { opts: audit, beforeContent: audit.beforeContent } : undefined;
-  await patchDnsRecord(tenant, domain, recordId, content, auditPayload);
-}
-
 async function patchDnsRecord(
   tenant: TenantContext,
   domain: string,
@@ -156,24 +145,28 @@ async function deleteDnsRecord(
   tenant: TenantContext,
   domain: string,
   recordId: string,
+  expect: DnsDeleteExpect,
   audit?: MtaStsAuditOpts,
-): Promise<void> {
-  const cf = await tenant.cfFor(domain);
-  const zone = await cf.zoneFor(domain);
+): Promise<DnsRemoval> {
+  let removal: DnsRemoval;
   try {
-    let deleted = await cf.deleteDnsRecord(zone.id, recordId); // already gone is fine
+    const cf = await tenant.cfFor(domain);
+    const zone = await cf.zoneFor(domain);
+    let deleted = await cf.deleteDnsRecord(zone.id, recordId, expect); // false: it was already gone
     const legacy = deleted ? undefined : tenant.legacyZoneId(zone.id);
     if (legacy) {
       // Not in the domain's zone: installs from before per-domain zones created it in the base zone.
-      deleted = await cf.deleteDnsRecord(legacy, recordId);
+      deleted = await cf.deleteDnsRecord(legacy, recordId, expect);
       if (deleted) console.warn(`[mta-sts] record ${recordId} was in the base zone (legacy location); deleted there`);
     }
+    removal = fromDeleted(deleted);
   } catch (e) {
     console.warn(`[mta-sts] delete DNS record ${recordId}: ${cfErrorText(e)}`);
-    return;
+    return keptFromError(e);
   }
 
-  if (audit) {
+  // Only a record that was really deleted is audited as a deletion.
+  if (audit && removal.state === 'deleted') {
     logAudit(tenant, {
       actor_id: audit.actor_id,
       actor_email: audit.actor_email,
@@ -185,6 +178,7 @@ async function deleteDnsRecord(
       before_value: { record_id: recordId },
     }, audit.ctx);
   }
+  return removal;
 }
 
 /**
@@ -287,17 +281,26 @@ export async function updateMtaStsTxtRecord(
   await patchDnsRecord(tenant, domain, recordId, content, auditPayload);
 }
 
+/** One of the MTA-STS records and what became of it on disable. */
+export interface MtaStsRemoval { id: string; type: string; name: string; removal: DnsRemoval }
+
 /**
- * Remove all three DNS records. Called on disable.
+ * Remove all three DNS records. Called on disable. Says what happened to each: a record the customer changed is kept
+ * (never deleted, never audited as deleted), and the caller reports it.
  */
 export async function deprovisionMtaSts(
   tenant: TenantContext,
   domain: string,
   ids: { mta_sts_record_id: string | null; tls_rpt_record_id: string | null; cname_record_id: string | null },
   audit?: MtaStsAuditOpts,
-): Promise<void> {
-  const tasks = [ids.mta_sts_record_id, ids.tls_rpt_record_id, ids.cname_record_id]
-    .filter(Boolean)
-    .map(id => deleteDnsRecord(tenant, domain, id!, audit).catch(e => console.warn(`[mta-sts] deprovision ${id}:`, e)));
-  await Promise.all(tasks);
+): Promise<MtaStsRemoval[]> {
+  const tasks = [
+    { id: ids.mta_sts_record_id, type: 'TXT', name: `_mta-sts.${domain}`, expect: { type: 'TXT', name: `_mta-sts.${domain}`, content: /^\s*"?v=STSv1\b/i } },
+    { id: ids.tls_rpt_record_id, type: 'TXT', name: `_smtp._tls.${domain}`, expect: { type: 'TXT', name: `_smtp._tls.${domain}`, content: /^\s*"?v=TLSRPTv1\b/i } },
+    { id: ids.cname_record_id, type: 'CNAME', name: `mta-sts.${domain}`, expect: { type: 'CNAME', name: `mta-sts.${domain}` } },
+  ].filter(t => t.id);
+  return Promise.all(tasks.map(async (t): Promise<MtaStsRemoval> => ({
+    id: t.id!, type: t.type, name: t.name,
+    removal: await deleteDnsRecord(tenant, domain, t.id!, t.expect, audit).catch((e): DnsRemoval => { console.warn(`[mta-sts] deprovision ${t.id}:`, e); return keptFromError(e); }),
+  })));
 }

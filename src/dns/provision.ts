@@ -15,6 +15,7 @@
 import type { TenantContext } from '../tenancy/context';
 import { CfNetworkError, CfNotConfiguredError, CfZoneNotFoundError, cfErrorText, type CfClient } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
+import { fromDeleted, keptFromError, type DnsRemoval } from './removal';
 
 /** Optional audit context — pass to enable self-logging of DNS mutations. */
 export interface DnsAuditOpts {
@@ -104,28 +105,33 @@ export async function provisionDomain(
 /**
  * Deletes the cross-domain DMARC authorization record.
  * Call this when a domain is removed. Idempotent — 404 is silently ignored.
+ * Says what happened (src/dns/removal.ts): deleted, already gone (404), or kept with the reason (the customer changed it, or Cloudflare refused).
  */
 export async function deprovisionDomain(
   tenant: TenantContext,
   recordId: string,
+  /** The monitored domain whose authorization record this is: the write policy checks the delete by name. */
+  domain: string,
   audit?: DnsAuditOpts,
-): Promise<void> {
+): Promise<DnsRemoval> {
   const reportsDomain = tenant.settings.reportsDomain;
 
-  // If CF creds aren't configured, there's nothing to clean up
-  if (!tenant.hasCloudflare() || !reportsDomain) return;
+  // Without a Cloudflare connection or a reports domain nothing can be deleted: the record stays, and the caller says so.
+  if (!tenant.hasCloudflare()) return { state: 'kept', reason: 'no Cloudflare connection is available to delete it' };
+  if (!reportsDomain) return { state: 'kept', reason: 'no reports domain is set, so the record cannot be found to delete it' };
+  let result: DnsRemoval;
 
   try {
     const cf = await tenant.cfFor(reportsDomain);
     const zone = await cf.zoneFor(reportsDomain);
-    await cf.deleteDnsRecord(zone.id, recordId);
+    result = fromDeleted(await cf.deleteDnsRecord(zone.id, recordId, { type: 'TXT', name: `${domain}._report._dmarc.${reportsDomain}`, content: 'v=DMARC1;' }));
   } catch (e) {
     // Domain delete must still succeed: warn and move on.
     console.warn(`deprovisionDomain: could not delete record ${recordId}: ${e instanceof Error ? e.message : String(e)}`);
-    return;
+    return keptFromError(e);
   }
 
-  if (audit) {
+  if (audit && result.state === 'deleted') {
     logAudit(tenant, {
       actor_id: audit.actor_id,
       actor_email: audit.actor_email,
@@ -136,4 +142,5 @@ export async function deprovisionDomain(
       before_value: { record_id: recordId },
     }, audit.ctx);
   }
+  return result;
 }

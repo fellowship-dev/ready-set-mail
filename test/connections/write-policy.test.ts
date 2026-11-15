@@ -9,7 +9,13 @@ const REC = 'c'.repeat(32);
 const zones = [{ zone_id: ZONE, zone_name: 'acme.com', cf_account_id: 'acct1' }] as any;
 
 function client(mode: Mode) {
-  const fetch = vi.fn(async () => new Response(JSON.stringify({ success: true, result: { id: REC } }), { status: 200 }));
+  // A list answers an empty page with its paging block; a single record answers the managed _dmarc TXT; anything else {id}.
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    const p = new URL(url).pathname;
+    if (/dns_records$/.test(p) && (init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ success: true, result: [], result_info: { page: 1, per_page: 50, count: 0, total_count: 0, total_pages: 1 } }), { status: 200 });
+    if (/dns_records\/[^/]+$/.test(p) && (init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ success: true, result: { id: REC, ...txt('_dmarc.acme.com') } }), { status: 200 });
+    return new Response(JSON.stringify({ success: true, result: { id: REC } }), { status: 200 });
+  });
   const cf = new CfClient('tok', { fetch: fetch as unknown as typeof globalThis.fetch, mode, policy: policyFor('conn1', zones, [], 'acct1', mode) });
   return { cf, fetch };
 }
@@ -23,8 +29,12 @@ describe('a connection-backed client (saas) sends only managed DNS writes', () =
     ['name outside the zone', cf => cf.createDnsRecord(ZONE, txt('_dmarc.evil.com')), CfRecordNotAllowedError],
     ['other zone id', cf => cf.createDnsRecord(OTHER, txt('_dmarc.acme.com')), CfZoneNotAllowedError],
     ['PATCH renaming to an unmanaged name', cf => cf.patchDnsRecord(ZONE, REC, { type: 'TXT', name: 'www.acme.com', content: 'x' }), CfRecordNotAllowedError],
-    ['DELETE of a malformed id', cf => cf.deleteDnsRecord(ZONE, 'not-hex'), CfRecordNotAllowedError],
-    ['DELETE in another zone', cf => cf.deleteDnsRecord(OTHER, REC), CfZoneNotAllowedError],
+    ['DELETE of a malformed id', cf => cf.deleteDnsRecord(ZONE, 'not-hex', { type: 'TXT', name: '_dmarc.acme.com' }), CfRecordNotAllowedError],
+    ['DELETE in another zone', cf => cf.deleteDnsRecord(OTHER, REC, { type: 'TXT', name: '_dmarc.acme.com' }), CfZoneNotAllowedError],
+    ['DELETE of an MX record', cf => cf.deleteDnsRecord(ZONE, REC, { type: 'MX', name: 'reports.acme.com' }), CfRecordNotAllowedError],
+    ['DELETE of an unmanaged TXT', cf => cf.deleteDnsRecord(ZONE, REC, { type: 'TXT', name: 'www.acme.com' }), CfRecordNotAllowedError],
+    ['DELETE of a record outside the zone', cf => cf.deleteDnsRecord(ZONE, REC, { type: 'TXT', name: '_dmarc.evil.com' }), CfRecordNotAllowedError],
+    ['DELETE that names no record', cf => cf.request('DELETE', `/zones/${ZONE}/dns_records/${REC}`), CfRecordNotAllowedError],
     ['path tricks', cf => cf.request('DELETE', `/zones/${ZONE}/dns_records/../settings/x`), Error],
     ['dns_records sub-path (batch)', cf => cf.request('POST', `/zones/${ZONE}/dns_records/batch`, { body: {} }), CfRecordNotAllowedError],
     ['zone settings write', cf => cf.request('PATCH', `/zones/${ZONE}/settings/ssl`, { body: { value: 'off' } }), CfRecordNotAllowedError],
@@ -51,13 +61,18 @@ describe('a connection-backed client (saas) sends only managed DNS writes', () =
     ['DMARC TXT create', cf => cf.createDnsRecord(ZONE, txt('_dmarc.acme.com'))],
     ['SPF update', cf => cf.patchDnsRecord(ZONE, REC, { content: 'v=spf1 -all' })],
     ['mta-sts CNAME to the vouched host', cf => cf.createDnsRecord(ZONE, { type: 'CNAME', name: 'mta-sts.acme.com', content: 'w.workers.dev' }, { cnameTargets: ['w.workers.dev'] })],
-    ['record delete', cf => cf.deleteDnsRecord(ZONE, REC)],
     ['record list', cf => cf.listDnsRecords(ZONE, { type: 'TXT' })],
     ['workers routes read', cf => cf.request('GET', `/zones/${ZONE}/workers/routes`)],
     ['zone read', cf => cf.getZone(ZONE)],
     ['token verify', cf => cf.verifyToken()],
     ['zone name lookup in scope', cf => cf.request('GET', '/zones', { query: { name: 'acme.com' } })],
   ];
+  it('allows the delete of a managed TXT: the record is read, then deleted', async () => {
+    const { cf, fetch } = client('saas');
+    await expect(cf.deleteDnsRecord(ZONE, REC, { type: 'TXT', name: '_dmarc.acme.com' })).resolves.toBe(true);
+    expect(fetch.mock.calls.map(c => (c[1] as RequestInit | undefined)?.method)).toEqual(['GET', 'DELETE']);
+  });
+
   it.each(allowed)('allows %s (fetch called once)', async (_t, run) => {
     const { cf, fetch } = client('saas');
     await run(cf);

@@ -13,6 +13,23 @@ import type { Mode } from './mode';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 
+/**
+ * Testing only: CLOUDFLARE_API_BASE_URL points the client at a local fake Cloudflare (e2e/support/fake-cloudflare.mjs).
+ * It is honoured ONLY for `http://127.0.0.1:<port>` or `http://localhost:<port>` (strict parse: no userinfo, path,
+ * query or fragment), so a stray or malicious value can never send a real token to a remote host. Anything else is
+ * ignored and the real Cloudflare API is used.
+ */
+export function cfApiBase(override?: string | null): string {
+  if (!override) return CF_API;
+  const raw = override.trim();
+  if (!/^http:\/\/(127\.0\.0\.1|localhost):[0-9]{1,5}\/?$/.test(raw)) return CF_API;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && Number(u.port) > 0) return `http://${u.hostname}:${u.port}/client/v4`;
+  } catch { /* not a URL: ignored */ }
+  return CF_API;
+}
+
 export interface CfErrorDetail { code?: number; message: string }
 
 /** Base class for every failure talking to Cloudflare. */
@@ -67,6 +84,13 @@ export class CfRecordNotAllowedError extends Error {
   constructor(readonly reason: string, readonly request?: { method?: string; type?: string; name?: string; path?: string }) {
     super(`Refused Cloudflare write: ${reason}`);
     this.name = 'CfRecordNotAllowedError';
+  }
+}
+/** A delete was refused because the record under that id is no longer the one the caller meant to remove (it was changed). */
+export class CfRecordChangedError extends CfRecordNotAllowedError {
+  constructor(reason: string, request?: { method?: string; type?: string; name?: string; path?: string }) {
+    super(reason, request);
+    this.name = 'CfRecordChangedError';
   }
 }
 /** None of the domain's candidate zones exists on the token's Cloudflare account. */
@@ -143,6 +167,8 @@ export interface CfClientOptions {
    * request with, or null. (OAuth access tokens: refresh once, then retry.)
    */
   onUnauthorized?: () => Promise<string | null>;
+  /** The CLOUDFLARE_API_BASE_URL env value; see cfApiBase (localhost only, otherwise ignored). */
+  apiBaseUrl?: string | null;
 }
 
 export interface CfRequestOptions {
@@ -152,9 +178,82 @@ export interface CfRequestOptions {
   dns?: DnsWriteContext;
 }
 
-export interface DnsWriteContext { cnameTargets?: string[]; allowedApexes?: string[] }
+/** What a DNS record must be for a delete to go ahead; the record stored under the id is read first and must match. */
+export interface DnsDeleteExpect {
+  type: string;
+  name: string;
+  /** When known: the content it must have (a string compares ignoring quotes, case and a trailing dot; a RegExp is tested on the raw content). */
+  content?: string | RegExp;
+}
 
-interface CfEnvelope<T> { success?: boolean; result?: T; errors?: CfErrorDetail[] }
+export interface DnsWriteContext {
+  cnameTargets?: string[];
+  allowedApexes?: string[];
+  /** DELETE only: the record being removed. The write policy decides on this, so a delete is as constrained as a create. */
+  expect?: DnsDeleteExpect;
+}
+
+/** Cloudflare's paging block of a list answer. */
+export interface CfResultInfo { page?: number; per_page?: number; count?: number; total_count?: number; total_pages?: number }
+
+interface CfEnvelope<T> { success?: boolean; result?: T; errors?: CfErrorDetail[]; result_info?: CfResultInfo }
+
+/** A list that could not be read completely: an error, a missing or inconsistent page, or more pages than the cap. */
+export class CfIncompleteListError extends Error {
+  constructor(readonly path: string, readonly why: string) {
+    super(`Cloudflare list ${path} could not be read completely: ${why}`);
+    this.name = 'CfIncompleteListError';
+  }
+}
+
+/** The plain sentence for a list Cloudflare returned in full only beyond what can be read (zones and accounts: the token is too wide). */
+export function incompleteListMessage(e: CfIncompleteListError): string {
+  const what = e.path === '/zones' ? 'zones' : e.path === '/accounts' ? 'accounts' : null;
+  if (what && /more than/.test(e.why)) return `Cloudflare returned more ${what} than Ready Set Mail can read at once (${what === 'zones' ? 5000 : LIST_MAX_ITEMS}). Limit the token to the ${what} you want to manage.`;
+  return `Cloudflare returned ${what ? `the ${what}` : 'a list'} in a way that could not be read completely (${e.why}). Try again in a moment.`;
+}
+
+export const LIST_PER_PAGE = 50;
+export const LIST_MAX_PAGES = 20;
+export const LIST_MAX_ITEMS = 1000;
+
+/**
+ * Reads every page of a list through `getPage`, trusting only what `result_info` proves: each page must be the page asked
+ * for and hold exactly the rows its place in `total_count` implies, the total must not change, and the whole must fit
+ * the caps. Anything else throws CfIncompleteListError, so a caller never decides on a partial list.
+ */
+export async function readAllPages<T>(
+  path: string,
+  getPage: (page: number, perPage: number) => Promise<{ result: T[] | null | undefined; info?: CfResultInfo }>,
+  caps: { perPage?: number; maxPages?: number; maxItems?: number } = {},
+): Promise<T[]> {
+  const perPage = caps.perPage ?? LIST_PER_PAGE;
+  const maxPages = caps.maxPages ?? LIST_MAX_PAGES;
+  const maxItems = caps.maxItems ?? LIST_MAX_ITEMS;
+  const bad = (why: string) => new CfIncompleteListError(path, why);
+  const out: T[] = [];
+  let total: number | null = null;
+  let size = perPage;
+  for (let page = 1; ; page++) {
+    if (page > maxPages) throw bad(`more than ${maxPages} pages`);
+    const { result, info } = await getPage(page, perPage);
+    if (!Array.isArray(result)) throw bad(`page ${page} has no list`);
+    if (!info || !Number.isInteger(info.total_count) || (info.total_count as number) < 0) throw bad(`page ${page} has no total count`);
+    if (info.page !== page) throw bad(`asked for page ${page}, got ${info.page ?? 'none'}`);
+    const t = info.total_count as number;
+    if (total !== null && t !== total) throw bad('the total changed while reading');
+    if (page === 1) {
+      if (!Number.isInteger(info.per_page) || (info.per_page as number) < 1 || (info.per_page as number) > perPage) throw bad('implausible page size');
+      size = info.per_page as number;
+      total = t;
+      if (t > maxItems || Math.ceil(t / size) > maxPages) throw bad(`${t} entries is more than ${maxItems} entries or ${maxPages} pages`);
+    } else if (info.per_page !== size) throw bad('the page size changed while reading');
+    const expected = Math.min(size, (total as number) - (page - 1) * size);
+    if (result.length !== expected) throw bad(`page ${page} has ${result.length} entries, expected ${expected}`);
+    out.push(...result);
+    if (out.length >= (total as number)) return out;
+  }
+}
 
 /**
  * Candidate zone names for a domain, longest first, never below two labels:
@@ -186,6 +285,7 @@ export class CfClient {
   readonly #zones = new Map<string, Promise<CfZone | null>>();
   readonly #zoneNames = new Map<string, string>();
   readonly #mode: Mode;
+  readonly #base: string;
   readonly #dnsWritePolicy?: CfClientOptions['dnsWritePolicy'];
 
   /** `token` may be a function, called for every request (so an expiring token is refreshed lazily). */
@@ -195,6 +295,7 @@ export class CfClient {
     this.#policy = opts.policy;
     this.#onUnauthorized = opts.onUnauthorized;
     this.#mode = opts.mode ?? 'selfhost';
+    this.#base = cfApiBase(opts.apiBaseUrl);
     this.#dnsWritePolicy = opts.dnsWritePolicy;
     // Looked up per call (not captured) so stubbing globalThis.fetch in tests works.
     this.#fetch = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -214,7 +315,20 @@ export class CfClient {
     assertSafePath(path);
     this.#policy?.request(method.toUpperCase(), path, opts.query);
     this.#checkDnsWrite(method.toUpperCase(), path, opts.body, opts.dns);
+    return (await this.#send<T>(method, path, opts, false)).result as T;
+  }
+
+  /** Like request(), with the answer's paging block. */
+  async requestPage<T = unknown>(method: string, path: string, opts: CfRequestOptions = {}): Promise<{ result: T; info?: CfResultInfo }> {
+    assertSafePath(path);
+    this.#policy?.request(method.toUpperCase(), path, opts.query);
+    this.#checkDnsWrite(method.toUpperCase(), path, opts.body, opts.dns);
     return this.#send<T>(method, path, opts, false);
+  }
+
+  /** Every entry of a list, 50 per page, following result_info; throws CfIncompleteListError rather than return part of it. */
+  listAll<T>(path: string, query: CfRequestOptions['query'] = {}, caps?: { maxPages?: number; maxItems?: number }): Promise<T[]> {
+    return readAllPages<T>(path, (page, perPage) => this.requestPage<T[]>('GET', path, { query: { ...query, per_page: perPage, page } }), caps);
   }
 
   /** Every non-GET request touching dns_records passes the write policy here, the one choke point. */
@@ -232,8 +346,8 @@ export class CfClient {
     const w = {
       method,
       zoneName: this.#zoneNames.get(zoneId) ?? this.#policy?.zoneName?.(zoneId),
-      type: b.type as string | undefined,
-      name: b.name as string | undefined,
+      type: method === 'DELETE' ? ctx?.expect?.type : (b.type as string | undefined),
+      name: method === 'DELETE' ? ctx?.expect?.name : (b.name as string | undefined),
       content: b.content as string | undefined,
       patchKeys: Object.keys(b),
       cnameTargets: ctx?.cnameTargets,
@@ -243,12 +357,12 @@ export class CfClient {
     else assertDnsWriteAllowed({ ...w, mode: this.#mode });
   }
 
-  async #send<T>(method: string, path: string, opts: CfRequestOptions, retried: boolean): Promise<T> {
-    const url = new URL(CF_API + path);
+  async #send<T>(method: string, path: string, opts: CfRequestOptions, retried: boolean): Promise<{ result: T; info?: CfResultInfo }> {
+    const url = new URL(this.#base + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
-    const shown = url.pathname.slice(new URL(CF_API).pathname.length) + url.search;
+    const shown = url.pathname.slice(new URL(this.#base).pathname.length) + url.search;
 
     // Resolved first: a token that cannot be produced (broken connection) is its own error, not a network failure.
     const bearer = await this.#bearer();
@@ -266,7 +380,7 @@ export class CfClient {
     let data: CfEnvelope<T> = {};
     try { data = await res.json() as CfEnvelope<T>; } catch { /* non-JSON body */ }
 
-    if (res.ok && data.success !== false) return data.result as T;
+    if (res.ok && data.success !== false) return { result: data.result as T, info: data.result_info };
 
     const details = data.errors ?? [];
     const reason = details.map(e => e.message).join(', ') || `HTTP ${res.status}`;
@@ -334,26 +448,28 @@ export class CfClient {
     return hit;
   }
 
-  getZone(zoneId: string): Promise<{ id: string; name: string; account?: { id: string } }> {
+  getZone(zoneId: string): Promise<{ id: string; name: string; status?: string; type?: string; name_servers?: string[]; account?: { id: string } }> {
     return this.request('GET', `/zones/${zoneId}`);
   }
 
-  /** Every active zone the token can see (paged: Cloudflare caps a page at 50). */
-  async listZones(): Promise<{ id: string; name: string; status: string; account?: { id: string } }[]> {
-    const PER_PAGE = 50;
-    const out: { id: string; name: string; status: string; account?: { id: string } }[] = [];
-    for (let page = 1; page <= 40; page++) {
-      const batch = (await this.request<{ id: string; name: string; status: string; account?: { id: string } }[]>('GET', '/zones', { query: { per_page: PER_PAGE, page, status: 'active' } })) ?? [];
-      out.push(...batch);
-      if (batch.length < PER_PAGE) break;
-    }
-    return out;
+  /** Every active zone the token can see (50 a page, following result_info; an unreadable or oversized list throws rather than return part of it). */
+  listZones(): Promise<{ id: string; name: string; status: string; account?: { id: string } }[]> {
+    return readAllPages<{ id: string; name: string; status: string; account?: { id: string } }>(
+      '/zones',
+      (page, perPage) => this.requestPage('GET', '/zones', { query: { per_page: perPage, page, status: 'active' } }),
+      { maxPages: 100, maxItems: 5000 },
+    );
   }
 
   // ── DNS records ─────────────────────────────────────────────
 
+  /**
+   * Every record matching the filters (all pages; CfIncompleteListError when the list cannot be read in full).
+   * `per_page` is the older single-page read: one page of that size, for callers that only look at a name's first records.
+   */
   listDnsRecords(zoneId: string, query: { type?: string; name?: string; per_page?: number }): Promise<CfDnsRecord[]> {
-    return this.request<CfDnsRecord[]>('GET', `/zones/${zoneId}/dns_records`, { query }).then(r => r ?? []);
+    if (query.per_page !== undefined) return this.request<CfDnsRecord[]>('GET', `/zones/${zoneId}/dns_records`, { query }).then(r => r ?? []);
+    return this.listAll<CfDnsRecord>(`/zones/${zoneId}/dns_records`, query);
   }
 
   createDnsRecord(zoneId: string, record: CfDnsRecordInput, dns?: DnsWriteContext): Promise<CfDnsRecord> {
@@ -364,10 +480,24 @@ export class CfClient {
     return this.request('PATCH', `/zones/${zoneId}/dns_records/${recordId}`, { body: patch, dns });
   }
 
-  /** Idempotent: a record that is already gone is not an error. Returns whether something was deleted. */
-  async deleteDnsRecord(zoneId: string, recordId: string): Promise<boolean> {
+  /**
+   * Idempotent: a record that is already gone is not an error. Returns whether something was deleted.
+   * The write policy judges the type and name the caller claims, so the record stored under `recordId` is read first and
+   * must be that record (type, name and, when given, content); otherwise nothing is deleted.
+   */
+  async deleteDnsRecord(zoneId: string, recordId: string, expect: DnsDeleteExpect): Promise<boolean> {
+    const path = `/zones/${zoneId}/dns_records/${recordId}`;
+    // Refused before any request leaves the Worker (zone, id shape, managed type and name).
+    assertSafePath(path);
+    this.#policy?.request('DELETE', path);
+    this.#checkDnsWrite('DELETE', path, undefined, { expect });
     try {
-      await this.request('DELETE', `/zones/${zoneId}/dns_records/${recordId}`);
+      const stored = await this.request<Pick<CfDnsRecord, 'type' | 'name' | 'content'>>('GET', path);
+      const norm = (v: string) => String(v ?? '').trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
+      const same = norm(stored?.type) === norm(expect.type) && norm(stored?.name) === norm(expect.name)
+        && (expect.content === undefined || (typeof expect.content === 'string' ? norm(stored?.content) === norm(expect.content) : expect.content.test(String(stored?.content ?? ''))));
+      if (!same) throw new CfRecordChangedError(`the record ${recordId} is not the ${expect.type} record ${expect.name} that was meant to be removed`, { method: 'DELETE', type: stored?.type, name: stored?.name, path });
+      await this.request('DELETE', path, { dns: { expect } });
       return true;
     } catch (e) {
       if (!(e instanceof CfNotFoundError)) throw e;
@@ -384,7 +514,7 @@ export class CfClient {
 
   /** Cloudflare accounts the token can see. */
   listAccounts(): Promise<{ id: string; name: string }[]> {
-    return this.request<{ id: string; name: string }[]>('GET', '/accounts', { query: { per_page: 50 } }).then(r => r ?? []);
+    return this.listAll<{ id: string; name: string }>('/accounts');
   }
 
   workersSubdomain(cfAccountId: string): Promise<{ subdomain: string } | null> {

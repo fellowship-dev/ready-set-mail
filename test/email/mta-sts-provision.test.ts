@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../../src/audit/log', () => ({ logAudit: vi.fn() }));
 
-import { provisionMtaSts, deprovisionMtaSts, updateMtaStsTxtRecord, patchCfDnsRecord } from '../../src/email/mta-sts';
+import { provisionMtaSts, deprovisionMtaSts, updateMtaStsTxtRecord } from '../../src/email/mta-sts';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { makeTenant } from '../helpers/tenant';
 
@@ -99,18 +99,22 @@ describe('MTA-STS record updates and removal stay in the domain\'s zone', () => 
     expect(cf.forZone('zone-acme')).toHaveLength(0);
   });
 
-  it('patchCfDnsRecord targets the zone of the domain given', async () => {
-    const cf = world();
-    const rec = cf.seed('zone-other', { type: 'TXT', name: '_dmarc.other-company.org', content: 'v=DMARC1; p=none' });
-    await patchCfDnsRecord(tenant(), 'other-company.org', rec.id, 'v=DMARC1; p=reject');
-    expect(cf.records.get('zone-other')![0].content).toBe('v=DMARC1; p=reject');
-  });
-
   it('deprovision deletes from the right zone and tolerates records that are already gone', async () => {
     const cf = world();
-    const a = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
+    const a = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'v=STSv1; id=1' });
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: a.id, tls_rpt_record_id: 'gone', cname_record_id: null });
     expect(cf.records.get('zone-other')).toEqual([]);
+  });
+});
+
+describe('deprovision removes only the record it created', () => {
+  it('a record stored under the id that is not an MTA-STS policy is left alone', async () => {
+    const cf = world();
+    const rec = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'something else entirely' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: rec.id, tls_rpt_record_id: null, cname_record_id: null });
+    expect(cf.records.get('zone-other')).toHaveLength(1);
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/not the TXT record/);
   });
 });
 
@@ -125,18 +129,18 @@ describe('legacy records in the base zone (installs from before per-domain zones
     expect(warn.mock.calls.flat().join(' ')).toMatch(/legacy location/);
   });
 
-  it('deletes a record that is only in the base zone, and logs it', async () => {
+  it('does not delete a record in the base zone whose name lies outside that zone: the write policy refuses the delete, and it is only warned about', async () => {
     const cf = world();
     const rec = cf.seed('zone-acme', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: rec.id, tls_rpt_record_id: null, cname_record_id: null });
-    expect(cf.records.get('zone-acme')).toEqual([]);
-    expect(warn.mock.calls.flat().join(' ')).toMatch(/legacy location/);
+    expect(cf.records.get('zone-acme')).toHaveLength(1);
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/outside zone/);
   });
 
   it('prefers the domain\'s own zone, and does not touch the base zone when the record is there', async () => {
     const cf = world();
-    const own = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'x' });
+    const own = cf.seed('zone-other', { type: 'TXT', name: '_mta-sts.other-company.org', content: 'v=STSv1; id=1' });
     await deprovisionMtaSts(tenant(), 'other-company.org', { mta_sts_record_id: own.id, tls_rpt_record_id: null, cname_record_id: null });
     expect(cf.records.get('zone-other')).toEqual([]);
     expect(cf.calls.filter(c => c.zoneId === 'zone-acme' && c.method === 'DELETE')).toHaveLength(0);

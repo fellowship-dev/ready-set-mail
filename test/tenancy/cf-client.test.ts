@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { inspect } from 'node:util';
 import {
-  CfApiError, CfAuthError, CfClient, CfNetworkError, CfNotConfiguredError, CfNotFoundError, CfZoneNotFoundError,
-  cfErrorText, zoneCandidates,
+  CfApiError, CfAuthError, CfClient, CfIncompleteListError, CfNetworkError, CfRecordNotAllowedError, CfNotConfiguredError, CfNotFoundError, CfZoneNotFoundError,
+  cfApiBase, cfErrorText, zoneCandidates,
 } from '../../src/tenancy/cf-client';
 import { FakeCloudflare } from '../helpers/cf-fake';
 
@@ -138,7 +138,7 @@ describe('CfClient typed errors', () => {
 
   it('delete of a missing record is not an error', async () => {
     const fake = new FakeCloudflare({});
-    await expect(clientFor(fake).deleteDnsRecord('z', 'missing')).resolves.toBe(false);
+    await expect(clientFor(fake).deleteDnsRecord('z', 'missing', { type: 'TXT', name: '_dmarc.acme.com' })).resolves.toBe(false);
   });
 
   it('refuses to be built without a token', () => {
@@ -178,5 +178,147 @@ describe('TenantContext never leaks the env secrets', () => {
     expect(out).not.toContain(TOKEN);
     expect(out).not.toContain('api-key-secret');
     expect(out).toContain('ws_default');
+  });
+});
+
+describe('CLOUDFLARE_API_BASE_URL guard', () => {
+  const REAL = 'https://api.cloudflare.com/client/v4';
+  it('honours only http://127.0.0.1:<port> and http://localhost:<port>', () => {
+    expect(cfApiBase('http://127.0.0.1:8788')).toBe('http://127.0.0.1:8788/client/v4');
+    expect(cfApiBase('http://localhost:9999/')).toBe('http://localhost:9999/client/v4');
+  });
+  it('ignores everything else and uses the real API', () => {
+    for (const v of [undefined, '', 'not a url', 'https://127.0.0.1:8788', 'http://127.0.0.1', 'http://evil.example:80', 'http://127.0.0.1.evil.example:80',
+      'http://localhost:80@evil.example', 'http://user:pw@localhost:80', 'http://127.0.0.1:8788/path', 'http://localhost:8788?x=1', 'http://localhost:8788#x',
+      'http://[::1]:8788', 'http://0.0.0.0:8788', 'http://localhost.evil.example:8788', 'ftp://localhost:21']) {
+      expect(cfApiBase(v), String(v)).toBe(REAL);
+    }
+  });
+  it('a client sends its requests to the honoured base, and to the real API otherwise', async () => {
+    const urls: string[] = [];
+    const fetchStub = (async (u: string) => { urls.push(u); return new Response(JSON.stringify({ success: true, result: [], result_info: { page: 1, per_page: 50, count: 0, total_count: 0, total_pages: 1 } })); }) as unknown as typeof fetch;
+    await new CfClient(TOKEN, { fetch: fetchStub, apiBaseUrl: 'http://127.0.0.1:8788' }).listAccounts();
+    await new CfClient(TOKEN, { fetch: fetchStub, apiBaseUrl: 'https://evil.example' }).listAccounts();
+    expect(urls[0]).toBe('http://127.0.0.1:8788/client/v4/accounts?per_page=50&page=1');
+    expect(urls[1]).toBe(`${REAL}/accounts?per_page=50&page=1`);
+  });
+});
+
+describe('CfClient.listAll / listDnsRecords: every page, or an error', () => {
+  const Zid = 'z1';
+  const seed = (fake: FakeCloudflare, n: number) => { for (let i = 0; i < n; i++) fake.seed(Zid, { type: 'TXT', name: 'many.acme.com', content: `v=${i}` }); };
+  const asked = (fake: FakeCloudflare) => fake.calls.map(c => { const u = new URL(c.url); return `${u.searchParams.get('page')}/${u.searchParams.get('per_page')}`; });
+
+  it('reads 50 per page until total_count is reached', async () => {
+    const fake = new FakeCloudflare({});
+    seed(fake, 120);
+    expect(await clientFor(fake).listDnsRecords(Zid, { type: 'TXT', name: 'many.acme.com' })).toHaveLength(120);
+    expect(asked(fake)).toEqual(['1/50', '2/50', '3/50']);
+  });
+
+  it('an empty list is one page', async () => {
+    const fake = new FakeCloudflare({});
+    expect(await clientFor(fake).listDnsRecords(Zid, { type: 'TXT' })).toEqual([]);
+    expect(asked(fake)).toEqual(['1/50']);
+  });
+
+  it('a page that fails fails the whole read', async () => {
+    const fake = new FakeCloudflare({});
+    seed(fake, 80);
+    const inner = fake.fetch.getMockImplementation()!;
+    fake.fetch.mockImplementation(async (i, init) => new URL(String(i)).searchParams.get('page') === '2' ? new Response(JSON.stringify({ success: false, errors: [{ message: 'boom' }] }), { status: 500 }) : inner(i, init));
+    await expect(clientFor(fake).listDnsRecords(Zid, {})).rejects.toBeInstanceOf(CfApiError);
+  });
+
+  const tamper = (fake: FakeCloudflare, f: (b: any, page: number) => void) => {
+    const inner = fake.fetch.getMockImplementation()!;
+    fake.fetch.mockImplementation(async (i, init) => {
+      const r = await inner(i, init);
+      const b = await r.json() as any;
+      f(b, Number(new URL(String(i)).searchParams.get('page')));
+      return new Response(JSON.stringify(b), { status: 200 });
+    });
+  };
+  it.each<[string, (b: any, page: number) => void, RegExp]>([
+    ['no result_info', b => { delete b.result_info; }, /no total count/],
+    ['a different page than asked', (b, p) => { if (p === 2) b.result_info.page = 1; }, /asked for page 2/],
+    ['a short page', (b, p) => { if (p === 2) b.result = b.result.slice(1); }, /expected/],
+    ['a total that changes', (b, p) => { if (p === 2) b.result_info.total_count += 1; }, /total changed/],
+    ['a page size above the one asked', b => { b.result_info.per_page = 500; }, /implausible page size/],
+    ['a result that is not a list', b => { b.result = {}; }, /no list/],
+  ])('refuses %s', async (_t, f, why) => {
+    const fake = new FakeCloudflare({});
+    seed(fake, 80);
+    tamper(fake, f);
+    const e = await clientFor(fake).listDnsRecords(Zid, {}).catch(x => x);
+    expect(e).toBeInstanceOf(CfIncompleteListError);
+    expect(e.message).toMatch(why);
+  });
+
+  it('refuses a list over the caps (1000 entries / 20 pages) without walking it', async () => {
+    const fake = new FakeCloudflare({});
+    seed(fake, 1001);
+    await expect(clientFor(fake).listDnsRecords(Zid, {})).rejects.toBeInstanceOf(CfIncompleteListError);
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it('per_page given keeps the older single-page read', async () => {
+    const fake = new FakeCloudflare({});
+    seed(fake, 80);
+    expect(await clientFor(fake).listDnsRecords(Zid, { per_page: 5 })).toHaveLength(5);
+  });
+});
+
+describe('CfClient.deleteDnsRecord checks the record stored under the id', () => {
+  const Zid = 'a'.repeat(32);
+  const setup = () => { const fake = new FakeCloudflare({}); const rec = fake.seed(Zid, { type: 'TXT', name: 'x._report._dmarc.reports.acme.com', content: '"v=DMARC1;"' }); return { fake, rec, cf: clientFor(fake) }; };
+  const methods = (fake: FakeCloudflare) => fake.calls.map(c => c.method);
+
+  it('a match is deleted (read first, then deleted)', async () => {
+    const { fake, rec, cf } = setup();
+    await expect(cf.deleteDnsRecord(Zid, rec.id, { type: 'TXT', name: 'x._report._dmarc.reports.acme.com', content: 'v=DMARC1;' })).resolves.toBe(true);
+    expect(methods(fake)).toEqual(['GET', 'DELETE']);
+    expect(fake.records.get(Zid)).toEqual([]);
+  });
+
+  it.each<[string, { type: string; name: string; content?: string | RegExp }]>([
+    ['another name', { type: 'TXT', name: '_dmarc.reports.acme.com' }],
+    ['other content', { type: 'TXT', name: 'x._report._dmarc.reports.acme.com', content: 'v=STSv1; id=1' }],
+    ['other content (pattern)', { type: 'TXT', name: 'x._report._dmarc.reports.acme.com', content: /^v=STSv1/ }],
+  ])('refuses when it expects %s: nothing is deleted', async (_t, expect_) => {
+    const { fake, rec, cf } = setup();
+    await expect(cf.deleteDnsRecord(Zid, rec.id, expect_)).rejects.toBeInstanceOf(CfRecordNotAllowedError);
+    expect(methods(fake)).toEqual(['GET']);
+    expect(fake.records.get(Zid)).toHaveLength(1);
+  });
+
+  it('refuses when the stored record is of another type: nothing is deleted', async () => {
+    const { fake, cf } = setup();
+    const a = fake.seed(Zid, { type: 'A', name: 'x._report._dmarc.reports.acme.com', content: '192.0.2.1' });
+    await expect(cf.deleteDnsRecord(Zid, a.id, { type: 'TXT', name: 'x._report._dmarc.reports.acme.com' })).rejects.toBeInstanceOf(CfRecordNotAllowedError);
+    expect(fake.records.get(Zid)).toHaveLength(2);
+  });
+
+  it('a record already gone (404 on the read) is treated as gone', async () => {
+    const { fake, cf } = setup();
+    await expect(cf.deleteDnsRecord(Zid, 'f'.repeat(32), { type: 'TXT', name: 'x._report._dmarc.reports.acme.com' })).resolves.toBe(false);
+    expect(methods(fake)).toEqual(['GET']);
+  });
+});
+
+describe('CfClient.listZones / listAccounts read every page', () => {
+  it('zones: 120 zones are read in three pages, and a failing page is an error, not a short list', async () => {
+    const zones = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`d${i}.com`, { id: `id${i}` }]));
+    const fake = new FakeCloudflare(zones);
+    expect(await clientFor(fake).listZones()).toHaveLength(120);
+    const inner = fake.fetch.getMockImplementation()!;
+    fake.fetch.mockImplementation(async (i, init) => new URL(String(i)).searchParams.get('page') === '2' ? new Response('{}', { status: 500 }) : inner(i, init));
+    await expect(clientFor(fake).listZones()).rejects.toBeInstanceOf(CfApiError);
+  });
+
+  it('accounts: more than one page is followed', async () => {
+    const fake = new FakeCloudflare({});
+    fake.accounts = Array.from({ length: 70 }, (_, i) => ({ id: `a${i}`, name: `A${i}` }));
+    expect(await clientFor(fake).listAccounts()).toHaveLength(70);
   });
 });

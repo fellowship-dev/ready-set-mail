@@ -14,7 +14,7 @@
 		"directory": "./web/dist",
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
-		"run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*", "/health", "/llms.txt"]
+		"run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*", "/health", "/llms.txt", "/relay/*"]
 	},
 	"compatibility_date": "2025-03-01",
 	// Per-version preview URLs are off: an installation serves one origin, its BETTER_AUTH_URL.
