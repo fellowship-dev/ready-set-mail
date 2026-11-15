@@ -12,7 +12,7 @@ import { StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
-import { buildRecommendedRecord, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
+import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
 import { NextDmarcStep } from '../../../components/domain/NextDmarcStep';
@@ -61,6 +61,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	// inherited policy, so an inherited, unknown or failed lookup gets no offer: never weaker than the effective policy.
 	// Self-host with no record of its own: the new record replaces whatever it inherits, so it starts at the inherited
 	// policy when that enforces (never weaker), and nothing is offered when the policy that applies is unknown.
+	// A record receivers do not apply as written (an invalid p= or sp=): never "configured", whatever its rua= says. The
+	// shared sentence says what receivers do with it; the next step below says what to fix.
+	const recordProblem = dmarc.found && !applied && dmarcFailed.length === 0 ? dmarcRecordProblem(dmarc.current_record ?? null, `_dmarc.${status.domain}`) : null;
 	const floor = offerEnforcement(coverage);
 	const recommended = rua
 		? offeredDmarcRecord(dmarc.current_record, coverage, rua)
@@ -93,7 +96,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const authFound = auth?.found || authProvisioned;
 
 	return (
-		<StepCard title="DMARC policy" badge={<SeverityBadge severity={applied ? 'info' : severity} />}>
+		<StepCard title="DMARC policy" badge={<SeverityBadge severity={applied ? 'info' : recordProblem ? 'error' : severity} />}>
 			<DnsHostLine domain={status.domain} />
 			{dmarcFailed.length > 0 ? (
 				<>
@@ -130,7 +133,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 								<p className="text-sm text-ink-2">We could not tell which DMARC policy applies to this name, so no record is offered. Try again in a moment.</p>
 							) : (
 								<p className="text-sm text-ink-2">
-									{applied ? 'The record was written to Cloudflare. Public DNS can take a few minutes to show it.' : 'Your DMARC record is published, read from public DNS.'}
+									{applied ? 'The record was written to Cloudflare. Public DNS can take a few minutes to show it.' : recordProblem ?? 'Your DMARC record is published, read from public DNS.'}
 								</p>
 							)}
 							<div className="space-y-1">
@@ -160,20 +163,25 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							(monitor only) so reports start flowing.
 						</p>
 					) : null}
-					{severity === 'warning' && rua && !applied ? (
+					{recordProblem && !hostedNoReports ? (
+						<Alert variant="warning" title="This DMARC record is not applied as written">
+							{recordProblem}
+						</Alert>
+					) : null}
+					{severity === 'warning' && rua && !applied && !recordProblem ? (
 						<p className="text-sm text-ink-2">
 							Your DMARC record exists but does not send reports to Ready Set Mail. Add <code className="font-mono text-ink-1">rua=mailto:{rua}</code> to receive
 							aggregate reports.
 						</p>
 					) : null}
-					{(severity === 'info' && !hostedNoReports) || (applied && !hostedNoReports) ? (
+					{(severity === 'info' && !hostedNoReports && !recordProblem) || (applied && !hostedNoReports) ? (
 						<Alert variant={applied ? 'success' : 'info'} title={applied ? 'DMARC record applied' : 'Reports are configured'}>
 							Reports will start arriving within 24 hours. Once there is data, the dashboard guides you from <code className="font-mono">p=none</code> to{' '}
 							<code className="font-mono">p=reject</code> safely.
 						</Alert>
 					) : null}
 					{/* A record of its own is in place: the next step toward enforcement, from the shared rule. */}
-					{dmarc.found && dmarc.current_record && !applied && severity !== 'error' && severity !== 'warning' ? (
+					{dmarc.found && dmarc.current_record && !applied && ((severity !== 'error' && severity !== 'warning') || recordProblem) ? (
 						<NextDmarcStep domain={{ id: status.domain_id, domain: status.domain, rua_address: status.rua_address }} />
 					) : null}
 					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
