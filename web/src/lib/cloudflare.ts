@@ -125,21 +125,9 @@ export function importSummary(t: ImportTotals): string {
 }
 
 export interface CfSuggestion { connection_id: string; account_id: string | null; account_name: string | null; zone_id: string; name: string; removed: boolean }
-export const fetchSuggestions = () => api<{ suggestions: CfSuggestion[]; verified_claims?: string[] }>('/api/cloudflare/suggestions');
-/** The zones to offer. Reading them can verify a pending claim that a connected zone proves (the server says which): the domain list is then reloaded. */
+export const fetchSuggestions = () => api<{ suggestions: CfSuggestion[] }>('/api/cloudflare/suggestions').then((r) => r.suggestions);
 export function useCfSuggestions(enabled = true) {
-	const qc = useQueryClient();
-	return useQuery({
-		queryKey: cfKeys.suggestions,
-		queryFn: async () => {
-			const r = await fetchSuggestions();
-			if (r.verified_claims?.length) void qc.invalidateQueries({ queryKey: keys.domains });
-			return r.suggestions;
-		},
-		enabled,
-		retry: false,
-		staleTime: 60_000,
-	});
+	return useQuery({ queryKey: cfKeys.suggestions, queryFn: fetchSuggestions, enabled, retry: false, staleTime: 60_000 });
 }
 
 /** Where "connect Cloudflare" goes from a page: the first-run wizard from the dashboard and the setup screens, the connect page (and back) elsewhere. */

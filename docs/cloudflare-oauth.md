@@ -145,15 +145,17 @@ claim. Pending claims for imported names, or for names inside an allowed zone, a
 * **Idempotent.** A domain the workspace already has is left alone; a second grant for the same account adds nothing twice. A domain a person removes is remembered
   (`removed_domains`) and is not imported again; it is offered under Add domain, and asking for it by id adds it back.
 * **Suggestions.** `GET /api/cloudflare/suggestions` lists zones of the working connections that are not domains yet (removed ones marked). Zones that appear in Cloudflare
-  later are suggested, never added by themselves. A zone whose name is a pending claim is not suggested: the claim is that domain.
+  later are suggested, never added by themselves. A zone on the saved allow-list whose name is a pending claim is not suggested (the domain list
+  verifies it); a claimed zone that is not on the list is suggested, and Add imports, verifies and links it.
 * **Linked to the proving connection.** Every domain verified through a zone (claim Verify, Prove again, Add domain, bulk add, the import, a claim settled
   without a click) is written with `cf_connection_id` = the connection whose zone proved it (`proofColumns`), on an insert and on a restore, so Apply via
   Cloudflare finds it. A TXT or parent proof links nothing.
-* **Pending claims settle when a page loads (hosted, owners and admins).** `GET /api/domains` checks a pending claim whose name is (inside) a zone on a
-  stored allow-list; `GET /api/cloudflare/suggestions` checks one whose name is (inside) a zone it just listed, allowing that zone for the proof and
-  removing it again when the proof fails (`verified_claims` names what was verified). The proof is the live one above; each claim is checked at most
-  once an hour (`CLAIM_AUTOCHECK_SECONDS`, the next allowed time kept as a `cf_claim_autocheck:<claim id>` setting). A claim with no zone in a
-  connected account costs nothing and keeps its TXT record. A member's page load checks nothing.
+* **Pending claims settle when the domain list loads (hosted, owners and admins).** `GET /api/domains` checks a pending claim whose name is (inside) a
+  zone on an active connection's saved allow-list, with the live proof above; the saved list is never the proof and nothing here writes it. At most five
+  claims per request (longest unchecked first), each at most once an hour (`CLAIM_AUTOCHECK_SECONDS`; the next allowed time is the
+  `cf_claim_autocheck:<claim id>:` setting). Worst case per load: five Cloudflare zone reads and five public NS lookups (one each per matching zone),
+  the rival re-check any proof makes, and for each claim that verifies the first DNS read of a new domain. A load with no matching claim makes no
+  outgoing request. A member's load checks nothing.
 
 ### How a zone proves ownership
 
@@ -320,7 +322,6 @@ connection that manages its zone. The connection must be `active` (`409` otherwi
 ### `POST /api/cloudflare/connections/:id/import` · `GET /api/cloudflare/suggestions`
 
 See [First run](#first-run-import-proof-and-accounts). Import takes `{ "zone_ids"?: [...] }` and answers `{ imported, already, skipped, removed, more, accounts, verified_claims, needs_selection? }`.
-Suggestions answer `{ suggestions, verified_claims }`.
 
 ### Suggested UI flow
 

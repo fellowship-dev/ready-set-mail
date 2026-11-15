@@ -45,7 +45,7 @@ import {
 } from './oauth';
 import { ConnectionInputError, IMPLICIT_CONNECTION_ID, type PublicConnection } from './service';
 import { accountViews } from './accounts';
-import { autoVerifyClaims, importZones, suggestedZones, verifyPendingClaims, visibleZones } from './import';
+import { importZones, suggestedZones, verifyPendingClaims } from './import';
 import { DomainServiceError } from '../domains/service';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -165,15 +165,8 @@ export async function handleConnectionRoutes(
       return json({ ok: true, domain_id: domain.id, connection_id: target });
     }
 
-    // GET /api/cloudflare/suggestions — zones of the connected accounts that are not domains of the workspace yet. The zone lists it reads anyway also
-    // settle pending claims that a visible zone proves (autoVerifyClaims: at most one live check per claim per hour), so a claimed name is verified
-    // instead of being offered as new. `verified_claims` tells the page to reload its domains.
-    if (path === '/api/cloudflare/suggestions' && method === 'GET') {
-      const visible = await visibleZones(tenant);
-      const verified_claims = await autoVerifyClaims(tenant, { id: caller.user?.id, email: caller.user?.email }, ctx, visible)
-        .catch(() => [] as string[]); // a failed check never costs the person their suggestions; the claim's Verify button still works
-      return json({ suggestions: await suggestedZones(tenant, visible), verified_claims });
-    }
+    // GET /api/cloudflare/suggestions — zones of the connected accounts that are not domains of the workspace yet
+    if (path === '/api/cloudflare/suggestions' && method === 'GET') return json({ suggestions: await suggestedZones(tenant) });
 
     // ── Connections ─────────────────────────────────────────
     if (path === '/api/cloudflare/connections' && method === 'GET') {

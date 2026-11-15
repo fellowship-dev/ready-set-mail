@@ -155,34 +155,25 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   return result;
 }
 
-type VisibleZone = Awaited<ReturnType<TenantContext['connections']['availableZones']>>[number];
-
-/** Every zone each working connection can see, read from Cloudflare once (one zone list per connection). An unreadable connection shows nothing. */
-export async function visibleZones(tenant: TenantContext): Promise<Map<string, VisibleZone[]>> {
-  const out = new Map<string, VisibleZone[]>();
-  for (const c of await tenant.scope.connections.list()) {
-    if (c.status !== 'active') continue;
-    try { out.set(c.id, await tenant.connections.availableZones(c.id)); } catch { /* an unreadable connection suggests nothing */ }
-  }
-  return out;
-}
-
 /**
- * Zones of the workspace's working connections that are not domains of it yet (removed ones included): what Add domain offers. A zone whose name is a
- * pending claim is not offered as new: the claim is that domain, shown with its own card (and verified without a click when a connection proves it,
- * autoVerifyClaims).
+ * Zones of the workspace's working connections that are not domains of it yet (removed ones included): what Add domain offers. A zone on the
+ * connection's saved allow-list whose name is a pending claim is not offered as new: that claim is verified on the next overview load
+ * (autoVerifyClaims). A claimed zone that is not on the list is offered: Add imports, verifies and links it.
  */
-export async function suggestedZones(tenant: TenantContext, visible?: Map<string, VisibleZone[]>): Promise<{ connection_id: string; account_id: string | null; account_name: string | null; zone_id: string; name: string; removed: boolean }[]> {
+export async function suggestedZones(tenant: TenantContext): Promise<{ connection_id: string; account_id: string | null; account_name: string | null; zone_id: string; name: string; removed: boolean }[]> {
   const have = new Set((await tenant.scope.domains.list()).map(d => d.domain.toLowerCase()));
   const claimed = new Set((await tenant.scope.claims.list()).filter(c => c.status === 'pending').map(c => c.domain.toLowerCase()));
   const removed = await tenant.scope.removals.names();
   const out: Awaited<ReturnType<typeof suggestedZones>> = [];
   const seen = new Set<string>();
-  for (const [connectionId, zones] of visible ?? (await visibleZones(tenant))) {
+  for (const c of await tenant.scope.connections.list()) {
+    if (c.status !== 'active') continue;
+    let zones: Awaited<ReturnType<typeof tenant.connections.availableZones>>;
+    try { zones = await tenant.connections.availableZones(c.id); } catch { continue; } // an unreadable connection suggests nothing
     for (const z of zones) {
-      if (isPublicSuffix(z.name) || have.has(z.name) || claimed.has(z.name) || seen.has(z.name)) continue;
+      if (isPublicSuffix(z.name) || have.has(z.name) || seen.has(z.name) || (z.allowed && claimed.has(z.name))) continue;
       seen.add(z.name);
-      out.push({ connection_id: connectionId, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null, zone_id: z.id, name: z.name, removed: removed.has(z.name) });
+      out.push({ connection_id: c.id, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null, zone_id: z.id, name: z.name, removed: removed.has(z.name) });
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -190,77 +181,62 @@ export async function suggestedZones(tenant: TenantContext, visible?: Map<string
 
 /**
  * At most one automatic live check per pending claim per this interval. A check that fails is nearly always a delegation still moving (name servers
- * being changed at the registrar), which takes minutes to hours: an hour bounds the cost to one Cloudflare zone read and one public NS lookup per claim
- * per hour (at most MAX_PENDING_CLAIMS a workspace), while the claim's Verify button stays there for an immediate retry.
+ * being changed at the registrar), which takes minutes to hours: an hour bounds the cost, while the claim's Verify button stays for an immediate retry.
  */
 export const CLAIM_AUTOCHECK_SECONDS = 3600;
-/** settings key prefix: `<prefix><claim id>` holds the unix time until which that claim is not checked automatically again. */
+/** At most this many claims are checked by one request (the ones whose last automatic check is oldest, never checked first). */
+export const CLAIM_AUTOCHECKS_PER_REQUEST = 5;
+/** settings key `<prefix><claim id>:` holds the unix time until which that claim is not checked automatically again (the trailing ':' keeps id 1 apart from 12). */
 export const CLAIM_AUTOCHECK_PREFIX = 'cf_claim_autocheck:';
+const autocheckKey = (claimId: number) => `${CLAIM_AUTOCHECK_PREFIX}${claimId}:`;
 
 /**
- * Pending claims that a Cloudflare connection the workspace already has can prove, verified (and linked to that connection) when a page loads, with no
- * click. Used where the product already knows the answer may have changed, without adding Cloudflare reads to every load:
- *  - the domain list (no `visible`): only a claim whose name is, or is inside, a zone on an active connection's STORED allow-list
- *    (cloudflare_connection_zones) is worth a live check; any other claim costs nothing;
- *  - the suggestions read (`visible`: the zone lists it already fetched): a claim with no stored match whose name is, or is inside, a zone a working
- *    connection can see. That zone joins the connection's allow-list for the proof, as importing it would, and leaves it again when the proof fails.
- * The stored or listed zone is never the proof: admitByZone is, unchanged (the live server-side check: active, full, in the connection's account,
- * DNS edit, public name servers equal the zone's; the conflict, unproven-row, public-suffix and label-boundary rules). Each claim costs at most one such
- * check per CLAIM_AUTOCHECK_SECONDS, recorded before it runs (settings.claim: two loads at once cannot both check). Callers let only owners and admins
- * trigger it: members are read-only and cannot verify a claim themselves. Returns the names verified.
+ * Pending claims inside a zone on an active connection's SAVED allow-list (cloudflare_connection_zones), verified and linked to the proving connection
+ * when the domain list loads (GET /api/domains), with no click. Only owners and admins trigger it (the caller checks): members are read-only.
+ *  - The saved list only says a live check is worth making; it is never the proof. admitByZone is, unchanged (the live server-side check: active,
+ *    full, in the connection's account, DNS edit, public name servers equal the zone's; the conflict, unproven-row, public-suffix and label-boundary rules).
+ *  - Nothing here writes the allow-list. A claim whose zone is visible but not on the list stays pending (Add domain imports it with a click).
+ *  - Cost: at most CLAIM_AUTOCHECKS_PER_REQUEST claims per request, each at most once per CLAIM_AUTOCHECK_SECONDS (the next allowed time is stored
+ *    before the check, through settings.claim, so two loads at once cannot both check one claim). Per claim checked: one Cloudflare zone read per
+ *    matching allowed zone (normally one) and one public NS lookup; the rival re-check any proof makes (holders of the name in other workspaces, on
+ *    their own cooldown); and, when it verifies, the first DNS read adding a domain makes. A load with no matching claim costs no outgoing request.
+ * Returns the names verified.
  */
-export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ctx?: ExecutionContext, visible?: Map<string, VisibleZone[]>, nowSeconds = Math.floor(Date.now() / 1000)): Promise<string[]> {
+export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ctx?: ExecutionContext, nowSeconds = Math.floor(Date.now() / 1000)): Promise<string[]> {
   if (getMode(tenant.env) !== 'saas') return [];
   const claims = (await tenant.scope.claims.list()).filter(c => c.status === 'pending' && c.settled_at === null);
   if (claims.length === 0) return [];
   const conns = (await tenant.scope.connections.list()).filter(c => c.status === 'active');
   if (conns.length === 0) return [];
-  const stored = new Map<string, Awaited<ReturnType<typeof tenant.scope.connections.zones>>>();
-  for (const c of conns) stored.set(c.id, await tenant.scope.connections.zones(c.id));
+  const saved: string[] = [];
+  for (const c of conns) for (const z of await tenant.scope.connections.zones(c.id)) if (!isPublicSuffix(z.zone_name)) saved.push(z.zone_name.toLowerCase());
+  const candidates = claims.filter(c => saved.some(z => within(c.domain.toLowerCase(), z)));
+  if (candidates.length === 0) return [];
+
+  // Due: never checked, or its interval is over. Oldest check first, at most CLAIM_AUTOCHECKS_PER_REQUEST.
+  const next = await tenant.scope.settings.getMany(candidates.map(c => autocheckKey(c.id)));
+  const due = candidates
+    .map(c => ({ claim: c, until: Number(next.get(autocheckKey(c.id)) ?? 0) }))
+    .filter(x => x.until <= nowSeconds)
+    .sort((a, b) => a.until - b.until || a.claim.id - b.claim.id)
+    .slice(0, CLAIM_AUTOCHECKS_PER_REQUEST);
 
   const cap = domainCap(tenant);
   let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
   const done: string[] = [];
-  let swept = false;
-  for (const claim of claims) {
+  for (const { claim } of due) {
     if (cap !== undefined && held >= cap) break; // a full plan: nothing is checked, nothing verified, nobody evicted
-    const name = claim.domain.toLowerCase();
-    const inStored = conns.some(c => stored.get(c.id)!.some(z => !isPublicSuffix(z.zone_name) && within(name, z.zone_name.toLowerCase())));
-    // The zone to allow first (suggestions read only): the nearest visible zone of the name.
-    let widen: { connectionId: string; zone: VisibleZone } | null = null;
-    if (visible) {
-      if (inStored) continue; // the domain list checks these
-      for (const c of conns) {
-        for (const z of visible.get(c.id) ?? []) {
-          if (isPublicSuffix(z.name) || !within(name, z.name)) continue;
-          if (!widen || z.name.length > widen.zone.name.length) widen = { connectionId: c.id, zone: z };
-        }
-      }
-      if (!widen) continue;
-    } else if (!inStored) continue;
-
-    if (!swept) { await tenant.scope.settings.deleteExpired(CLAIM_AUTOCHECK_PREFIX, nowSeconds); swept = true; }
-    if (!(await tenant.scope.settings.claim(`${CLAIM_AUTOCHECK_PREFIX}${claim.id}`, String(nowSeconds + CLAIM_AUTOCHECK_SECONDS)))) continue; // checked within the interval
-
-    let restore: string[] | null = null;
-    if (widen) {
-      const seenIds = new Set((visible!.get(widen.connectionId) ?? []).map(z => z.id));
-      restore = stored.get(widen.connectionId)!.map(z => z.zone_id).filter(id => seenIds.has(id));
-      await tenant.connections.setAllowedZones(widen.connectionId, [...new Set([...restore, widen.zone.id])]);
-    }
+    const key = autocheckKey(claim.id);
+    await tenant.scope.settings.deleteExpired(key, nowSeconds);
+    if (!(await tenant.scope.settings.claim(key, String(nowSeconds + CLAIM_AUTOCHECK_SECONDS)))) continue; // another request took it
+    const r = await admitByZone(tenant, claim.domain);
+    if (r.kind !== 'verified') continue;
     try {
-      const r = await admitByZone(tenant, claim.domain);
-      if (r.kind !== 'verified') continue;
       await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined); // linked to the proving connection (proofColumns)
       done.push(claim.domain);
       held++;
-      restore = null;
     } catch (e) {
       if (!(e instanceof DomainServiceError)) throw e; // a full plan leaves the claim as it was
-    } finally {
-      // Not proven: the zone leaves the allow-list again. Nothing is logged here (src/connections logs nothing: an error may carry Cloudflare's text);
-      // a restore that fails leaves the zone allowed, which proves nothing by itself (every proof is the live check).
-      if (widen && restore) await tenant.connections.setAllowedZones(widen.connectionId, restore).catch(() => undefined);
     }
   }
   if (done.length) tenant.invalidate();

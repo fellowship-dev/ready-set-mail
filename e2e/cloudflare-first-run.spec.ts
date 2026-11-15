@@ -144,32 +144,46 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 	}
 });
 
-test('hosted, a claim and a Cloudflare connection both made before the release (no import ran): the next overview verifies and links it, and Apply via Cloudflare works', async ({ page }) => {
-	const inst = await startInstance({ mode: 'hosted', port: 8820, tokenKey: true });
+test('hosted, the owner\'s state before this release (a claim from sign-up, then a connection whose saved zone list has that zone): the next overview verifies and links it with one live check, and Apply keeps p=reject and adds the report address', async ({ page }) => {
+	const intake = 'rua.intake.example.net';
+	const inst = await startInstance({ mode: 'hosted', port: 8820, tokenKey: true, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
-		// The state an earlier release left: the claim pending, a connection whose zone list nobody imported or allowed.
+		const state = async () => (await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState & { zones: Array<{ id: string; name: string; account: { id: string } }>; zoneReads: Record<string, number> };
+		const zone = (await state()).zones.find((z) => z.name === 'harbor-lane.org')!;
+		// The live record: a policy, no report address.
+		const seeded = await fetch(`${inst.fake.url}/client/v4/zones/${zone.id}/dns_records`, { method: 'POST', headers: { authorization: 'Bearer e2e-seed', 'content-type': 'application/json' }, body: JSON.stringify({ type: 'TXT', name: '_dmarc.harbor-lane.org', content: 'v=DMARC1; p=reject;', ttl: 1 }) });
+		expect(seeded.status).toBe(200);
+		// The claim first, then the connection (made through the API: no import ran), then its saved zone list, as the release before this left them.
 		const made = await page.evaluate(async () => {
-			const post = (path: string, body: unknown) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.status);
-			return [await post('/api/domains', { domain: 'harbor-lane.org' }), await post('/api/cloudflare/connections', { token: 'e2e-fake-token-not-a-real-secret-0000' })];
+			const post = (path: string, body: unknown) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+			const claim = (await post('/api/domains', { domain: 'harbor-lane.org' })).status;
+			const conn = await post('/api/cloudflare/connections', { token: 'e2e-fake-token-not-a-real-secret-0000' });
+			return { claim, conn: conn.status, id: ((await conn.json()) as { connection: { id: string } }).connection.id };
 		});
-		expect(made).toEqual([202, 201]);
+		expect([made.claim, made.conn]).toEqual([202, 201]);
+		const ws = inst.d1("SELECT workspace_id FROM domain_claims WHERE domain = 'harbor-lane.org'")[0]!.workspace_id;
+		inst.d1(`INSERT INTO cloudflare_connection_zones (connection_id, workspace_id, zone_id, zone_name, cf_account_id) VALUES ('${made.id}', '${ws}', '${zone.id}', 'harbor-lane.org', '${zone.account.id}')`);
 		expect(inst.d1('SELECT domain FROM domains')).toEqual([]);
+		const readsBefore = (await state()).zoneReads['harbor-lane.org'] ?? 0;
 
+		const list = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/domains' && r.request().method() === 'GET');
 		await page.goto(`${inst.url}/#/`);
 		await page.reload();
-
+		await list;
+		expect(((await state()).zoneReads['harbor-lane.org'] ?? 0) - readsBefore).toBe(1); // exactly one live check
 		await expect(page.getByRole('link', { name: 'harbor-lane.org', exact: true })).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
-		await expect(page.getByText('2 new domains in your Cloudflare account')).toBeVisible(); // the other two zones; the claimed name is not offered as new
-		expect(inst.d1("SELECT domain, verified_via, cf_connection_id IS NOT NULL AS linked FROM domains")).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare', linked: 1 }]);
+		expect(inst.d1('SELECT domain, verified_via, cf_connection_id FROM domains')).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare', cf_connection_id: made.id }]);
 		expect(inst.d1('SELECT settled_at IS NOT NULL AS settled FROM domain_claims')).toEqual([{ settled: 1 }]);
 
 		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
-		const applied = await page.evaluate(async (domainId) => (await fetch(`/api/domains/${domainId}/apply-dmarc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ record: 'v=DMARC1; p=none' }) })).status, id);
+		const applied = await page.evaluate(async (domainId) => (await fetch(`/api/domains/${domainId}/apply-dmarc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ record: 'v=DMARC1; p=reject;' }) })).status, id);
 		expect(applied).toBe(200);
-		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
-		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
+		const written = Object.values((await state()).records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content);
+		expect(written).toHaveLength(1);
+		expect(written[0]).toMatch(/\bp=reject\b/);
+		expect(written[0]).toContain(`rua=mailto:rua@${intake}`);
 	} finally {
 		await inst.stop();
 	}

@@ -1,10 +1,11 @@
 // A domain proven through a Cloudflare zone is linked to the connection whose zone proved it, on every path (claim Verify, Prove again, Add
 // domain, bulk add, the import), so Apply via Cloudflare works; and a pending claim that a connection the workspace already has can prove is
-// verified without a click when a page loads, at most one live check per claim per hour (src/connections/import.ts autoVerifyClaims).
+// verified without a click when the domain list loads, when its zone is on a saved allow-list: at most one live check per claim per hour and
+// five per request (src/connections/import.ts autoVerifyClaims).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { call, inviteAndAccept, signupVerified } from '../auth/helpers';
 import { world } from './world';
-import { CLAIM_AUTOCHECK_SECONDS } from '../../src/connections/import';
+import { CLAIM_AUTOCHECK_SECONDS, CLAIM_AUTOCHECKS_PER_REQUEST } from '../../src/connections/import';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
@@ -121,31 +122,34 @@ describe('a pending claim a connection can prove is verified without a click', (
     expect((await s.apply(s.row('readysetmail.com')!.id)).status).toBe(200);
   });
 
-  it('the owner\'s state with the zone visible but not allowed: the suggestions read (made anyway) verifies and links it, once; it is not offered as new', async () => {
-    const s = await setup(['readysetmail.com', 'other.net']);
+  it('a claim whose zone is granted in Cloudflare but not on the saved list stays pending, is offered under "new domains", and Add verifies and links it', async () => {
+    const s = await setup(['readysetmail.com']);
     s.seedClaim('readysetmail.com');
     const id = await s.connect();
     s.w.cf.calls.length = 0;
-
-    // The domain list alone has nothing stored to go on: no Cloudflare read.
     expect((await json(await call(s.w.env, 'GET', '/api/domains', { key: s.C.token }))).pending_claims.map((c: any) => c.domain)).toEqual(['readysetmail.com']);
-    expect(s.w.cf.calls).toEqual([]);
-
+    expect(s.w.cf.calls).toEqual([]); // nothing saved to go on: no Cloudflare read
     const sug = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
-    expect(sug.verified_claims).toEqual(['readysetmail.com']);
-    expect(sug.suggestions.map((x: any) => x.name)).toEqual(['other.net']);
-    expect(s.liveChecks('readysetmail.com')).toBe(1);
-    expect(s.row('readysetmail.com')).toMatchObject({ verified_via: 'cloudflare', cf_connection_id: id });
-    expect(s.allowList()).toEqual(['readysetmail.com']);
-    expect(s.openClaims()).toEqual([]);
-
-    s.w.cf.calls.length = 0;
-    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
-    const again = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
-    expect(again.verified_claims).toEqual([]);
+    expect(sug.suggestions.map((x: any) => x.name)).toEqual(['readysetmail.com']);
     expect(s.liveChecks('readysetmail.com')).toBe(0);
-    expect(s.w.cf.calls.filter(c => /\/zones\/[^/]+/.test(new URL(c.url).pathname))).toEqual([]); // no zone read: only what the suggestions read anyway
+    expect(s.allowList()).toEqual([]); // nothing writes the saved list on a load
+    expect(s.openClaims()).toEqual(['readysetmail.com']);
+
+    const add = await json(await s.w.api(s.C.token, 'POST', `/api/cloudflare/connections/${id}/import`, { zone_ids: [zid('readysetmail.com')] }));
+    expect(add.imported.map((i: any) => i.domain)).toEqual(['readysetmail.com']);
+    expect(s.row('readysetmail.com')).toMatchObject({ verified_via: 'cloudflare', cf_connection_id: id });
+    expect(s.openClaims()).toEqual([]);
     expect((await s.apply(s.row('readysetmail.com')!.id)).status).toBe(200);
+  });
+
+  it('a claim whose zone is on the saved list is not offered as new', async () => {
+    const s = await setup(['readysetmail.com', 'other.net']);
+    s.seedClaim('readysetmail.com');
+    const id = await s.connect();
+    s.allow(id, 'readysetmail.com');
+    const sug = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(sug.suggestions.map((x: any) => x.name)).toEqual(['other.net']);
+    expect(s.liveChecks('readysetmail.com')).toBe(0); // the suggestions read verifies nothing; the domain list does
   });
 
   it('a claim whose zone is not in the account stays pending with the TXT route, and costs no live check', async () => {
@@ -156,35 +160,56 @@ describe('a pending claim a connection can prove is verified without a click', (
     s.w.cf.calls.length = 0;
     const list = await json(await call(s.w.env, 'GET', '/api/domains', { key: s.C.token }));
     expect(list.pending_claims).toEqual([expect.objectContaining({ domain: 'elsewhere.org', status: 'pending', txt_name: '_readysetmail.elsewhere.org' })]);
-    const sug = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
-    expect(sug.verified_claims).toEqual([]);
-    expect(s.w.cf.calls.filter(c => /\/zones\/[^/]+/.test(new URL(c.url).pathname))).toEqual([]); // no zone read: only the zone list the suggestions read anyway
+    expect(s.w.cf.calls).toEqual([]);
     expect(s.openClaims()).toEqual(['elsewhere.org']);
   });
 
-  it('a zone that does not prove the claim: it stays pending, the zone leaves the allow-list again, the name is not offered as new, and it is checked at most once an hour', async () => {
+  it('a zone that does not prove the claim: it stays pending and is checked at most once an hour', async () => {
     const s = await setup(['moving.com']);
     s.w.cf.ns['moving.com'] = ['ns1.registrar.test']; // public DNS still delegates elsewhere
     s.seedClaim('moving.com');
-    await s.connect();
-    s.w.cf.calls.length = 0;
+    const id = await s.connect();
+    s.allow(id, 'moving.com');
     vi.useFakeTimers({ toFake: ['Date'] });
 
-    const sug = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
-    expect(sug.verified_claims).toEqual([]);
-    expect(sug.suggestions).toEqual([]);
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
     expect(s.liveChecks('moving.com')).toBe(1);
-    expect(s.allowList()).toEqual([]);
     expect(s.openClaims()).toEqual(['moving.com']);
-
-    await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions');
+    expect(s.allowList()).toEqual(['moving.com']); // the saved list is left as it was
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
     expect(s.liveChecks('moving.com')).toBe(1); // within the hour: no second check
 
     vi.setSystemTime(Date.now() + (CLAIM_AUTOCHECK_SECONDS + 1) * 1000);
     delete s.w.cf.ns['moving.com']; // the delegation finished moving
-    const later = await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'));
-    expect(later.verified_claims).toEqual(['moving.com']);
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
     expect(s.liveChecks('moving.com')).toBe(2);
+    expect(s.row('moving.com')).toMatchObject({ verified_via: 'cloudflare', cf_connection_id: id });
+  });
+
+  it(`checks at most ${CLAIM_AUTOCHECKS_PER_REQUEST} claims per load, the longest unchecked first`, async () => {
+    const names = ['c1.com', 'c2.com', 'c3.com', 'c4.com', 'c5.com', 'c6.com', 'c7.com'];
+    const s = await setup(names);
+    for (const n of names) s.w.cf.ns[n] = ['ns1.registrar.test']; // none proves yet
+    for (const n of names) s.seedClaim(n);
+    const id = await s.connect();
+    for (const n of names) s.allow(id, n);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const checked = () => names.filter(n => s.liveChecks(n) > 0);
+
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
+    expect(checked()).toEqual(names.slice(0, 5));
+    s.w.cf.calls.length = 0;
+    vi.setSystemTime(Date.now() + 60_000);
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
+    expect(checked()).toEqual(['c6.com', 'c7.com']);
+    s.w.cf.calls.length = 0;
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
+    expect(s.w.cf.calls).toEqual([]); // all seven within their hour
+
+    vi.setSystemTime(Date.now() + (CLAIM_AUTOCHECK_SECONDS + 1) * 1000);
+    s.w.cf.calls.length = 0;
+    await call(s.w.env, 'GET', '/api/domains', { key: s.C.token });
+    expect(checked()).toEqual(names.slice(0, 5)); // the oldest checks come round first
   });
 
   it('a member\'s page load triggers nothing a member could not do: no live check, no verification; the owner\'s next load does it', async () => {
