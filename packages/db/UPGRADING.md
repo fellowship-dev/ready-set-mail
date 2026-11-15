@@ -47,13 +47,16 @@ is no adoption or repair step that converts one into the other.
 
 To move a v1.x installation to the current release:
 
-1. Keep the old Worker running and export its database: `npx wrangler d1 export <old database name> --remote --output v1-backup.sql`.
+1. Keep the old Worker running and, from the old installation's checkout, export its database:
+   `npx wrangler d1 export <old database name> --remote --output v1-backup.sql` (v1.x named it `inbox-angel` unless you changed it). <!-- @legacy-name: the v1.x database name -->
    Keep that file: it is the only copy of the old report history once you remove the old installation.
 2. Install the current release next to it under a new name: `npm run setup -- --name <new name>`.
 3. Become the owner of the new instance, add your domains again, and point each domain's DMARC `rua` at the new reports address.
 4. When reports arrive at the new instance, remove the old Worker and database.
 
-Report history from v1.x is not imported into the new database automatically; the export keeps it readable with any SQLite tool.
+Nothing from the v1.x database is imported: report history, users, settings, the audit log and alert subscriptions start fresh, and
+old `ia_…` keys do not work (issue `ias_…` credentials). The export is a SQL dump; load it into SQLite to read it
+(`sqlite3 v1.db < v1-backup.sql`). What changed in 2.0: [CHANGELOG.md](../../CHANGELOG.md).
 
 `migrations/0001_baseline.sql` creates the complete original schema (later files are additive; see each file) and the implicit workspace `ws_default`.
 
@@ -63,12 +66,12 @@ Report history from v1.x is not imported into the new database automatically; th
   them by file name in `d1_migrations`. `npm run migrate` is a thin wrapper around it.
 * The Worker never changes the schema. On startup it checks that `REQUIRED_MIGRATION` (`src/ready.ts`: the newest migration
   this build depends on) is recorded in `d1_migrations`; if not it answers `503` with "Database schema is out of date … run
-  `npm run migrate`" (cron and email handlers log the same message).
+  `npm run migrate`" (cron and email handlers log the same message; the email handler also throws, so senders retry later).
 * `test/schema-drift.test.ts` and `test/drizzle-baseline.test.ts` fail if `src/schema.ts` and `/migrations` disagree.
 
 ## Adding a migration
 
-See [SCHEMA.md](SCHEMA.md#3-changing-the-schema). Never edit a released migration; add a new numbered file and bump `REQUIRED_MIGRATION`.
+See [SCHEMA.md](SCHEMA.md#2-changing-the-schema). Never edit a released migration; add a new numbered file and bump `REQUIRED_MIGRATION`.
 Prefer additive changes (new tables, nullable or defaulted columns) so the old Worker keeps running while you migrate.
 
 ## Rollback

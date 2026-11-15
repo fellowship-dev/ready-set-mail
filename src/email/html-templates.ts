@@ -148,8 +148,8 @@ export interface WeeklyDigestHtmlParams {
   weekLabel: string;
   ruaAddress: string;
   reportsDomain: string;
-  latestVersion: string | null;
-  currentVersion: string;
+  /** Only when a newer published release exists (src/update-check.ts). */
+  update?: { current: string; latest: string | null; release_url: string; upgrade_url: string } | null;
   brand?: Brand;
 }
 
@@ -171,8 +171,9 @@ export function buildWeeklyDigestHtml(p: WeeklyDigestHtmlParams): string {
 </p>`;
   }
 
-  if (p.latestVersion && p.latestVersion !== p.currentVersion) {
-    body += `<p style="font-size:12px;color:#6b7280;">Update available: v${esc(p.latestVersion)} (you're on v${esc(p.currentVersion)})</p>`;
+  if (p.update?.latest) {
+    const u = p.update;
+    body += `<p style="font-size:12px;color:#6b7280;">Ready Set Mail v${esc(u.latest!)} is available (you&rsquo;re on v${esc(u.current)}): <a href="${esc(u.release_url)}">release notes</a> &middot; <a href="${esc(u.upgrade_url)}">how to upgrade</a></p>`;
   }
 
   return htmlLayout(`DMARC Weekly Digest — ${p.weekLabel}`, body, p.brand ?? DEFAULT_BRAND);

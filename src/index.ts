@@ -63,6 +63,7 @@ export interface Env {
   // Worker config (vars in wrangler.jsonc)
   WORKER_NAME?: string;          // defaults to "ready-set-mail-worker"
   MODE?: string;                 // "selfhost" (default) | "saas"
+  UPDATE_CHECK?: string;         // "off" (or 0/false/no): no GitHub release check for GET /api/version and the digest (src/update-check.ts)
   // Hosted service (MODE=saas + SAAS_ENABLED=1), see docs/hosted.md
   INTAKE_DOMAIN?: string;        // central report address domain, e.g. rua.readysetmail.com
   HOSTED_CONNECT_REPORTS?: string; // who may connect reports to the fixed address: owner (default: OWNER_EMAIL's workspaces) | all
