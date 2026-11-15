@@ -103,3 +103,40 @@ describe('0012 dmarc_enforcement', () => {
 		expect(d.sqlite.prepare('SELECT dmarc_policy, dmarc_pct, dmarc_sp, dmarc_p, dmarc_rua FROM domains').all()).toEqual([{ dmarc_policy: 'reject', dmarc_pct: null, dmarc_sp: null, dmarc_p: null, dmarc_rua: null }]);
 	});
 });
+
+describe('0014 public_reports', () => {
+	// Bounded by the migration just before this one, whatever its number, so another migration landing first does not break it.
+	const MINE = '0014_public_reports.sql';
+	const before = () => migrationFiles()[migrationFiles().indexOf(MINE) - 1]!;
+
+	it('adds one empty table and leaves every existing table alone', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: before() });
+		const tablesBefore = (d.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r) => r.name);
+		d.sqlite.prepare("INSERT INTO domains (domain, rua_address) VALUES ('acme.com', 'r@x')").run();
+		expect(applyMigrations(d.sqlite, { through: MINE })).toEqual([MINE]);
+		const tablesAfter = (d.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r) => r.name);
+		expect(tablesAfter.filter((t) => !tablesBefore.includes(t))).toEqual(['public_reports']);
+		expect(d.sqlite.prepare('SELECT COUNT(*) AS n FROM public_reports').get()).toEqual({ n: 0 });
+		expect(d.sqlite.prepare('SELECT domain FROM domains').all()).toEqual([{ domain: 'acme.com' }]);
+	});
+
+	it('requires every column but dedupe_key, and makes id the primary key', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: MINE });
+		const cols = d.sqlite.prepare("SELECT name, type, \"notnull\" AS nn, pk FROM pragma_table_info('public_reports') ORDER BY cid").all() as any[];
+		expect(cols).toEqual([
+			{ name: 'id', type: 'TEXT', nn: 1, pk: 1 },
+			{ name: 'domain', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'created_at', type: 'INTEGER', nn: 1, pk: 0 },
+			{ name: 'schema_version', type: 'INTEGER', nn: 1, pk: 0 },
+			{ name: 'source', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'result_json', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'delete_token_hash', type: 'TEXT', nn: 1, pk: 0 },
+			{ name: 'dedupe_key', type: 'TEXT', nn: 0, pk: 0 },
+		]);
+		const ins = d.sqlite.prepare('INSERT INTO public_reports (id, domain, created_at, schema_version, source, result_json, delete_token_hash) VALUES (?, ?, 1, 1, ?, ?, ?)');
+		ins.run('a'.repeat(22), 'acme.com', 'dmarc', '{}', 'h');
+		expect(() => ins.run('a'.repeat(22), 'acme.com', 'dmarc', '{}', 'h')).toThrow();
+	});
+});

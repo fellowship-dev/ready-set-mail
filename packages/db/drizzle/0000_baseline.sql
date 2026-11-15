@@ -517,6 +517,19 @@ CREATE TABLE `products` (
 	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE TABLE `public_reports` (
+	`id` text PRIMARY KEY NOT NULL,
+	`domain` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`schema_version` integer NOT NULL,
+	`source` text NOT NULL,
+	`result_json` text NOT NULL,
+	`delete_token_hash` text NOT NULL,
+	`dedupe_key` text
+);
+--> statement-breakpoint
+CREATE INDEX `idx_public_reports_created` ON `public_reports` (`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_public_reports_dedupe` ON `public_reports` (`dedupe_key`);--> statement-breakpoint
 CREATE TABLE `report_records` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`report_id` integer NOT NULL,

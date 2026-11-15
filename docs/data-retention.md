@@ -15,6 +15,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Raw report XML (and the raw JSON of TLS-RPT reports) | **30 days** self-hosted; **not stored** in hosted mode | `RAW_XML_RETENTION_DAYS` | `0` = never store. The parsed rows above are what the raw payload contained. After the window only the raw payload is removed. Hosted mode defaults to `0`. |
 | IP enrichment cache (`ip_info`: reverse DNS, ASN, organisation, country) | **30 days** | `RETENTION_IP_INFO_DAYS` | A global cache, not per workspace. |
 | Free-check results (`check_results`) | **30 days** | `RETENTION_CHECK_RESULTS_DAYS` | |
+| Public domain reports (`public_reports`: the checked domain, the time and what public DNS showed) | **until deleted** | | No automatic expiry, by decision; revisit only if storage becomes a real problem. Deleted with the report's delete token or by the operator on request (below). Not tied to a workspace. |
 | Intake counters (`intake_usage`, `intake_quota`: messages and records per address, workspace and day) | **8 days** | `RETENTION_INTAKE_COUNTERS_DAYS` | Counters, no report content. |
 | "Reports we could not store" markers (`intake_failures`: a count per domain, day and reason) | **90 days** | `RETENTION_INTAKE_FAILURES_DAYS` | A counter, no report content. |
 | Aggregate reports that are stored but never counted (`reporter_tier` `unknown` or `unauthenticated`) | **30 days** | `RETENTION_UNCOUNTED_REPORTS_DAYS` (the earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` is still honoured when it is unset) | Stored but never counted. Not applied when `REPORT_COUNTING=all`, where they are the numbers. A reporter an owner later promotes becomes `counted` and keeps the normal window. |
@@ -45,6 +46,21 @@ records the privacy policy describes for the website and for sales prospecting.
 * Logs one line per run with the counts: `[retention] {"aggregate_reports":12,"sessions":4,…,"failed":0}`.
   Read it in Workers logs; an alert on `"failed":` greater than 0 is worthwhile.
 * Retention for `leads`, suppression lists, unsubscribe records and the free-monitor subscriptions is owned by the onboarding feature, not by this job.
+
+## Public domain reports
+
+Running the website's domain checker stores a dated report (`POST /api/public/reports`, `src/public-reports/routes.ts`) that anyone with its
+link (`https://readysetmail.com/r/<id>`) can read. A row holds the checked domain, when it was checked, which checker made it, and the DNS
+results (at most 64 KiB); no IP address, no email and nothing else the visitor typed. A keyed hash of the client IP and domain is kept with
+the row so a repeat within a minute returns the same report; it is cleared when the next report is made after that minute, and at the latest
+by the daily job.
+
+* **Kept until deleted.** The daily job deletes no report; it only clears those de-duplication keys (`public_report_dedupe_keys` in its log line).
+* **Deleted by its creator:** `DELETE /api/public/reports/:id` with the delete token the creation answer handed out once (the site keeps it
+  in the creator's browser and shows "Delete this report"). Only its SHA-256 is stored.
+* **Deleted on request** (anyone else, sent to the contact address in the privacy policy with the link): the operator runs
+  `wrangler d1 execute DB --remote --command "DELETE FROM public_reports WHERE id = '<id>'"`. The id is the last part of the link.
+* **Not in a workspace export or an account deletion:** a report belongs to no workspace and no account.
 
 ## Deleting a workspace
 

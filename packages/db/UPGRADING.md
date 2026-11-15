@@ -11,6 +11,10 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
+## Public reports (0014)
+
+Migration `0014_public_reports.sql` is additive: one new table, `public_reports` (dated free-check reports at a private link, `src/public-reports/`). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. Creating reports stays off until `PUBLIC_REPORTS_ENABLED=1`; see [docs/data-retention.md](../../docs/data-retention.md#public-domain-reports).
+
 ## Reports connected at
 
 Migration `0011_reports_connected_at.sql` is additive: one nullable `domains.reports_connected_at` column, set when a hosted domain's reports are connected to the fixed report address and cleared when they are disconnected. Apply it before serving the new Worker (the schema guard requires it). Existing rows stay NULL.

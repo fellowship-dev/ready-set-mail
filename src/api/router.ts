@@ -98,6 +98,7 @@ import { hostedConfig, hostedEnabled } from '../hosted/config';
 import { openHostedZone } from '../hosted/records';
 import { issueCanary } from '../hosted/canary';
 import { isCorsPath, preflight, withCors } from './cors';
+import { handlePublicReportRoute } from '../public-reports/routes';
 import { handleLeadRoutes, handlePublicFunnelRoute, isInstanceOwner } from '../funnel/routes';
 import { agentAvailability, instancePreflight } from '../setup/preflight';
 import { requestMonitorSubscription } from '../funnel/monitor-optin';
@@ -532,6 +533,10 @@ async function _handleApi(
       ...(hostedServiceUrl(env) ? { hosted_service_url: hostedServiceUrl(env) } : {}),
     });
   }
+
+  // Public dated reports, no login: POST/GET/DELETE /api/public/reports[/:id] (src/public-reports/routes.ts).
+  const publicReport = await handlePublicReportRoute(request, env);
+  if (publicReport) return publicReport;
 
   // ── Public routes ───────────────────────────────────────────
   // No credentials, no user data. They act through an explicit anonymous context: the platform's

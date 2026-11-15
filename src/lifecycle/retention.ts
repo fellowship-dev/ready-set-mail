@@ -5,7 +5,7 @@
 // sweep is logged and the others still run. The whole run shares one statement budget (D1 caps queries per
 // invocation), so a big backlog is worked off over several days; truncated sweeps say so in the log line. Expired canary tokens are purged by src/hosted/cron.ts, as before.
 
-import { lifecycleQueries, sweepLimits, type SweepResult } from '@ready-set-mail/db';
+import { lifecycleQueries, publicReportQueries, sweepLimits, type SweepResult } from '@ready-set-mail/db';
 import { retentionPolicy, type RetentionEnv } from './config';
 import { reportCounting } from '../dmarc/counting';
 
@@ -53,6 +53,13 @@ export async function runRetention(env: RetentionEnv & { DB: D1Database }, opts:
     ['intake_failures', () => q.purgeIntakeFailures(dayOf(ago(p.intakeFailureDays)), limits)],
     ['intake_drops', () => q.purgeIntakeDrops(ago(p.intakeFailureDays), limits)],
     ['reporter_candidates', () => q.purgeReporterCandidates(dayOf(ago(p.intakeFailureDays)), limits)],
+    // Public reports are kept until deleted; only their one-minute de-duplication keys (a keyed hash of IP and domain) go.
+    ['public_report_dedupe_keys', async () => {
+      if (limits.budget.left <= 0) return { deleted: 0, truncated: true };
+      limits.budget.left -= 1;
+      const r = (await publicReportQueries(env.DB).clearDedupeBefore(now - 60)) as { meta?: { changes?: number } } | undefined;
+      return { deleted: Number(r?.meta?.changes ?? 0), truncated: false };
+    }],
     // Last: recount a few workspaces' stored records (repairs drift, counts data stored before the counters existed).
     ['storage_reconciled', () => q.reconcileStorage(limits)],
   ];

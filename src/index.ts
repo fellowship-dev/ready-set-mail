@@ -121,6 +121,8 @@ export interface Env {
   HOSTED_SERVICE_URL?: string;   // https URL of the maker-run hosted free tier; unset = no surface mentions a hosted service (src/hosted-service.ts)
   SERVICE_PRICES?: string;       // JSON {"fix":"$…","keepFixed":"$…/mo","bimi":"$…/mo"}: the prices in the day-10 email
   ONBOARDING_SEQUENCE_ENABLED?: string; // "1" turns the onboarding sequence on for self-host; hosted: on unless "0"
+  PUBLIC_REPORTS_ENABLED?: string; // '1': POST /api/public/reports makes dated public reports (src/public-reports/routes.ts); reading and deleting work either way
+  PUBLIC_REPORTS_DAILY_CAP?: string; // new public reports per UTC day for the whole instance (default 2000)
   SITE_ORIGINS?: string;         // comma-separated origins allowed to call the free-check endpoints from a browser (CORS)
   // Bindings
   SEND_EMAIL?: SendEmail;        // CF Email Workers outbound binding
