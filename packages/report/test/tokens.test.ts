@@ -11,8 +11,8 @@ describe('report tokens vs @ready-set-mail/ui tokens.css', () => {
     expect(tokenDrift(css)).toEqual([]);
   });
 
-  it('covers the brand, accent, surfaces, ink, lines and semantic colours in both modes', () => {
-    for (const k of ['brand', 'brand-fg', 'brand-ink', 'accent', 'accent-fg', 'surface-0', 'surface-1', 'surface-2', 'ink-1', 'ink-2', 'ink-3', 'line', 'line-strong', 'success', 'warning', 'danger', 'focus']) {
+  it('covers the brand, surfaces, ink, lines and semantic colours in both modes', () => {
+    for (const k of ['brand', 'brand-fg', 'brand-ink', 'info', 'logo-wordmark', 'surface-0', 'surface-1', 'surface-2', 'ink-1', 'ink-2', 'ink-3', 'line', 'line-strong', 'success', 'warning', 'danger', 'focus']) {
       expect(REPORT_TOKENS.light[k], `light ${k}`).toMatch(/^#[0-9a-f]{6}$/);
     }
     for (const k of ['brand', 'brand-fg', 'surface-0', 'ink-1', 'success', 'warning', 'danger', 'focus']) {
@@ -21,7 +21,7 @@ describe('report tokens vs @ready-set-mail/ui tokens.css', () => {
   });
 
   it('changing a colour in tokens.css fails the check (light and dark)', () => {
-    const light = css.replace('--brand: #0b1f3a;', '--brand: #60a5fa;');
+    const light = css.replace('--brand: #0647ff;', '--brand: #60a5fa;');
     expect(light).not.toBe(css);
     expect(tokenDrift(light)).toEqual([expect.stringContaining('light --brand')]);
     const dark = css.replace(/(:root:not\(\[data-theme="light"\]\)\s*\{[^}]*?--danger: )#f87171;/, '$1#ff0000;');

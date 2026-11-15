@@ -1,11 +1,17 @@
 /* ─────────────────────────────────────────────────────────
-   Ready Set Mail design tokens. Values are taken verbatim from the website's
-   globals.css (docs/design/site-globals.css); test/tokens.test.ts keeps them in sync.
+   Ready Set Mail design tokens. The website's globals.css carries the same values (parity snapshot:
+   docs/design/site-globals.css); test/tokens.test.ts keeps them in sync.
 
-   Palette: sober navy #0B1F3A is the light-mode brand (fills, links, headings); halo gold #FAD172 is the
-   dark-mode brand and the accent in both. --brand is a FILL: text on it uses --brand-fg (white on navy,
-   navy on gold); brand-coloured text on surfaces uses --brand-ink. --focus is the ring colour.
-   Blush --blush is decorative only (never text, never the only signal).
+   Palette (brand asset pack: web/public/brand/README.md):
+   - Brand blue #0647FF is the action colour: primary buttons, links, focus rings, selected states, progress.
+     --brand is a FILL: text on it uses --brand-fg (white). Brand-coloured text on surfaces uses --brand-ink, which is
+     #0647FF in light mode and a lighter blue in dark mode (#0647FF is too dark for text on the dark surfaces).
+   - Brand navy #06194B is the ink for headings and strong text in light mode. Every neutral (surfaces, muted text,
+     borders) is re-hued to the navy's hue (223.5deg), keeping the lightness and saturation of the previous set.
+   - The logo's red lives ONLY inside the logo (components/logo-svg.ts). It is not a token: never a UI colour.
+   - Status colours keep their meaning and stay apart from the brand: success green, warning amber, danger red (a
+     darker crimson than the logo's red), and info teal (not the brand blue, so a note never looks like an action).
+   - --logo-wordmark is the lockup's wordmark: navy on light surfaces, white on dark (lockup.svg / lockup-dark.svg).
 
    Theme selection:
    - default: light; follows prefers-color-scheme: dark
@@ -18,27 +24,21 @@
   /* Surfaces */
   --surface-0: #f7f8fa;
   --surface-1: #ffffff;
-  --surface-2: #eff2f6;
-  --surface-3: #e3e9f0;
+  --surface-2: #eff1f6;
+  --surface-3: #e3e7f0;
 
   /* Text */
-  --ink-1: #0b1f3a;
-  --ink-2: #526175;
-  --ink-3: #5d6d82;
+  --ink-1: #06194b;
+  --ink-2: #525c75;
+  --ink-3: #5d6782;
 
-  /* Brand — navy (light) / gold (dark) */
-  --brand: #0b1f3a;
-  --brand-hover: #173a63;
-  --brand-ink: #0b1f3a;
-  --brand-subtle: #e8eef5;
+  /* Brand — blue #0647FF (fills, links, focus, selection, progress) */
+  --brand: #0647ff;
+  --brand-hover: #063edb;
+  --brand-active: #0635b7;
+  --brand-ink: #0647ff;
+  --brand-subtle: #ebf0ff;
   --brand-fg: #ffffff;
-
-  /* Accent — halo gold (navy label) and blush (decorative only) */
-  --accent: #fad172;
-  --accent-hover: #f5c04a;
-  --accent-fg: #0b1f3a;
-  --accent-subtle: #fef7e3;
-  --blush: #fca0a4;
 
   /* Semantic */
   --success: #147a3a;
@@ -47,10 +47,15 @@
   --warning-subtle: #fff7e6;
   --danger: #b91c1c;
   --danger-subtle: #fef2f2;
+  --info: #076a7e;
+  --info-subtle: #e9f8fb;
 
   /* Borders */
-  --line: #d7dfe8;
-  --line-strong: #b8c5d4;
+  --line: #d7dce8;
+  --line-strong: #b8c0d4;
+
+  /* Logo */
+  --logo-wordmark: #06194b;
 
   /* Shadow */
   --shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.05);
@@ -69,8 +74,8 @@
   /* Additions to the website set (not in site-globals.css).
      --line-strong is ~1.5:1 on white, below the 3:1 WCAG 1.4.11 needs for
      form-control edges, so controls use --control-border. */
-  --control-border: #617185;
-  --focus: #0b1f3a;
+  --control-border: #616b85;
+  --focus: #0647ff;
 
   /* Fonts (bundled via @fontsource-variable, no CDN) */
   --font-geist-sans: "Geist Variable";
@@ -81,24 +86,21 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
 
-    --surface-0: #0b1220;
-    --surface-1: #142238;
-    --surface-2: #1c2e47;
-    --surface-3: #293d58;
+    --surface-0: #0b1120;
+    --surface-1: #141e38;
+    --surface-2: #1c2847;
+    --surface-3: #293658;
 
-    --ink-1: #f4f7fb;
-    --ink-2: #a8b5c7;
-    --ink-3: #8a9bb1;
+    --ink-1: #f4f6fb;
+    --ink-2: #a8b1c7;
+    --ink-3: #8a95b1;
 
-    --brand: #fad172;
-    --brand-hover: #ffe09a;
-    --brand-ink: #fad172;
-    --brand-subtle: #332c1d;
-    --brand-fg: #0b1f3a;
-
-    --accent-fg: #0b1f3a;
-
-    --accent-subtle: #2a2210;
+    --brand: #2e64ff;
+    --brand-hover: #0647ff;
+    --brand-active: #063edb;
+    --brand-ink: #82a3ff;
+    --brand-subtle: #112660;
+    --brand-fg: #ffffff;
 
     --success: #4ade80;
     --success-subtle: #0f2a1a;
@@ -106,41 +108,42 @@
     --warning-subtle: #2a2110;
     --danger: #f87171;
     --danger-subtle: #2c1416;
+    --info: #3cc2dd;
+    --info-subtle: #0e2a31;
 
-    --line: #33465f;
-    --line-strong: #50647e;
+    --line: #333f5f;
+    --line-strong: #505d7e;
+
+    --logo-wordmark: #ffffff;
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.3);
     --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.3);
 
-    --control-border: #8a9bb1;
-    --focus: #fad172;
+    --control-border: #8a95b1;
+    --focus: #82a3ff;
   }
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-0: #0b1220;
-  --surface-1: #142238;
-  --surface-2: #1c2e47;
-  --surface-3: #293d58;
+  --surface-0: #0b1120;
+  --surface-1: #141e38;
+  --surface-2: #1c2847;
+  --surface-3: #293658;
 
-  --ink-1: #f4f7fb;
-  --ink-2: #a8b5c7;
-  --ink-3: #8a9bb1;
+  --ink-1: #f4f6fb;
+  --ink-2: #a8b1c7;
+  --ink-3: #8a95b1;
 
-  --brand: #fad172;
-  --brand-hover: #ffe09a;
-  --brand-ink: #fad172;
-  --brand-subtle: #332c1d;
-  --brand-fg: #0b1f3a;
-
-  --accent-fg: #0b1f3a;
-
-  --accent-subtle: #2a2210;
+  --brand: #2e64ff;
+  --brand-hover: #0647ff;
+  --brand-active: #063edb;
+  --brand-ink: #82a3ff;
+  --brand-subtle: #112660;
+  --brand-fg: #ffffff;
 
   --success: #4ade80;
   --success-subtle: #0f2a1a;
@@ -148,15 +151,19 @@
   --warning-subtle: #2a2110;
   --danger: #f87171;
   --danger-subtle: #2c1416;
+  --info: #3cc2dd;
+  --info-subtle: #0e2a31;
 
-  --line: #33465f;
-  --line-strong: #50647e;
+  --line: #333f5f;
+  --line-strong: #505d7e;
+
+  --logo-wordmark: #ffffff;
 
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.3);
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.3);
 
-  --control-border: #8a9bb1;
-  --focus: #fad172;
+  --control-border: #8a95b1;
+  --focus: #82a3ff;
 }

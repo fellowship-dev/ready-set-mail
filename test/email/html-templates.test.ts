@@ -4,12 +4,15 @@ import {
   buildWeeklyDigestHtml,
   buildFreeCheckHtml,
   buildDnsAlertHtml,
+  buildLetterHtml,
 } from '../../src/email/html-templates';
+import { stepCopy, SEQUENCE_DAYS } from '../../src/funnel/copy';
 import type { DomainWeeklyStat, FailingSource } from '@ready-set-mail/db';
 import type { CheckSummary } from '../../src/email/report-formatter';
 import type { DomainChange } from '../../src/monitor/check';
 import type { DnsCheckResult } from '../../src/email/dns-check';
 import type { AuthResultsHeader } from '../../src/email/parse-headers';
+import { DEFAULT_BRAND_COLOR } from '../../src/tenancy/context';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -70,13 +73,13 @@ describe('buildWeeklyDigestHtml', () => {
   it('renders reject badge for reject policy', () => {
     const html = buildWeeklyDigestHtml(makeParams());
     expect(html).toContain('reject');
-    expect(html).toContain('#16a34a'); // green color for reject badge
+    expect(html).toContain('#147a3a'); // success token: reject badge
   });
 
   it('renders none badge for none policy', () => {
     const html = buildWeeklyDigestHtml(makeParams());
     expect(html).toContain('none');
-    expect(html).toContain('#dc2626'); // red color for none badge
+    expect(html).toContain('#b91c1c'); // danger token: none badge
   });
 
   it('shows pass/fail counts with percentages', () => {
@@ -143,19 +146,19 @@ describe('buildFreeCheckHtml', () => {
   it('shows green banner for protected status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('protected'), auth: AUTH_PASS, dns: DNS_FULL });
     expect(html).toContain('Protected');
-    expect(html).toContain('#16a34a');
+    expect(html).toContain('#147a3a');
   });
 
   it('shows orange banner for at_risk status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('at_risk'), auth: AUTH_PASS, dns: DNS_FULL });
     expect(html).toContain('At risk');
-    expect(html).toContain('#d97706');
+    expect(html).toContain('#aa4f08');
   });
 
   it('shows red banner for exposed status', () => {
     const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('exposed'), auth: null, dns: DNS_FULL });
     expect(html).toContain('Exposed');
-    expect(html).toContain('#dc2626');
+    expect(html).toContain('#b91c1c');
   });
 
   it('shows PASS badges for all checks when protected', () => {
@@ -286,19 +289,19 @@ describe('buildDnsAlertHtml', () => {
   it('shows degraded badge in red', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('degraded');
-    expect(html).toContain('#dc2626');
+    expect(html).toContain('#b91c1c');
   });
 
   it('shows improved badge in green', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('improved');
-    expect(html).toContain('#16a34a');
+    expect(html).toContain('#147a3a');
   });
 
   it('shows changed badge in orange', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [changed], reportsDomain: 'reports.acme.com' });
     expect(html).toContain('changed');
-    expect(html).toContain('#d97706');
+    expect(html).toContain('#aa4f08');
   });
 
   it('shows old and new values in change table', () => {
@@ -323,5 +326,58 @@ describe('buildDnsAlertHtml', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
     expect(html).toMatch(/^<!DOCTYPE html>/);
     expect(html).toContain('</html>');
+  });
+});
+
+// ── Shared layout: the logo ───────────────────────────────────
+
+describe('email header', () => {
+  const params = { fromEmail: 'user@acme.com', summary: { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary, auth: AUTH_PASS, dns: DNS_FULL };
+
+  it('sets the name as navy text on a light cell, with the brand rule under it, and no image', () => {
+    const html = buildFreeCheckHtml(params);
+    expect(html).not.toContain('<img');
+    expect(html).toContain('background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;');
+    expect(html).toMatch(/color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/i);
+    expect(html).not.toMatch(/<svg|data:image/);
+  });
+
+  it("keeps a workspace's own logo on its coloured band", () => {
+    const html = buildFreeCheckHtml({ ...params, brand: { color: '#ff0000', logoUrl: 'https://logo.example.test/x.png' } });
+    expect(html).toContain('background:#ff0000;padding:16px 24px;');
+    expect(html).toContain('src="https://logo.example.test/x.png"');
+    expect(html).not.toContain('https://app.example.test/l.png');
+  });
+
+  it('the default brand colour is the brand blue', () => {
+    expect(DEFAULT_BRAND_COLOR).toBe('#0647FF');
+  });
+});
+
+// ── No remote resources in any default-brand email ────────────
+
+describe('default-brand HTML emails load nothing remote', () => {
+  const dns = DNS_FULL;
+  const summary = { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary;
+  const changes: DomainChange[] = [{ field: 'dmarc', was: 'p=none', now: 'p=reject', severity: 'improved' } as DomainChange];
+  const sequence = SEQUENCE_DAYS.map((_, i) => {
+    const copy = stepCopy(i, { domain: 'acme.com', summary, bookingUrl: 'https://cal.example.test/x', prices: {} });
+    return [`funnel step ${i}`, buildLetterHtml({ title: copy.subject, blocks: copy.blocks, brand: { color: DEFAULT_BRAND_COLOR } })] as const;
+  });
+  const emails: (readonly [string, string])[] = [
+    ['weekly digest', buildWeeklyDigestHtml({ recipientName: 'Ada', weekLabel: 'Jan 1', stats: [STAT_REJECT], sourcesByDomain: new Map(), ruaAddress: 'rua@r.example.test', reportsDomain: 'reports.example.test' })],
+    ['free check', buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary, auth: AUTH_PASS, dns })],
+    ['dns alert', buildDnsAlertHtml({ domain: 'acme.com', changes, reportsDomain: 'reports.example.test' })],
+    ['letter', buildLetterHtml({ title: 'Hi', blocks: ['Hello', { cta: { label: 'Go', url: 'https://example.test/' } }] })],
+    ...sequence,
+  ];
+
+  it.each(emails)('%s', (_name, html) => {
+    expect(html).not.toMatch(/<img[^>]*\ssrc\s*=\s*["']?https?:/i);
+    expect(html).not.toMatch(/url\(\s*["']?https?:/i);
+    expect(html).not.toMatch(/<link\b/i);
+    expect(html).not.toMatch(/@import/i);
+    expect(html).not.toMatch(/<svg|data:image/i);
+    expect(html).toMatch(/font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/);
   });
 });

@@ -16,6 +16,8 @@ import { buildPolicyFile } from './email/mta-sts';
 import { assertSchemaReady, SchemaNotReadyError } from '@ready-set-mail/db';
 import { hostedServiceUrl, hostedServiceSentence } from './hosted-service';
 import { llmsTxt } from './llms-txt';
+import { lockupSvg } from '../packages/ui/src/components/logo-svg';
+import { lightColors as c } from '../packages/ui/src/tokens/tokens';
 
 export interface Env {
   DB: D1Database | undefined;
@@ -234,7 +236,7 @@ export default withMcpAuthorization(coreWorker, createInboxMcpHandler());
 export function setupPage(env: Pick<Env, 'MODE' | 'HOSTED_SERVICE_URL'> = {}): Response {
   const hosted = hostedServiceUrl(env);
   const hostedNote = hosted
-    ? `\n  <p style="font-size: 0.9rem; color: #4b5563;">${escapeHtml(hostedServiceSentence(hosted)).replace(escapeHtml(hosted), () => `<a href="${escapeHtml(hosted)}" target="_blank" rel="noopener noreferrer">${escapeHtml(hosted)}</a>`)}</p>`
+    ? `\n  <p style="font-size: 0.9rem; color: ${c['ink-2']};">${escapeHtml(hostedServiceSentence(hosted)).replace(escapeHtml(hosted), () => `<a href="${escapeHtml(hosted)}" target="_blank" rel="noopener noreferrer">${escapeHtml(hosted)}</a>`)}</p>`
     : '';
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -243,18 +245,19 @@ export function setupPage(env: Pick<Env, 'MODE' | 'HOSTED_SERVICE_URL'> = {}): R
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ready Set Mail — Setup Required</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 24px; color: #1a1a1a; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 80px auto; padding: 0 24px; color: ${c['ink-1']}; background: ${c['surface-1']}; }
     h1 { font-size: 1.5rem; margin-bottom: 4px; }
-    .badge { display: inline-block; background: #fef3c7; color: #92400e; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-bottom: 24px; }
+    h1 svg { display: block; height: 48px; width: auto; }
+    .badge { display: inline-block; background: ${c['warning-subtle']}; color: ${c.warning}; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-bottom: 24px; }
     ol { padding-left: 1.25rem; line-height: 2; }
-    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.6; }
-    a { color: #4f46e5; }
-    .note { background: #eff6ff; border-left: 3px solid #3b82f6; padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 0.9rem; margin-top: 24px; }
+    code { background: ${c['surface-2']}; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    pre { background: ${c['surface-2']}; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.6; }
+    a { color: ${c['brand-ink']}; }
+    .note { background: ${c['info-subtle']}; border-left: 3px solid ${c.info}; padding: 12px 16px; border-radius: 0 8px 8px 0; font-size: 0.9rem; margin-top: 24px; }
   </style>
 </head>
 <body>
-  <h1>🪄 Ready Set Mail</h1>
+  <h1>${lockupSvg('light')}</h1>
   <div class="badge">Setup required</div>
   <p>Your Worker is running, but no D1 database is attached yet. Complete these steps to finish setup:</p>${hostedNote}
   <ol>

@@ -47,7 +47,7 @@ export function SenderInventory({ senders, showDomains, alignment }: { senders: 
 									<span className="flex flex-wrap items-center gap-2 font-semibold text-ink-1 [overflow-wrap:anywhere]">
 										{senderName(s)}
 										{s.is_new ? (
-											<Badge variant="brand">
+											<Badge variant="info">
 												<Sparkles aria-hidden />
 												New sender
 											</Badge>

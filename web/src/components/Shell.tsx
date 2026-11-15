@@ -8,6 +8,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 	IconButton,
+	LogoLockup,
 	LogoMark,
 	WorkspaceSwitcher,
 	type RenderNavLink,
@@ -60,9 +61,10 @@ export function Shell() {
 	return (
 		<AppShell
 			brand={
-				<Link to="/" className="flex items-center gap-2 font-bold tracking-tight">
-					<LogoMark className="size-8 shrink-0 rounded-md" aria-hidden />
-					<span>Ready Set Mail</span>
+				<Link to="/" aria-label="Ready Set Mail" className="flex items-center gap-2 font-bold tracking-tight">
+					{/* The lockup where there is width; the collapsed sidebar has room for the mark only. */}
+					<LogoLockup aria-hidden className="h-9 w-auto shrink-0 [[data-collapsed=true]_&]:hidden" />
+					<LogoMark className="hidden size-8 shrink-0 [[data-collapsed=true]_&]:block" aria-hidden />
 				</Link>
 			}
 			sidebarTop={(collapsed) =>

@@ -6,8 +6,8 @@ export const buttonVariants = cva(
 	{
 		variants: {
 			variant: {
-				// Brand FILL (navy in light, gold in dark) with its --brand-fg label.
-				primary: "bg-brand text-brand-fg hover:bg-brand-hover",
+				// Brand FILL (brand blue; a lighter blue in dark mode) with its white --brand-fg label; darker on hover and press.
+				primary: "bg-brand text-brand-fg hover:bg-brand-hover active:bg-brand-active",
 				secondary: "border border-line-strong bg-surface-1 text-ink-1 hover:bg-surface-2",
 				ghost: "text-ink-1 hover:bg-surface-2",
 				danger: "border border-danger bg-danger-subtle text-danger hover:bg-surface-2",

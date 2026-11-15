@@ -40,9 +40,12 @@ export function settingsQueries(db: Db, workspaceId: string) {
 			return (r.meta.changes ?? 0) > 0;
 		},
 
-		/** Delete this workspace's settings whose key starts with `prefix` and whose value (a unix time) is not after `nowSeconds`. */
+		/**
+		 * Delete this workspace's settings whose key starts with `prefix` and whose value (a unix time) is not after `nowSeconds`. A plain prefix
+		 * comparison, not LIKE: `_` and `%` in a prefix (`cf_oauth_used:`) are ordinary characters.
+		 */
 		async deleteExpired(prefix: string, nowSeconds: number): Promise<void> {
-			await db.delete(settings).where(and(eq(settings.workspace_id, workspaceId), sql`${settings.key} LIKE ${prefix + '%'} AND CAST(${settings.value} AS INTEGER) <= ${nowSeconds}`)).run();
+			await db.delete(settings).where(and(eq(settings.workspace_id, workspaceId), sql`substr(${settings.key}, 1, ${prefix.length}) = ${prefix} AND CAST(${settings.value} AS INTEGER) <= ${nowSeconds}`)).run();
 		},
 
 		set(key: string, value: string) {

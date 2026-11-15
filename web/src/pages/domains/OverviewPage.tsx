@@ -179,7 +179,7 @@ export function OverviewPage() {
 				const h = statuses?.[d.id];
 				return { domain: d, hosted: h?.enabled ? h : null, hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(batch.data?.get(d.id)) };
 			});
-			downloadPdfReport({ summaries: summaryData, contexts, trends });
+			await downloadPdfReport({ summaries: summaryData, contexts, trends });
 			toast({ title: 'Report downloaded', description: 'email-auth-report.pdf', variant: 'success' });
 		} catch (e) {
 			toast({ title: 'Could not export the PDF', description: errorMessage(e), variant: 'danger' });

@@ -23,7 +23,8 @@ export function workerName(env: { WORKER_NAME?: string }): string {
   return env.WORKER_NAME || DEFAULT_WORKER_NAME;
 }
 
-export const DEFAULT_BRAND_COLOR = '#4F46E5';
+/** Brand blue (packages/ui tokens `brand`): the default colour of outbound HTML mail. */
+export const DEFAULT_BRAND_COLOR = '#0647FF';
 
 export interface TenantSettings {
   baseDomain?: string;

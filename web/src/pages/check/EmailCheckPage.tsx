@@ -64,7 +64,7 @@ function Waiting({ session, onCancel }: { session: CheckSession; onCancel: () =>
 			<CopyAddress email={session.email} />
 			{session.expires_at ? <p className="text-sm text-ink-2">This address takes one email and expires at {formatDateTime(session.expires_at)}.</p> : null}
 			<p role="status" className="flex items-center gap-2 text-sm text-ink-2">
-				<span aria-hidden className="size-2.5 rounded-full bg-brand-ink motion-safe:animate-pulse" />
+				<span aria-hidden className="size-2.5 rounded-full bg-info motion-safe:animate-pulse" />
 				Waiting for email… (checking every {CHECK_POLL_MS / 1000}s)
 			</p>
 			<p className="text-sm text-ink-2">

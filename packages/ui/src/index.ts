@@ -19,6 +19,7 @@ export * from "./components/label.js";
 export * from "./components/level-card.js";
 export { LevelLadder, type LevelLadderProps } from "./components/level-ladder.js";
 export * from "./components/logo.js";
+export * from "./components/logo-svg.js";
 export * from "./components/page-header.js";
 export * from "./components/record-block.js";
 export * from "./components/select.js";
