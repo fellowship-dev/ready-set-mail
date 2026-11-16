@@ -1,4 +1,4 @@
-// A report with more rows than a report is stored with is ACCEPTED, never refused whole (docs/adr/0016).
+// A report with more rows than a report is stored with is ACCEPTED, never refused whole (docs/adr/0017).
 //
 //   passing rows   every row that passes DMARC for the customer's own domain (aligned SPF or aligned DKIM: the parser's own judgement,
 //                  `alignment.dmarc`, not decided again here). All kept, always.

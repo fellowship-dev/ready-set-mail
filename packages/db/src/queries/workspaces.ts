@@ -18,7 +18,7 @@ export interface WorkspaceSummary {
 	role: MembershipRole;
 	member_count: number;
 	created_at: number;
-	/** Hosted plan (0017): 'free' or 'payg', and whether this workspace holds the person's one free domain (only that person's own: the owner's). */
+	/** Hosted plan (0018): 'free' or 'payg', and whether this workspace holds the person's one free domain (only that person's own: the owner's). */
 	plan: 'free' | 'payg';
 	includes_free_domain: boolean;
 }
@@ -73,7 +73,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 		 * workspace row existing, so a refused create writes nothing. Returns whether it was created.
 		 */
 		async createCapped(id: string, name: string, ownerId: string, max: number, allowance: 'none' | 'if_free' | 'require' = 'if_free'): Promise<boolean> {
-			// The person's one free domain (0017): 'if_free' gives the new workspace the allowance when they hold none (recorded whether or not a plan is
+			// The person's one free domain (0018): 'if_free' gives the new workspace the allowance when they hold none (recorded whether or not a plan is
 			// enforced); 'require' also refuses the create when they hold one (the plan's first workspace); 'none' never gives it (a workspace made with a card).
 			const holds = sql`EXISTS (SELECT 1 FROM workspaces WHERE free_owner_user_id = ${ownerId})`;
 			const [made] = await batchStatements(db, [
@@ -106,7 +106,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 		 * and never leaves the workspace without an owner. Returns whether it applied.
 		 */
 		async transferOwnership(workspaceId: string, fromId: string, toId: string, maxOwned?: number): Promise<boolean> {
-			// The allowance (0017) follows the new owner: it moves with the workspace when they hold none, else the workspace loses it. One statement, in the same batch.
+			// The allowance (0018) follows the new owner: it moves with the workspace when they hold none, else the workspace loses it. One statement, in the same batch.
 			// With a cap, the promotion also needs `toId` to own fewer than `maxOwned` workspaces now; the demotion follows the
 			// promotion, so a refused promotion leaves both roles as they were.
 			const underCap = maxOwned === undefined ? sql`1 = 1`

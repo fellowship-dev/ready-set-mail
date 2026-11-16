@@ -1,4 +1,4 @@
--- Hosted plan: free for one domain, pay as you go for more (docs/billing.md, docs/adr/0014). Additive only.
+-- Hosted plan: free for one domain, pay as you go for more (docs/billing.md, docs/adr/0015). Additive only.
 -- Nothing here changes behaviour until the hosted service sets HOSTED_PLAN=free_one_domain.
 --
 -- workspaces.plan                free | payg. payg: a Stripe subscription exists for this workspace (workspace_subscriptions).

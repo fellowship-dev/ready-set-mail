@@ -1,6 +1,6 @@
 // Pay as you go: one Stripe subscription per workspace, one item, quantity = billable domains (units beyond the free allowance).
 //
-// Rules this file keeps (docs/billing.md "Pay as you go", ADR 0014 and 0015):
+// Rules this file keeps (docs/billing.md "Pay as you go", ADR 0015 and 0016):
 //   - THE SERVER IS THE ONLY WRITER OF THE QUANTITY. It is recomputed from the database inside the workspace's lease (src/hosted/plan.ts withPlanLock)
 //     every time, never taken from a request. The idempotency key of every Stripe write names workspace, item, target and the lease's revision.
 //   - A domain added while the Stripe update fails is rolled back: the row goes, nothing is billed, nothing is free.

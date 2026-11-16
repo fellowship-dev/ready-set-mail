@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-11-16
-decided-by: coordinator (implementation of ADR 0014)
+decided-by: coordinator (implementation of ADR 0015)
 ---
 # One module decides what a workspace holds and may add; the server alone writes the subscription quantity
 

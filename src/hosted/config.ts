@@ -163,7 +163,7 @@ export const SELFHOST_MAX_RAW_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_MAX_STORAGE_RETRIES_PER_DAY = 20;
 export const DEFAULT_MAX_HOSTED_DOMAINS_PER_WORKSPACE = 10;
 /**
- * The free plan's daily volume (docs/adr/0016): report ROWS that PASS DMARC for the customer's own domain (aligned SPF or aligned DKIM, the parser's own
+ * The free plan's daily volume (docs/adr/0017): report ROWS that PASS DMARC for the customer's own domain (aligned SPF or aligned DKIM, the parser's own
  * judgement). Mail that fails authentication never counts toward it: the customer does not control who fakes their domain. 20,000 is about ten times what
  * an honest small domain's reports hold in a day.
  */

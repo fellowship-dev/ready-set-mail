@@ -11,6 +11,6 @@ Owner decisions of 2026-11-16: "C. Free for one domain, with a paid plan for mor
 
 **Consequences**
 - Pricing is a hypothesis: $5 a month, $50 a year, in two Stripe prices found by lookup key (`rsm_extra_domain_monthly`, `rsm_extra_domain_yearly`); the amount always comes from Stripe. The dashboard offers monthly only for now; the server accepts `interval: "year"`.
-- The server is the only writer of the quantity (ADR 0015). The browser never sends a quantity or a price.
+- The server is the only writer of the quantity (ADR 0016). The browser never sends a quantity or a price.
 - "Hosted plan pricing" leaves `OPEN.md`.
 - Separate accounts each get one free domain; only the existing sign-up controls (bot check, emailed codes, auth limits) bound that. A cap on swapping the free domain, blocking disposable addresses and a members cap are not built; their triggers are in the memo.

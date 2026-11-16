@@ -62,7 +62,7 @@ export interface ReportOptions {
    */
   dropOverCap?: boolean;
   /**
-   * Hosted intake (docs/adr/0016): a COUNTED report with more rows than a report is stored with is accepted, not refused. Every passing row is kept, the failing
+   * Hosted intake (docs/adr/0017): a COUNTED report with more rows than a report is stored with is accepted, not refused. Every passing row is kept, the failing
    * rows with the most messages are kept up to `room().keepFailing`, and the rest are folded into summary rows with exact totals. `room` sees the report's
    * passing and failing rows and returns a reason to refuse (a limit on the customer's OWN passing mail only) or how many failing rows may be stored as they are.
    * Reports of the uncounted tiers keep their small per-report caps and are refused over them, as before.

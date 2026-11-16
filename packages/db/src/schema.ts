@@ -46,7 +46,7 @@ export const workspaces = sqliteTable('workspaces', {
 	created_at: integer('created_at').notNull().default(now),
 	/** The workspace's Stripe Customer (hosted billing, 0016): one card per workspace. Created on first need, cleared when Stripe says it was deleted. */
 	stripe_customer_id: text('stripe_customer_id'),
-	/** Hosted plan (0017): 'free' or 'payg' (a Stripe subscription exists, see workspaceSubscriptions). */
+	/** Hosted plan (0018): 'free' or 'payg' (a Stripe subscription exists, see workspaceSubscriptions). */
 	plan: text('plan', { enum: ['free', 'payg'] }).notNull().default('free'),
 	/** Non-null: this workspace holds that person's one free domain (the allowance). Unique, so a second one is refused by the database under any race. */
 	free_owner_user_id: text('free_owner_user_id'),
@@ -172,11 +172,11 @@ export const domains = sqliteTable(
 		dmarc_sp: text('dmarc_sp'),
 		dmarc_p: text('dmarc_p'),
 		dmarc_rua: integer('dmarc_rua'),
-		/** The organizational domain this row is a unit of (0017): a domain with all its subdomains is one domain of the plan. Null: the row's own name (rows from before are filled in by the Worker). */
+		/** The organizational domain this row is a unit of (0018): a domain with all its subdomains is one domain of the plan. Null: the row's own name (rows from before are filled in by the Worker). */
 		org_domain: text('org_domain'),
 		/** Unix seconds the domain was paused (the plan lapsed, or its owner kept one domain): readable and exportable, new reports are not processed. Null: active. */
 		paused_at: integer('paused_at'),
-		/** Unix seconds a paid domain was added while its first payment waits for the owner's bank (3-D Secure) (0017). Cleared when Stripe says paid; the row is removed if the payment never completes. */
+		/** Unix seconds a paid domain was added while its first payment waits for the owner's bank (3-D Secure) (0018). Cleared when Stripe says paid; the row is removed if the payment never completes. */
 		payment_pending_at: integer('payment_pending_at'),
 	},
 	(t) => [
@@ -223,7 +223,7 @@ export const aggregateReports = sqliteTable(
 		ingest_token: text('ingest_token'),
 		/** Rows stored in report_records for this report. Null: stored before 0010. */
 		record_count: integer('record_count'),
-		/** A report too large to store row by row (0017): how many failing rows were folded into summary rows, and from how many source addresses. Null: stored whole. */
+		/** A report too large to store row by row (0018): how many failing rows were folded into summary rows, and from how many source addresses. Null: stored whole. */
 		summarised_rows: integer('summarised_rows'),
 		summarised_sources: integer('summarised_sources'),
 	},
@@ -258,7 +258,7 @@ export const reportRecords = sqliteTable(
 		country_code: text('country_code'),
 		org: text('org'),
 		workspace_id: workspaceId(),
-		/** A summary row (0017): the number of failing source addresses of one network folded into it, with exact message totals. Null: a real row. */
+		/** A summary row (0018): the number of failing source addresses of one network folded into it, with exact message totals. Null: a real row. */
 		summarised_sources: integer('summarised_sources'),
 	},
 	(t) => [
@@ -1144,11 +1144,11 @@ export const billingPriceCache = sqliteTable('billing_price_cache', {
 	amount: integer('amount').notNull(),
 	currency: text('currency').notNull(),
 	fetched_at: integer('fetched_at').notNull(),
-	/** 'month' | 'year' for a recurring price (0017); null for the one-time offer price. */
+	/** 'month' | 'year' for a recurring price (0018); null for the one-time offer price. */
 	interval: text('interval'),
 });
 
-/** The one Stripe subscription of a pay-as-you-go workspace (0017): its state as last seen. No card data. */
+/** The one Stripe subscription of a pay-as-you-go workspace (0018): its state as last seen. No card data. */
 export const workspaceSubscriptions = sqliteTable('workspace_subscriptions', {
 	workspace_id: text('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
 	stripe_subscription_id: text('stripe_subscription_id').notNull(),
@@ -1177,7 +1177,7 @@ export const workspaceSubscriptions = sqliteTable('workspace_subscriptions', {
 	check('workspace_subscriptions_interval_check', sql`${t.interval} IN ('month', 'year')`),
 ]);
 
-/** A person's wish to create another workspace, held until the card is verified (0017): the workspace id is allocated here, the workspace row is written on success. */
+/** A person's wish to create another workspace, held until the card is verified (0018): the workspace id is allocated here, the workspace row is written on success. */
 export const workspaceIntents = sqliteTable('workspace_intents', {
 	id: text('id').primaryKey(),
 	user_id: text('user_id').notNull(),

@@ -1,4 +1,4 @@
-// Operator alerts about a workspace's report volume (docs/adr/0016), each at most once per workspace per day, by email to OWNER_EMAIL through the
+// Operator alerts about a workspace's report volume (docs/adr/0017), each at most once per workspace per day, by email to OWNER_EMAIL through the
 // existing notify path. Nothing here is shown to the customer: the only customer-facing words are the limit notice and the summarised-rows note.
 //   heavy_passing   a FREE workspace's own mail passed more than the alert line (default 5,000 rows a day): "heavy legitimate user on the free plan"
 //   spoofing        a workspace saw an extreme number of FAILING rows in a day (default 100,000): "this customer may be under a spoofing run"

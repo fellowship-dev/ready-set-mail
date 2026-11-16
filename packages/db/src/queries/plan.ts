@@ -1,5 +1,5 @@
 /**
- * The hosted plan (0017): one workspace's plan state, its subscription row, the lease every plan change runs under, and the cross-workspace
+ * The hosted plan (0018): one workspace's plan state, its subscription row, the lease every plan change runs under, and the cross-workspace
  * reads the webhook, the daily job and workspace creation need. The rules are in src/hosted/plan.ts; this file only reads and writes.
  *
  * `planQueries(db, workspaceId)` is scoped: every statement carries the workspace id.

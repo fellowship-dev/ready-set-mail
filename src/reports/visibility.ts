@@ -90,7 +90,7 @@ export const storageDropText = (reporterLabel: string, time: string) => `Report 
 export const utcMinute = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
 /**
- * The free plan's daily limit, in terms of the customer's OWN passing mail (docs/adr/0016): mail that fails authentication never counts toward it.
+ * The free plan's daily limit, in terms of the customer's OWN passing mail (docs/adr/0017): mail that fails authentication never counts toward it.
  * Plain, no alarm; the web adds the help link from `help_url`.
  */
 export const freePlanDayNotice = (n: number, rows: number) => `Today your domain sent more of its own mail than the free plan's ${rows.toLocaleString('en-US')} report rows a day, so ${n} ${n === 1 ? 'report was' : 'reports were'} not saved. Mail that fails authentication never counts toward this. Everything already here stays.`;

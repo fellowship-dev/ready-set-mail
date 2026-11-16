@@ -63,7 +63,7 @@ describe('migration 0016 and the schema', () => {
   const db = createMigratedD1().sqlite;
   const info = (t: string) => db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string; notnull: number }>;
   it('is the newest migration the Worker requires', () => {
-    expect(REQUIRED_MIGRATION).toBe('0017_hosted_plan.sql');
+    expect(REQUIRED_MIGRATION).toBe('0018_hosted_plan.sql');
   });
   it('is additive: one nullable column on workspaces, new tables, nothing dropped', () => {
     const sql = readFileSync(join(import.meta.dirname, '../../migrations/0016_billing.sql'), 'utf8');

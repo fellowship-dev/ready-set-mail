@@ -227,7 +227,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   const body = new Proxy(message, { get: (t, p) => (p === 'raw' ? rest : Reflect.get(t, p, t) instanceof Function ? (Reflect.get(t, p, t) as Function).bind(t) : Reflect.get(t, p, t)) });
   const tenant = await loadTenant(env, { workspaceId: tgt.workspace_id });
 
-  // The free plan counts the customer's OWN passing mail only (docs/adr/0016): failing rows never reach its limit, and are summarised, not refused, when
+  // The free plan counts the customer's OWN passing mail only (docs/adr/0017): failing rows never reach its limit, and are summarised, not refused, when
   // the room for them is used up. Passing rows have all the room there is.
   const freePlan = kind === 'rua' && planOn && (await isFreePlan(env, env.DB, tgt.workspace_id).catch(() => false));
   const summarise = kind === 'rua' && planOn ? {

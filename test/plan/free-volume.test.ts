@@ -1,4 +1,4 @@
-// Mail that fails authentication never counts toward a customer's limits (docs/adr/0016), and a report is never refused whole for its size.
+// Mail that fails authentication never counts toward a customer's limits (docs/adr/0017), and a report is never refused whole for its size.
 //   - the free plan's daily volume counts only rows that PASS DMARC for the customer's own domain
 //   - a spoofing run (many reports, many source addresses, all failing) leaves the customer's own reports recorded and the plan counter untouched
 //   - a report over the row limit is accepted: every passing row kept, the biggest failing rows kept, the rest summarised with exact totals

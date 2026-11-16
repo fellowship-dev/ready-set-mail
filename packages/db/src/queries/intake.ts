@@ -177,7 +177,7 @@ export function intakeQueries(db: Db, workspaceId: string) {
 					UNION ALL SELECT 'w', NULL, messages FROM intake_quota WHERE day = ${day} AND scope = ${'w:' + workspaceId}
 					UNION ALL SELECT 'ws', NULL, records FROM workspace_storage WHERE workspace_id = ${workspaceId}
 					UNION ALL SELECT 'inst', NULL, records FROM intake_quota WHERE scope = ${STORED_ROW.scope} AND day = ${STORED_ROW.day}`),
-				// Reports stored with failing rows folded into summary rows (0017): how many reports, from how many source addresses.
+				// Reports stored with failing rows folded into summary rows (0018): how many reports, from how many source addresses.
 				db.all<{ domain_id: number; reports: number; sources: number }>(sql`SELECT domain_id, COUNT(*) AS reports, COALESCE(SUM(summarised_sources), 0) AS sources FROM aggregate_reports
 					WHERE workspace_id = ${workspaceId} AND ${inRange} AND summarised_rows IS NOT NULL AND created_at >= ${sinceSeconds} GROUP BY domain_id`),
 			]);
@@ -213,7 +213,7 @@ export function intakeQueries(db: Db, workspaceId: string) {
 			return rows[0]?.messages ?? 1;
 		},
 
-		/** Today's volume of the customer's own mail (0017): report rows that PASSED DMARC and were stored (what the free plan counts), and failing rows seen (what the operator is alerted on). */
+		/** Today's volume of the customer's own mail (0018): report rows that PASSED DMARC and were stored (what the free plan counts), and failing rows seen (what the operator is alerted on). */
 		async volumeToday(day: string): Promise<{ passing: number; failing: number }> {
 			const rows = await db.all<{ scope: string; records: number }>(sql`SELECT scope, records FROM intake_quota WHERE day = ${day} AND scope IN (${'p:' + workspaceId}, ${'f:' + workspaceId})`);
 			const n = (scope: string) => Number(rows.find((r) => r.scope === scope)?.records ?? 0);

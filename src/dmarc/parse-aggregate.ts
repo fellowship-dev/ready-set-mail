@@ -77,7 +77,7 @@ export interface ParseLimits {
   /** Refuse (before any lookup) a report with more records than this. */
   maxRecords?: number;
   /**
-   * Hosted intake (docs/adr/0016): a report above `maxRecords` is not refused whole. It is parsed up to this many rows (a safety bound on the parser)
+   * Hosted intake (docs/adr/0017): a report above `maxRecords` is not refused whole. It is parsed up to this many rows (a safety bound on the parser)
    * and `shape` decides what is stored. Absent: `maxRecords` refuses, as before.
    */
   hardMaxRecords?: number;
