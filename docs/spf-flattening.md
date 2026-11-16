@@ -61,6 +61,15 @@ Flattening moves terms out of the records they were read from and into the custo
 
 **Hosted records (a record published as an include target).** The hosted record (`<id>._spf.h.<zone>`) is evaluated by receivers as the target of `include:` in the customer's own record, `v=spf1 include:<id>._spf.h.<zone> <the original's all>`. An include answers only `pass` or "no match", and its own name is the current domain. So the engine's `publishedAs: 'include'` mode (`HOSTED_SPF_OPTS`, used by `src/hosted/service.ts` and `src/hosted/cron.ts`): a bare `a`, `mx` or `ptr` at the root is pinned to the customer's domain; a **macro** at the root, and any root term with a **qualifier other than `+`** before the `all` (`-ip4:`, `~a`, `?include:`), is refused in one sentence (kind `not_hostable`, HTTP 422 on enabling), because an include would turn that fail, softfail or neutral into "no match" and a macro would expand with the include's name; the root `all` and `exp=` are not carried (the customer's record keeps the original's `all`; an include never matches on its own `all`), except `+all`, which an include passes everyone with. So the include gives `pass` only where the original gives `pass`, and the customer's `all` decides the rest. The property test checks this mode: it evaluates the pointer record against the original for random records and senders ("include" mode, same assertions as the others).
 
+## How it is tested
+
+`packages/dns-checks/test/spf-flatten.property.test.ts` (in `npm test`, 2,000 trees in about 12 s; `npm run test:spf-property` or `bash scripts/spf-property.sh 50000 summary.json` for the long run) flattens seeded random SPF trees in five modes (default, most-unbounded, most, tight, include) and compares each result with an independent RFC 7208 evaluator (`test/spf-eval.ts`) for random senders and every listed address. The RFC 7208 section 4.6.4 processing limits (10 lookups, 2 void lookups) are what flattening escapes, so:
+
+- the original gives a result: the flattened record gives the same, never wider (`wider` = a `pass` the original did not give);
+- the original errors because of a processing limit (it errors with the limits on and not with both off): the flattened record means the same without the limits (and spends no more void lookups than the original), and gives the result the original gives without them; an include the engine keeps as an include still spends the receiver's limits, so there it may give the same limit error the original gives, never another result (`origErrLimit`, `origErrStillLimited`);
+- the original errors for any other reason (a syntax permerror, a temperror, an include of a name with no record): the flattened record is never `pass` and the engine must have refused (`origErrOther`, `errorPasses`, `errorNotRefused`);
+- an `ok` result stays within 10 lookups and 450 bytes (bounded modes); no sender is skipped without being counted.
+
 ## A removal waits
 
 [ADR 0024](adr/0024-a-refresh-never-removes-an-address-on-first-sighting.md). Each inlined provider is compared with what the published record authorises for it (`spf_flatten_config.provider_state`):
