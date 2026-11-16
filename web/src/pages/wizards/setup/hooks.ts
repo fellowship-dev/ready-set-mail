@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api';
+import { setupStatusKey } from '../../../lib/domain-queries';
 import type { OnboardingStatus, WizardState } from '../../../lib/types';
 import { DEFAULT_WIZARD } from './steps';
 
 export const setupKeys = {
-	status: (id: number) => ['onboarding-status', id] as const,
+	status: setupStatusKey,
 	wizard: (id: number) => ['wizard-state', id] as const,
 };
 

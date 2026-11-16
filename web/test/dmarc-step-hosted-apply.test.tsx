@@ -64,6 +64,39 @@ describe('setup step 4 on hosted', () => {
 		expect(text()).not.toContain(`rua=mailto:${ADDR}`);
 	});
 
+	it('says nothing of a "Report authorization record" or Routing on hosted (no reports domain of the install\'s own exists); self-host still does', async () => {
+		const withAuth = { ...onboarding(true, true), rua_address: ADDR, dmarc: { ...onboarding(true, true).dmarc, auth_record: { found: false, record_name: null } } };
+		const { unmount } = step4(base({ 'GET /api/domains/1/onboarding-status': withAuth }));
+		await screen.findByText('DMARC policy');
+		expect(text()).not.toContain('Report authorization record');
+		expect(text()).not.toContain('Set one up in Routing');
+		unmount();
+		renderApp(<Routes><Route path="/domains/:id/setup/:step" element={<SetupWizardPage />} /></Routes>, { route: '/domains/1/setup/4', status: { mode: 'self-host', has_domain: true } as never, routes: base({ 'GET /api/domains/1/onboarding-status': withAuth, 'GET /api/hosted/config': { enabled: false } }) as never });
+		expect(await screen.findByText('Report authorization record')).toBeInTheDocument();
+		expect(text()).toContain('Set one up in Routing');
+	});
+
+	it('connecting reports in the step makes the step itself say so: its own status is read again, nothing stale is left above the panel', async () => {
+		let connected = false;
+		const view = () => ({
+			available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: connected ? ADDR : null, connected_at: connected ? now : null, last_report_at: null,
+			counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: connected ? 'not_published' : 'not_connected',
+			dns: connected ? { checked_at: now, error: null, plan: { kind: 'add', name: '_dmarc.example.com', current: null, record: RECORD, created: true } } : null, apply_via_cloudflare: false, preview: null,
+		});
+		step4(base({
+			'GET /api/domains/1/onboarding-status': () => ({ ...onboarding(false), rua_address: connected ? ADDR : '' }),
+			'GET /api/domains/1/report-address': () => view(),
+			'POST /api/domains/1/report-address': () => { connected = true; return { __status: 201, body: view() }; },
+			'GET /api/domains/dns-host': { provider: null, nameservers: [], status: 'unknown' },
+			'GET /api/cloudflare/connections': { connections: [], accounts: [], oauth: null, token_paste: false },
+		}));
+		await userEvent.click(await screen.findByRole('button', { name: 'Connect reports' }));
+		// The step reads its own status again: the address is now the domain's, so the step shows the record to publish, not "not connected".
+		await waitFor(() => expect(screen.queryByText('Reports not connected yet')).not.toBeInTheDocument());
+		expect(await screen.findByText('Recommended record')).toBeInTheDocument();
+		expect(text()).toContain(`rua=mailto:${ADDR}`);
+	});
+
 	for (const found of [false, true]) {
 		it(`without Cloudflare, ${found ? 'a record that already lists our address' : 'no record'}: the step says reports are not connected, offers no record with our address and no Copy of one`, async () => {
 			step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false, found) }));

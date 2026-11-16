@@ -13,7 +13,8 @@
 // so never a pending or lost claim (those live in domain_claims), never an evicted row, and never a row whose
 // ownership was not proven ('legacy', from before ownership checks).
 
-import { createResolver, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { resolverFor } from '../dns/resolver';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
@@ -70,6 +71,17 @@ export interface ReportAddressView {
   state: ReportAddressState;
   /** The live DMARC check, made only when connected. `plan` is null when the lookup failed. */
   dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | InheritedPlan | null } | null;
+  /**
+   * Whether "Apply" can write this domain's DMARC record: a Cloudflare connection reaches its zone (the test onboarding-status uses).
+   * False when reports cannot be connected for the domain.
+   */
+  apply_via_cloudflare: boolean;
+  /**
+   * Not connected yet, and Apply would reach the zone: the live DMARC check planned with the address that connecting uses, so the
+   * review can show the record now and after. Never set without Cloudflare: a record carrying the address is not offered to paste
+   * before the domain is connected (the intake refuses reports for a domain that never was).
+   */
+  preview: { checked_at: number; error: string | null; plan: ReportAddressPlan | InheritedPlan | null } | null;
   /** When the domain follows its organizational domain's record: that domain, if this workspace has it, and whether its reports are connected. */
   parent: { domain_id: number; domain: string; connected: boolean } | null;
 }
@@ -171,6 +183,11 @@ async function connectedAddress(tenant: TenantContext, domain: DomainRow, intake
   return token && (await hashToken(rcpt.tag)) === token.token_hash ? intakeAddress('rua', rcpt.tag, intakeDomain) : null;
 }
 
+/** Does a Cloudflare connection reach this domain's zone, so a DMARC write (apply-dmarc) can run? One test for the status and onboarding-status. */
+export async function applyViaCloudflare(tenant: TenantContext, domain: Pick<DomainRow, 'domain'>): Promise<boolean> {
+  return tenant.hasCloudflare() && (await tenant.cfFor(domain.domain).then(() => true, () => false));
+}
+
 export async function reportAddressStatus(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps = {}): Promise<ReportIntakeStatus> {
   const intakeDomain = reportIntakeDomain(tenant.env);
   if (!intakeDomain) return { available: false };
@@ -183,14 +200,20 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
 
   let counts = { since: 0, counted_since: 0, last_counted_since: null as number | null, before: 0 };
   let dns: ReportAddressView['dns'] = null;
+  let preview: ReportAddressView['preview'] = null;
+  const apply_via_cloudflare = !managed_by && !refusal && (await applyViaCloudflare(tenant, domain));
   let visibility: ReportVisibility | null = null;
   if (address) {
     counts = await tenant.scope.intake.reportsAround(domain.id, connected_at);
     // Since the connection began, by when we RECEIVED the reports: a report covers the previous day, so its period starts before the connection.
     visibility = await reportVisibility(tenant, domain.id, connected_at ?? 0, undefined, 'received');
-    const lookup = await lookupDmarc(deps.resolver ?? createResolver(), domain.domain);
+    const lookup = await lookupDmarc(deps.resolver ?? resolverFor(tenant.env), domain.domain);
     const checked_at = Math.floor((deps.now?.() ?? Date.now()) / 1000);
     dns = { checked_at, error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, address) };
+  }
+  if (!address && apply_via_cloudflare) {
+    const lookup = await lookupDmarc(deps.resolver ?? resolverFor(tenant.env), domain.domain);
+    preview = { checked_at: Math.floor((deps.now?.() ?? Date.now()) / 1000), error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, fixedReportAddress(intakeDomain)) };
   }
   let parent: ReportAddressView['parent'] = null;
   if (dns?.plan?.kind === 'inherited') {
@@ -209,7 +232,7 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
   return {
     available: true, domain_id: domain.id, domain: domain.domain, managed_by, can_connect: !refusal, refusal, address,
     connected_at, last_report_at: counts.last_counted_since, counted_since_connect: counts.counted_since, reports_since_connect: counts.since,
-    reports_before_connect: counts.before, visibility, state, dns, parent,
+    reports_before_connect: counts.before, visibility, state, dns, apply_via_cloudflare, preview, parent,
   };
 }
 

@@ -4,6 +4,8 @@ import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/reac
 import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { useHostedInfo } from '../../lib/hosted';
+import { useHosted } from '../../lib/session';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
 import type { MtaStsStatus, SpfFlatStatus } from '../../lib/types';
@@ -116,7 +118,7 @@ function spfCard(id: number, s: SpfFlatStatus) {
 			title="SPF flattening"
 			badge={badge}
 			active={active}
-			activeText={`${s.config?.ip_count ?? '?'} IPs, re-resolved daily.`}
+			activeText={`${s.config?.ip_count ?? '?'} IPs, as resolved when it ran. Not updated when your providers change theirs.`}
 			inactiveText="Resolve SPF includes to raw IPs to stay under the 10-lookup limit."
 			configureTo={`/domains/${id}/spf-flatten`}
 			disablePath={`/api/domains/${id}/spf-flatten`}
@@ -164,16 +166,22 @@ function Slot<T>({ q, title, show, render }: { q: UseQueryResult<T>; title: stri
 
 /** SPF flattening and MTA-STS: only shown when a tool is available or configured for this instance. */
 export function DnsTools({ domainId }: { domainId: number }) {
-	const spf = useSpfFlatten(domainId);
-	const mta = useMtaSts(domainId);
-	const spfHidden = spf.isSuccess && !spf.data.available && !spf.data.config;
-	const mtaHidden = mta.isSuccess && !mta.data.available && !mta.data.config;
+	// Hosted: the tool serves the policy from the install's own reports domain, which the hosted service has none of (enabling it fails there);
+	// only a domain on hosted records has MTA-STS, and that card leads to the hosted page.
+	const hostedMode = useHosted();
+	const hostedRecords = useHostedInfo(domainId);
+	const mtaOff = hostedMode && !hostedRecords;
+	// Hosted: no SPF flattening (the routes are off there; a hosted-records domain's SPF is flattened by the hosted service).
+	const spf = useSpfFlatten(domainId, !hostedMode);
+	const mta = useMtaSts(domainId, !mtaOff);
+	const spfHidden = hostedMode || (spf.isSuccess && !spf.data.available && !spf.data.config);
+	const mtaHidden = mtaOff || (mta.isSuccess && !mta.data.available && !mta.data.config);
 	if (spfHidden && mtaHidden) return null;
 	return (
 		<Section title="DNS tools" description="Optional tools that change your DNS for you.">
 			<div className="grid gap-3 md:grid-cols-2">
-				<Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />
-				<Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />
+				{hostedMode ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />}
+				{mtaOff ? null : <Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />}
 			</div>
 		</Section>
 	);

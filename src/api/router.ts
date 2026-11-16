@@ -87,7 +87,7 @@ import { handleBillingRoutes } from '../billing/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
-import { ReportAddressError, connectReports, mergeReportAddress, reportAddressForWrite, reportConnectFor, reportConnectForPage, type ReportMerge } from '../hosted/report-address';
+import { ReportAddressError, applyViaCloudflare, connectReports, mergeReportAddress, reportAddressForWrite, reportConnectFor, reportConnectForPage, type ReportMerge } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
@@ -141,6 +141,7 @@ import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/sp
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
+import { resolverFor } from '../dns/resolver';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -165,13 +166,19 @@ const CHECK_SESSION_WINDOW_MS = 3600_000;
 /**
  * Endpoints that act on the operator's own Cloudflare account (Email Routing, Workers custom domains) with the
  * instance token. On the hosted service they would run with a customer's connection token, widening what a
- * stolen session can do in that account, and no hosted customer needs them.
+ * stolen session can do in that account, and no hosted customer needs them. Also what only means something with
+ * the install's own reports domain: the default ("infrastructure hub") domain, and SPF flattening.
+ * `method` null: every method. (MTA-STS is not here: hosted-records domains use that route.)
  */
-const SELF_HOST_ONLY: ReadonlySet<string> = new Set([
-  'POST /api/setup/email-routing',
-  'POST /api/setup/custom-domain',
-  'POST /api/settings/register-destination',
-]);
+const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
+  { method: 'POST', path: /^\/api\/setup\/email-routing$/ },
+  { method: 'POST', path: /^\/api\/setup\/custom-domain$/ },
+  { method: 'POST', path: /^\/api\/settings\/register-destination$/ },
+  { method: 'PUT', path: /^\/api\/domains\/[^/]+\/set-default$/ },
+  // SPF flattening rewrites the customer's SPF in place and its daily refresh is not wired for the hosted service (hosted SPF has its own, src/hosted/spf.ts).
+  { method: null, path: /^\/api\/domains\/[^/]+\/spf-flatten(\/preview)?$/ },
+];
+const selfHostOnly = (method: string, path: string): boolean => SELF_HOST_ONLY.some((r) => (r.method === null || r.method === method) && r.path.test(path));
 
 const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'X-Content-Type-Options': 'nosniff',
@@ -757,7 +764,7 @@ async function _handleApi(
     return err('admin required', 403);
   }
 
-  if (getMode(env) === 'saas' && SELF_HOST_ONLY.has(`${method} ${path}`)) return err('not available on the hosted service', 404);
+  if (getMode(env) === 'saas' && selfHostOnly(method, path)) return err('not available on the hosted service', 404);
 
   // GET /api/me — who the caller is in this workspace (the dashboard gates controls on `role`)
   const instanceOwner = isInstanceOwner(env, { kind: (workspace as AuthedWorkspace).kind, email: userBySession?.email, role: workspace.role, workspaceId: workspace.workspaceId });
@@ -1047,7 +1054,7 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
 
       try {
-        const txt = await createResolver().txt(`_dmarc.${domain.domain}`);
+        const txt = await resolverFor(env).txt(`_dmarc.${domain.domain}`);
         // SERVFAIL / timeout / HTTP error / malformed answer: we don't know, so don't say "not found"
         if (txt.status === 'error') {
           return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
@@ -1140,7 +1147,7 @@ async function _handleApi(
 
       // Live DNS goes through the shared resolver: a DNS *error* is reported as such
       // (`dns_errors`), never as "record not found".
-      const dnsResolver = createResolver();
+      const dnsResolver = resolverFor(env);
       const dns_errors: string[] = [];
       // What this read resolved, stored below. A key stays unset when its lookup failed (unknown is never stored as absent).
       const resolved: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean } = {};
@@ -1287,7 +1294,7 @@ async function _handleApi(
       // a record pasted by hand with that address would be refused at intake, the domain never having been connected. Only the apply connects it.
       // Only when that Apply can actually run for THIS domain: a connection exists AND it manages the domain's zone (the domain is linked to it). With Cloudflare
       // connected for other zones only, Apply cannot write the record or connect the reports, so no report address is named anywhere.
-      const applyReaches = tenant.hasCloudflare() && await tenant.cfFor(domain.domain).then(() => true, () => false);
+      const applyReaches = await applyViaCloudflare(tenant, domain);
       const reportWrite = domain.rua_address?.trim() || !applyReaches ? null : await reportAddressForWrite(tenant, domain);
       return json({
         domain_id: domain.id,

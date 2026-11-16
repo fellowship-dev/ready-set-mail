@@ -11,6 +11,7 @@ import { StepFooter, StepNav } from '../../components/wizard/StepNav';
 import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { api, errorMessage } from '../../lib/api';
+import { useHosted } from '../../lib/session';
 import type { OnboardingStatus, SpfFlatConfig, SpfFlatStatus } from '../../lib/types';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { dnsErrorDetail, dnsErrorsFor } from './setup/steps';
@@ -58,7 +59,20 @@ async function loadFlatten(domainId: number): Promise<FlattenData> {
 	return { flat, record, recordError, lookupCount, preview, previewFailed };
 }
 
+/** Not on the hosted service: its routes are off there, and a hosted-records domain's SPF is flattened by the hosted service itself. */
 export function SpfFlattenPage() {
+	const hosted = useHosted();
+	if (hosted) {
+		return (
+			<StepCard title="SPF flattening">
+				<p className="text-sm text-ink-2">SPF flattening is not available on the hosted service.</p>
+			</StepCard>
+		);
+	}
+	return <SpfFlattenWizard />;
+}
+
+function SpfFlattenWizard() {
 	const domainId = useRouteDomainId();
 	const qc = useQueryClient();
 	const queryKey = ['spf-flatten-wizard', domainId] as const;
@@ -137,8 +151,9 @@ export function SpfFlattenPage() {
 				{step === 1 ? (
 					<StepCard title="Compare: original and flattened">
 						<p className="text-sm text-ink-2">
-							Flattening resolves every <code className="font-mono text-ink-1">include:</code> to raw IP addresses, which brings the lookup count down to 1. The flattened record is
-							re-resolved daily to follow your providers' changes.
+							Flattening resolves every <code className="font-mono text-ink-1">include:</code> to raw IP addresses, which brings the lookup count down to 1. The IPs are those your
+							providers list when you enable it. A daily run rewrites the record from what is published at that name, which is by then the flattened record itself, so it does not
+							follow your providers' later IP changes: disable and enable flattening again to take them.
 						</p>
 						<RecordPair>
 							<TxtRecord title="Original record" value={record ?? ''} badge={lookupCount !== null ? <LookupBadge count={lookupCount} /> : undefined} />
@@ -168,7 +183,8 @@ export function SpfFlattenPage() {
 									disable flattening.
 								</Alert>
 								<p className="text-sm text-ink-2">
-									The flattened record is <strong className="text-ink-1">re-resolved daily</strong>, so if your mail providers add or change IPs the record updates itself.
+									The flattened record is a snapshot: a daily run rewrites it from what is published at that name, which is by then the flattened record itself, so{' '}
+									<strong className="text-ink-1">it does not follow your providers' IP changes</strong>. Disable and enable flattening again to take them.
 								</p>
 								{record ? <TxtRecord title="Record to flatten" value={record} /> : null}
 								{!flat.available ? (
@@ -209,7 +225,7 @@ export function SpfFlattenPage() {
 							<ul className="list-disc space-y-0.5 pl-5">
 								{ipCount ? <li>{ipCount} IPs in the flattened record</li> : null}
 								<li>DNS lookups reduced to 1</li>
-								<li>IPs are re-resolved daily to follow upstream provider changes</li>
+								<li>The IPs are a snapshot: they do not follow your providers' later changes until you disable and enable flattening again</li>
 							</ul>
 						</Alert>
 						{config?.flattened_record ? (

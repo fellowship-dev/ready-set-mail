@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
-import { domainKeys, invalidateDomain } from './domain-queries';
+import { domainKeys, invalidateDomain, setupStatusKey } from './domain-queries';
 import { HOSTED_CONFIG_KEY } from './hosted';
 import { reportsRefusalOf, type ReportsRefusal } from './dmarc-step';
 import { useHosted } from './session';
@@ -47,6 +47,10 @@ export interface ReportAddressView {
 	visibility?: ReportVisibilityFields | null;
 	state: ReportAddressState;
 	dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | null } | null;
+	/** A Cloudflare connection reaches this domain's zone, so Apply can write its DMARC record. */
+	apply_via_cloudflare?: boolean;
+	/** Not connected yet and Apply can write: the live record planned with the address connecting will use (now and after). */
+	preview?: { checked_at: number; error: string | null; plan: ReportAddressPlan | null } | null;
 	parent?: { domain_id: number; domain: string; connected: boolean } | null;
 }
 
@@ -85,6 +89,8 @@ export function useReportAddress(domainId: number, enabled = true) {
 		queryKey: reportAddressKey(domainId),
 		queryFn: () => api<ReportIntakeStatus>(`/api/domains/${domainId}/report-address`),
 		enabled,
+		// The state is live DNS plus stored reports: a screen that mounts shows what is true now, not what a screen before it read.
+		refetchOnMount: 'always',
 	});
 }
 
@@ -95,8 +101,19 @@ export function useReportAddressMutations(domainId: number) {
 	const settle = (s: ReportIntakeStatus) => {
 		qc.setQueryData(reportAddressKey(domainId), s);
 		void invalidateDomain(qc, domainId);
+		// A setup step reads the domain's report address from its own status: connecting or disconnecting changes what it says.
+		void qc.invalidateQueries({ queryKey: setupStatusKey(domainId) });
 	};
 	const connect = useMutation({ mutationFn: () => api<ReportIntakeStatus>(base, { method: 'POST', body: {} }), onSuccess: settle });
 	const disconnect = useMutation({ mutationFn: () => api<ReportIntakeStatus>(base, { method: 'DELETE' }), onSuccess: settle });
 	return { connect, disconnect };
+}
+
+/** "Check again": read the live DNS again everywhere this domain's reports are shown, the setup step's status included. */
+export function useCheckReportsAgain(domainId: number) {
+	const qc = useQueryClient();
+	return () => {
+		void qc.invalidateQueries({ queryKey: reportAddressKey(domainId) });
+		void qc.invalidateQueries({ queryKey: setupStatusKey(domainId) });
+	};
 }

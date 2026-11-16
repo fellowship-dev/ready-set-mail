@@ -7,6 +7,7 @@ import { countingBasisNote, emptyReportsState, storageDropNotices, uncountedNoti
 import { formatDateTime, timeAgo } from '../../lib/format';
 import {
 	useReportAddress,
+	useCheckReportsAgain,
 	useReportAddressMutations,
 	useReportIntakeEnabled,
 	type OwnPlan,
@@ -14,7 +15,11 @@ import {
 	type ReportAddressState,
 	type ReportAddressView,
 } from '../../lib/report-address';
+import { useApplyDmarc } from '../../lib/apply-dmarc';
+import { hostOf, isCloudflareHost, useDnsHost } from '../../lib/dns-host';
+import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { CopyField } from '../domain/CopyField';
+import { DnsHostLine } from '../domain/DnsHostLine';
 import { ConfirmDialog } from '../domain/ConfirmDialog';
 import { RadioCard } from '../wizard/RadioCard';
 import { inheritedCoverage, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../lib/dmarc-coverage';
@@ -52,10 +57,17 @@ const STATE_DOT: Record<ReportAddressState, { status: StatusDotStatus; label: st
 	unknown: { status: 'unknown', label: 'Connected, DNS check failed' },
 };
 
+/** The plans a Cloudflare write can carry out: our address added to the live record (or a new one), or chosen among replacements. */
+type ApplyPlan = Extract<OwnPlan, { kind: 'add' | 'choose' }>;
+const applyable = (plan: ReportAddressPlan | null | undefined): plan is ApplyPlan => plan?.kind === 'add' || plan?.kind === 'choose';
+
 function Panel({ domainId, domainName, bare }: { domainId: number; domainName: string; bare: boolean }) {
 	const q = useReportAddress(domainId);
 	const m = useReportAddressMutations(domainId);
+	const apply = useApplyDmarc(domainId);
+	const checkAgain = useCheckReportsAgain(domainId);
 	const [disconnectOpen, setDisconnectOpen] = useState(false);
+	const [reviewing, setReviewing] = useState(false);
 
 	if (q.isPending) return <ListSkeleton rows={1} label="Loading the report address" />;
 	if (q.isError) return <LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load the report address" />;
@@ -66,20 +78,39 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 		return <p className="text-sm text-ink-2">Reports for {domainName} come through its hosted records.</p>;
 	}
 
+	const applyFailed = apply.isError ? (
+		<Alert variant="danger" title="Could not write the record">
+			{errorMessage(apply.error)}
+		</Alert>
+	) : null;
+	const onApply = (record: string) => apply.mutate(record);
+
 	if (!s.address) {
+		// Cloudflare reaches the zone and the live record can take our address: review the change, then one Apply connects and writes.
+		const plan = s.can_connect && s.apply_via_cloudflare && applyable(s.preview?.plan) ? s.preview!.plan : null;
+		if (plan && reviewing) {
+			return (
+				<div className="space-y-3 rounded-lg border border-line bg-surface-1 p-4" data-state="review">
+					<h3 className="text-sm font-semibold text-ink-1">Review the change to {plan.name}</h3>
+					<ReviewRecord plan={plan} pending={apply.isPending} onApply={onApply} onCancel={() => { setReviewing(false); apply.reset(); }} />
+					{applyFailed}
+				</div>
+			);
+		}
 		return (
 			<div className={bare ? 'space-y-3' : 'space-y-3 rounded-lg border border-line bg-surface-1 p-4'} data-state="not_connected">
 				{bare ? null : (
 					<>
 						<StatusDot status={STATE_DOT.not_connected.status} label={STATE_DOT.not_connected.label} className="font-semibold" />
 						<p className="text-sm text-ink-2">
-							Mail servers send DMARC reports to the addresses listed in a domain&apos;s DMARC record. Connect reports to have the reports for{' '}
-							<Mono>{domainName}</Mono> filed here; you then see the exact record to publish.
+							A report address is where a domain&apos;s DMARC record sends its reports: mail services tell you which servers sent mail as <Mono>{domainName}</Mono> and whether it
+							passed. <Mono>{domainName}</Mono> has no Ready Set Mail report address yet.
 						</p>
+						<ReportsMore />
 					</>
 				)}
 				{s.can_connect ? (
-					<WriteButton onClick={() => m.connect.mutate()} disabled={m.connect.isPending} reasonVisible>
+					<WriteButton onClick={() => (plan ? setReviewing(true) : m.connect.mutate())} disabled={m.connect.isPending} reasonVisible>
 						{m.connect.isPending ? 'Connecting…' : 'Connect reports'}
 					</WriteButton>
 				) : (
@@ -95,13 +126,31 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	}
 
 	const disconnectErr = m.disconnect.isError ? errorMessage(m.disconnect.error) : null;
+	const livePlan = s.dns?.plan ?? null;
+	const canApply = s.apply_via_cloudflare === true && applyable(livePlan);
+	const written = apply.isSuccess && s.state === 'not_published';
 	return (
 		<div className="space-y-4 rounded-lg border border-line bg-surface-1 p-4" data-state={s.state}>
-			<StateLine s={s} />
+			{apply.isSuccess ? (
+				apply.data.reports?.state === 'connected' ? (
+					<p className="text-sm font-medium text-ink-1">Report address added.</p>
+				) : apply.data.reports?.reason ? (
+					<p className="text-sm text-ink-2">{apply.data.reports.reason}</p>
+				) : null
+			) : null}
+			<StateLine s={s} written={written} />
 			<CopyField label="Report address" value={s.address} />
-			{s.dns?.plan ? <PlanView plan={s.dns.plan} domain={domainName} parent={s.parent ?? null} address={s.address} /> : null}
+			{written ? null : canApply ? (
+				<ReviewRecord plan={livePlan as ApplyPlan} pending={apply.isPending} onApply={onApply} />
+			) : s.dns?.plan ? (
+				<>
+					{s.state === 'not_published' && applyable(livePlan) ? <PublishElsewhere domain={domainName} /> : null}
+					<PlanView plan={s.dns.plan} domain={domainName} parent={s.parent ?? null} address={s.address} />
+				</>
+			) : null}
+			{applyFailed}
 			<div className="flex flex-wrap gap-2">
-				<Button variant="secondary" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
+				<Button variant="secondary" size="sm" onClick={checkAgain} disabled={q.isFetching}>
 					<RefreshCw aria-hidden />
 					{q.isFetching ? 'Checking…' : 'Check again'}
 				</Button>
@@ -128,10 +177,80 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	);
 }
 
-function StateLine({ s }: { s: ReportAddressView }) {
+/** What a DMARC report address is, in RFC 7489's terms (6.3: the rua= tag and ri=, whose default is 86400 seconds; 7.2: aggregate reports). */
+function ReportsMore() {
+	return (
+		<details className="text-sm text-ink-2">
+			<summary className="cursor-pointer rounded-sm font-medium text-brand-ink underline underline-offset-4">More</summary>
+			<div className="mt-2 space-y-2">
+				<p>
+					Mail services that receive mail claiming to be from your domain, for example large mailbox providers, send aggregate reports to the addresses in the rua= tag of your
+					DMARC record. It is usually once a day: the record&apos;s ri= interval defaults to 86400 seconds.
+				</p>
+				<p>Each report counts messages by sending IP address, with their SPF and DKIM results and what the receiver did with them. Reports contain no message content. Source: RFC 7489.</p>
+			</div>
+		</details>
+	);
+}
+
+/** The record to publish by hand: where this domain's DNS is hosted, and Cloudflare when that is where it is. */
+function PublishElsewhere({ domain }: { domain: string }) {
+	const host = useDnsHost(domain);
+	const cloudflare = isCloudflareHost(hostOf(host.data));
+	return (
+		<>
+			<DnsHostLine domain={domain} />
+			{cloudflare ? <ConnectCloudflareLink>Connect Cloudflare to write this for you</ConnectCloudflareLink> : null}
+		</>
+	);
+}
+
+/**
+ * Now and after, for the record Apply writes (POST /api/domains/:id/apply-dmarc): ours is added to what is published, nothing else
+ * changes. Two addresses already: the person chooses what ours replaces (the rule of ChooseView).
+ */
+function ReviewRecord({ plan, pending, onApply, onCancel }: { plan: ApplyPlan; pending: boolean; onApply: (record: string) => void; onCancel?: () => void }) {
+	const body = (record: string | null) => (
+		<div className="space-y-3">
+			<div className="space-y-1 text-sm">
+				<p className="text-ink-2">
+					Now: {plan.current ? <Mono>{plan.current}</Mono> : 'no DMARC record'}
+				</p>
+				{record ? (
+					<p className="text-ink-1">
+						After: <Mono>{record}</Mono>
+					</p>
+				) : (
+					<p className="text-ink-2">Choose an option to see the record Apply writes.</p>
+				)}
+			</div>
+			<p className="text-sm text-ink-2">
+				{plan.current
+					? 'Only rua= changes: the policy and every other tag stay as they are, and the report addresses already there are kept.'
+					: 'p=none asks receivers for reports and changes nothing about how they handle your mail.'}{' '}
+				Apply writes it in your Cloudflare zone.
+			</p>
+			<div className="flex flex-wrap items-center gap-2">
+				<WriteButton onClick={() => record && onApply(record)} disabled={!record || pending} reasonVisible>
+					{pending ? 'Applying…' : 'Apply'}
+				</WriteButton>
+				{onCancel ? (
+					<Button variant="ghost" onClick={onCancel} disabled={pending}>
+						Cancel
+					</Button>
+				) : null}
+			</div>
+		</div>
+	);
+	return plan.kind === 'choose' ? <ChooseView plan={plan}>{body}</ChooseView> : body(plan.record);
+}
+
+function StateLine({ s, written = false }: { s: ReportAddressView; written?: boolean }) {
 	const dot = STATE_DOT[s.state];
 	let detail: ReactNode = null;
-	if (s.state === 'not_published') {
+	if (s.state === 'not_published' && written) {
+		detail = <>The record was written to Cloudflare. Public DNS can take a few minutes to show it: check again shortly.</>;
+	} else if (s.state === 'not_published') {
 		detail = <>Checked in live DNS {s.dns ? timeAgo(s.dns.checked_at) : 'just now'}: the DMARC record does not list the report address yet. Publish the record below.</>;
 	} else if (s.state === 'waiting') {
 		detail = <>Your DMARC record lists the report address. Receivers send reports about once a day, so the first one can take a day or two.</>;
@@ -263,7 +382,7 @@ function OwnPlanView({ plan, domain, inherited = false }: { plan: OwnPlan; domai
 	return <ChooseView plan={plan} />;
 }
 
-function ChooseView({ plan }: { plan: Extract<OwnPlan, { kind: 'choose' }> }) {
+function ChooseView({ plan, children }: { plan: Extract<OwnPlan, { kind: 'choose' }>; /** Replaces the record to publish and its prompt: the review step, which shows Now and After itself. */ children?: (record: string | null) => ReactNode }) {
 	const [choice, setChoice] = useState<string | null>(null);
 	const name = useId();
 	const legend = useId();
@@ -271,7 +390,7 @@ function ChooseView({ plan }: { plan: Extract<OwnPlan, { kind: 'choose' }> }) {
 	const picked = choice === null ? null : plan.options.find((o) => (o.replaces ?? THIRD) === choice) ?? null;
 	return (
 		<div className="space-y-3">
-			{plan.current ? <Current record={plan.current} /> : null}
+			{plan.current && !children ? <Current record={plan.current} /> : null}
 			<fieldset className="space-y-2" aria-labelledby={legend}>
 				<p id={legend} className="text-sm text-ink-2">
 					{plan.current ? (
@@ -281,7 +400,7 @@ function ChooseView({ plan }: { plan: Extract<OwnPlan, { kind: 'choose' }> }) {
 					) : (
 						<>This record starts with the {plan.existing.length} report addresses listed today.</>
 					)}{' '}
-					Receivers only have to send to two, so choose which one this address replaces. Nothing changes until you publish the record.
+					Receivers only have to send to two, so choose which one this address replaces. {children ? 'Nothing changes until you press Apply.' : 'Nothing changes until you publish the record.'}
 				</p>
 				{plan.options.map((o) => {
 					const value = o.replaces ?? THIRD;
@@ -299,7 +418,9 @@ function ChooseView({ plan }: { plan: Extract<OwnPlan, { kind: 'choose' }> }) {
 					);
 				})}
 			</fieldset>
-			{picked ? (
+			{children ? (
+				children(picked?.record ?? null)
+			) : picked ? (
 				<RecordToPublish replace={!!plan.current} name={plan.name} value={picked.record} />
 			) : (
 				<p className="text-sm text-ink-2">Choose an option to see the record to publish.</p>

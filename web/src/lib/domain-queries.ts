@@ -78,6 +78,9 @@ export const domainKeys = {
 	zones: ['zones'] as const,
 };
 
+/** The setup wizard's live DNS status for a domain (GET onboarding-status). The wizard patches it in place after its own writes, so it is refreshed only where a screen asks. */
+export const setupStatusKey = (id: number) => ['onboarding-status', id] as const;
+
 export const fetchSummary = (id: number) => api<DomainCheckSummary>(`/api/domains/${id}/check-summary`);
 
 /** GET /api/domains/summaries: every domain's summary, a page at a time. */
@@ -121,8 +124,8 @@ export const useDnsCheck = (id: number) => useQuery({ queryKey: domainKeys.dnsCh
 export const useOnboardingStatus = (id: number) =>
 	useQuery({ queryKey: domainKeys.onboarding(id), queryFn: () => api<OnboardingResult>(`/api/domains/${id}/onboarding-status`) });
 export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`) });
-export const useSpfFlatten = (id: number) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`) });
-export const useMtaSts = (id: number) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`) });
+export const useSpfFlatten = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`), enabled });
+export const useMtaSts = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`), enabled });
 export const useMonitorSubs = (id: number) =>
 	useQuery({ queryKey: domainKeys.monitorSubs(id), queryFn: () => api<{ subs: MonitorSub[] }>(`/api/domains/${id}/monitor-subs`).then((r) => r.subs) });
 

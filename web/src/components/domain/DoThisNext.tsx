@@ -4,6 +4,13 @@ import { useId } from 'react';
 import { Link } from 'react-router';
 import type { DomainAction } from '../../lib/actions';
 
+/** The reports panel on this page (ConnectReports): bring its action into view and focus it. */
+function focusConnectReports() {
+	const button = document.querySelector<HTMLElement>('[data-testid="connect-reports"] button');
+	button?.scrollIntoView({ block: 'center' });
+	button?.focus();
+}
+
 /**
  * The top of a domain page: one to three actions, each as Do this / Why, with who acts and where. `stale`: the stored
  * check could not be reloaded after this page's live read, so the steps come from the last one and may be out of date.
@@ -85,6 +92,10 @@ export function DoThisNext({ actions, pending, canWrite, onRetry, stale = false,
 											<RefreshCw aria-hidden />
 											Check again
 										</Button>
+									) : a.connectReports && canWrite ? (
+										<button type="button" onClick={focusConnectReports} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
+											{a.cta ?? 'Connect reports'}
+										</button>
 									) : a.to && (canWrite || !a.writes) ? (
 										<Link to={a.to} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
 											{a.cta ?? 'Open'}

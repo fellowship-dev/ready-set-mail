@@ -429,7 +429,7 @@ invites they sent.
 sent the session token. Unattended products use named service principals and finite grants with hashed `ias_…` credentials (`X-Api-Key` or bearer); the legacy broad key contract is retired. Browser agents use this installation's OAuth consent. Product/credential and Google Postmaster administration require an owner session. See [agent operations](agent-operations.md).
 
 **Not available when hosted:** `POST /api/setup/email-routing`, `/api/setup/custom-domain`, `/api/settings/register-destination`
-(they act on a whole Cloudflare account and are self-host setup steps).
+(they act on a whole Cloudflare account and are self-host setup steps), and `PUT /api/domains/:id/set-default` (the default domain is where a self-hosted install's own reports domain lives), and every `/api/domains/:id/spf-flatten` route (SPF flattening is a self-host tool; a hosted-records domain's SPF is flattened by `src/hosted/spf.ts`). The dashboard shows no "Infrastructure" section, no SPF flattening, no "Monitoring alerts" (they send from the install's own sender address) and no MTA-STS tool for a domain without hosted records there.
 
 ## Customer setup
 
@@ -472,6 +472,8 @@ Filing (`src/hosted/fixed-address.ts`, `src/hosted/intake.ts`). Mail to `rua@<IN
 * for a domain with no DMARC record: `v=DMARC1; p=none; rua=mailto:<address>`;
 * several DMARC records at one name: no proposal (receivers ignore them all);
 * a failed lookup: `plan: null` and `state: "unknown"`, never "no record".
+
+With Cloudflare reaching the domain's zone the dashboard turns this into one review and one **Apply**: `apply_via_cloudflare` is true when a connection reaches the zone (the test `onboarding-status` uses, `applyViaCloudflare`), and while the domain is not connected `preview` is the same live check planned with the address that connecting will use (`plan` as above: the record now in `current`, the record after in `record`). Apply is `POST /api/domains/:id/apply-dmarc` with that record: the server connects the domain's reports first and writes the record second, so a write that fails leaves the domain connected and the status `not_published`, and Apply is offered again. Without Cloudflare no record carrying the address is offered before the domain is connected: Connect reports connects first and then shows the record to publish. Both are `null`/`false` where reports cannot be connected.
 
 `state` comes from evidence: `not_connected`; `not_published` (connected, the live record does not list the address); `waiting` (listed, no COUNTED report since connecting); `receiving` (listed AND at least one COUNTED report, `reporter_tier = 'counted'`, stored since `connected_at`; `last_report_at` is the newest of those); or `unknown` (the lookup failed). `counted_since_connect`, `reports_since_connect` and `reports_before_connect` count the rest, and `visibility` carries the uncounted and not-stored reports RECEIVED since connecting (the same fields as `/stats`, windowed on `created_at`: a report covers the previous day, so its period starts before the connection), so a reconnect, an uncounted or a forged report never reads as "received".
 Token addresses (`rua+<token>@…`) keep working: hosted records issue them, and an operator-issued one shows as connected while its token is current. `tls-rpt@` without a token is refused: TLS-RPT still needs a token address.
@@ -702,7 +704,7 @@ Connecting reports (see [above](#report-address-without-hosted-records); `404` o
 
 | Method & path | Response |
 |---------------|----------|
-| `GET /api/domains/:id/report-address` | `{ available: false }` without `INTAKE_DOMAIN`, else `{ available, domain_id, domain, managed_by, can_connect, refusal, address, connected_at, last_report_at, reports_since_connect, reports_before_connect, state, dns: { checked_at, error, plan } \| null, parent }`. `plan.kind` is `published`, `add`, `choose`, `multiple`, `invalid` (no valid `p=`: fix it first) or `inherited` (with `policy_tag` `sp`/`p`) |
+| `GET /api/domains/:id/report-address` | `{ available: false }` without `INTAKE_DOMAIN`, else `{ available, domain_id, domain, managed_by, can_connect, refusal, address, connected_at, last_report_at, reports_since_connect, reports_before_connect, state, dns: { checked_at, error, plan } \| null, apply_via_cloudflare, preview: { checked_at, error, plan } \| null, parent }`. `plan.kind` is `published`, `add`, `choose`, `multiple`, `invalid` (no valid `p=`: fix it first) or `inherited` (with `policy_tag` `sp`/`p`) |
 | `POST /api/domains/:id/report-address` | connect: `201` with the status; `200` and the unchanged status when already connected; `403` for a `legacy` row, an orphaned subdomain, or a workspace `HOSTED_CONNECT_REPORTS` does not admit; `409` with hosted records |
 | `DELETE /api/domains/:id/report-address` | disconnect: the status (`not_connected`) |
 
