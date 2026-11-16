@@ -15,7 +15,7 @@
 // caller's workspace only: another workspace's connection or domain id is a 404.
 
 import type { TenantContext } from '../tenancy/context';
-import { cloudflareConnectReturned, cloudflareConnectStarted, domainAdded } from '../product-analytics/steps';
+import { cloudflareConnectReturned, cloudflareConnectStarted, cloudflareTokenConnected, domainAdded } from '../product-analytics/steps';
 import {
   CfAuthError,
   CfConnectionError,
@@ -191,7 +191,7 @@ export async function handleConnectionRoutes(
       const created = await svc.addToken({ token: body.token.trim(), label: typeof body.label === 'string' ? body.label : undefined, createdBy: caller.user?.id });
       audit('cf_connection.create', { id: created.id, name: created.label }, { after: { auth_type: 'token', cf_account_id: created.cf_account_id } });
       tenant.setHasConnections(true);
-      cloudflareConnectReturned(tenant, ctx, 'token', 'connected', created);
+      cloudflareTokenConnected(tenant, ctx, created); // docs/analytics.md: the token way's start and return
       return json({ connection: created }, 201);
     }
 

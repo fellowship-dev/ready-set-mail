@@ -1,8 +1,9 @@
 // Product analytics on a real local hosted instance (docs/analytics.md): `wrangler dev` with POSTHOG_KEY and POSTHOG_HOST pointed at a
 // fake PostHog (a local HTTP server that keeps every request), the fake Cloudflare (which also answers DNS-over-HTTPS) and the fake
-// Stripe. A person arrives from the website's checker with its visitor id, signs up in the browser, adds a domain, connects Cloudflare,
-// applies the DMARC step, sees the records live, and buys the fix; the operator marks it done. The fake PostHog must have received
-// the funnel's steps in order, under the visitor id, and nothing forbidden; with the keys unset it must receive nothing.
+// Stripe. A person arrives from the website's checker (`src=checker`, its domain carried over; a stray `vid` the server must ignore),
+// signs up in the browser, adds a domain, connects Cloudflare with a pasted token, applies the DMARC step, sees the records live, and
+// buys the fix; the operator marks it done. The fake PostHog must have received the funnel's steps in order, under the workspace's
+// server-minted id, with no forwarded client address or browser identity, and nothing forbidden; with the keys unset it must receive nothing.
 // E2E_ANALYTICS_OUT=<file> writes the captured event sequence there. Hosted sign-up asks Cloudflare's Turnstile test endpoint
 // (challenges.cloudflare.com) to check a dummy token: this spec needs that network access.
 // Ports 8833-8834. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/product-analytics.spec.ts
@@ -47,12 +48,12 @@ async function fakePostHog() {
 	return { url: `http://127.0.0.1:${port}`, sent, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
-const events = (sent: Sent[]) => sent.flatMap((r) => (JSON.parse(r.body) as { batch: { event: string; distinct_id: string; properties: Record<string, unknown> }[] }).batch);
+const events = (sent: Sent[]) => sent.flatMap((r) => (JSON.parse(r.body) as { batch: { event: string; distinct_id: string; timestamp: string; properties: Record<string, unknown> }[] }).batch);
 
 const mailedCodes = (inst: Instance) =>
 	existsSync(inst.logFile) ? [...readFileSync(inst.logFile, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map((m) => m[1]!) : [];
 
-/** Sign up through the screen, arriving by the website's sign-up link (checker result, with its visitor id). */
+/** Sign up through the screen, arriving by the website's sign-up link (checker result). */
 async function signUp(page: Page, inst: Instance, link: string) {
 	await page.goto(`${inst.url}/${link}`);
 	await page.locator('#email').fill(OWNER);
@@ -83,9 +84,12 @@ test('hosted with PostHog configured: the walk from sign-up to a delivered order
 		vars: { POSTHOG_KEY: KEY, POSTHOG_HOST: ph.url, INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all', STRIPE_SECRET_KEY: 'rk_test_e2eanalytics0123456789', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: stripe.url, OWNER_EMAIL: OWNER },
 	});
 	try {
-		await signUp(page, inst, `#/signup?domain=${DOMAIN}&vid=${VID}&from=checker`);
+		await signUp(page, inst, `#/signup?domain=${DOMAIN}&src=checker&vid=${VID}`);
 		const ws = inst.d1(`SELECT m.workspace_id AS w FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = '${OWNER}'`)[0]!.w as string;
-		expect(inst.d1(`SELECT value FROM settings WHERE workspace_id = '${ws}' AND key = 'analytics_id'`)).toEqual([{ value: VID }]);
+		const id = inst.d1(`SELECT value FROM settings WHERE workspace_id = '${ws}' AND key = 'analytics_id'`)[0]!.value as string;
+		expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+		expect(id).not.toBe(VID); // minted by the server; nothing in the link chooses it
+		const browserUA = await page.evaluate(() => navigator.userAgent);
 
 		// The domain typed, then Cloudflare connected (a pasted token: the same code as after the OAuth return) and its zone imported.
 		expect((await call(page, 'POST', '/api/domains', { domain: DOMAIN })).status).toBe(202);
@@ -113,31 +117,37 @@ test('hosted with PostHog configured: the walk from sign-up to a delivered order
 		await expect.poll(() => inst.d1('SELECT status FROM billing_orders')[0]?.status, { timeout: 60_000 }).toBe('paid');
 		for (const step of ['started', 'done']) expect((await call(page, 'POST', `/api/operator/orders/${order.json.order.id}/${step}`)).status).toBe(200);
 
-		const want = ['Signup Started', 'Signup Code Sent', 'Code Verified', 'Workspace Created', 'Dashboard First Viewed', 'Domain Added', 'Cloudflare Connect Returned', 'Ownership Verified', 'Apply Clicked', 'Apply Done', 'Records Live', 'Fix Offer Viewed', 'Card Setup Started', 'Card Setup Completed', 'Fix Order Created', 'Fix Order Paid', 'Fix Order Delivered'];
+		const want = ['Signup Started', 'Signup Code Sent', 'Code Verified', 'Workspace Created', 'Dashboard First Viewed', 'Domain Added', 'Cloudflare Connect Started', 'Cloudflare Connect Returned', 'Ownership Verified', 'Apply Clicked', 'Apply Done', 'Records Live', 'Fix Offer Viewed', 'Card Setup Started', 'Card Setup Completed', 'Fix Order Created', 'Fix Order Paid', 'Fix Order Delivered'];
 		await expect.poll(() => events(ph.sent).map((e) => e.event), { timeout: 30_000 }).toEqual(expect.arrayContaining(want));
 		const all = events(ph.sent);
-		if (process.env.E2E_ANALYTICS_OUT) writeFileSync(process.env.E2E_ANALYTICS_OUT, JSON.stringify({ source: 'e2e/product-analytics.spec.ts (wrangler dev, fake PostHog, fake Cloudflare, fake Stripe)', requests: ph.sent.length, events: all.map(({ event, distinct_id, properties }) => ({ event, distinct_id, properties })) }, null, 2));
+		if (process.env.E2E_ANALYTICS_OUT) writeFileSync(process.env.E2E_ANALYTICS_OUT, JSON.stringify({ source: 'e2e/product-analytics.spec.ts (wrangler dev, fake PostHog, fake Cloudflare, fake Stripe)', requests: ph.sent.length, events: all.map(({ event, distinct_id, timestamp, properties }) => ({ timestamp, event, distinct_id, properties })) }, null, 2));
 
-		// In order, under the visitor id.
-		const mine = all.filter((e) => e.distinct_id === VID).map((e) => e.event);
-		let at = -1;
-		for (const step of want) { const next = mine.indexOf(step, at + 1); expect(next, `${step} in ${mine.join(' > ')}`).toBeGreaterThan(at); at = next; }
-		expect(new Set(all.map((e) => e.distinct_id))).toEqual(new Set([VID]));
+		// In funnel order by timestamp (equal seconds count, as in PostHog's ordered funnels), under the workspace's id.
+		expect(new Set(all.map((e) => e.distinct_id))).toEqual(new Set([id]));
+		let t = '';
+		for (const step of want) {
+			const hit = all.filter((e) => e.event === step && e.timestamp >= t).sort((a, b) => a.timestamp.localeCompare(b.timestamp))[0];
+			expect(hit, `${step} after ${t} in ${all.map((e) => `${e.timestamp.slice(11)} ${e.event}`).join(' > ')}`).toBeTruthy();
+			t = hit!.timestamp;
+		}
 		expect(all.find((e) => e.event === 'Code Verified')!.properties).toMatchObject({ from_checker: true, entry: 'checker', purpose: 'signup' });
-		expect(all.find((e) => e.event === 'Signup Started')!.properties).toMatchObject({ entry: 'checker', visitor_id: 'passed' });
+		expect(all.find((e) => e.event === 'Signup Started')!.properties).toMatchObject({ method: 'email_code', entry: 'checker', from_checker: true });
+		expect(all.filter((e) => e.event === 'Cloudflare Connect Started').map((e) => e.properties.method)).toEqual(['token']);
 
 		// Every request: the batch endpoint, the project key, personless, no forwarded client address or browser identity, nothing forbidden.
 		for (const r of ph.sent) {
 			expect([r.method, r.path]).toEqual(['POST', '/batch/']);
-			for (const name of ['cf-connecting-ip', 'x-forwarded-for', 'x-real-ip', 'cookie', 'authorization', 'referer', 'origin']) expect(r.headers[name], name).toBeUndefined();
+			for (const name of ['cf-connecting-ip', 'x-forwarded-for', 'x-real-ip', 'forwarded', 'true-client-ip', 'cookie', 'authorization', 'referer', 'origin']) expect(r.headers[name], name).toBeUndefined();
+			expect(r.headers['user-agent'], 'the browser\'s user agent').not.toBe(browserUA);
 			const body = JSON.parse(r.body) as { api_key: string; batch: { distinct_id: string; timestamp: string; properties: Record<string, unknown> }[] };
 			expect(body.api_key).toBe(KEY);
 			for (const e of body.batch) {
+				expect(e.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/); // whole seconds
 				expect(e.properties).toMatchObject({ surface: 'app', $process_person_profile: false, $geoip_disable: true });
 				expect(Object.keys(e.properties)).not.toContain('$ip');
 				for (const v of Object.values(e.properties)) for (const re of FORBIDDEN) expect(String(v), `${re}`).not.toMatch(re);
 			}
-			for (const s of [OWNER, DOMAIN, ws, order.json.order.id, 'correct-horse-battery', 'Example Co']) expect(r.body.toLowerCase(), s).not.toContain(s.toLowerCase());
+			for (const s of [OWNER, DOMAIN, ws, VID, order.json.order.id, 'correct-horse-battery', 'Example Co']) expect(r.body.toLowerCase(), s).not.toContain(s.toLowerCase());
 		}
 	} finally {
 		await inst.stop();
@@ -151,7 +161,7 @@ test('hosted without POSTHOG_KEY / POSTHOG_HOST: the same sign-up sends nothing 
 	// The host alone (no key): still off.
 	const inst = await startInstance({ mode: 'hosted', port: OFF_PORT, tokenKey: true, vars: { POSTHOG_HOST: ph.url } });
 	try {
-		await signUp(page, inst, `#/signup?domain=${DOMAIN}&vid=${VID}&from=checker`);
+		await signUp(page, inst, `#/signup?domain=${DOMAIN}&src=checker`);
 		expect((await call(page, 'POST', '/api/domains', { domain: DOMAIN })).status).toBe(202);
 		expect((await call(page, 'GET', '/api/auth/status')).json.product_analytics).toBe(false);
 		await page.waitForTimeout(1500);

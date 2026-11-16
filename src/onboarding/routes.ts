@@ -15,7 +15,7 @@ import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
 import { ReportAddressError, connectReports } from '../hosted/report-address';
-import { applyClicked, applyDone, dnsChecked } from '../product-analytics/steps';
+import { applyClicked, applyDone, dnsCheckedById } from '../product-analytics/steps';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -208,7 +208,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     for (const d of await writableDomains(tenant, input.ids)) {
       const id = d.id;
       results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain, { resolver: resolverFor(tenant.env) })) !== null });
-      dnsChecked(tenant, ctx, id);
+      dnsCheckedById(tenant, ctx, id);
     }
     return json({ results });
   }

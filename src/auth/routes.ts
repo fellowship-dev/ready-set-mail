@@ -538,7 +538,7 @@ export async function handleAuthRoute(
     if (!isSaas(env)) return err('sign-up is closed — ask an owner for an invite', 403);
     if (await hostedSignupClosed(env)) return err(SIGNUP_CLOSED_MESSAGE, 503);
     if (await ipLimited(env, request, 'signup', { window: 3600, max: 10 })) return err('Too many requests — try again later', 429);
-    const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string; vid?: unknown; entry?: unknown }>(request);
+    const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string; src?: unknown; from_checker?: unknown }>(request);
     if (!body.email || !body.password) return err('email and password are required', 400);
     if (body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (body.password.length > MAX_PASSWORD) return err(`password must be at most ${MAX_PASSWORD} characters`, 400);

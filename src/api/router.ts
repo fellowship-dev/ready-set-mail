@@ -124,7 +124,7 @@ import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
-import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
+import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
@@ -985,6 +985,7 @@ async function _handleApi(
         const current_record = records[0] ?? null;
         // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
         const cf_managed = await zoneReachable(tenant, domain.domain);
+        if (has_rua) recordsSeenLive(tenant, ctx, domain, 'domain_page'); // docs/analytics.md: records added by hand are seen live here
         return json({ found, has_rua, current_record, cf_managed });
       } catch {
         return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
@@ -1200,7 +1201,7 @@ async function _handleApi(
       // Same store as the daily cron, from lookups this request already made (no extra DNS). A write failure must not fail the read.
       try {
         await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000) });
-        dnsChecked(tenant, ctx, domain.id);
+        dnsChecked(tenant, ctx, domain, resolved.dmarc, 'setup');
       } catch (e) {
         console.warn(`[onboarding-status] storing DNS check failed for ${domain.domain}:`, e);
       }

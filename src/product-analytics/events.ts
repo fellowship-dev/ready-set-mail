@@ -18,8 +18,24 @@ export const SHORT_WAIT = ['none', 'under_1m', '1_10m', '10_60m', '1_24h', 'over
 /** Long waits: sign-up → records live, records live → first report, paid → delivered. */
 export const LONG_WAIT = ['none', 'under_1h', '1_24h', '24_48h', '48_72h', '3_7d', 'over_7d'] as const;
 
-export const ENTRIES = ['checker', 'report', 'agencies', 'header', 'pricing', 'cold'] as const;
+/**
+ * Where a sign-up came from: the website's `src=<page class>` on its sign-up link (ready-set-mail-website), a closed list; any other
+ * value is `other`, and no `src` at all is `cold` (a person who typed the address, or a link from anywhere else).
+ */
+export const SOURCES = ['home', 'checker', 'report', 'agencies', 'pricing', 'errors', 'tools', 'other'] as const;
+export const ENTRIES = [...SOURCES, 'cold'] as const;
 export type Entry = (typeof ENTRIES)[number];
+/** How an account was created or signed in to. */
+export const SIGNUP_METHODS = ['email_code', 'oauth_google', 'oauth_github'] as const;
+export type SignupMethod = (typeof SIGNUP_METHODS)[number];
+/**
+ * Which way a domain's setup went: `cloudflare` (connected, proven by its zone, records written by Apply) or `manual` (proven by a TXT
+ * record, records added by hand at any DNS host). Each setup event says which, so each path has a funnel it can finish.
+ */
+export const PATHS = ['cloudflare', 'manual'] as const;
+export type SetupPath = (typeof PATHS)[number];
+/** What observed the records live: a setup screen's read, the domain page's DNS check, or the daily job. */
+export const SEEN_BY = ['setup', 'domain_page', 'daily'] as const;
 export const ROLES = ['owner', 'admin', 'member'] as const;
 /** DNS hosts the product recognises (src/domains/dns-host.ts DNS_PROVIDERS ids), plus what detection can say otherwise. */
 export const DNS_PROVIDERS = ['cloudflare', 'godaddy', 'porkbun', 'namecheap', 'route53', 'google-cloud-dns', 'squarespace', 'digitalocean', 'vercel', 'ns1', 'other', 'mixed', 'unknown'] as const;
@@ -32,11 +48,11 @@ type Allowed = readonly string[] | typeof BOOL;
 /** Event name → property → allowed values. Adding an event or a value is a change to this table, its test and docs/analytics.md. */
 export const EVENTS = {
   // ── Sign-up and sign-in (src/auth/routes.ts) ──
-  'Signup Started': { entry: ENTRIES, visitor_id: ['passed', 'fresh'] },
+  'Signup Started': { method: SIGNUP_METHODS, entry: ENTRIES, from_checker: BOOL },
   'Signup Code Sent': { send: ['first', 'resend'] },
   'Code Verified': { purpose: ['signup', 'invite'], entry: ENTRIES, from_checker: BOOL, attempts: TRIES, resends: RESENDS, wait: CODE_WAIT, account_created: BOOL },
-  'Workspace Created': { source: ['signup', 'added'] },
-  'Signed In': { method: ['code', 'password'] },
+  'Workspace Created': { source: ['signup', 'added'], method: SIGNUP_METHODS },
+  'Signed In': { method: ['code', 'password', 'oauth_google', 'oauth_github'] },
   // Waiting on the sign-up screens of PR 177 (docs/analytics.md, "Waiting on the new sign-up").
   'Signup Profile Saved': { whose_email: ['company', 'clients', 'looking'], role: ['founder', 'developer', 'it', 'marketing', 'agency', 'other', 'none'], heard_about_given: BOOL },
   'Setup Path Chosen': { path: ['cloudflare', 'records', 'dns_manager', 'teammate'], dns_provider: DNS_PROVIDERS },
@@ -47,16 +63,16 @@ export const EVENTS = {
   'Invite Sent': { role: ['admin', 'member'] },
   'Invite Accepted': { role: ['admin', 'member'], wait: SHORT_WAIT },
   // ── Domains and ownership ──
-  'Domain Added': { source: ['typed', 'bulk', 'cloudflare_import', 'agent'], needs_proof: BOOL, added: COUNT, domains: COUNT, dns_provider: DNS_PROVIDERS, verdict_issues: ISSUES },
-  'Ownership Verified': { method: ['cloudflare_zone', 'txt', 'parent', 'selfhost'], wait: SHORT_WAIT },
+  'Domain Added': { path: PATHS, source: ['typed', 'bulk', 'cloudflare_import', 'agent'], needs_proof: BOOL, added: COUNT, domains: COUNT, dns_provider: DNS_PROVIDERS, verdict_issues: ISSUES },
+  'Ownership Verified': { path: PATHS, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost'], wait: SHORT_WAIT },
   // ── Cloudflare ──
-  'Cloudflare Connect Started': { method: ['oauth'] },
-  'Cloudflare Connect Returned': { method: ['oauth', 'token'], result: ['connected', 'denied', 'failed'], zones: COUNT, accounts: COUNT },
+  'Cloudflare Connect Started': { path: PATHS, method: ['oauth', 'token'] },
+  'Cloudflare Connect Returned': { path: PATHS, method: ['oauth', 'token'], result: ['connected', 'denied', 'failed'], zones: COUNT, accounts: COUNT },
   // ── Records ──
-  'Apply Clicked': { step: ['dmarc', 'reports_mailbox', 'dmarc_record'], changes: COUNT },
-  'Apply Done': { step: ['dmarc', 'reports_mailbox', 'dmarc_record'], result: ['applied', 'partial', 'failed', 'nothing_to_do'], changes: COUNT, reports: ['connected', 'refused', 'limit', 'unavailable', 'none'] },
-  'Records Live': { method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
-  'First Report Received': { since_live: LONG_WAIT },
+  'Apply Clicked': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], changes: COUNT },
+  'Apply Done': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], result: ['applied', 'partial', 'failed', 'nothing_to_do'], changes: COUNT, reports: ['connected', 'refused', 'limit', 'unavailable', 'none'] },
+  'Records Live': { path: PATHS, seen_by: SEEN_BY, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
+  'First Report Received': { path: PATHS, since_live: LONG_WAIT },
   'No Report After 3 Days': { domains_waiting: COUNT },
   // ── Free email check from the dashboard ──
   'Email Check Started': {},

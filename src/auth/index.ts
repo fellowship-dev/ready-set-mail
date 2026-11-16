@@ -17,6 +17,7 @@ import { authSecret } from './secret';
 import { cleanName } from './names';
 import { rotateDeviceEpoch } from './device';
 import { assertMaySignUp, provisionUser, type SignupIntent } from './signup-policy';
+import { oauthMethodOf, oauthSignedUp, signedIn } from '../product-analytics/auth';
 
 export const AUTH_BASE_PATH = '/api/auth';
 
@@ -33,6 +34,9 @@ export async function createAuth(
   const db = env.DB as D1Database;
   const providers = oauthProviders(env);
   const saas = isSaas(env);
+  // Product analytics (docs/analytics.md): a Google/GitHub callback is a sign-up (a user was created) or a sign-in.
+  const oauth = oauthMethodOf(request);
+  let oauthCreated = false;
 
   return betterAuth({
     appName: 'Ready Set Mail',
@@ -85,7 +89,8 @@ export async function createAuth(
             return { data: { ...user, name: cleanName(user.name) || user.email } };
           },
           after: async (user) => {
-            await provisionUser(env, intent, { id: user.id, email: user.email.toLowerCase(), name: user.name, emailVerified: user.emailVerified === true });
+            const placed = await provisionUser(env, intent, { id: user.id, email: user.email.toLowerCase(), name: user.name, emailVerified: user.emailVerified === true });
+            if (oauth) { oauthCreated = true; oauthSignedUp(env, opts.ctx, oauth, placed); }
           },
         },
       },
@@ -105,6 +110,7 @@ export async function createAuth(
         create: {
           after: async (session) => {
             await globalQueries(db).users.touchLogin(session.userId);
+            if (oauth && !oauthCreated) signedIn(env, opts.ctx, session.userId, oauth);
           },
         },
       },

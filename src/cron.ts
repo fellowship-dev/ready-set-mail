@@ -128,7 +128,7 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
       await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });
-      dnsChecked(tenant, ctx, d.id);
+      dnsChecked(tenant, ctx, d, found.dmarc, 'daily'); // the row it has: no query unless the read shows the records live
     } catch (e) {
       console.warn(`[monitor] storing DNS check failed for ${d.domain}:`, e);
     }

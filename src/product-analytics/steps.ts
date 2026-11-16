@@ -5,13 +5,13 @@
 // "First time" events (records live, first report, first dashboard view, an agent's first call) are made exactly-once by a marker row in
 // the workspace's settings (identity.ts claimMarker): the call that inserts the marker sends the event, every later one finds it there.
 import { workspaceLifecycle } from '@ready-set-mail/db';
-import type { DomainRow, OrderRow } from '@ready-set-mail/db';
+import type { DmarcFacts, DomainRow, OrderRow } from '@ready-set-mail/db';
 import type { TenantContext } from '../tenancy/context';
 import type { BillingAuditAction } from '../billing/notify';
 import { detectDnsHostFor } from '../domains/dns-host';
 import { resolverFor } from '../dns/resolver';
-import { capture, captureLater, ev, type AnalyticsEnv, type Captured } from './capture';
-import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait } from './events';
+import { capture, captureLater, captureMany, ev, type AnalyticsEnv, type Captured } from './capture';
+import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait, type SetupPath } from './events';
 import { claimMarker, markerAt, markerCount, setMarker } from './identity';
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
@@ -52,7 +52,7 @@ export function domainAdded(tenant: TenantContext, ctx: Ctx, p: { source: 'typed
     const row = p.domain ? await tenant.scope.domains.getByName(p.domain) : null;
     const provider = p.source === 'cloudflare_import' ? 'cloudflare' : p.domain ? await dnsProvider(tenant, p.domain).catch(() => 'unknown' as const) : 'unknown';
     return { subject: ws(tenant), events: [ev('Domain Added', {
-      source: p.source, needs_proof: p.needsProof, added: countBucket(p.added), domains: countBucket(await liveDomains(tenant)),
+      path: p.source === 'cloudflare_import' ? 'cloudflare' : 'manual', source: p.source, needs_proof: p.needsProof, added: countBucket(p.added), domains: countBucket(await liveDomains(tenant)),
       dns_provider: provider, verdict_issues: issuesBucket(p.added === 1 ? verdictIssues(row) : null),
     })] };
   });
@@ -69,7 +69,7 @@ export function ownershipVerified(tenant: TenantContext, ctx: Ctx, domain: strin
   captureLater(tenant.env, ctx, async () => {
     const claim = await tenant.db.prepare('SELECT created_at FROM domain_claims WHERE workspace_id = ?1 AND domain = ?2 ORDER BY id DESC LIMIT 1').bind(tenant.workspaceId, domain).first<{ created_at: number }>();
     const method = proofMethod(via);
-    return { subject: ws(tenant), events: [ev('Ownership Verified', { ...(method !== 'other' ? { method } : {}), wait: shortWait(claim ? nowS() - claim.created_at : null) })] };
+    return { subject: ws(tenant), events: [ev('Ownership Verified', { path: method === 'cloudflare_zone' ? 'cloudflare' : 'manual', ...(method !== 'other' ? { method } : {}), wait: shortWait(claim ? nowS() - claim.created_at : null) })] };
   });
 }
 
@@ -77,7 +77,7 @@ export function ownershipVerified(tenant: TenantContext, ctx: Ctx, domain: strin
 
 /** Apply was pressed (the plan's step, or the domain page's DMARC record): `changes` writes asked for. */
 export function applyClicked(tenant: TenantContext, ctx: Ctx, step: 'dmarc' | 'reports_mailbox' | 'dmarc_record', changes: number): void {
-  capture(tenant.env, ctx, ws(tenant), 'Apply Clicked', { step, changes: countBucket(changes) });
+  capture(tenant.env, ctx, ws(tenant), 'Apply Clicked', { path: 'cloudflare', step, changes: countBucket(changes) });
 }
 
 /**
@@ -87,27 +87,54 @@ export function applyDone(tenant: TenantContext, ctx: Ctx, p: { step: 'dmarc' | 
   captureLater(tenant.env, ctx, async () => {
     if (p.changes - p.failed > 0) for (const id of new Set(p.domainIds)) await setMarker(tenant.db, tenant.workspaceId, `applied:${id}`);
     const result = p.changes === 0 ? 'nothing_to_do' : p.failed === 0 ? 'applied' : p.failed < p.changes ? 'partial' : 'failed';
-    return { subject: ws(tenant), events: [ev('Apply Done', { step: p.step, result, changes: countBucket(p.changes), reports: p.reports })] };
+    return { subject: ws(tenant), events: [ev('Apply Done', { path: 'cloudflare', step: p.step, result, changes: countBucket(p.changes), reports: p.reports })] };
+  });
+}
+
+/** Whether a DMARC read sends reports to this domain's own report address (the rule recordDnsCheck stores as `dmarc_rua`). */
+export function sendsReportsHere(ruaAddress: string | null | undefined, dmarc: Pick<DmarcFacts, 'p' | 'rua'> | undefined): boolean {
+  const ours = ruaAddress?.trim().toLowerCase();
+  if (!ours || !dmarc || dmarc.p === undefined) return false;
+  return (dmarc.rua ?? []).some((a) => a.trim().toLowerCase() === ours);
+}
+
+/** The path a domain's records went live by: written by our Apply through Cloudflare, or added by hand. */
+const pathOf = (applied: number | null): SetupPath => (applied === null ? 'manual' : 'cloudflare');
+
+/**
+ * The records of a domain were observed live (its DMARC record sends reports to its report address): counted once per domain, by
+ * whichever read sees it first. Costs one statement (the marker) per call; the event's own reads run only the first time.
+ */
+export function recordsSeenLive(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id' | 'verified_via'>, seenBy: 'setup' | 'domain_page' | 'daily'): void {
+  captureLater(tenant.env, ctx, async () => {
+    if (!(await claimMarker(tenant.db, tenant.workspaceId, `live:${domain.id}`))) return null;
+    const [workspace, applied, live] = await Promise.all([
+      workspaceLifecycle(tenant.db).get(tenant.workspaceId), markerAt(tenant.db, tenant.workspaceId, `applied:${domain.id}`), markerCount(tenant.db, tenant.workspaceId, 'live:'),
+    ]);
+    const now = nowS();
+    return { subject: ws(tenant), events: [ev('Records Live', {
+      path: pathOf(applied), seen_by: seenBy, method: proofMethod(domain.verified_via), since_signup: longWait(workspace ? now - workspace.created_at : null),
+      since_apply: shortWait(applied === null ? null : now - applied), domains_live: countBucket(live),
+    })] };
   });
 }
 
 /**
- * A DNS read of a domain was stored (domains.recordDnsCheck). The first time it shows a DMARC record that sends reports to this
- * domain's report address, the records are live: counted once per domain.
+ * A DNS read of a domain was stored (domains.recordDnsCheck), by a caller that has the domain's row and the read: no query at all
+ * unless the read shows the records live, then recordsSeenLive. The daily job passes the row it already loaded.
  */
-export function dnsChecked(tenant: TenantContext, ctx: Ctx, domainId: number): void {
+export function dnsChecked(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id' | 'verified_via' | 'rua_address'>, dmarc: Pick<DmarcFacts, 'p' | 'rua'> | undefined, seenBy: 'setup' | 'daily'): void {
+  try {
+    if (sendsReportsHere(domain.rua_address, dmarc)) recordsSeenLive(tenant, ctx, domain, seenBy);
+  } catch { /* never affects the read */ }
+}
+
+/** A DNS read was stored by a caller without the row (the first check after setup): reads the stored result in the background. */
+export function dnsCheckedById(tenant: TenantContext, ctx: Ctx, domainId: number): void {
   captureLater(tenant.env, ctx, async () => {
     const row = await tenant.scope.domains.getById(domainId);
-    if (!row || row.dmarc_rua !== 1) return null;
-    if (!(await claimMarker(tenant.db, tenant.workspaceId, `live:${domainId}`))) return null;
-    const [workspace, applied, live] = await Promise.all([
-      workspaceLifecycle(tenant.db).get(tenant.workspaceId), markerAt(tenant.db, tenant.workspaceId, `applied:${domainId}`), markerCount(tenant.db, tenant.workspaceId, 'live:'),
-    ]);
-    const now = nowS();
-    return { subject: ws(tenant), events: [ev('Records Live', {
-      method: proofMethod(row.verified_via), since_signup: longWait(workspace ? now - workspace.created_at : null),
-      since_apply: shortWait(applied === null ? null : now - applied), domains_live: countBucket(live),
-    })] };
+    if (row && row.dmarc_rua === 1) recordsSeenLive(tenant, ctx, row, 'setup');
+    return null;
   });
 }
 
@@ -117,8 +144,8 @@ export function dnsChecked(tenant: TenantContext, ctx: Ctx, domainId: number): v
 export function reportStored(tenant: TenantContext, ctx: Ctx, domainId: number): void {
   captureLater(tenant.env, ctx, async () => {
     if (!(await claimMarker(tenant.db, tenant.workspaceId, `first_report:${domainId}`))) return null;
-    const live = await markerAt(tenant.db, tenant.workspaceId, `live:${domainId}`);
-    return { subject: ws(tenant), events: [ev('First Report Received', { since_live: longWait(live === null ? null : nowS() - live) })] };
+    const [live, applied] = await Promise.all([markerAt(tenant.db, tenant.workspaceId, `live:${domainId}`), markerAt(tenant.db, tenant.workspaceId, `applied:${domainId}`)]);
+    return { subject: ws(tenant), events: [ev('First Report Received', { path: pathOf(applied), since_live: longWait(live === null ? null : nowS() - live) })] };
   });
 }
 
@@ -202,14 +229,26 @@ export function workspaceAdded(env: AnalyticsEnv, ctx: Ctx, workspaceId: string)
 
 // ── Cloudflare ───────────────────────────────────────────────
 
+/** POST /api/cloudflare/oauth/start: the OAuth way to connect Cloudflare begins. */
 export function cloudflareConnectStarted(tenant: TenantContext, ctx: Ctx): void {
-  capture(tenant.env, ctx, ws(tenant), 'Cloudflare Connect Started', { method: 'oauth' });
+  capture(tenant.env, ctx, ws(tenant), 'Cloudflare Connect Started', { path: 'cloudflare', method: 'oauth' });
 }
 
 export function cloudflareConnectReturned(tenant: TenantContext, ctx: Ctx, method: 'oauth' | 'token', result: 'connected' | 'denied' | 'failed', connection?: { zones: unknown[]; accounts: unknown[] }): void {
   capture(tenant.env, ctx, ws(tenant), 'Cloudflare Connect Returned', {
-    method, result, ...(connection ? { zones: countBucket(connection.zones.length), accounts: countBucket(connection.accounts.length) } : {}),
+    path: 'cloudflare', method, result, ...(connection ? { zones: countBucket(connection.zones.length), accounts: countBucket(connection.accounts.length) } : {}),
   });
+}
+
+/**
+ * A pasted Cloudflare token connected (POST /api/cloudflare/connections): the start and the return of the token way, in one batch and
+ * in that order, so the setup funnels count this path like the OAuth one.
+ */
+export function cloudflareTokenConnected(tenant: TenantContext, ctx: Ctx, connection: { zones: unknown[]; accounts: unknown[] }): void {
+  captureMany(tenant.env, ctx, ws(tenant), [
+    ev('Cloudflare Connect Started', { path: 'cloudflare', method: 'token' }),
+    ev('Cloudflare Connect Returned', { path: 'cloudflare', method: 'token', result: 'connected', zones: countBucket(connection.zones.length), accounts: countBucket(connection.accounts.length) }),
+  ]);
 }
 
 // ── Agents ───────────────────────────────────────────────────

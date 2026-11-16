@@ -4,28 +4,36 @@
 // pending attempt's row of the verifications table (src/auth/codes.ts), set for every attempt alike (decoys too, so the sign-up's
 // constant work is unchanged) and gone with the attempt. "Send a new code" from the same browser carries the tag over, so resends
 // and the time from the first code to the right one can be counted. When the code is right, the new workspace adopts the tag's id.
+// Where the sign-up came from: the website's sign-up link carries `src=<page class>` (and the checker's `domain=` carry-over); the
+// dashboard sends `src` and `from_checker` with the sign-up form, read from that link and kept in memory only. Only the closed list is
+// kept (anything else is `other`, none is `cold`), and `from_checker` only as a boolean: never the domain.
 import { authLookups } from '@ready-set-mail/db';
 import { identifierFor } from '../auth/codes';
 import { analyticsEnabled, capture, captureLater, captureMany, ev, type AnalyticsEnv, type Captured } from './capture';
-import { ENTRIES, codeWait, resendsBucket, shortWait, triesBucket, type Entry } from './events';
-import { adoptAnalyticsId, visitorId } from './identity';
+import { SOURCES, codeWait, resendsBucket, shortWait, triesBucket, type Entry, type SignupMethod } from './events';
+import { adoptAnalyticsId, analyticsIdFor, mintedId } from './identity';
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
 const nowS = () => Math.floor(Date.now() / 1000);
 
-/** What a sign-up attempt carries for analytics: its id, codes sent so far, when the first was sent, where the person came from. */
-export interface SignupTag { id: string; sends: number; at: number; entry: Entry; passed: boolean }
-interface StoredTag { i: string; s: number; a: number; e: string; v: 0 | 1 }
+/** What a sign-up attempt carries for analytics: its id (minted here), codes sent so far, when the first was sent, where the person came from. */
+export interface SignupTag { id: string; sends: number; at: number; entry: Entry; fromChecker: boolean }
+interface StoredTag { i: string; s: number; a: number; e: string; c: 0 | 1 }
 
-const entryOf = (raw: unknown): Entry => (typeof raw === 'string' && (ENTRIES as readonly string[]).includes(raw) ? (raw as Entry) : 'cold');
+/** The website's `src` as an entry: one of the closed list, `other` for anything else, `cold` when there is none. */
+export function entryOf(src: unknown): Entry {
+  if (src === undefined || src === null || src === '') return 'cold';
+  return typeof src === 'string' && (SOURCES as readonly string[]).includes(src) ? (src as Entry) : 'other';
+}
 
 function parseTag(raw: unknown): SignupTag | null {
   if (typeof raw !== 'string') return null;
   try {
     const t = JSON.parse(raw) as Partial<StoredTag>;
-    const id = visitorId(t.i);
+    const id = mintedId(t.i);
     if (!id || typeof t.s !== 'number' || typeof t.a !== 'number') return null;
-    return { id, sends: Math.max(1, Math.floor(t.s)), at: t.a, entry: entryOf(t.e), passed: t.v === 1 };
+    const entry = t.e === 'cold' ? 'cold' : entryOf(t.e);
+    return { id, sends: Math.max(1, Math.floor(t.s)), at: t.a, entry, fromChecker: t.c === 1 };
   } catch {
     return null;
   }
@@ -45,14 +53,13 @@ export async function attemptTag(env: AnalyticsEnv, handle: string | null): Prom
 
 /**
  * POST /api/auth/signup: the tag for the attempt about to start. Carried over from this browser's live attempt (a new code asked for),
- * else new: the website visitor id when the form sent a valid one (`vid`), else a random one. Null when analytics is off.
+ * else new, with a fresh random id minted here. Null when analytics is off.
  */
-export async function signupTag(env: AnalyticsEnv, previousHandle: string | null, body: { vid?: unknown; entry?: unknown }): Promise<SignupTag | null> {
+export async function signupTag(env: AnalyticsEnv, previousHandle: string | null, body: { src?: unknown; from_checker?: unknown }): Promise<SignupTag | null> {
   if (!analyticsEnabled(env)) return null;
   const prior = (await attemptTag(env, previousHandle))?.tag;
   if (prior) return { ...prior, sends: prior.sends + 1 };
-  const vid = visitorId(body.vid);
-  return { id: vid ?? crypto.randomUUID(), sends: 1, at: nowS(), entry: entryOf(body.entry), passed: !!vid };
+  return { id: crypto.randomUUID(), sends: 1, at: nowS(), entry: entryOf(body?.src), fromChecker: body?.from_checker === true };
 }
 
 /** The hooks answerWithCode runs for a sign-up attempt: store the tag on the new attempt, then count what was answered. */
@@ -61,13 +68,13 @@ export function signupHooks(env: AnalyticsEnv, ctx: Ctx, tag: SignupTag | null):
   return {
     async started(handle) {
       try {
-        const stored: StoredTag = { i: tag.id, s: tag.sends, a: tag.at, e: tag.entry, v: tag.passed ? 1 : 0 };
+        const stored: StoredTag = { i: tag.id, s: tag.sends, a: tag.at, e: tag.entry, c: tag.fromChecker ? 1 : 0 };
         await env.DB?.prepare("UPDATE verifications SET value = json_set(value, '$.an', json(?2)) WHERE identifier = ?1").bind(await identifierFor(handle), JSON.stringify(stored)).run();
       } catch { /* the attempt works without it */ }
     },
     answered(mailed) {
       const events: Captured[] = [];
-      if (tag.sends === 1) events.push(ev('Signup Started', { entry: tag.entry, visitor_id: tag.passed ? 'passed' : 'fresh' }));
+      if (tag.sends === 1) events.push(ev('Signup Started', { method: 'email_code', entry: tag.entry, from_checker: tag.fromChecker }));
       if (mailed) events.push(ev('Signup Code Sent', { send: tag.sends === 1 ? 'first' : 'resend' }));
       captureMany(env, ctx, { analyticsId: tag.id }, events);
     },
@@ -95,9 +102,9 @@ export async function codeVerified(
     const analyticsId = await adoptAnalyticsId(env.DB, workspaceId, p.purpose === 'signup' ? tag?.id ?? null : null);
     const events: Captured[] = [ev('Code Verified', {
       purpose: p.purpose, account_created: p.created, attempts: triesBucket((p.tagged?.tries ?? 0) + 1),
-      ...(tag ? { entry: tag.entry, from_checker: tag.entry === 'checker', resends: resendsBucket(tag.sends - 1), wait: codeWait(nowS() - tag.at) } : {}),
+      ...(tag ? { entry: tag.entry, from_checker: tag.fromChecker, resends: resendsBucket(tag.sends - 1), wait: codeWait(nowS() - tag.at) } : {}),
     })];
-    if (p.purpose === 'signup' && p.created) events.push(ev('Workspace Created', { source: 'signup' }));
+    if (p.purpose === 'signup' && p.created) events.push(ev('Workspace Created', { source: 'signup', method: 'email_code' }));
     captureMany(env, ctx, { analyticsId }, events);
   } catch { /* never affects sign-up */ }
 }
@@ -108,13 +115,37 @@ export function inviteAccepted(env: AnalyticsEnv, ctx: Ctx, invite: { workspace_
 }
 
 /** A sign-in completed. */
-export function signedIn(env: AnalyticsEnv, ctx: Ctx, userId: string, method: 'code' | 'password'): void {
+export function signedIn(env: AnalyticsEnv, ctx: Ctx, userId: string, method: 'code' | 'password' | 'oauth_google' | 'oauth_github'): void {
   const db = env.DB;
   if (!db) return;
   captureLater(env, ctx, async () => {
     const workspaceId = await firstWorkspace(db, userId);
     return workspaceId ? { subject: { workspaceId }, events: [ev('Signed In', { method })] } : null;
   });
+}
+
+/** `google` / `github` from a Better Auth OAuth callback path (`/api/auth/callback/<provider>`), else null. */
+export function oauthMethodOf(request: Request): Extract<SignupMethod, 'oauth_google' | 'oauth_github'> | null {
+  try {
+    const m = /\/api\/auth\/callback\/(google|github)$/.exec(new URL(request.url).pathname);
+    return m ? (m[1] === 'google' ? 'oauth_google' : 'oauth_github') : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An account created by a Google or GitHub sign-up (src/auth/index.ts, after its workspace is provisioned): Signup Started and
+ * Workspace Created, in that order, under the new workspace's random id. Only a new owner's own workspace counts (an invitee joins
+ * someone else's). `entry` is not known on this path (the provider's redirect carries no `src`), so it is left out.
+ */
+export function oauthSignedUp(env: AnalyticsEnv, ctx: Ctx, method: 'oauth_google' | 'oauth_github', placed: { workspaceId: string; role: string } | null | undefined): void {
+  const db = env.DB;
+  if (!db || !placed?.workspaceId || placed.role !== 'owner') return;
+  captureLater(env, ctx, async () => ({
+    subject: { analyticsId: await analyticsIdFor(db, placed.workspaceId) },
+    events: [ev('Signup Started', { method }), ev('Workspace Created', { source: 'signup', method })],
+  }));
 }
 
 // ── Waiting on the new sign-up screens (draft PR 177, `onboarding-signup-first-run`; docs/analytics.md) ──

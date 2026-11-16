@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { bindSignupDomainToEmail, readSignupDomain } from '../../lib/signup-intent';
-import { signupAnalytics } from '../../lib/visitor';
+import { signupAnalytics } from '../../lib/signup-source';
 import { useSession } from '../../lib/session';
 import { TalkToMax } from '../../components/TalkToMax';
 import { CodeStep, needsCode, type CodeRequired } from './CodeStep';

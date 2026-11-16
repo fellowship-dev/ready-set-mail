@@ -10,7 +10,7 @@
  * email (or a sign-out) clears it, so the next person on a shared browser never sees someone else's domain.
  */
 import { normalizeDomainInput } from './domain-input';
-import { captureVisit } from './visitor';
+import { captureVisit } from './signup-source';
 
 export const SIGNUP_DOMAIN_KEY = 'ia_signup_domain';
 export const SIGNUP_DOMAIN_TTL_MS = 24 * 60 * 60 * 1000;
