@@ -168,3 +168,25 @@ export function focusDomainOf<T extends { domain: string }>(domains: T[], worksp
 	const named = readFocusDomain(workspaceId);
 	return domains.find((d) => d.domain === named) ?? domains[0];
 }
+
+// ── An agency's Cloudflare account holds many clients ───────────
+
+/**
+ * "My clients'": the Cloudflare account an agency connects usually holds many clients' zones, so only the zone of the client being
+ * set up is added to this client's workspace (basis: one workspace per client; src/hosted/plan-limits.ts caps workspaces per person and
+ * domains per workspace, so "everything into one workspace" is wrong and "a workspace per zone" is bounded by the plan). The company
+ * case ("My company's", "Just looking around") adds every active zone, as before.
+ */
+export const isAgency = (whose: string | null | undefined): boolean => whose === 'clients';
+
+/** The zone that covers `domain`: the zone itself, or the longest zone it is a subdomain of. */
+export function zoneCovering<Z extends { name: string }>(domain: string, zones: Z[]): Z | undefined {
+	const d = domain.toLowerCase();
+	return zones.filter((z) => d === z.name.toLowerCase() || d.endsWith(`.${z.name.toLowerCase()}`)).sort((a, b) => b.name.length - a.name.length)[0];
+}
+
+/** Zones of the account that the workspace does not hold: shown as "Also in this Cloudflare account", nothing imported for them. */
+export function zonesNotAdded<Z extends { name: string }>(zones: Z[], held: string[]): Z[] {
+	const have = new Set(held.map((h) => h.toLowerCase()));
+	return zones.filter((z) => !have.has(z.name.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
+}

@@ -427,16 +427,32 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		expect(screen.queryByTestId('first-day')).toBeNull();
 	});
 
-	// One rule for the order: what blocks progress or needs the person comes before the first-day card.
-	it('a domain that needs attention is listed before the card', async () => {
+	// One rule for the order: while a domain is in its first-day state the card is the first thing on the page, whatever else is there.
+	it('the card comes first even when a domain needs attention (an older domain keeps its "Not yet" headline)', async () => {
 		renderOverview({ routes: routesFor({ dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
 		const r = await row('example.com');
 		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
 		const card = await dayCard();
-		expect(before(screen.getByRole('region', { name: 'Your domains' }), card)).toBe(true);
+		expect(before(card, screen.getByRole('region', { name: 'Your domains' }))).toBe(true);
+		expect(before(card, screen.getByTestId('am-i-done'))).toBe(true);
 	});
 
-	it('a domain waiting for proof comes before the card, and the card stays first while nothing needs anyone', async () => {
+	it('day one with a row that needs attention: the card first, no "Not yet." headline, no level ladder', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0, dns_check_status: 'failed' }) });
+		const r = await row('example.com');
+		const card = await dayCard();
+		expect(before(card, r)).toBe(true);
+		expect(screen.getByTestId('am-i-done').textContent).not.toMatch(/Not yet/);
+		expect(within(r).queryByLabelText('example.com: protection level')).toBeNull();
+	});
+
+	it('levels appear with the first report; before it, on the first day, there is no ladder', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1, dns_check_status: 'ok' }) });
+		await dayCard();
+		expect(screen.queryByLabelText('example.com: protection level')).toBeNull();
+	});
+
+	it('the card stays first, ahead of a domain waiting for proof and the list', async () => {
 		const claim = { id: 5, domain: 'acme.io', status: 'pending', txt_name: '_readysetmail.acme.io', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null };
 		renderOverview({
 			routes: {
@@ -447,8 +463,7 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 			},
 		});
 		const card = await dayCard();
-		expect(before(screen.getByRole('region', { name: 'Waiting for verification' }), card)).toBe(true);
-		// the row is gathering evidence: nobody has to act, so the card leads the list
+		expect(before(card, screen.getByRole('region', { name: 'Waiting for verification' }))).toBe(true);
 		expect(before(card, screen.getByRole('region', { name: 'Your domains' }))).toBe(true);
 	});
 
@@ -502,13 +517,13 @@ describe('OverviewPage: every counted domain has a row, at any depth', () => {
 });
 
 describe('OverviewPage: verified domains first, then the ones waiting', () => {
-	it('puts "Waiting for verification" first, above the first-day card and the domains', async () => {
+	it('puts "Waiting for verification" above the domains (the first-day card, when there is one, is above both)', async () => {
 		const claim = { id: 5, domain: 'acme.com', status: 'pending', txt_name: '_readysetmail.acme.com', txt_value: 'v=1', created_at: 1700000000, last_checked_at: null, last_error: null };
 		renderOverview({ routes: { 'GET /api/domains': { domains: [domain(1, 'example.com')], pending_claims: [claim] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com'), 'GET /api/domains/1/stats': stats(99) } });
 		const verified = await screen.findByRole('region', { name: 'Your domains' });
 		const waiting = await screen.findByRole('region', { name: 'Waiting for verification' });
 		expect(waiting.compareDocumentPosition(verified) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		const card = screen.queryByTestId('first-day');
-		if (card) expect(waiting.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		if (card) expect(card.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 });

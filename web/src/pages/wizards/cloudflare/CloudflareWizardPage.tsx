@@ -20,7 +20,8 @@ import {
 	type CfWizardProgress,
 } from '../../../lib/cloudflare';
 import { fetchPlan, markWizardState, pendingWrites } from '../../../lib/dns-plan';
-import { REVIEW_PATH, reviewDone } from '../../../lib/first-run';
+import { REVIEW_PATH, isAgency, reviewDone } from '../../../lib/first-run';
+import { useDomainClaims } from '../../../lib/queries';
 import { useHosted, useSession } from '../../../lib/session';
 import { ConnectStep } from './ConnectStep';
 import { ImportStep } from './ImportStep';
@@ -38,6 +39,7 @@ export function CloudflareWizardPage() {
 	const workspace = me?.workspace_id ?? null;
 	const navigate = useNavigate();
 	const conns = useCfConnections();
+	const claims = useDomainClaims();
 	const [progress, setProgress] = useState<CfWizardProgress>(() => readProgress(workspace) ?? { step: 'connect', domainIds: [], written: { domains: 0, records: 0 } });
 	const [returnError, setReturnError] = useState<string | null>(null);
 	const returned = useRef(false);
@@ -101,10 +103,16 @@ export function CloudflareWizardPage() {
 		) : (
 			<LoadError error={conns.error} onRetry={() => void conns.refetch()} title="Could not check Cloudflare" />
 		);
+	} else if (hosted && connection && progress.step === 'connect' && !returnError) {
+		// Back from Cloudflare's consent: the connection is known, the import starts on the next render. No second "Connect" screen in between.
+		body = <PageSkeleton label="Connecting to Cloudflare" />;
 	} else if (progress.step === 'connect' || (progress.step !== 'done' && !connection)) {
 		body = <ConnectStep offer={conns.data} returnError={returnError} onConnected={(c) => { setFresh(c); setReturnError(null); go(c.implicit || c.zones.length > 0 ? 'domains' : 'zones', { connectionId: c.id }); }} />;
+	} else if (hosted && connection && progress.step !== 'done' && isAgency(me?.whose_email) && claims.isPending) {
+		body = <PageSkeleton label="Reading your domains" />;
 	} else if (hosted && connection && progress.step !== 'done') {
-		body = <ImportStep key={connection.id} connection={connection} onDone={(note) => {
+		const agency = isAgency(me?.whose_email) ? { targets: (claims.data ?? []).filter((c) => c.status === 'pending').map((c) => c.domain) } : undefined;
+		body = <ImportStep agency={agency} key={connection.id} connection={connection} onDone={(note) => {
 			clearProgress(workspace);
 			// First run: Cloudflare returned with domains, so the review comes next (C2). Later connections, and an import that added nothing, go to the dashboard.
 			navigate(note?.ok && !reviewDone(workspace) ? REVIEW_PATH : '/', { replace: true, state: note ? { imported: note } : undefined });
@@ -125,7 +133,8 @@ export function CloudflareWizardPage() {
 		<div className="space-y-6">
 			<header className="space-y-3">
 				<h1 className="text-2xl font-bold tracking-tight">Set up with Cloudflare</h1>
-				<WizardProgress label="Cloudflare setup progress" current={index} steps={steps.map((k, i) => ({ label: LABELS[k], state: i < index ? 'complete' : 'pending' }))} />
+				{/* Hosted is one screen of the first run (S4, here, C2): it has no counter of its own, so no two counters can disagree. */}
+				{hosted ? null : <WizardProgress label="Cloudflare setup progress" current={index} steps={steps.map((k, i) => ({ label: LABELS[k], state: i < index ? 'complete' : 'pending' }))} />}
 			</header>
 			<ReadOnlyNotice />
 			{notice && notice.shownOn === progress.step ? (

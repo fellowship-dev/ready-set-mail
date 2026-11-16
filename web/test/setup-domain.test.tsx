@@ -65,7 +65,7 @@ describe('S4 variants', () => {
 	it('cold, company: asks the question, says looking it up changes nothing, and shows nothing else yet', async () => {
 		open();
 		expect(await screen.findByRole('heading', { name: 'Which domain do you send email from?' })).toBeInTheDocument();
-		expect(screen.getByText('Step 1 of 3')).toBeInTheDocument();
+		expect(screen.queryByText(/Step \d of \d/)).toBeNull();
 		expect(screen.getByLabelText('Domain')).toBeInTheDocument();
 		expect(screen.getByText('Looking it up changes nothing in its DNS.')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Connect Cloudflare/ })).toBeNull();
@@ -101,14 +101,57 @@ describe('S4 variants', () => {
 		expect(sessionStorage.getItem('ia_setup_redirected:ws_default')).toBe('1');
 	});
 
-	it('from the checker: "Domain: x · Not this domain?", nothing is added until the person confirms, and the link turns it into a field', async () => {
+	it('from the checker: the domain is checked on arrival (no field, no Check click), named with "Not this domain?", and the result is shown', async () => {
 		rememberSignupDomain('brightwave-mail.com');
-		const { calls } = open();
-		expect(await screen.findByText(/Domain:/)).toHaveTextContent('Domain: brightwave-mail.com · Not this domain?');
-		expect(screen.getByRole('button', { name: 'Check brightwave-mail.com' })).toBeInTheDocument();
-		expect(calls.some((c) => c.method === 'POST')).toBe(false);
-		await userEvent.setup().click(screen.getByRole('button', { name: 'Not this domain?' }));
-		expect(await screen.findByLabelText('Domain')).toHaveValue('');
+		const { calls } = open({ routes: { 'POST /api/domains': { __status: 202, body: { pending: true, claim: claim('brightwave-mail.com'), domain: null } }, 'GET /api/domains/claims/5/preview': preview('brightwave-mail.com'), 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') } });
+		await waitFor(() => expect(screen.getByTestId('dns-result')).toHaveTextContent('brightwave-mail.com:'));
+		expect(screen.getByText(/Domain:/)).toHaveTextContent('Domain: brightwave-mail.com · Not this domain?');
+		expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/domains')).toHaveLength(1);
+		expect(screen.queryByLabelText('Domain')).toBeNull();
+		expect(screen.queryByRole('button', { name: /^Check/ })).toBeNull();
+	});
+
+	it('a typo\'d domain can be corrected without a reload: "Not this domain?" removes the claim, and the field comes back empty (the typo does not return)', async () => {
+		let claims: ReturnType<typeof claim>[] = [];
+		const { calls } = open({
+			routes: {
+				'GET /api/domains': () => ({ domains: [], pending_claims: claims }),
+				'POST /api/domains': () => { claims = [claim('brightwave-mial.com')]; return { __status: 202, body: { pending: true, claim: claims[0], domain: null } }; },
+				'DELETE /api/domains/claims/5': () => { claims = []; return { ok: true }; },
+				'GET /api/domains/claims/5/preview': preview('brightwave-mial.com', { nxdomain: true }),
+				'GET /api/domains/dns-host': host(null),
+			},
+		});
+		await enter('brightwave-mial.com');
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Use a different domain' }));
+		const field = await screen.findByLabelText('Domain');
+		expect(field).toHaveValue('');
+		expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual(['/api/domains/claims/5']);
+		// still the field a moment later: the old claim is not read back in from a stale cache
+		await new Promise((r) => setTimeout(r, 50));
+		expect(screen.getByLabelText('Domain')).toHaveValue('');
+		expect(screen.queryByText(/Domain: brightwave-mial.com/)).toBeNull();
+	});
+
+	it('if the claim cannot be removed, the screen says so and keeps it (no silent leftover)', async () => {
+		open({
+			routes: {
+				'POST /api/domains': { __status: 202, body: { pending: true, claim: claim('brightwave-mial.com'), domain: null } },
+				'DELETE /api/domains/claims/5': fail(500, 'boom'),
+				'GET /api/domains/claims/5/preview': preview('brightwave-mial.com', { nxdomain: true }),
+				'GET /api/domains/dns-host': host(null),
+			},
+		});
+		await enter('brightwave-mial.com');
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Use a different domain' }));
+		expect(await screen.findByText(/still waiting here/)).toBeInTheDocument();
+	});
+
+	it('the checker domain that is refused comes back in the field with the reason', async () => {
+		rememberSignupDomain('brightwave-mail.com');
+		open({ routes: { 'POST /api/domains': fail(409, 'domain already registered in another workspace') } });
+		expect(await screen.findByLabelText('Domain')).toHaveValue('brightwave-mail.com');
+		expect(await screen.findByRole('alert')).toHaveTextContent(/another workspace/i);
 	});
 
 	it('a wrong name is refused in words, with nothing sent', async () => {
@@ -151,7 +194,7 @@ describe('S4 by who hosts DNS', () => {
 	});
 
 	it('Cloudflare name servers, Cloudflare can be connected: the result line, "Connect Cloudflare" is the only primary, the records path is the quiet secondary', async () => {
-		const { calls } = open({ routes: added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') }) });
+		const { calls } = open({ routes: added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare'), 'POST /api/cloudflare/oauth/start': { authorize_url: 'about:blank#cf' } }) });
 		await enter('brightwave-mail.com');
 		expect(await screen.findByRole('heading', { name: 'brightwave-mail.com uses Cloudflare for DNS' })).toBeInTheDocument();
 		expect(await screen.findByTestId('dns-result')).toHaveTextContent('brightwave-mail.com: 2 things to fix. DMARC is published (p=quarantine) but sends its reports nowhere. No SPF record.');
@@ -164,6 +207,15 @@ describe('S4 by who hosts DNS', () => {
 		// nothing was written anywhere
 		expect(calls.filter((c) => c.method !== 'GET').map((c) => c.path)).toEqual(['/api/domains']);
 		await userEvent.setup().click(connect);
+		// Cloudflare's consent opens from this very button (the server's start endpoint, with the return route): no second "Connect Cloudflare" page
+		await waitFor(() => expect(calls.find((c) => c.path === '/api/cloudflare/oauth/start')?.body).toEqual({ return_to: '/#/setup/cloudflare' }));
+		expect(where()).toBe('/setup');
+	});
+
+	it('no sign-in offered, only a pasted token: Connect goes to the token screen', async () => {
+		open({ routes: { ...added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') }), 'GET /api/cloudflare/connections': conns({ oauth: { available: false, scopes: [], via_relay: false } }) } });
+		await enter('brightwave-mail.com');
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Connect Cloudflare' }));
 		expect(where()).toBe('/setup/cloudflare');
 	});
 

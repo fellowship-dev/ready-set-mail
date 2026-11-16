@@ -6,7 +6,7 @@ import { ClaimCard } from '../../components/domain/ClaimCard';
 import { PlanLimitNotice, planLimitOf } from '../../components/PlanLimitNotice';
 import { DomainRefusalHelp } from '../../components/TalkToMax';
 import { api, ApiError, errorMessage } from '../../lib/api';
-import { clearProgress, useCfConnections } from '../../lib/cloudflare';
+import { clearProgress, isEncryptionMissing, ENCRYPTION_MESSAGE, useCfConnections, useStartOAuth } from '../../lib/cloudflare';
 import type { ClaimPreviewData } from '../../lib/claim-preview';
 import { DOMAIN_PATTERN } from '../wizards/setup/DomainStep';
 import { INVALID_DOMAIN_TEXT, domainErrorMessage } from '../../lib/domain-errors';
@@ -44,6 +44,8 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 	const [validation, setValidation] = useState('');
 	const [entered, setEntered] = useState<Entered | null>(null);
 	const claims = useDomainClaims();
+	const [removeError, setRemoveError] = useState('');
+	const autoChecked = useRef(false);
 	const heading = useRef<HTMLHeadingElement>(null);
 
 	// Back on a later visit: the claim made earlier is still here, with its result and choice.
@@ -76,6 +78,21 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 		},
 	});
 
+	// The domain is known (the website checker): check it on arrival and show the result. The person is not asked for what we know, and
+	// "Not this domain?" is one click away. If it is refused, the field comes back with the reason.
+	useEffect(() => {
+		if (!checker || entered || autoChecked.current || !canWrite || claims.isPending || domains.isPending || waiting.length > 0 || focus) return;
+		if ((domains.data ?? []).some((d) => d.domain === checker)) return;
+		autoChecked.current = true;
+		add.mutate(checker, {
+			onError: () => {
+				setInput(checker);
+				setChecker(null);
+			},
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [checker, entered, canWrite, claims.isPending, domains.isPending, waiting.length, focus]);
+
 	function submit(e: FormEvent, preset?: string) {
 		e.preventDefault();
 		const d = normalizeDomainInput(preset ?? input);
@@ -84,14 +101,27 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 		add.mutate(d);
 	}
 
+	/** "Not this domain?": the claim is removed on the server and from the cache BEFORE the screen clears, so the typo does not come back and does not linger as a pending domain. */
 	async function notThisDomain() {
 		const claim = entered?.claim;
-		if (claim) await api(`/api/domains/claims/${claim.id}`, { method: 'DELETE' }).catch(() => {});
-		void qc.invalidateQueries({ queryKey: keys.domains });
-		setEntered(null);
+		setRemoveError('');
+		if (claim) {
+			try {
+				await api(`/api/domains/claims/${claim.id}`, { method: 'DELETE' });
+			} catch (e) {
+				return setRemoveError(`${errorMessage(e)} ${claim.domain} is still waiting here.`);
+			}
+			qc.setQueryData<{ domains: Domain[]; pending_claims?: DomainClaim[] }>(keys.domains, (old) => (old ? { ...old, pending_claims: (old.pending_claims ?? []).filter((c) => c.id !== claim.id) } : old));
+			qc.removeQueries({ queryKey: ['claim-preview', claim.id] });
+		}
+		clearSignupDomainIf(entered?.name ?? '');
+		autoChecked.current = true;
 		setChecker(null);
+		setEntered(null);
 		setInput('');
 		add.reset();
+		void qc.invalidateQueries({ queryKey: keys.domains });
+		void qc.invalidateQueries({ queryKey: ['workspaces'] });
 	}
 
 	const notNow = () => {
@@ -110,27 +140,20 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 
 	return (
 		<div className="mx-auto max-w-xl space-y-6" data-testid="setup-domain">
-			<p className="text-sm text-ink-2">Step 1 of 3</p>
 			{!entered ? (
 				claims.isPending && !add.isPending ? (
 					<Skeleton className="h-40 w-full" role="status" aria-label="Checking for a domain you started with" />
 				) : checker ? (
-					<form onSubmit={(e) => submit(e, checker)} className="space-y-4" noValidate>
+					<div className="space-y-4">
 						<h1 ref={heading} className="text-2xl font-semibold tracking-tight">{title}</h1>
 						<p className="text-sm text-ink-1">
 							Domain: <span className="font-mono [overflow-wrap:anywhere]">{checker}</span> ·{' '}
-							<button type="button" className="text-brand-ink underline underline-offset-4" onClick={() => setChecker(null)}>
+							<button type="button" className="text-brand-ink underline underline-offset-4" disabled={add.isPending} onClick={() => { clearSignupDomainIf(checker); setChecker(null); }}>
 								Not this domain?
 							</button>
 						</p>
-						<FieldHint>Looking it up changes nothing in its DNS.</FieldHint>
-						{error ? <FieldError>{error}</FieldError> : null}
-						{atLimit ? <PlanLimitNotice limit={atLimit} /> : null}
-						{add.isError && !atLimit ? <DomainRefusalHelp error={add.error} /> : null}
-						<Button type="submit" className="w-full sm:w-auto" loading={add.isPending} disabled={!canWrite}>
-							Check {checker}
-						</Button>
-					</form>
+						<Skeleton className="h-5 w-3/4" role="status" aria-label={`Reading public DNS for ${checker}`} />
+					</div>
 				) : (
 					<form onSubmit={submit} className="space-y-4" noValidate>
 						<h1 ref={heading} className="text-2xl font-semibold tracking-tight">{title}</h1>
@@ -166,7 +189,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 					</form>
 				)
 			) : (
-				<Entered entered={entered} onNotThis={() => void notThisDomain()} onVerified={() => navigate('/')} heading={heading} />
+				<Entered entered={entered} removeError={removeError} onNotThis={() => void notThisDomain()} onVerified={() => navigate('/')} heading={heading} />
 			)}
 			<div className="space-y-2 text-sm text-ink-2">
 				{lookingAround ? (
@@ -190,7 +213,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 }
 
 /** The result and the choice for the domain just entered. */
-function Entered({ entered, onNotThis, onVerified, heading }: { entered: Entered; onNotThis: () => void; onVerified: () => void; heading: React.RefObject<HTMLHeadingElement | null> }) {
+function Entered({ entered, removeError, onNotThis, onVerified, heading }: { entered: Entered; removeError: string; onNotThis: () => void; onVerified: () => void; heading: React.RefObject<HTMLHeadingElement | null> }) {
 	const { canWrite, me } = useSession();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
@@ -223,9 +246,14 @@ function Entered({ entered, onNotThis, onVerified, heading }: { entered: Entered
 		onError: (e) => setVerifyError(e instanceof ApiError ? e.message : errorMessage(e)),
 	});
 
+	// "Connect Cloudflare" opens Cloudflare's own consent right away (the same server start the Connect screen used: state and PKCE are the server's).
+	// Only an instance that offers a pasted token and no sign-in goes to the token screen.
+	const start = useStartOAuth();
+	const startError = start.isError ? (isEncryptionMissing(start.error) ? ENCRYPTION_MESSAGE : errorMessage(start.error)) : '';
 	const connect = () => {
 		clearProgress(me?.workspace_id ?? null);
-		navigate('/setup/cloudflare');
+		if (!conns.data?.oauth.available) return navigate('/setup/cloudflare');
+		start.mutate({ returnTo: '/#/setup/cloudflare' }, { onSuccess: (r) => window.location.assign(r.authorize_url) });
 	};
 
 	return (
@@ -246,6 +274,7 @@ function Entered({ entered, onNotThis, onVerified, heading }: { entered: Entered
 					</>
 				) : null}
 			</p>
+			{removeError ? <Alert variant="warning">{removeError}</Alert> : null}
 			<div aria-live="polite" data-testid="dns-result">
 				{dnsLoading ? <Skeleton className="h-5 w-3/4" role="status" aria-label="Reading public DNS" /> : dns ? <p className="max-w-prose text-base text-ink-1 [overflow-wrap:anywhere]">{resultLine(name, dns)}</p> : <p className="text-sm text-ink-2">We couldn't read public DNS for {name} just now. You can still set it up.</p>}
 			</div>
@@ -278,14 +307,15 @@ function Entered({ entered, onNotThis, onVerified, heading }: { entered: Entered
 							: "Connect Cloudflare and we'll prepare the changes. You see every record before anything is written."}
 					</p>
 					{verifyError ? <Alert variant="warning">{verifyError}</Alert> : null}
+					{startError ? <FieldError>{startError}</FieldError> : null}
 					<div className="flex flex-col gap-2 sm:flex-row">
 						{choice.kind === 'continue' ? (
 							<Button className="w-full sm:w-auto" loading={verify.isPending} onClick={() => { setVerifyError(''); verify.mutate(); }}>
 								{choice.account ? `Continue with ${choice.account}` : 'Continue with Cloudflare'}
 							</Button>
 						) : (
-							<Button className="w-full sm:w-auto" onClick={connect}>
-								Connect Cloudflare
+							<Button className="w-full sm:w-auto" loading={start.isPending} onClick={connect}>
+								{start.isPending ? 'Opening Cloudflare…' : 'Connect Cloudflare'}
 							</Button>
 						)}
 						<Button variant="secondary" className="w-full sm:w-auto" onClick={() => setManual(true)}>

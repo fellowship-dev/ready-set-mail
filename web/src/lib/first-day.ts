@@ -102,3 +102,8 @@ export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict 
 	if (rows.length === 0 || rows.some((r) => !r.verdict || !r.dayOne)) return null;
 	return rows.length === 1 ? `Waiting for the first reports on ${rows[0]!.name}. They usually arrive within a day or two.` : `Waiting for the first reports on ${rows.length} new domains. They usually arrive within a day or two.`;
 }
+
+/** A domain on its first day with no report yet: the overview shows no level ladder for it (it appears with the first report). Facts unknown: not first day. */
+export function onFirstDay(d: Pick<Domain, 'created_at'>, totals: ReportTotals | null | undefined, now = Math.floor(Date.now() / 1000)): boolean {
+	return !!totals && totals.total === 0 && now - d.created_at < DAY_ONE_SECONDS;
+}

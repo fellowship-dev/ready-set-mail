@@ -151,6 +151,24 @@ describe('the plan', () => {
   });
 });
 
+describe("an agency's account (\"My clients'\"): only the client being set up is imported", () => {
+  it('importing the one client zone adds it, settles its claim, leaves every other zone out of the workspace and the allow-list, and offers them as suggestions', async () => {
+    const s = await setup({ 'brightwave-mail.com': {}, 'harbor-lane.org': {}, 'quietfield.net': {} });
+    expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
+    const id = await s.connect();
+    const res = await json(await s.imp(id, { zone_ids: [zid('brightwave-mail.com')] }));
+    expect(res.imported.map((i: any) => i.domain)).toEqual(['brightwave-mail.com']);
+    expect(s.domains().map(d => d.domain)).toEqual(['brightwave-mail.com']);
+    expect(s.w.rows('SELECT zone_name FROM cloudflare_connection_zones WHERE workspace_id = ?', s.C.ws).map(r => r.zone_name)).toEqual(['brightwave-mail.com']);
+    expect(s.w.rows('SELECT settled_at FROM domain_claims WHERE workspace_id = ? AND settled_at IS NULL', s.C.ws)).toEqual([]);
+    expect(s.dnsWrites()).toEqual([]);
+    const sug = (await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'))).suggestions;
+    expect(sug.map((x: any) => x.name)).toEqual(['harbor-lane.org', 'quietfield.net']);
+    // the other zones are not writable from this workspace: no domain, so no plan and no write
+    expect(s.w.rows('SELECT domain FROM domains WHERE domain IN (?, ?)', 'harbor-lane.org', 'quietfield.net')).toEqual([]);
+  });
+});
+
 describe('removed domains', () => {
   it('stay removed on a later import, are suggested, and come back when the person asks for them', async () => {
     const s = await setup({ 'one.com': {}, 'two.org': {} });

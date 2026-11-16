@@ -247,7 +247,7 @@ test('hosted C2: connect, review the one change with the report address, Apply, 
 		await connectWithToken(page);
 
 		await expect(page.getByRole('heading', { name: '1 change to harbor-lane.org' })).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByText('Step 3 of 3')).toBeVisible();
+		await expect(page.getByText(/Step \d of \d/)).toHaveCount(0); // one counter or none: none
 		await expect(page.locator('[data-testid^="change-dmarc:"]')).toContainText(`rua=mailto:rua@${intake}`);
 		await expect(page.getByText('Not changed: SPF and DKIM.', { exact: false })).toBeVisible();
 		await expect(page.getByRole('button', { name: /copy/i })).toHaveCount(0);

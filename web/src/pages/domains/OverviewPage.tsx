@@ -16,7 +16,7 @@ import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../comp
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
-import { dayOneAnswer, dayOneVerdict, firstDay } from '../../lib/first-day';
+import { DAY_ONE_SECONDS, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
 import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains } from '../../lib/queries';
@@ -183,9 +183,9 @@ export function OverviewPage() {
 	}
 
 	const empty = domains.length === 0 && claims.length === 0;
-	// One rule for the order: whatever blocks progress or needs the person comes before the first-day card: a Cloudflare connection that
-	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
 	const needsAttention = shownVerdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
+	// One rule for the order: while a domain is in its first-day state the first-day card is the first thing on the page, whatever else the page
+	// has to say (a row that needs attention comes after it, and does not bring back "Not yet." as the headline on day one).
 	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.
 	const focus = focusDomainOf(domains, me?.workspace_id ?? null);
 	const dayState = canWrite
@@ -198,7 +198,9 @@ export function OverviewPage() {
 	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
 	// While the first-day card (or the hand-off card) speaks and nothing blocks, the card is the first thing said: no "Not yet." above it.
 	const cardSpeaks = !!(handoff && !recordsLive) || (!!dayState && dayState.kind !== 'arrived' && dayState.kind !== 'empty' && dayState.kind !== 'proof');
-	const headline = cardSpeaks && !needsAttention && waiting === 0 && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
+	// On a domain's first day an attention row does not bring "Not yet." back as the headline; later it does.
+	const focusFirstDay = !!focus && Math.floor(Date.now() / 1000) - focus.created_at < DAY_ONE_SECONDS;
+	const headline = cardSpeaks && waiting === 0 && (focusFirstDay || !needsAttention) && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
 	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
@@ -231,6 +233,8 @@ export function OverviewPage() {
 				<LoadError error={list.error} onRetry={() => void list.refetch()} title="Could not load your domains" />
 			) : (
 				<>
+					{stepper}
+
 					<div className="space-y-1">
 						<p className="text-lg font-semibold tracking-tight text-ink-1 [overflow-wrap:anywhere] sm:text-xl" aria-live="polite" data-testid="am-i-done">
 							{headline}
@@ -246,8 +250,6 @@ export function OverviewPage() {
 					<ProofLostList domains={domains} canWrite={canWrite} />
 					{canWrite ? <CloudflareAttention /> : null}
 					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain))} canWrite={canWrite} />
-
-					{!needsAttention && stepper}
 
 					{empty && !canWrite ? (
 						<EmptyState
@@ -265,13 +267,11 @@ export function OverviewPage() {
 							<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
 								{ordered.map(({ d, parent, depth }) => {
 									const row = byId.get(d.id)!;
-									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} />;
+									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} hideLadder={onFirstDay(d, totals[domains.indexOf(d)])} />;
 								})}
 							</ul>
 						</section>
 					) : null}
-
-					{needsAttention && stepper}
 				</>
 			)}
 		</div>

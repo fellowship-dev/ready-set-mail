@@ -61,7 +61,7 @@ describe('C2: what will be written', () => {
 	it('shows the change with what is there now, what it will be, why, and the one Apply', async () => {
 		open({ domains: [domainRow(7, 'brightwave-mail.com'), ...[8, 9, 10, 11].map((i) => domainRow(i, `d${i}.example`))] });
 		expect(await screen.findByRole('heading', { name: '1 change to brightwave-mail.com' })).toBeInTheDocument();
-		expect(screen.getByText('Step 3 of 3')).toBeInTheDocument();
+		expect(screen.queryByText(/Step \d of \d/)).toBeNull(); // one counter across the flow, or none: none
 		expect(screen.getByText(/Connected to Cloudflare account Brightwave Studio\./)).toBeInTheDocument();
 		const card = screen.getByTestId('change-dmarc:7');
 		expect(card).toHaveTextContent('DMARC · TXT _dmarc · Update');
@@ -189,5 +189,27 @@ describe('C2 honest about reports, in both HOSTED_CONNECT_REPORTS cases', () => 
 		expect(screen.getByTestId('reports-note').getAttribute('role')).not.toBe('alert');
 		await userEvent.setup().click(screen.getByRole('button', { name: 'Apply 1 change' }));
 		expect(await screen.findByText('dashboard')).toBeInTheDocument();
+	});
+});
+
+describe("C2 for an agency (\"My clients'\"): the rest of the account is listed, not added", () => {
+	it('lists the other zones as "Also in this Cloudflare account", says nothing was added for them and why', async () => {
+		open({
+			routes: {
+				'GET /api/me': { ...me('owner'), whose_email: 'clients' },
+				'GET /api/cloudflare/connections/c1/zones': { zones: [{ id: 'z1', name: 'brightwave-mail.com', allowed: true }, { id: 'z2', name: 'harbor-lane.org', allowed: false }, { id: 'z3', name: 'quietfield.net', allowed: false }] },
+			},
+		});
+		expect(await screen.findByRole('heading', { name: '1 change to brightwave-mail.com' })).toBeInTheDocument();
+		const note = await screen.findByTestId('also-in-account');
+		expect(note).toHaveTextContent('Also in Brightwave Studio: harbor-lane.org, quietfield.net. Not added: this workspace is for brightwave-mail.com. Add each client from Add domain, in its own workspace.');
+		expect(note).not.toHaveTextContent('brightwave-mail.com,');
+		expect(screen.queryByText(/added and watched/)).toBeNull();
+	});
+
+	it('the company case keeps its quiet line: the other zones were added and watched', async () => {
+		open({ domains: [domainRow(7, 'brightwave-mail.com'), domainRow(8, 'two.example')] });
+		expect(await screen.findByText(/Also in Brightwave Studio: 1 more domain, added and watched/)).toBeInTheDocument();
+		expect(screen.queryByTestId('also-in-account')).toBeNull();
 	});
 });

@@ -10,7 +10,7 @@ import { DomainRow } from '../src/components/domain/DomainRow';
 import { AddDomainPage } from '../src/pages/domains/AddDomainPage';
 import { CloudflareSection } from '../src/pages/settings/CloudflareSection';
 import { CloudflareWizardPage } from '../src/pages/wizards/cloudflare/CloudflareWizardPage';
-import { renderApp } from './render';
+import { me, renderApp } from './render';
 
 const conn = (over: Record<string, unknown> = {}) => ({ id: 'c1', label: 'Example Co', auth_type: 'oauth', status: 'active', status_detail: null, cf_account_id: 'a1', cf_account_name: 'Example Co', zones: [{ id: 'z1', name: 'one.com' }], scopes: [], accounts: [{ id: 'a1', name: 'Example Co' }], ...over });
 const offer = (connections: unknown[] = [], over: Record<string, unknown> = {}) => ({ connections, oauth: { available: true, scopes: [], via_relay: false }, token_paste: false, encryption_configured: true, ...over });
@@ -275,5 +275,58 @@ describe('Add domain: a name inside a connected zone', () => {
 		await userEvent.clear(field);
 		await userEvent.type(field, 'notone.com');
 		expect(screen.queryByText(/verified on the spot/)).toBeNull(); // a lookalike is not inside the zone
+	});
+});
+
+describe("hosted wizard, \"My clients'\": only the client being set up is added", () => {
+	const claim = (domain: string, id = 5) => ({ id, domain, status: 'pending', txt_name: `_readysetmail.${domain}`, txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null });
+	const zones = { zones: [{ id: 'z1', name: 'brightwave-mail.com', allowed: false }, { id: 'z2', name: 'harbor-lane.org', allowed: false }, { id: 'z3', name: 'quietfield.net', allowed: false }] };
+	const agencyRoutes = (whose: 'clients' | 'company', pending: unknown[], extra: Record<string, unknown> = {}) => ({
+		'GET /api/me': { ...me('owner'), whose_email: whose },
+		'GET /api/domains': { domains: [], pending_claims: pending },
+		'GET /api/cloudflare/connections': offer([conn()]),
+		'GET /api/cloudflare/connections/c1/zones': zones,
+		'POST /api/cloudflare/connections/c1/import': done({ imported: [{ domain: 'brightwave-mail.com', domain_id: 1 }], accounts: [{ id: 'a1', name: 'Example Co' }] }),
+		...extra,
+	});
+
+	it('imports ONLY the zone of the client domain: the request names that one zone id, never the others', async () => {
+		const { calls } = renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('clients', [claim('brightwave-mail.com')]) });
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
+		const imp = calls.filter((c) => c.path.endsWith('/import'));
+		expect(imp).toHaveLength(1);
+		expect(imp[0]!.body).toEqual({ zone_ids: ['z1'] });
+	});
+
+	it('a client domain that is a subdomain is covered by its zone', async () => {
+		const { calls } = renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('clients', [claim('mail.harbor-lane.org')]) });
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
+		expect(calls.find((c) => c.path.endsWith('/import'))?.body).toEqual({ zone_ids: ['z2'] });
+	});
+
+	it('the client domain is not in the connected account: nothing is imported, the other zones are listed, and the way back is said', async () => {
+		const { calls } = renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('clients', [claim('elsewhere.io')]) });
+		expect(await screen.findByRole('heading', { name: "elsewhere.io isn't in this Cloudflare account" })).toBeInTheDocument();
+		expect(screen.getByTestId('also-in-account')).toHaveTextContent('Also in this Cloudflare account: brightwave-mail.com, harbor-lane.org, quietfield.net.');
+		expect(calls.some((c) => c.path.endsWith('/import'))).toBe(false);
+	});
+
+	it('no client domain waiting at all: nothing is imported and Add domain is where the account\'s zones are offered', async () => {
+		const { calls } = renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('clients', []) });
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/));
+		expect(calls.some((c) => c.path.endsWith('/import'))).toBe(false);
+		expect(screen.getByTestId('note')).toHaveTextContent(/Nothing was added: add each client's domain with Add domain/);
+	});
+
+	it('the company case is unchanged: every zone, no zone ids', async () => {
+		const { calls } = renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('company', [claim('brightwave-mail.com')]) });
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
+		expect(calls.find((c) => c.path.endsWith('/import'))?.body).toEqual({});
+	});
+
+	it('back from consent with a connection already made: no second "Connect Cloudflare" page in between', async () => {
+		renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: agencyRoutes('company', [], { 'POST /api/cloudflare/connections/c1/import': done({ imported: [{ domain: 'one.com', domain_id: 1 }] }) }) });
+		expect(screen.queryByRole('heading', { name: 'Connect Cloudflare' })).toBeNull();
+		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/setup\/review$/));
 	});
 });

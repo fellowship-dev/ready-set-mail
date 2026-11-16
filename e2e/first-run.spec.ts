@@ -45,7 +45,7 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 
 			// C2: what will be written, with the report address; nothing is written until Apply
 			await expect(page.getByRole('heading', { name: new RegExp(`^1 change to ${DOMAIN.replace('.', '\\.')}$`) })).toBeVisible({ timeout: 60_000 });
-			await expect(page.getByText('Step 3 of 3')).toBeVisible();
+			await expect(page.getByText(/Step \d of \d/)).toHaveCount(0); // one counter or none: none
 			await expect(page.locator('[data-testid^="change-dmarc:"]')).toContainText(`rua=mailto:rua@${INTAKE}`);
 			await expect(page.getByText('Not changed: SPF and DKIM.', { exact: false })).toBeVisible();
 			await fits(page);

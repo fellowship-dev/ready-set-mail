@@ -4,9 +4,9 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { LoadError } from '../../components/states';
 import { errorMessage } from '../../lib/api';
-import { clearProgress, useCfConnections } from '../../lib/cloudflare';
+import { clearProgress, fetchZones, useCfConnections } from '../../lib/cloudflare';
 import { applyStep, fetchPlan, firstCheck, markWizardState, pendingWrites, type DnsPlan, type PlanWrite } from '../../lib/dns-plan';
-import { HAND_OFF_ENABLED, focusDomainOf, markReviewDone } from '../../lib/first-run';
+import { HAND_OFF_ENABLED, focusDomainOf, isAgency, markReviewDone, zonesNotAdded } from '../../lib/first-run';
 import { invalidateDomain } from '../../lib/domain-queries';
 import { useDomainClaims, useDomains } from '../../lib/queries';
 import { handoffPath } from '../../lib/handoff';
@@ -87,6 +87,10 @@ export function ReviewPage() {
 	const [error, setError] = useState('');
 	const [changed, setChanged] = useState(false);
 	const current = replaced ?? plan.data;
+	const connection = (conns.data?.connections ?? []).find((c) => c.cf_account_id && c.cf_account_id === domain?.cf_account_id) ?? (conns.data?.connections ?? []).find((c) => c.status === 'active');
+	// "My clients'": only this client's zone was added; the rest of the account is listed, not imported (ImportStep).
+	const agency = isAgency(me?.whose_email);
+	const accountZones = useQuery({ queryKey: ['cf-zones-not-added', connection?.id], queryFn: () => fetchZones(connection!), enabled: agency && !!connection && !connection.implicit && canWrite, retry: false, staleTime: 60_000 });
 
 	const leave = (how: 'applied' | 'skipped' = 'skipped') => {
 		markReviewDone(workspace, how);
@@ -124,9 +128,9 @@ export function ReviewPage() {
 	// The report-address refusal is its own sentence (the server's own words); the rest are per-domain notes.
 	const reportsNote = notes.find((x) => x.what === 'Report address');
 	const others = notes.filter((x) => x !== reportsNote);
-	const connection = (conns.data?.connections ?? []).find((c) => c.cf_account_id && c.cf_account_id === domain.cf_account_id) ?? (conns.data?.connections ?? []).find((c) => c.status === 'active');
 	const accountName = connection?.cf_account_name ?? conns.data?.accounts?.find((a) => a.id === domain.cf_account_id)?.name ?? null;
-	const more = list.filter((d) => d.id !== domain.id && (!domain.cf_account_id || d.cf_account_id === domain.cf_account_id)).length;
+	const notAdded = agency ? zonesNotAdded(accountZones.data ?? [], list.map((d) => d.domain)) : [];
+	const more = agency ? 0 : list.filter((d) => d.id !== domain.id && (!domain.cf_account_id || d.cf_account_id === domain.cf_account_id)).length;
 
 	async function apply() {
 		if (!current || !domain) return;
@@ -162,7 +166,6 @@ export function ReviewPage() {
 
 	return (
 		<div className="mx-auto max-w-xl space-y-5" data-testid="review">
-			<p className="text-sm text-ink-2">Step 3 of 3</p>
 			{plan.isPending || (!current && !plan.isError) ? (
 				<>
 					<h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">Checking {domain.domain} in Cloudflare</h1>
@@ -238,6 +241,11 @@ export function ReviewPage() {
 					</div>
 
 					<div className="space-y-2 text-sm text-ink-2">
+						{notAdded.length > 0 ? (
+							<p data-testid="also-in-account">
+								Also in {accountName ?? 'this Cloudflare account'}: {notAdded.map((z) => z.name).join(', ')}. Not added: this workspace is for {domain.domain}. Add each client from Add domain, in its own workspace.
+							</p>
+						) : null}
 						{more > 0 ? (
 							<p>
 								Also in {accountName ?? 'your Cloudflare account'}: {more} more {plural(more, 'domain', 'domains')}, added and watched. Nothing was written to {plural(more, 'it', 'them')}.
