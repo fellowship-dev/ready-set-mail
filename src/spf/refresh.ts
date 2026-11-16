@@ -196,6 +196,15 @@ function connectionRefused(e: unknown): { ok: false; refused: SpfProblemOut } {
   if (!isConnectionFailure(e)) throw e;
   return { ok: false, refused: { kind: 'connection_lost', message: `${problemSentence({ kind: 'connection_lost' })} (${connectionText(e)})` } };
 }
+/**
+ * Our write landed but the claim was lost meanwhile. If flattening was turned off (the row is gone or not on) the owner's original is what belongs in Cloudflare;
+ * otherwise something else changed the row and the value we replaced goes back.
+ */
+async function undoLostClaim(tenant: TenantContext, row: SpfConfigRow, target: SpfTarget, live: { id: string; content: string }): Promise<void> {
+  const now = await tenant.scope.spf.get(row.domain_id);
+  await putBack(target, live.id, !now || now.enabled !== 1 ? row.canonical_record : live.content);
+}
+
 /** Best effort: write `content` back and say whether Cloudflare holds it. */
 async function putBack(target: SpfTarget, id: string, content: string): Promise<boolean> {
   try {
@@ -274,7 +283,7 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
     return { ...(await fail('connection_lost', `${problemSentence({ kind: 'connection_lost' })} (${connectionText(e)})`)), fetches };
   }
   const done = await q.finish(row.domain_id, claimed, { ...settle, flattened_record: flat.record, previous_record: edited ? live.content : row.flattened_record, last_flattened_at: at });
-  if (!done) { await putBack(target, live.id, live.content); return { outcome: 'skipped', fetches }; }
+  if (!done) { await undoLostClaim(tenant, row, target, live); return { outcome: 'skipped', fetches }; }
   audit(tenant, deps, 'spf_flatten.update', domain, { spf_record: edited ? live.content : row.flattened_record }, { spf_record: flat.record, ip_count: flat.ipCount, lookups: flat.lookupsAfter }, { by: deps.takeOver ? 'replace' : deps.manual ? 'try_again' : 'job', cron: deps.manual ? undefined : '0 11 * * *' });
   audit(tenant, deps, 'dns.update', domain, { content: edited ? live.content : row.flattened_record }, { content: flat.record }, undefined, { type: 'dns_record', id: live.id, name: `TXT ${domain.domain}` });
   if (recovered) await emit(deps, tenant, { type: 'spf.recovered', workspaceId: tenant.workspaceId, domainId: domain.id, domain: domain.domain, at });
@@ -295,9 +304,9 @@ export type DisableResult =
  */
 export async function disableSpf(tenant: TenantContext, domain: { id: number; domain: string }, deps: SpfDeps = {}): Promise<DisableResult> {
   const q = tenant.scope.spf;
-  const row = await q.get(domain.id);
-  if (!row) return { ok: false, notConfigured: true };
-  await q.deactivate(domain.id);
+  if (!(await q.get(domain.id))) return { ok: false, notConfigured: true };
+  await q.deactivate(domain.id); // from here no refresh can finish: it undoes its own write
+  const row = (await q.get(domain.id))!; // read after, so a refresh that finished just before is seen
   const target = deps.target ?? cloudflareTarget(tenant, domain.domain);
   const at = nowS(deps);
   const done = async (restored: boolean, why?: 'edited_outside' | 'record_missing'): Promise<DisableResult> => {
@@ -360,7 +369,7 @@ export async function rollbackSpf(tenant: TenantContext, domain: { id: number; d
     const back = await target.read();
     if (!('found' in back && back.found) || !sameSpfRecord(back.content, row.previous_record)) throw new NotKept();
     const done = await q.finish(domain.id, claimed, { flattened_record: row.previous_record, previous_record: row.flattened_record, last_flattened_at: at });
-    if (!done) { await putBack(target, live.id, live.content); return 'skipped'; }
+    if (!done) { await undoLostClaim(tenant, row, target, live); return 'skipped'; }
     audit(tenant, deps, 'spf_flatten.rollback', domain, { spf_record: row.flattened_record }, { spf_record: row.previous_record }, { by: deps.actor ? 'user' : 'operator' });
     return 'rolled_back';
   } catch (e) {

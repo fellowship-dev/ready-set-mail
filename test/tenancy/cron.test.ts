@@ -102,6 +102,26 @@ describe('cron iterates workspaces, each in its own try', () => {
   });
 });
 
+describe('the SPF refresh runs on 0 11, and the older 0 10 trigger is the same job', () => {
+  const ELEVEN = { cron: '0 11 * * *' } as ScheduledController;
+  it('0 11 refreshes every workspace; a second trigger the same day finds nothing due', async () => {
+    const { cf, env, load, state } = setup();
+    await runCronForWorkspaces(ELEVEN, env, ctx, { workspaces: WORKSPACES.map(a => a.id), load });
+    for (const a of WORKSPACES) expect(state(a.id).flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
+    const writes = () => cf.calls.filter(c => c.method === 'PATCH').length;
+    expect(writes()).toBe(3);
+    cf.doh['_spf.mail.test'] = ['v=spf1 ip4:192.0.2.99 -all']; // the provider moved after the first run
+    await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: WORKSPACES.map(a => a.id), load }); // an install that kept `0 10`: looked at an hour ago, not due
+    expect(writes()).toBe(3);
+    expect(state('ws_a').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
+  });
+  it('0 10 does not fall through to the monitor job (an expression this file does not know would)', async () => {
+    const { db, env, load } = setup();
+    await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: ['ws_a'], load });
+    expect(db.sqlite.prepare('SELECT dns_checked_at FROM domains WHERE id = 1').get().dns_checked_at).toBeNull();
+  });
+});
+
 describe('SPF lookup-count refresh in the default cron', () => {
   const DAILY = { cron: '0 8 * * *' } as ScheduledController;
 
