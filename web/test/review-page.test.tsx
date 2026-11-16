@@ -1,6 +1,7 @@
 // C2, review and Apply, after Cloudflare returns (hosted): what exists now, what will be written, one Apply, then the dashboard.
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster } from '@ready-set-mail/ui';
 import { Route, Routes, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { rememberFocusDomain, reviewDone } from '../src/lib/first-run';
@@ -38,6 +39,7 @@ function open(opts: { routes?: Record<string, unknown>; role?: 'owner' | 'member
 				<Route path="/setup" element={<p>s4</p>} />
 			</Routes>
 			<Where />
+			<Toaster />
 		</>,
 		{
 			route: '/setup/review',
@@ -97,6 +99,19 @@ describe('C2: what will be written', () => {
 		expect(localStorage.getItem('rsm_review_done:ws_default')).toBe('applied');
 		expect(calls.some((c) => c.path === '/api/onboarding/first-check')).toBe(true); // public DNS read and stored for the dashboard
 		expect(where()).toBe('/');
+	});
+
+	it('no toast repeats what the first-day card says; one appears only when the write could not be read back', async () => {
+		open();
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Apply 1 change' }));
+		expect(await screen.findByText('dashboard')).toBeInTheDocument();
+		expect(screen.queryByText(/read back/i)).toBeNull();
+	});
+
+	it('a write Cloudflare could not read back gets one toast saying so', async () => {
+		open({ routes: { 'POST /api/onboarding/dns-apply': { results: [{ id: 'dmarc:7', ok: true, verified: false, reports: 'connected' }] } } });
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Apply 1 change' }));
+		expect(await screen.findByText("We couldn't read it back from Cloudflare yet. Public DNS can take a few minutes.")).toBeInTheDocument();
 	});
 
 	it('Cloudflare refusing a write says so, writes nothing as far as we know, and offers to try again', async () => {

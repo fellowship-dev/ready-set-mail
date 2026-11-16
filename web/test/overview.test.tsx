@@ -397,6 +397,14 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		expect(within(card).queryByText('Your first reports are on their way')).toBeNull();
 	});
 
+	it('waiting for records, no report address yet: the card says it once; the long "Reports not connected yet" block does not repeat it', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none', rua_address: '' }, { dmarc_policy: 'none', dmarc_rua: 0, report_connect: { can_connect: true, refusal: null, refusal_kind: null } }) });
+		const card = await dayCard();
+		expect(within(card).getByRole('heading', { name: "Waiting for the report address in example.com's DMARC record" })).toBeInTheDocument();
+		await row('example.com');
+		expect(screen.queryByText('Reports not connected yet')).toBeNull();
+	});
+
 	it('the change was applied but public DNS does not show it yet: says so, no review link, no promise of reports', async () => {
 		localStorage.setItem('rsm_review_done:ws_default', 'applied');
 		renderOverview({ routes: routesFor({ created_at: justNow(), cf_account_id: 'acc1' }, { dmarc_rua: 0 }) });

@@ -281,7 +281,8 @@ export function OverviewPage() {
 							<h2 id={listId} className="sr-only">
 								Your domains
 							</h2>
-							{reportsOff ? <ReportsNotConnected /> : null}
+							{/* While the card says the report address is what we wait for, the long "Reports not connected yet" block says the same again. */}
+							{reportsOff && !(cardSpeaks && dayState?.kind === 'records') ? <ReportsNotConnected /> : null}
 							<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
 								{ordered.map(({ d, parent, depth }) => {
 									const row = byId.get(d.id)!;

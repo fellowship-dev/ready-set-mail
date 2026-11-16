@@ -154,8 +154,8 @@ export function ReviewPage() {
 			// Read public DNS once now and store it, so the dashboard's first-day card is about what DNS shows, not what it showed yesterday. Best effort.
 			await firstCheck([domain.id]).catch(() => undefined);
 			await invalidateDomain(qc, domain.id);
-			const readBack = r.results.every((x) => x.verified);
-			toast({ variant: 'success', title: readBack ? 'Written to Cloudflare and read back from it' : 'Written to Cloudflare', description: readBack ? 'Public DNS can take a few minutes to show it.' : "We couldn't read it back from Cloudflare yet. Public DNS can take a few minutes." });
+			// The first-day card says "Written to Cloudflare: waiting for public DNS" itself; a toast only adds the one thing it does not know.
+			if (!r.results.every((x) => x.verified)) toast({ variant: 'success', title: 'Written to Cloudflare', description: "We couldn't read it back from Cloudflare yet. Public DNS can take a few minutes." });
 			leave('applied');
 		} catch (e) {
 			setError(`${errorMessage(e)} Nothing was confirmed as written.`);
