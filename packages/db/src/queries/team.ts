@@ -97,6 +97,7 @@ export function teamQueries(db: Db, workspaceId: string) {
 
 		/** Remove a member; the user row goes too once they belong to no workspace. */
 		async removeUser(userId: string) {
+			await db.run(sql`DELETE FROM email_preferences WHERE workspace_id = ${workspaceId} AND user_id = ${userId}`);
 			await db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId)));
 			await db.delete(users).where(
 				and(
@@ -109,7 +110,8 @@ export function teamQueries(db: Db, workspaceId: string) {
 		},
 
 		/** Remove only the membership (the user keeps their login and other workspaces). */
-		removeMembership(userId: string) {
+		async removeMembership(userId: string) {
+			await db.run(sql`DELETE FROM email_preferences WHERE workspace_id = ${workspaceId} AND user_id = ${userId}`);
 			return db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId))).run();
 		},
 

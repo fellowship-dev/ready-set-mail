@@ -27,6 +27,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
 | Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
+| Lifecycle email records (hosted: `email_preferences` a person's choices per workspace; `lifecycle_sends` which lifecycle email was claimed or sent to whom and when, no address and no content; `domain_milestones` when a domain's records were first seen live) | while the workspace exists; a person's preference rows go when they leave the workspace; all three go with the workspace | | `lifecycle_sends` is what keeps an email from being sent twice, so it is kept as long as the workspace is. Choices are in the workspace export. |
 | Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
 | Failed Cloudflare revocations of deleted workspaces | retried daily until they succeed, at most **30 days** | | See below. The sealed token is deleted with the row; giving up is logged and written to the audit log. |
 

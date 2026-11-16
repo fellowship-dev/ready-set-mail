@@ -9,6 +9,7 @@ import { auditQueries } from './audit';
 import { baseDomainQueries } from './base-domain';
 import { billingQueries } from './billing';
 import { claimQueries } from './claims';
+import { lifecycleEmailQueries } from './lifecycle-email';
 import { connectionQueries } from './connections';
 import { removalQueries } from './removals';
 import { domainQueries } from './domains';
@@ -42,6 +43,7 @@ export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_B
 export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimits, type SweepResult, type Tombstone } from './global-lifecycle';
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';
 export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow } from './billing';
+export { lifecycleEmailQueries, WEEK_SECONDS, type RecipientRow, type MilestoneRow, type PreferenceRow, type SendRow, type SendKey, type WeekTotalRow, type WeekSourceRow, type ReportRow as LifecycleReportRow } from './lifecycle-email';
 export { funnelQueries, hashEmail, type LeadRow } from './funnel';
 
 /**
@@ -81,6 +83,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
 		billing: billingQueries(d, workspaceId),
+		lifecycleEmail: lifecycleEmailQueries(d, workspaceId, counting),
 	};
 }
 

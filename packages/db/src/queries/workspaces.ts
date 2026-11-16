@@ -7,7 +7,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { batchStatements, getDb, type DbLike } from '../client';
 import { changesOf } from './plan-limit';
 import {
-	apiKeys, auditLog, aggregateReports, billingCheckoutSessions, cloudflareConnectionBlockedZones, cloudflareConnectionZones, cloudflareConnections,
+	apiKeys, auditLog, aggregateReports, billingCheckoutSessions, domainMilestones, emailPreferences, lifecycleSends, cloudflareConnectionBlockedZones, cloudflareConnectionZones, cloudflareConnections,
 	domains, hostedDomains, intakeTokens, invites, memberships, monitorSubscriptions, mtaStsConfig, reportRecords, settings,
 	spfFlattenConfig, tlsReports, workspaces, type MembershipRole,
 } from '../schema';
@@ -134,6 +134,10 @@ export function workspaceLifecycle(dbLike: DbLike) {
 				db.delete(apiKeys).where(eq(apiKeys.workspace_id, workspaceId)),
 				// Orders are accounting records and stay; the bindings of card sessions hold nothing worth keeping (docs/data-retention.md).
 				db.delete(billingCheckoutSessions).where(eq(billingCheckoutSessions.workspace_id, workspaceId)),
+				// Lifecycle emails (0017): what the workspace's members chose and what was sent to them; milestones go with their domains.
+				db.delete(emailPreferences).where(eq(emailPreferences.workspace_id, workspaceId)),
+				db.delete(lifecycleSends).where(eq(lifecycleSends.workspace_id, workspaceId)),
+				db.delete(domainMilestones).where(eq(domainMilestones.workspace_id, workspaceId)),
 				db.delete(memberships).where(eq(memberships.workspace_id, workspaceId)),
 				db.delete(workspaces).where(eq(workspaces.id, workspaceId)),
 			]),

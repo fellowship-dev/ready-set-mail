@@ -37,6 +37,9 @@ Every workspace-owned table has `workspace_id TEXT NOT NULL DEFAULT 'ws_default'
 | `billing_checkout_sessions` | ✔ | binds a Stripe Checkout (add a card) session to the workspace and person that started it; deleted with the workspace |
 | `billing_events`, `billing_price_cache` | global | Stripe events already seen (webhook idempotency); the Stripe price an offer resolves to |
 | `workspaces.stripe_customer_id` | — | the workspace's Stripe Customer (unique, nullable) |
+| `domain_milestones` | ✔ | when a domain's records were first seen live and by whom (`app` or `job`); one row per domain, cascades with it (hosted lifecycle emails) |
+| `email_preferences` | ✔ | a person's choice per workspace for `summary` and `tips`; no row = the role's default |
+| `lifecycle_sends` | ✔ | every lifecycle email, claimed (`INSERT OR IGNORE`) before it is sent: workspace, person, domain (0: none), kind, period, state |
 | `hosted_zones`, `canary_tokens` | global | record counts of the operator's hosted-records zone; expiring single-use free-check addresses |
 
 `WORKSPACE_OWNED_TABLES` and `GLOBAL_TABLES` in `schema.ts` encode this split; `test/db/workspace-predicates.test.ts`
