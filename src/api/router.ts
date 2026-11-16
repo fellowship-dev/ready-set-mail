@@ -168,7 +168,7 @@ const CHECK_SESSION_WINDOW_MS = 3600_000;
  * instance token. On the hosted service they would run with a customer's connection token, widening what a
  * stolen session can do in that account, and no hosted customer needs them. Also what only means something with
  * the install's own reports domain: the default ("infrastructure hub") domain, and SPF flattening.
- * `method` null: every method. (MTA-STS is not here: hosted-records domains use that route.)
+ * `method` null: every method. (MTA-STS is not here: hosted-records domains use that route; the route itself refuses the rest in saas mode.)
  */
 const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
   { method: 'POST', path: /^\/api\/setup\/email-routing$/ },
@@ -177,6 +177,11 @@ const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
   { method: 'PUT', path: /^\/api\/domains\/[^/]+\/set-default$/ },
   // SPF flattening rewrites the customer's SPF in place and its daily refresh is not wired for the hosted service (hosted SPF has its own, src/hosted/spf.ts).
   { method: null, path: /^\/api\/domains\/[^/]+\/spf-flatten(\/preview)?$/ },
+  // Monitoring alerts: the email is built from the workspace's own reports domain and sender address (src/monitor/notify.ts), which a hosted workspace has neither of,
+  // so the send fails after the baseline moved on (src/tenancy/load.ts derives both for self-host only).
+  { method: 'PATCH', path: /^\/api\/domains\/[^/]+\/alerts$/ },
+  { method: 'GET', path: /^\/api\/domains\/[^/]+\/monitor-subs$/ },
+  { method: 'PATCH', path: /^\/api\/monitor-subs\/[^/]+$/ },
 ];
 const selfHostOnly = (method: string, path: string): boolean => SELF_HOST_ONLY.some((r) => (r.method === null || r.method === method) && r.path.test(path));
 
@@ -2082,11 +2087,16 @@ async function _handleApi(
         }
       }
 
+      // Hosted, a domain without hosted records cannot have MTA-STS: enabling it needs the install's own reports domain (TLS-RPT goes to tls-rpt@ there) and a Worker
+      // hostname in the customer's zone, and the hosted service has neither. Hosted records carry their own (src/hosted/service.ts), handled above.
+      const hostedWithout = getMode(env) === 'saas' && !isHosted;
+      if (hostedWithout && method !== 'GET') return err('not available on the hosted service', 404);
+
       if (method === 'GET') {
         const config = await tenant.scope.mtaSts.get(id);
         const tlsSince = Math.floor(Date.now() / 1000) - 30 * 86400; // last 30 days
         const summary = config ? await tenant.scope.reports.tlsSummary(id, tlsSince) : null;
-        return json({ available: tenant.hasCloudflare(), config, summary });
+        return json({ available: tenant.hasCloudflare() && !hostedWithout, config, summary });
       }
 
       if (method === 'POST') {

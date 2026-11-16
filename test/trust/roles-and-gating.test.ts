@@ -105,6 +105,10 @@ describe('the hosted service switches off the self-host-only account endpoints',
     ['POST', '/api/domains/1/spf-flatten', {}],
     ['DELETE', '/api/domains/1/spf-flatten', undefined],
     ['GET', '/api/domains/1/spf-flatten/preview', undefined],
+    // Monitoring alerts: built from the workspace's own reports domain and sender, which a hosted workspace has neither of (src/monitor/notify.ts).
+    ['PATCH', '/api/domains/1/alerts', { alerts_enabled: false }],
+    ['GET', '/api/domains/1/monitor-subs', undefined],
+    ['PATCH', '/api/monitor-subs/1', { active: false }],
   ];
 
   it('are 404 in saas mode for every role, and still routed in self-host', async () => {
@@ -159,5 +163,30 @@ describe('the hosted service switches off the self-host-only account endpoints',
     w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, 'ws_default', 'a-corp.com', '', 'txt')").run();
     const ok = await call(w.env, 'GET', '/api/domains/1/spf-flatten', { key: w.owner });
     expect(ok.status).toBe(200);
+  });
+
+  it('MTA-STS: hosted refuses a domain without hosted records and writes nothing; self-host still routes it', async () => {
+    const hdb = createMigratedD1();
+    const hosted = makeEnv(hdb, { MODE: 'saas', SAAS_ENABLED: '1' });
+    const { signupVerified } = await import('../auth/helpers');
+    const token = await signupVerified(hosted, 'a@example.com');
+    const ws = hdb.sqlite.prepare('SELECT workspace_id FROM memberships').get().workspace_id as string;
+    hdb.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, ?, 'a-corp.com', '', 'txt')").run(ws);
+    for (const m of ['POST', 'PATCH', 'DELETE']) {
+      const res = await call(hosted, m, '/api/domains/1/mta-sts', { key: token, body: m === 'PATCH' ? { mode: 'enforce' } : {} });
+      expect(res.status, m).toBe(404);
+      expect((await json(res)).error, m).toMatch(/not available on the hosted service/);
+    }
+    expect(hdb.sqlite.prepare('SELECT COUNT(*) AS n FROM mta_sts_config').get().n).toBe(0);
+    const read = await call(hosted, 'GET', '/api/domains/1/mta-sts', { key: token });
+    expect(read.status).toBe(200);
+    expect((await json(read)).available).toBe(false); // the dashboard offers no card
+
+    const w = await team();
+    w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, 'ws_default', 'a-corp.com', '', 'txt')").run();
+    for (const m of ['POST', 'PATCH', 'DELETE']) {
+      const res = await call(w.env, m, '/api/domains/1/mta-sts', { key: w.owner, body: m === 'PATCH' ? { mode: 'enforce' } : {} });
+      expect(await res.clone().text(), m).not.toMatch(/not available on the hosted service/);
+    }
   });
 });
