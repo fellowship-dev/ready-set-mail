@@ -6,9 +6,9 @@
 // its records, so the Worker reads the same record the fake holds), `wrangler dev --local`, MODE=saas. Needs `npm run build:dashboard`.
 // Run alone: npx playwright test e2e/connect-reports-one-click.spec.ts
 import { expect, test, type Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { signUp } from './support/signup';
 
 interface Instance { url: string; fake: { url: string }; logFile: string; stop(): Promise<void> }
 const nativeImport = new Function('u', 'return import(u)') as (u: string) => Promise<{ startInstance(o: Record<string, unknown>): Promise<Instance> }>;
@@ -23,9 +23,6 @@ const EMAIL = 'owner@harbor-lane.org';
 const TOKEN = 'e2e-fake-token-not-a-real-secret-0000';
 const VIEWPORTS = [{ width: 375, height: 812 }, { width: 1440, height: 900 }];
 
-const ESC = String.fromCharCode(27);
-const codes = (inst: Instance) => [...readFileSync(inst.logFile, 'utf8').replace(new RegExp(`${ESC}\\[[0-9;]*m`, 'g'), '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map((m) => m[1]!);
-
 const fakeCf = async (inst: Instance, method: string, path: string, body?: unknown) =>
  (await fetch(`${inst.fake.url}${path}`, { method, headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }, body: body ? JSON.stringify(body) : undefined })).json() as Promise<any>;
 const liveRecords = async (inst: Instance) => {
@@ -33,26 +30,12 @@ const liveRecords = async (inst: Instance) => {
  return (Object.values(s.records).flat() as Array<{ name: string; content: string }>).filter((r) => r.name === `_dmarc.${DOMAIN}`).map((r) => r.content);
 };
 
-/** Hosted sign-up through the real screens: password, then the 6-digit code the Worker "mailed" (a local run logs it). */
-async function signUp(page: Page, inst: Instance) {
- await page.goto(`${inst.url}/#/signup`);
- await page.locator('#email').fill(EMAIL);
- await page.locator('#password').fill('correct-horse-battery');
- const had = codes(inst).length;
- await page.waitForTimeout(2500); // Turnstile's test widget
- await page.getByRole('button', { name: /Create account/ }).click();
- await expect.poll(() => codes(inst).length, { timeout: 30_000 }).toBeGreaterThan(had);
- await page.getByLabel('6-digit code').fill(codes(inst).at(-1)!);
- await page.getByRole('button', { name: 'Continue' }).click({ timeout: 3000 }).catch(() => {}); // the field may submit itself at six digits
- await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible({ timeout: 30_000 });
-}
-
 /** A Cloudflare connection (pasted token) allowing the one zone, imported: the domain is verified by the zone and linked to the connection. */
 async function ownerWithLinkedDomain(page: Page, inst: Instance): Promise<number> {
  await fakeCf(inst, 'POST', '/__zones', { name: DOMAIN });
  const zoneId = (await fakeCf(inst, 'GET', '/__state')).zones.find((z: any) => z.name === DOMAIN).id as string;
  for (const r of [{ type: 'TXT', name: `_dmarc.${DOMAIN}`, content: 'v=DMARC1; p=reject;' }, { type: 'TXT', name: DOMAIN, content: 'v=spf1 ip4:203.0.113.5 -all' }]) await fakeCf(inst, 'POST', `/client/v4/zones/${zoneId}/dns_records`, r);
- await signUp(page, inst);
+ await signUp(page, inst, EMAIL);
  const api = async (method: string, path: string, data?: unknown) => (await page.request.fetch(`${inst.url}${path}`, { method, data, headers: { 'content-type': 'application/json', origin: inst.url } })).json() as Promise<any>;
  const { connection } = await api('POST', '/api/cloudflare/connections', { token: TOKEN, label: 'e2e' });
  await api('PUT', `/api/cloudflare/connections/${connection.id}/zones`, { zone_ids: [zoneId] });
