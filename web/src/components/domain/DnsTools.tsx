@@ -118,7 +118,7 @@ function spfCard(id: number, s: SpfFlatStatus) {
 			title="SPF flattening"
 			badge={badge}
 			active={active}
-			activeText={`${s.config?.ip_count ?? '?'} IPs, re-resolved daily.`}
+			activeText={`${s.config?.ip_count ?? '?'} IPs, as resolved when it ran. Not updated when your providers change theirs.`}
 			inactiveText="Resolve SPF includes to raw IPs to stay under the 10-lookup limit."
 			configureTo={`/domains/${id}/spf-flatten`}
 			disablePath={`/api/domains/${id}/spf-flatten`}
@@ -171,15 +171,16 @@ export function DnsTools({ domainId }: { domainId: number }) {
 	const hostedMode = useHosted();
 	const hostedRecords = useHostedInfo(domainId);
 	const mtaOff = hostedMode && !hostedRecords;
-	const spf = useSpfFlatten(domainId);
+	// Hosted: no SPF flattening (the routes are off there; a hosted-records domain's SPF is flattened by the hosted service).
+	const spf = useSpfFlatten(domainId, !hostedMode);
 	const mta = useMtaSts(domainId, !mtaOff);
-	const spfHidden = spf.isSuccess && !spf.data.available && !spf.data.config;
+	const spfHidden = hostedMode || (spf.isSuccess && !spf.data.available && !spf.data.config);
 	const mtaHidden = mtaOff || (mta.isSuccess && !mta.data.available && !mta.data.config);
 	if (spfHidden && mtaHidden) return null;
 	return (
 		<Section title="DNS tools" description="Optional tools that change your DNS for you.">
 			<div className="grid gap-3 md:grid-cols-2">
-				<Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />
+				{hostedMode ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />}
 				{mtaOff ? null : <Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />}
 			</div>
 		</Section>

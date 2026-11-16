@@ -330,7 +330,7 @@ invites they sent.
 sent the session token. Unattended products use named service principals and finite grants with hashed `ias_…` credentials (`X-Api-Key` or bearer); the legacy broad key contract is retired. Browser agents use this installation's OAuth consent. Product/credential and Google Postmaster administration require an owner session. See [agent operations](agent-operations.md).
 
 **Not available when hosted:** `POST /api/setup/email-routing`, `/api/setup/custom-domain`, `/api/settings/register-destination`
-(they act on a whole Cloudflare account and are self-host setup steps), and `PUT /api/domains/:id/set-default` (the default domain is where a self-hosted install's own reports domain lives). The dashboard shows no "Infrastructure" section, no "Monitoring alerts" (they send from the install's own sender address) and no MTA-STS tool for a domain without hosted records there.
+(they act on a whole Cloudflare account and are self-host setup steps), and `PUT /api/domains/:id/set-default` (the default domain is where a self-hosted install's own reports domain lives), and every `/api/domains/:id/spf-flatten` route (SPF flattening is a self-host tool; a hosted-records domain's SPF is flattened by `src/hosted/spf.ts`). The dashboard shows no "Infrastructure" section, no SPF flattening, no "Monitoring alerts" (they send from the install's own sender address) and no MTA-STS tool for a domain without hosted records there.
 
 ## Customer setup
 

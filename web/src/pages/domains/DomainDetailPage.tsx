@@ -272,7 +272,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const spfTool = useSpfFlatten(domain.id);
+	const spfOff = useHosted(); // hosted: no SPF flattening (DnsTools)
+	const spfTool = useSpfFlatten(domain.id, !spfOff);
 	const mtaOff = useHosted() && !useHostedInfo(domain.id); // hosted without hosted records: no MTA-STS tool (DnsTools)
 	const mtaTool = useMtaSts(domain.id, !mtaOff);
 	const { canWrite } = useSession();
@@ -337,6 +338,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		hosted: hostedInfo,
 		suffixParent,
 		reportsRefusal,
+		hostedMode,
 	};
 	const actions = domainActions(actionInput);
 
@@ -351,7 +353,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const selectors = onboarding.data?.dkim.selectors.length;
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
-	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && (mtaOff || (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config)));
+	const toolsShown = !((spfOff || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && (mtaOff || (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config)));
 	const failing = sources.data?.length ?? 0;
 
 	return (
@@ -542,7 +544,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				)}
 
 				{toolsShown ? (
-					<Disclosure title="DNS tools" summary={mtaOff ? 'Optional tool that changes your DNS for you: SPF flattening.' : 'Optional tools that change your DNS for you: SPF flattening and MTA-STS.'}>
+					<Disclosure title="DNS tools" summary={spfOff ? 'Optional tool that changes your DNS for you: MTA-STS.' : mtaOff ? 'Optional tool that changes your DNS for you: SPF flattening.' : 'Optional tools that change your DNS for you: SPF flattening and MTA-STS.'}>
 						<DnsTools domainId={domain.id} />
 					</Disclosure>
 				) : null}

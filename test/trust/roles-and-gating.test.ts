@@ -100,6 +100,11 @@ describe('the hosted service switches off the self-host-only account endpoints',
     ['POST', '/api/settings/register-destination', { email: 'a@example.com' }],
     // Meaningful only with the install's own reports domain: the default domain.
     ['PUT', '/api/domains/1/set-default', undefined],
+    // SPF flattening: its daily refresh is not wired for hosted, and it rewrites the customer's SPF in place.
+    ['GET', '/api/domains/1/spf-flatten', undefined],
+    ['POST', '/api/domains/1/spf-flatten', {}],
+    ['DELETE', '/api/domains/1/spf-flatten', undefined],
+    ['GET', '/api/domains/1/spf-flatten/preview', undefined],
   ];
 
   it('are 404 in saas mode for every role, and still routed in self-host', async () => {
@@ -136,5 +141,23 @@ describe('the hosted service switches off the self-host-only account endpoints',
     const ok = await call(w.env, 'PUT', '/api/domains/1/set-default', { key: w.owner });
     expect(ok.status).toBe(200);
     expect(w.db.sqlite.prepare('SELECT is_default FROM domains WHERE id = 1').get().is_default).toBe(1);
+  });
+
+  it('SPF flattening: hosted refuses and writes nothing; self-host still answers', async () => {
+    const hdb = createMigratedD1();
+    const hosted = makeEnv(hdb, { MODE: 'saas', SAAS_ENABLED: '1' });
+    const { signupVerified } = await import('../auth/helpers');
+    const token = await signupVerified(hosted, 'a@example.com');
+    const ws = hdb.sqlite.prepare('SELECT workspace_id FROM memberships').get().workspace_id as string;
+    hdb.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, ?, 'a-corp.com', '', 'txt')").run(ws);
+    const res = await call(hosted, 'POST', '/api/domains/1/spf-flatten', { key: token, body: {} });
+    expect(res.status).toBe(404);
+    expect((await json(res)).error).toMatch(/not available on the hosted service/);
+    expect(hdb.sqlite.prepare('SELECT COUNT(*) AS n FROM spf_flatten_config').get().n).toBe(0);
+
+    const w = await team();
+    w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, 'ws_default', 'a-corp.com', '', 'txt')").run();
+    const ok = await call(w.env, 'GET', '/api/domains/1/spf-flatten', { key: w.owner });
+    expect(ok.status).toBe(200);
   });
 });

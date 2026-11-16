@@ -9,6 +9,7 @@ import { DomainDetailPage } from '../src/pages/domains/DomainDetailPage';
 import { DomainSettingsPage } from '../src/pages/domains/DomainSettingsPage';
 import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { ReportsStep } from '../src/pages/wizards/setup/ReportsStep';
+import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import { renderApp } from './render';
 
 const ADDR = 'rua@rua.example.net';
@@ -75,12 +76,11 @@ describe('the domain page', () => {
 		expect(screen.queryByRole('button', { name: 'Connect reports' })).not.toBeInTheDocument();
 	});
 
-	it('on hosted the MTA-STS tool is not offered (it needs the install\'s own reports domain); SPF flattening still is', async () => {
-		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, config: null, lookup_count: 1 } }));
-		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
-		expect(await screen.findByText('SPF flattening')).toBeInTheDocument();
-		expect(screen.queryByText('MTA-STS')).not.toBeInTheDocument();
-		expect(calls.some((c) => c.path === '/api/domains/1/mta-sts')).toBe(false);
+	it('on hosted, without hosted records, no DNS tools are offered: MTA-STS needs the install\'s own reports domain and SPF flattening is off', async () => {
+		const { calls } = detail(baseRoutes());
+		await screen.findByRole('heading', { name: 'Do this next' });
+		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
+		expect(calls.some((c) => c.path === '/api/domains/1/mta-sts' || c.path === '/api/domains/1/spf-flatten')).toBe(false);
 	});
 });
 
@@ -181,5 +181,30 @@ describe('the setup wizard\'s reports step', () => {
 		expect(await screen.findByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Back' }));
 		expect(await screen.findByText('the DMARC step')).toBeInTheDocument();
+	});
+});
+
+describe('SPF flattening is not offered on the hosted service', () => {
+	it('no entry point under DNS tools, no request for it, and the page says it is not available', async () => {
+		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, config: null, lookup_count: 1 } }));
+		await screen.findByRole('heading', { name: 'Do this next' });
+		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
+		expect(screen.queryByText('SPF flattening')).not.toBeInTheDocument();
+		expect(calls.some((c) => c.path.includes('spf-flatten'))).toBe(false);
+		const { unmount } = renderApp(
+			<Routes>
+				<Route path="/domains/:id/spf-flatten" element={<SpfFlattenPage />} />
+			</Routes>,
+			{ route: '/domains/1/spf-flatten', ...HOSTED, routes: baseRoutes() },
+		);
+		expect(await screen.findByText('SPF flattening is not available on the hosted service.')).toBeInTheDocument();
+		unmount();
+	});
+
+	it('self-host keeps the tool and says only what the daily run does', async () => {
+		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, ip_count: 7 }, lookup_count: 1 } }), { status: {} });
+		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
+		expect(await screen.findByText('7 IPs, as resolved when it ran. Not updated when your providers change theirs.')).toBeInTheDocument();
+		expect(screen.queryByText(/re-resolved daily/)).not.toBeInTheDocument();
 	});
 });

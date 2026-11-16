@@ -161,7 +161,7 @@ const CHECK_SESSION_WINDOW_MS = 3600_000;
  * Endpoints that act on the operator's own Cloudflare account (Email Routing, Workers custom domains) with the
  * instance token. On the hosted service they would run with a customer's connection token, widening what a
  * stolen session can do in that account, and no hosted customer needs them. Also what only means something with
- * the install's own reports domain: the default ("infrastructure hub") domain.
+ * the install's own reports domain: the default ("infrastructure hub") domain, and SPF flattening.
  * `method` null: every method. (MTA-STS is not here: hosted-records domains use that route.)
  */
 const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
@@ -169,6 +169,8 @@ const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
   { method: 'POST', path: /^\/api\/setup\/custom-domain$/ },
   { method: 'POST', path: /^\/api\/settings\/register-destination$/ },
   { method: 'PUT', path: /^\/api\/domains\/[^/]+\/set-default$/ },
+  // SPF flattening rewrites the customer's SPF in place and its daily refresh is not wired for the hosted service (hosted SPF has its own, src/hosted/spf.ts).
+  { method: null, path: /^\/api\/domains\/[^/]+\/spf-flatten(\/preview)?$/ },
 ];
 const selfHostOnly = (method: string, path: string): boolean => SELF_HOST_ONLY.some((r) => (r.method === null || r.method === method) && r.path.test(path));
 
