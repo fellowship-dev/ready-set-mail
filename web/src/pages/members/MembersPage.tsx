@@ -27,6 +27,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import { useSession } from '../../lib/session';
 import { useWorkspaces } from '../../lib/workspaces';
+import { usd } from '../../lib/plan';
 import type { Role } from '../../lib/types';
 import { Field } from '../auth/AuthLayout';
 
@@ -114,8 +115,14 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 
 	const workspaceId = useSession().me?.workspace_id;
 	const [handing, setHanding] = useState(false);
+	// Hosted plan: the new owner's free domain is theirs already, so this workspace's domains would cost money: the server says how much and waits for that amount.
+	const [owes, setOwes] = useState<{ amount: number; currency: string; interval: 'month' | 'year' } | null>(null);
 	const transfer = useMutation({
-		mutationFn: () => api(`/api/workspaces/${workspaceId}/transfer-ownership`, { method: 'POST', body: { user_id: member.id } }),
+		mutationFn: () => api(`/api/workspaces/${workspaceId}/transfer-ownership`, { method: 'POST', body: { user_id: member.id, ...(owes ? { confirm_amount: owes.amount } : {}) } }),
+		onError: (e) => {
+			const b = (e instanceof ApiError ? e.body : undefined) as { code?: string; monthly_amount?: number; currency?: string; interval?: 'month' | 'year' } | undefined;
+			if (b?.code === 'confirm_required' && typeof b.monthly_amount === 'number') setOwes({ amount: b.monthly_amount, currency: b.currency ?? 'usd', interval: b.interval ?? 'month' });
+		},
 		onSuccess: async () => {
 			setHanding(false);
 			toast({ variant: 'success', title: `${member.email} is now the owner`, description: 'You are an admin of this workspace now.' });
@@ -157,13 +164,14 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 						<DialogTitle>Make {member.email} the owner?</DialogTitle>
 						<DialogDescription>They become the workspace's owner, and you become an admin. Only an owner can delete the workspace, export its data or hand ownership on.</DialogDescription>
 					</DialogHeader>
-					{transfer.isError ? <FieldError>{errorMessage(transfer.error)}</FieldError> : null}
+					{owes ? <p className="text-sm text-ink-1">After the transfer this workspace costs {usd(owes.amount, owes.currency)} a {owes.interval}, billed to its card. Confirm to continue.</p> : null}
+					{transfer.isError && !owes ? <FieldError>{errorMessage(transfer.error)}</FieldError> : null}
 					<DialogFooter>
-						<Button variant="secondary" onClick={() => setHanding(false)}>
+						<Button variant="secondary" onClick={() => { setHanding(false); setOwes(null); transfer.reset(); }}>
 							Cancel
 						</Button>
 						<Button loading={transfer.isPending} onClick={() => transfer.mutate()}>
-							Transfer ownership
+							{owes ? `Transfer, ${usd(owes.amount, owes.currency)} a ${owes.interval}` : 'Transfer ownership'}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

@@ -681,6 +681,27 @@ export async function previewPaidAdd(d: BillingDeps, ws: Ws, domains: string[], 
   return { ...base, needs_confirm: true, unit_price, plan_starts: true, charge_now: first.charge_now, then: { amount: first.monthly, currency: first.currency, date: first.period_end }, reason: starting ? 'start' : 'paid' };
 }
 
+/** What removing a domain does to the bill: whether it is a billable one, and Stripe's preview of the next invoice without it (never a number computed here). */
+export async function previewRemoval(d: BillingDeps, ws: Ws, domainId: number): Promise<{ billable: boolean; unit_price: MoneyView | null; next_invoice: { amount_due: number; currency: string; date: number | null } | null }> {
+  const st = await loadPlanState(d.env, d.db, ws.id);
+  const row = st.rows.find((r) => r.id === domainId);
+  if (!row) throw new BillingError(404, 'domain_not_found', 'That domain was not found.');
+  const free = st.holdsAllowance ? st.rows[0]?.org : null;
+  const sub = st.subscription;
+  const billable = !st.exempt && st.plan === 'payg' && subscriptionState(sub) === 'active' && row.org !== free && !row.paused;
+  if (!billable || !sub || !st.customerId) return { billable: false, unit_price: null, next_invoice: null };
+  const interval = sub.interval;
+  const others = st.rows.filter((r) => r.org === row.org && r.id !== row.id).length;
+  const target = others > 0 ? st.billable : Math.max(0, st.billable - 1); // the unit goes only with its last row
+  let unit_price: MoneyView | null = null;
+  try { const p = await planPrice(d, interval); unit_price = { amount: p.amount, currency: p.currency, interval }; } catch { /* no amount */ }
+  try {
+    const inv = await d.stripe.previewInvoice({ customerId: st.customerId, subscriptionId: sub.stripe_subscription_id, itemId: sub.stripe_item_id, quantity: target });
+    const date = (inv.next_payment_attempt ?? inv.period_end) as unknown;
+    return { billable: true, unit_price, next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? 'usd'), date: typeof date === 'number' ? date : sub.current_period_end } };
+  } catch { return { billable: true, unit_price, next_invoice: null }; }
+}
+
 // ── The daily job ───────────────────────────────────────────
 
 export interface PlanSyncReport { synced: number; repaired: number; lapsed: number; failed: number }

@@ -19,7 +19,7 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
-import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, startPlan } from './plan-service';
+import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, previewRemoval, startPlan } from './plan-service';
 import { completeWorkspaceIntent, startWorkspaceIntent } from './plan-workspaces';
 import { planEnforced } from '../hosted/plan';
 import { cleanName } from '../auth/names';
@@ -144,6 +144,12 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     });
   }
 
+  const rm = path.match(/^\/api\/billing\/domains\/(\d{1,9})\/removal$/);
+  if (rm && method === 'GET') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    return json(await previewRemoval(d, me.ws, Number(rm[1])));
+  }
   const dm = path.match(/^\/api\/billing\/domains\/(\d{1,9})$/);
   if (dm && method === 'GET') {
     const domain = await scope.domains.getById(Number(dm[1]));

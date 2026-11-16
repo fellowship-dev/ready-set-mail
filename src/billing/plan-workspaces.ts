@@ -30,11 +30,14 @@ export async function createDecision(env: Pick<BoundEnv, 'MODE' | 'SAAS_ENABLED'
 }
 
 /** The 402 for a person who must add a card before creating another workspace. */
-export function workspaceNeedsCardBody(env: BoundEnv) {
+export async function workspaceNeedsCardBody(env: BoundEnv) {
   const paid = paidPathAvailable(env);
+  // The price is Stripe's (the screen says "$5 a month for each domain in it"); when it cannot be read the screen says it without an amount.
+  let unit_price: { amount: number; currency: string; interval: 'month' | 'year' } | null = null;
+  if (paid) { try { const p = await planPrice(billingDeps(env), 'month'); unit_price = { amount: p.amount, currency: p.currency, interval: 'month' }; } catch { /* no amount */ } }
   return {
     error: paid ? 'Add a card to create more workspaces.' : 'Your free plan includes one workspace. For more, talk to us.',
-    code: 'workspace_needs_card' as const, paid_available: paid, help_url: planHelpUrl(env),
+    code: 'workspace_needs_card' as const, paid_available: paid, help_url: planHelpUrl(env), unit_price,
   };
 }
 

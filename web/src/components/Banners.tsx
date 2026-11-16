@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
 import { SetupCheck } from './SetupCheck';
+import { PlanBanners } from './billing/PlanBanners';
 
 const DISMISS_KEY = 'ia_update_dismissed';
 
@@ -32,6 +33,7 @@ export function Banners() {
 	return (
 		<div className="space-y-3 empty:hidden">
 			<SetupCheck compact />
+			<PlanBanners />
 			{custom ? (
 				<Alert variant="info" title="Your dashboard has its own address">
 					It is also available at{' '}

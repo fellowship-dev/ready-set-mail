@@ -143,13 +143,13 @@ export async function handleWorkspaceRoutes(
       // (its first domain is then a paid one); otherwise a card comes first (POST /api/billing/workspace-intents, src/billing/plan-workspaces.ts).
       const env = { ...deps.env, MODE: 'saas', DB: deps.db } as BoundEnv;
       let decision = await createDecision(env, deps.db, user);
-      if (decision === 'needs_card') return json(workspaceNeedsCardBody(env), 402);
+      if (decision === 'needs_card') return json(await workspaceNeedsCardBody(env), 402);
       // Owned workspaces only (the sign-up workspace is one); atomic, so parallel creates cannot pass the cap together.
       let made = await lifecycle.createCapped(id, name, user.id, caps.workspacesPerUser, decision === 'free' ? 'require' : decision === 'eligible' ? 'none' : 'if_free');
       if (!made && decision === 'free') {
         // Another create took the allowance first: decide again with what is true now.
         decision = await createDecision(env, deps.db, user);
-        if (decision === 'needs_card') return json(workspaceNeedsCardBody(env), 402);
+        if (decision === 'needs_card') return json(await workspaceNeedsCardBody(env), 402);
         made = await lifecycle.createCapped(id, name, user.id, caps.workspacesPerUser, 'none');
       }
       if (!made) return planLimitResponse(deps.env ?? {}, 'workspaces_per_user', caps.workspacesPerUser);

@@ -7,6 +7,7 @@ import { errorMessage } from '../../lib/api';
 import { cardLine, formatMoney, openPortal, orderDate, startCardSession, STATUS_WORDS, statusDate, useBilling, type Order } from '../../lib/billing';
 import { useCardReturn } from '../../lib/card-return';
 import { useHosted } from '../../lib/session';
+import { PlanCard } from '../../components/billing/PlanCard';
 
 const TONE: Record<Order['status'], 'neutral' | 'success' | 'warning' | 'danger' | 'brand'> = {
 	pending: 'neutral', paid: 'success', started: 'brand', done: 'success', refunded: 'neutral', failed: 'danger', canceled: 'neutral',
@@ -25,11 +26,12 @@ export function BillingSection() {
 	const failure = portal.error ?? add.error;
 
 	return (
-		<Section title="Billing" description="One card per workspace. Cards are added and changed on Stripe's own pages, never here.">
+		<Section title="Billing" description={b?.plan ? 'Your plan, the card and your orders. Cards are added and changed on Stripe\'s own pages, never here.' : "One card per workspace. Cards are added and changed on Stripe's own pages, never here."}>
 			{!b ? (
 				<Skeleton className="h-32 w-full" />
 			) : (
 				<>
+					{b.plan ? <PlanCard plan={b.plan} billing={b} /> : null}
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">

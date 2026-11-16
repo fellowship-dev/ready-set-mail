@@ -132,6 +132,8 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
     const held = new Set(state.rows.map(r => r.org));
     const needed = new Set(fresh.filter(z => !held.has(unitOf(z.name))).map(z => unitOf(z.name)));
     if (needed.size > free) {
+      // The zones that did not fit stay verifiable through the connection (never added by themselves): the owner's paid confirm for one of them proves it on the spot.
+      await svc.setAllowedZones(connectionId, [...new Set([...(conn.zones ?? []).map(z => z.id), ...visible.map(z => z.id)])]);
       if (explicit) throw await planRefusal(tenant, new PlanLimitError('plan_units', room.units?.max ?? free), fresh[0]?.name ?? '');
       const wanted1 = [input.preferredDomain, caller.email?.split('@')[1]].map(d => (d ? unitOf(d) : null));
       const pick = free > 0 ? wanted1.map(u => (u ? fresh.find(z => unitOf(z.name) === u) : undefined)).find(Boolean) : undefined;

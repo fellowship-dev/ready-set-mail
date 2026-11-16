@@ -18,6 +18,7 @@ import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
 import { Rollout } from '../../components/domain/Rollout';
 import { ReportsNotConnected, useReportsNotConnected } from '../../components/ReportsNotConnected';
+import { usePlan } from '../../lib/plan';
 import { Disclosure, ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section } from '../../components/states';
 import { actionsPending, domainActions } from '../../lib/actions';
 import { errorMessage } from '../../lib/api';
@@ -370,6 +371,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
+			<PausedNotice domainId={domain.id} />
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
@@ -532,6 +534,18 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				) : null}
 			</div>
 		</div>
+	);
+}
+
+/** A domain paused after the plan ended: one sentence and the one action (the Billing page starts the plan again). Nothing for any other domain. */
+function PausedNotice({ domainId }: { domainId: number }) {
+	const plan = usePlan();
+	if (!plan?.domains.find((d) => d.id === domainId)?.paused) return null;
+	return (
+		<Alert variant="info" title="This domain is paused">
+			<span>You can read and export it; new reports are not processed. {plan.can_manage ? 'Start pay as you go again to resume these domains.' : 'Ask the workspace owner to start pay as you go again to resume it.'}</span>
+			{plan.can_manage && plan.paid_available ? <div className="pt-2"><Button asChild size="sm"><Link to="/settings?plan=start">Start pay as you go</Link></Button></div> : null}
+		</Alert>
 	);
 }
 

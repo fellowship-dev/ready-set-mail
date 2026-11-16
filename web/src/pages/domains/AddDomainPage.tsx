@@ -3,8 +3,12 @@ import { CloudflareSuggestions } from '../../components/domain/CloudflareSuggest
 import { Alert, Badge, Button, CheckResult, CheckResultList, FieldError, FieldHint, Input, Label, PageHeader, RecordBlock, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { PaidAdd } from '../../components/billing/PaidAdd';
+import { useBilling } from '../../lib/billing';
+import { planEnforced, planRequiredOf, usd, WORDS, type PaidPreview, type PaidAddResult } from '../../lib/plan';
+import { useCardReturn } from '../../lib/card-return';
 import { ClaimCard } from '../../components/domain/ClaimCard';
 import { InheritanceBanner } from '../../components/domain/InheritanceBanner';
 import { PlanLimitNotice, planLimitOf } from '../../components/PlanLimitNotice';
@@ -187,6 +191,13 @@ function SelfHostSetupStep({ result }: { result: AddDomainResult }) {
 	);
 }
 
+/** A domain that does not fit the free plan, for someone who cannot confirm it (not the owner) or where the paid path is not available: say whom to ask, or "talk to us". */
+function PlanRequiredNotice({ error, owner }: { error: unknown; owner: boolean }) {
+	const need = planRequiredOf(error)!;
+	if (!need.paidAvailable) return <PlanLimitNotice limit={{ kind: 'domains_per_workspace', message: need.message, help_url: need.helpUrl }} />;
+	return <Alert variant="info">{owner ? need.message : WORDS.askOwner}</Alert>;
+}
+
 export function AddDomainPage() {
 	const qc = useQueryClient();
 	// The domain asked for on the website, if any: a prefill the person confirms with Continue.
@@ -196,6 +207,20 @@ export function AddDomainPage() {
 	const [manual, setManual] = useState(false);
 	const [result, setResult] = useState<AddDomainResult | null>(null);
 	const [pending, setPending] = useState<PendingDomainResult | null>(null);
+	// Hosted plan: the domain does not fit the free one, so the owner confirms it as a paid domain (src/components/billing/PaidAdd.tsx).
+	const [paid, setPaid] = useState<string | null>(null);
+	// Several zones of the Cloudflare account, one confirm (`/add?zones=a.com,b.org` is where Stripe's page sends the browser back).
+	const [paidMany, setPaidMany] = useState<string[] | null>(() => { const z = (params.get('zones') ?? '').split(',').filter(Boolean).slice(0, 10); return z.length ? z : null; });
+	const navigate = useNavigate();
+	const billing = useBilling();
+	const plan = billing.data?.plan ?? null;
+	const isOwner = billing.data?.role === 'owner';
+	useCardReturn({ strip: false });
+	// Back from Stripe's page with a card for this domain: the same confirm, now showing the card.
+	useEffect(() => {
+		const d = params.get('domain')?.trim().toLowerCase();
+		if (d && params.get('card') === 'added' && planEnforced(plan) && isOwner) setPaid(d);
+	}, [params, plan?.mode, isOwner]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// No usable Cloudflare connection means no zone request: the domain is typed by hand.
 	const cf = useCfOffer();
@@ -211,13 +236,48 @@ export function AddDomainPage() {
 		onSuccess: async (res, domain) => {
 			clearSignupDomainIf(domain);
 			// 202: ownership has to be proven first; nothing is monitored yet.
-			if ('pending' in res && res.pending) setPending(res);
-			else setResult(res as AddDomainResult);
+			if ('pending' in res && res.pending) {
+				// A domain that would be a paid one is proven and confirmed in one place, so the money is asked when it would move.
+				if (planEnforced(plan) && isOwner && plan.paid_available) {
+					const prev = await api<PaidPreview>(`/api/billing/domains/preview?domain=${encodeURIComponent(domain)}`).catch(() => null);
+					if (prev?.needs_confirm) { setPaid(domain); return; }
+				}
+				setPending(res);
+			} else setResult(res as AddDomainResult);
 			await qc.invalidateQueries({ queryKey: ['domains'] });
+		},
+		onError: (e, domain) => {
+			const need = planRequiredOf(e);
+			if (need && need.paidAvailable && isOwner) setPaid(domain);
 		},
 	});
 
+	// "Added. $5 a month from today." lands on the domain list (src/components/billing/PlanBanners.tsx shows it).
+	function added(r: PaidAddResult) {
+		const unit = plan?.price;
+		const each = unit ? `${usd(unit.amount, unit.currency)} a ${unit.interval}` : null;
+		const text = r.added.length > 1 ? `Added ${r.added.length} domains.${each ? ` ${each} each from today.` : ''}` : `Added.${each ? ` ${each} from today.` : ''}`;
+		void qc.invalidateQueries({ queryKey: ['domains'] });
+		navigate('/', { state: { planFlash: { domains: r.added.map((a) => a.domain), text } } });
+	}
+
 	if (result) return <SetupStep result={result} />;
+	if (paidMany) {
+		return (
+			<div className="max-w-2xl space-y-6">
+				<PageHeader title={paidMany.length > 1 ? `Add ${paidMany.length} domains` : `Add ${paidMany[0]}`} />
+				<PaidAdd domains={paidMany} returnPath={`/add?zones=${paidMany.join(',')}`} onAdded={added} onCancel={() => setPaidMany(null)} />
+			</div>
+		);
+	}
+	if (paid) {
+		return (
+			<div className="max-w-2xl space-y-6">
+				<PageHeader title={`Add ${paid}`} />
+				<PaidAdd domains={[paid]} returnPath={`/add?domain=${encodeURIComponent(paid)}`} onAdded={added} onCancel={() => { setPaid(null); add.reset(); }} />
+			</div>
+		);
+	}
 	if (pending) {
 		return (
 			<div className="max-w-2xl space-y-6">
@@ -280,8 +340,9 @@ export function AddDomainPage() {
 					)}
 					{!cf.pending && !zones && cf.canConnect ? <ConnectCloudflareLink /> : null}
 					{inZone ? <FieldHint>{normalizeDomain(input)} is in your Cloudflare zone {inZone}, so it is verified on the spot.</FieldHint> : null}
-					{add.isError && !planLimitOf(add.error) ? <FieldError id="domain-error">{domainErrorMessage(add.error)}</FieldError> : null}
-					{add.isError && !planLimitOf(add.error) ? <DomainRefusalHelp error={add.error} /> : null}
+					{add.isError && !planLimitOf(add.error) && !planRequiredOf(add.error) ? <FieldError id="domain-error">{domainErrorMessage(add.error)}</FieldError> : null}
+					{add.isError && planRequiredOf(add.error) ? <PlanRequiredNotice error={add.error} owner={isOwner} /> : null}
+					{add.isError && !planLimitOf(add.error) && !planRequiredOf(add.error) ? <DomainRefusalHelp error={add.error} /> : null}
 					{add.isError && planLimitOf(add.error) ? <PlanLimitNotice limit={planLimitOf(add.error)!} /> : null}
 				</div>
 				<WriteButton type="submit" loading={add.isPending} disabled={!normalizeDomain(input)}>
@@ -289,7 +350,7 @@ export function AddDomainPage() {
 				</WriteButton>
 			</form>
 
-			<CloudflareSuggestions />
+			<CloudflareSuggestions onPaid={setPaidMany} />
 
 			<p className="text-sm text-ink-2">
 				Adding many at once? <Link className="text-brand-ink underline underline-offset-4" to="/bulk-import">Import a list of domains</Link>, or{' '}

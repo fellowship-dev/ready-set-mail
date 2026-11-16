@@ -1,6 +1,9 @@
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, FieldError, Input } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
-import { errorMessage } from '../lib/api';
+import { useMutation } from '@tanstack/react-query';
+import { Alert } from '@ready-set-mail/ui';
+import { api, ApiError, errorMessage } from '../lib/api';
+import { perInterval, type Money } from '../lib/plan';
 import { useCfOffer } from '../lib/cloudflare';
 import { setupSeenKey } from '../lib/workspace';
 import { switchToWorkspace, useCreateWorkspace } from '../lib/workspaces';
@@ -16,6 +19,15 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 		setName('');
 		onOpenChange(false);
 		switchToWorkspace(w.id);
+	});
+
+	// Hosted plan: a person who already holds their free domain adds a card first (the workspace is created when Stripe has it).
+	const needs = create.error instanceof ApiError && (create.error.body as { code?: string } | undefined)?.code === 'workspace_needs_card'
+		? (create.error.body as { paid_available: boolean; help_url: string | null; unit_price: Money | null })
+		: null;
+	const card = useMutation({
+		mutationFn: () => api<{ url: string }>('/api/billing/workspace-intents', { method: 'POST', body: { name: name.trim() } }),
+		onSuccess: ({ url }) => window.location.assign(url),
 	});
 
 	function submit(e: FormEvent) {
@@ -34,15 +46,31 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 					<Field id="workspace-name" label="Workspace name">
 						<Input id="workspace-name" required autoFocus maxLength={80} placeholder="Lexgo" value={name} onChange={(e) => setName(e.target.value)} />
 					</Field>
-					{create.isError && !planLimitOf(create.error) ? <FieldError>{errorMessage(create.error)}</FieldError> : null}
+					{needs ? (
+						<Alert variant="info" title={needs.paid_available ? 'Add a card to create more workspaces' : 'Your free plan includes one workspace'}>
+							{needs.paid_available ? (
+								<p>{needs.unit_price ? `Each domain in it is ${perInterval(needs.unit_price)}.` : 'Each domain in it is billed monthly.'} Cancel any time.</p>
+							) : (
+								<p>For more workspaces, talk to us.{needs.help_url?.startsWith('https://') ? <> <a href={needs.help_url} target="_blank" rel="noreferrer">Talk to us</a></> : null}</p>
+							)}
+						</Alert>
+					) : null}
+					{card.isError ? <FieldError>{errorMessage(card.error)}</FieldError> : null}
+					{create.isError && !planLimitOf(create.error) && !needs ? <FieldError>{errorMessage(create.error)}</FieldError> : null}
 					{create.isError && planLimitOf(create.error) ? <PlanLimitNotice limit={planLimitOf(create.error)!} /> : null}
 					<DialogFooter>
 						<Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
 							Cancel
 						</Button>
-						<Button type="submit" loading={create.isPending} disabled={!name.trim()}>
-							Create workspace
-						</Button>
+						{needs?.paid_available ? (
+							<Button type="button" loading={card.isPending} onClick={() => card.mutate()}>
+								Add a card to continue
+							</Button>
+						) : needs ? null : (
+							<Button type="submit" loading={create.isPending} disabled={!name.trim()}>
+								Create workspace
+							</Button>
+						)}
 					</DialogFooter>
 				</form>
 			</DialogContent>

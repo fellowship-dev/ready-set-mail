@@ -1,7 +1,7 @@
 import { removalNotice, type KeptRecord, type RemovedState } from '../../lib/removal-notice';
 import { Alert, Badge, Button, Card, CardContent, EmptyState, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast } from '@ready-set-mail/ui';
 import { useHosted } from '../../lib/session';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Download, PauseCircle, PlayCircle, Star } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -17,6 +17,7 @@ import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
 import type { Domain } from '../../lib/types';
+import { invoiceMoney, perInterval, shortDate, usePlan, type Money } from '../../lib/plan';
 
 function Info({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
@@ -172,10 +173,26 @@ function InfrastructureSection({ domain }: { domain: Domain }) {
 	);
 }
 
+/** What removing this domain does to the bill (only said for a billable one: removing the free domain says nothing about money). Stripe's preview, never a sum made here. */
+function useRemovalWords(domainId: number, open: boolean): string | null {
+	const plan = usePlan();
+	const billable = !!plan?.domains.find((d) => d.id === domainId)?.billable;
+	const owner = !!plan?.can_manage;
+	const q = useQuery({
+		queryKey: ['billing', 'removal', domainId], enabled: open && billable && owner, retry: false, staleTime: 0, gcTime: 0,
+		queryFn: () => api<{ billable: boolean; unit_price: Money | null; next_invoice: { amount_due: number; currency: string; date: number | null } | null }>(`/api/billing/domains/${domainId}/removal`),
+	});
+	if (!billable) return null;
+	const unit = q.data?.unit_price ?? plan?.price ?? null;
+	const next = q.data?.next_invoice ?? null;
+	return `Your bill goes down${unit ? ` by ${perInterval(unit)}` : ''}; the unused part comes off your next invoice.${next ? ` Your next invoice${next.date ? ` on ${shortDate(next.date)}` : ''} will be ${invoiceMoney(next.amount_due, next.currency)}.` : ''}`;
+}
+
 function DangerZone({ domain }: { domain: Domain }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const [open, setOpen] = useState(false);
+	const moneyWords = useRemovalWords(domain.id, open);
 	const remove = useMutation({
 		mutationFn: () => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}`, { method: 'DELETE' }),
 		onSuccess: async (res) => {
@@ -204,7 +221,7 @@ function DangerZone({ domain }: { domain: Domain }) {
 					if (!o) remove.reset();
 				}}
 				title={`Remove ${domain.domain}?`}
-				description="All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone."
+				description={`All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.${moneyWords ? ` ${moneyWords}` : ''}`}
 				confirmLabel={cleanupFailed ? 'Retry' : 'Yes, remove'}
 				busyLabel="Removing…"
 				variant="danger"

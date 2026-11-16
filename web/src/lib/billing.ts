@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from './api';
 import { useHosted } from './session';
 import type { DomainAction } from './actions';
+import type { PlanView } from './plan';
 
 export type OrderStatus = 'pending' | 'paid' | 'started' | 'done' | 'refunded' | 'failed' | 'canceled';
 
@@ -68,6 +69,8 @@ export interface BillingView {
 	orders: Order[];
 	terms_url: string | null;
 	refund_policy_url: string | null;
+	/** Hosted plan (HOSTED_PLAN on, or a subscription that exists): absent otherwise. */
+	plan?: PlanView;
 }
 
 export interface DomainBilling {
@@ -103,6 +106,8 @@ export function useBilling(wanted = true) {
 		enabled: hosted && wanted,
 		retry: false,
 		staleTime: 15_000,
+		// A first payment waiting for the bank: asked again every few seconds until Stripe says paid (the server asks Stripe too).
+		refetchInterval: (q) => (q.state.data?.plan?.pending ? 3000 : false),
 		queryFn: async (): Promise<BillingView | null> => {
 			try {
 				return await api<BillingView>('/api/billing');
