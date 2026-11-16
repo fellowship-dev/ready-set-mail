@@ -74,7 +74,7 @@ describe('self-host', () => {
 
   it('refuses a domain that already has MTA-STS elsewhere instead of overwriting it', async () => {
     const w = await selfHost();
-    w.cf.doh['_mta-sts.acme.com'] = ['v=STSv1; id=1'];
+    w.cf.seed('zone-acme', { id: 'f'.repeat(32), type: 'TXT', name: '_mta-sts.acme.com', content: 'v=STSv1; id=1' });
     const res = await w.mta('POST');
     expect(res.status).toBe(409);
     expect(w.cf.calls.filter((c) => c.method !== 'GET')).toEqual([]);

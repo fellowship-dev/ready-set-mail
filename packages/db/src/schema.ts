@@ -309,7 +309,7 @@ export const mtaStsConfig = sqliteTable(
 		cname_record_id: text('cname_record_id'),
 		last_error: text('last_error'),
 		via: text('via', { enum: ['cloudflare', 'manual'] }),
-		state: text('state', { enum: ['waiting_records', 'waiting_certificate', 'waiting_txt', 'active'] }).notNull().default('active'),
+		state: text('state', { enum: ['creating', 'waiting_records', 'waiting_certificate', 'waiting_txt', 'active'] }).notNull().default('active'),
 		policy_host: text('policy_host', { enum: ['worker_route', 'saas_hostname'] }).notNull().default('worker_route'),
 		ch_id: text('ch_id'),
 		ch_status: text('ch_status'),

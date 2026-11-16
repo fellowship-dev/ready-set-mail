@@ -125,14 +125,19 @@ describe('checks before anything is created', () => {
     expect((await w.json(await w.mta(w.A.token, 'GET', 1))).mx_preview).toEqual({ status: 'none', hosts: [], error: null });
   });
 
+  const ours = { cname: { type: 'CNAME', name: 'mta-sts.a-corp.com', content: OP.target }, tls: { type: 'TXT', name: '_smtp._tls.a-corp.com', content: `v=TLSRPTv1; rua=mailto:tls-rpt@${INTAKE}` }, sts: { type: 'TXT', name: '_mta-sts.a-corp.com', content: 'v=STSv1; id=20200101000000' } };
+
   it.each([
-    ['an _mta-sts record', (w: MtaWorld) => { w.cf.doh['_mta-sts.a-corp.com'] = ['v=STSv1; id=1']; }, /_mta-sts\.a-corp\.com already has a record \(v=STSv1; id=1\)/],
-    ['a TLS reporting record', (w: MtaWorld) => { w.cf.doh['_smtp._tls.a-corp.com'] = ['v=TLSRPTv1; rua=mailto:x@y.example']; }, /_smtp\._tls\.a-corp\.com already has a TLS reporting record/],
-    ['an mta-sts host', (w: MtaWorld) => { w.cf.a['mta-sts.a-corp.com'] = ['192.0.2.1']; }, /mta-sts\.a-corp\.com already exists in DNS/],
-    ['an mta-sts CNAME', (w: MtaWorld) => { w.cf.cname['mta-sts.a-corp.com'] = 'other.example'; }, /mta-sts\.a-corp\.com already exists in DNS/],
-  ])('%s in the way: 409 naming it, nothing created', async (_n, arrange, message) => {
+    ['an _mta-sts record that is not ours', [{ type: 'TXT', name: '_mta-sts.a-corp.com', content: 'v=STSv1; id=1; foo=bar' }, ours.cname], /_mta-sts\.a-corp\.com already has a record \(v=STSv1; id=1; foo=bar\)/],
+    ['an _mta-sts record with no mta-sts CNAME of ours', [ours.sts], /_mta-sts\.a-corp\.com already has a record \(v=STSv1; id=20200101000000\)/],
+    ['a TLS reporting record that sends reports elsewhere', [{ ...ours.tls, content: 'v=TLSRPTv1; rua=mailto:x@y.example' }], /_smtp\._tls\.a-corp\.com already has a TLS reporting record \(v=TLSRPTv1; rua=mailto:x@y\.example\)/],
+    ['a TLS reporting record with a second address', [{ ...ours.tls, content: `${ours.tls.content},mailto:x@y.example` }], /already has a TLS reporting record/],
+    ['an mta-sts address record', [{ type: 'A', name: 'mta-sts.a-corp.com', content: '192.0.2.1' }], /mta-sts\.a-corp\.com already exists in DNS \(A 192\.0\.2\.1\)/],
+    ['an mta-sts CNAME to somewhere else', [{ ...ours.cname, content: 'other.example' }], /mta-sts\.a-corp\.com already exists in DNS \(CNAME other\.example\)/],
+  ])('%s: 409 naming it, nothing created or changed', async (_n, seeded, message) => {
     const w = await mtaWorld();
-    arrange(w);
+    seeded.forEach((r, i) => w.cf.seed(w.Z.a1, { ...(r as any), id: String(i + 4).repeat(32) }));
+    const before = JSON.stringify(w.cf.records.get(w.Z.a1));
     const res = await w.mta(w.A.token, 'POST', 1);
     expect(res.status).toBe(409);
     const body = await w.json(res);
@@ -140,6 +145,65 @@ describe('checks before anything is created', () => {
     expect(body.code).toBe('mta_sts_record_in_the_way');
     expect(w.writes(OP_ZONE)).toEqual([]);
     expect(w.writes(w.Z.a1)).toEqual([]);
+    expect(JSON.stringify(w.cf.records.get(w.Z.a1))).toBe(before);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+  });
+
+  it('records that are exactly what this enable would write are ADOPTED: their ids are stored, nothing is written for them, the id is changed only once the policy is served, and Disable removes them', async () => {
+    const w = await mtaWorld();
+    const cname = w.cf.seed(w.Z.a1, { ...ours.cname, id: '1'.repeat(32) }), tls = w.cf.seed(w.Z.a1, { ...ours.tls, id: '2'.repeat(32) }), sts = w.cf.seed(w.Z.a1, { ...ours.sts, id: '3'.repeat(32) });
+    const res = await w.mta(w.A.token, 'POST', 1);
+    expect(res.status).toBe(201);
+    expect(w.writes(w.Z.a1)).toEqual([]);
+    expect(w.row(1)).toMatchObject({ state: 'waiting_certificate', cname_record_id: cname.id, tls_rpt_record_id: tls.id, mta_sts_record_id: sts.id, policy_published_at: null });
+    expect(w.cf.records.get(w.Z.a1)!.find((r) => r.id === sts.id)!.content).toBe('v=STSv1; id=20200101000000'); // still the old id: the policy host is not up yet
+    expect(w.rows("SELECT after_value FROM audit_log WHERE action = 'mta_sts.enable'").map((r) => JSON.parse(r.after_value).adopted)).toEqual([['cname', 'tls', 'txt']]);
+
+    w.cf.cname['mta-sts.a-corp.com'] = OP.target;
+    w.cf.doh['_smtp._tls.a-corp.com'] = [ours.tls.content];
+    w.cf.activateHostname('mta-sts.a-corp.com');
+    const v = await w.json(await w.mta(w.A.token, 'POST', 1, undefined, '/verify'));
+    expect(v, JSON.stringify(v)).toMatchObject({ state: 'active' });
+    expect(w.cf.records.get(w.Z.a1)!.find((r) => r.id === sts.id)!.content).toBe(`v=STSv1; id=${w.row(1).policy_id}`);
+    expect(w.writes(w.Z.a1).map((c) => c.method)).toEqual(['PATCH']);
+
+    const off = await w.json(await w.mta(w.A.token, 'DELETE', 1));
+    expect(off).toMatchObject({ ok: true, kept: [] });
+    expect(w.cf.records.get(w.Z.a1)).toEqual([]);
+  });
+
+  it('adopts some and writes the rest; a failed enable afterwards leaves the adopted record where it was', async () => {
+    const w = await mtaWorld();
+    const tls = w.cf.seed(w.Z.a1, { ...ours.tls, id: '2'.repeat(32) });
+    const inner = w.cf.fetch;
+    vi.stubGlobal('fetch', async (input: any, init: any) => (init?.method === 'POST' && String(input).includes('/dns_records') && JSON.parse(init.body).type === 'CNAME'
+      ? new Response(JSON.stringify({ success: false, errors: [{ message: 'cf down' }] }), { status: 500 })
+      : inner(input, init)));
+    expect((await w.mta(w.A.token, 'POST', 1)).status).toBe(502);
+    expect(w.cf.records.get(w.Z.a1)).toEqual([expect.objectContaining({ id: tls.id })]);
+    expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+  });
+
+  it('by hand: identical records already in DNS are fine (nothing is written either way); others are refused', async () => {
+    const w = await mtaWorld();
+    w.cf.cname['mta-sts.a-two.org'] = OP.target;
+    w.cf.doh['_smtp._tls.a-two.org'] = [ours.tls.content];
+    w.cf.doh['_mta-sts.a-two.org'] = ['v=STSv1; id=20200101000000'];
+    expect((await w.mta(w.A.token, 'POST', 2)).status).toBe(201);
+    const verify = await w.json(await w.mta(w.A.token, 'POST', 2, undefined, '/verify'));
+    expect(verify.checks.find((c: any) => c.key === 'policy_host').state).toBe('ok');
+
+    const x = await mtaWorld();
+    x.cf.doh['_smtp._tls.a-two.org'] = ['v=TLSRPTv1; rua=mailto:x@y.example'];
+    expect((await x.mta(x.A.token, 'POST', 2)).status).toBe(409);
+    const y = await mtaWorld();
+    y.cf.doh['_mta-sts.a-two.org'] = ['v=STSv1; id=1']; // our shape, but no CNAME of ours: not adoptable
+    expect((await y.mta(y.A.token, 'POST', 2)).status).toBe(409);
+    const z = await mtaWorld();
+    z.cf.a['mta-sts.a-two.org'] = ['192.0.2.1'];
+    expect((await z.mta(z.A.token, 'POST', 2)).status).toBe(409);
+    expect(z.writes(OP_ZONE)).toEqual([]);
   });
 
   it('already enabled: 409', async () => {
@@ -397,5 +461,90 @@ describe('disable', () => {
     expect(await reconcileOperatorZone(w.env)).toBe(1);
     expect(w.cf.routes[OP_ZONE]).toEqual([]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
+  });
+});
+
+describe('enable stores its row first, so the operator reconcile cannot take back what it is making', () => {
+  it('a reconcile that runs between the operator calls and the customer records deletes nothing, and enable finishes', async () => {
+    const w = await mtaWorld();
+    const { reconcileOperatorZone } = await import('../../src/mta-sts/refresh');
+    const inner = w.cf.fetch;
+    let during: { state: string; ch: boolean; route: boolean } | null = null;
+    let removed = -1;
+    let ran = false;
+    vi.stubGlobal('fetch', async (input: any, init: any) => {
+      if (!ran && init?.method === 'POST' && String(input).includes(`/zones/${w.Z.a1}/dns_records`)) {
+        ran = true; // the hostname and the route exist; the customer's first record is about to be written
+        const r = w.rows('SELECT state, ch_id, route_id FROM mta_sts_config WHERE domain_id = 1')[0];
+        during = { state: r.state, ch: !!r.ch_id, route: !!r.route_id };
+        removed = await reconcileOperatorZone(w.env);
+      }
+      return inner(input, init);
+    });
+    const res = await w.mta(w.A.token, 'POST', 1);
+    expect(res.status).toBe(201);
+    expect(during).toEqual({ state: 'creating', ch: true, route: true });
+    expect(removed).toBe(0);
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+    expect(w.cf.routes[OP_ZONE]).toHaveLength(1);
+    expect(w.row(1).state).toBe('waiting_certificate');
+  });
+
+  it('even a hostname created before the route is kept (the row exists from the start)', async () => {
+    const w = await mtaWorld();
+    const { reconcileOperatorZone } = await import('../../src/mta-sts/refresh');
+    const inner = w.cf.fetch;
+    let ran = false;
+    vi.stubGlobal('fetch', async (input: any, init: any) => {
+      if (!ran && init?.method === 'POST' && String(input).includes('/workers/routes')) {
+        ran = true;
+        w.cf.routes[OP_ZONE] = [...(w.cf.routes[OP_ZONE] ?? []), { id: 'r-early', pattern: 'mta-sts.a-corp.com/*', script: 'rsm-worker' }];
+        expect(await reconcileOperatorZone(w.env)).toBe(0);
+        w.cf.routes[OP_ZONE] = w.cf.routes[OP_ZONE].filter((r) => r.id !== 'r-early');
+      }
+      return inner(input, init);
+    });
+    expect((await w.mta(w.A.token, 'POST', 1)).status).toBe(201);
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+  });
+
+  it('a failed enable deletes the row, so the reconcile can take any leftover back', async () => {
+    const w = await mtaWorld();
+    const inner = w.cf.fetch;
+    vi.stubGlobal('fetch', async (input: any, init: any) => (init?.method === 'POST' && String(input).includes('/dns_records')
+      ? new Response(JSON.stringify({ success: false, errors: [{ message: 'cf down' }] }), { status: 500 })
+      : inner(input, init)));
+    expect((await w.mta(w.A.token, 'POST', 1)).status).toBe(502);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+  });
+
+  it('while creating: verify says so, a second enable is refused; a row stuck creating is torn down by the daily job, a fresh one is left alone', async () => {
+    const w = await mtaWorld();
+    const { refreshMtaStsHosted } = await import('../../src/mta-sts/refresh');
+    await w.mta(w.A.token, 'POST', 1);
+    w.db.sqlite.prepare("UPDATE mta_sts_config SET state = 'creating' WHERE domain_id = 1").run();
+    expect((await w.mta(w.A.token, 'POST', 1, undefined, '/verify')).status).toBe(409);
+    const again = await w.mta(w.A.token, 'POST', 1);
+    expect(again.status).toBe(409);
+    expect((await w.json(again)).error).toBe('MTA-STS is already being turned on for this domain');
+    await refreshMtaStsHosted(w.env);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toHaveLength(1); // fresh: in flight
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+
+    w.db.sqlite.prepare('UPDATE mta_sts_config SET created_at = ? WHERE domain_id = 1').run(now() - 3600);
+    await refreshMtaStsHosted(w.env);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
+    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(w.cf.records.get(w.Z.a1)).toEqual([]);
+  });
+
+  it('a stale creating row does not block a new enable', async () => {
+    const w = await mtaWorld();
+    await w.mta(w.A.token, 'POST', 1);
+    w.db.sqlite.prepare("UPDATE mta_sts_config SET state = 'creating', created_at = ? WHERE domain_id = 1").run(now() - 3600);
+    expect((await w.mta(w.A.token, 'POST', 1)).status).toBe(201);
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+    expect(w.row(1).state).toBe('waiting_certificate');
   });
 });

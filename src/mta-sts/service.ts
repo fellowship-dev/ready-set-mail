@@ -244,20 +244,65 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
 // ── Enable ───────────────────────────────────────────────────
 
 const TXT_V = (s: string) => s.replace(/^\s*"|"\s*$/g, '').trim();
+const squash = (s: string) => TXT_V(s).toLowerCase().replace(/\s+/g, '');
+/** The shape this product writes at `_mta-sts`: only a version and an id. */
+const OUR_STS = /^v=STSv1;\s*id=[A-Za-z0-9]{1,32};?$/i;
 
-/** What is already in the way at the names we are about to write, as one sentence naming it; null when the way is clear. Throws on a DNS failure. */
-async function inTheWay(domain: string, resolver: Resolver): Promise<string | null> {
-  const d = norm(domain);
+/** What an enable finds at the three names: a sentence naming what is in the way (null: the way is clear) and the ids of records that are already exactly what it would write. */
+export interface Way { clash: string | null; adopt: { cname: string | null; tls: string | null; txt: string | null } }
+
+/**
+ * A record at one of the three names whose content is exactly what this enable would write is ADOPTED (its id is stored, nothing is written for it, and
+ * disabling later removes it like any other); anything else at those names is refused, named. `_mta-sts` counts as ours when it has our shape (a version and
+ * an id) AND `mta-sts.<d>` already points at our target; adopting it keeps it unpublished-in-effect: the id is only changed once the policy host is up.
+ * With a Cloudflare connection the zone itself is read (ids, and the proxied flag); by hand only public DNS can be read, so an identical record is allowed
+ * but there is nothing to adopt. Throws on a DNS or Cloudflare failure.
+ */
+async function inTheWay(c: Ctx, via: Via, want: { target: string; proxied: boolean; address: string }, resolver: Resolver): Promise<Way> {
+  const d = norm(c.domain.domain);
+  const none: Way['adopt'] = { cname: null, tls: null, txt: null };
+  const hostName = `mta-sts.${d}`, rptName = `_smtp._tls.${d}`, stsName = `_mta-sts.${d}`;
+  const wantRpt = squash(tlsRptRecordValue(want.address));
+  const rptClash = (v: string) => `${rptName} already has a TLS reporting record (${v}). A domain can have only one: remove it or add our address to it by hand, then try again.`;
+  const stsClash = (v: string) => `${stsName} already has a record (${v}). Remove it before turning MTA-STS on here.`;
+  const hostClash = (v: string) => `${hostName} already exists in DNS (${v}). Remove it before turning MTA-STS on here.`;
+
+  if (via === 'cloudflare') {
+    const cf = await c.tenant.cfFor(c.domain.domain);
+    const zone = await cf.zoneFor(c.domain.domain);
+    const [host, rpt, sts] = await Promise.all([hostName, rptName, stsName].map((name) => cf.listDnsRecords(zone.id, { name })));
+    const adopt = { ...none };
+    const odd = host.find((r) => r.type.toUpperCase() !== 'CNAME');
+    if (odd) return { clash: hostClash(`${odd.type} ${odd.content}`), adopt: none };
+    if (host.length) {
+      const ours = host.length === 1 && norm(host[0].content) === norm(want.target) && (host[0].proxied === undefined || host[0].proxied === want.proxied);
+      if (!ours) return { clash: hostClash(`CNAME ${host.map((r) => r.content).join(', ')}${host[0].proxied !== undefined && host[0].proxied !== want.proxied ? `, ${host[0].proxied ? 'proxied' : 'DNS only'}` : ''}`), adopt: none };
+      adopt.cname = host[0].id;
+    }
+    const rptRecs = rpt.filter((r) => r.type.toUpperCase() === 'TXT' && /^\s*v=TLSRPTv1\b/i.test(TXT_V(r.content)));
+    if (rptRecs.length) {
+      if (rptRecs.length === 1 && squash(rptRecs[0].content) === wantRpt) adopt.tls = rptRecs[0].id;
+      else return { clash: rptClash(TXT_V(rptRecs[0].content)), adopt: none };
+    }
+    const stsRecs = sts.filter((r) => r.type.toUpperCase() === 'TXT' && /^\s*v=STSv1\b/i.test(TXT_V(r.content)));
+    if (stsRecs.length) {
+      if (stsRecs.length === 1 && OUR_STS.test(TXT_V(stsRecs[0].content)) && adopt.cname) adopt.txt = stsRecs[0].id;
+      else return { clash: stsClash(TXT_V(stsRecs[0].content)), adopt: none };
+    }
+    return { clash: null, adopt };
+  }
+
   const [sts, rpt, cname, a, aaaa] = await Promise.all([
-    resolver.txt(`_mta-sts.${d}`), resolver.txt(`_smtp._tls.${d}`),
-    resolver.resolve(`mta-sts.${d}`, 'CNAME'), resolver.resolve(`mta-sts.${d}`, 'A'), resolver.resolve(`mta-sts.${d}`, 'AAAA'),
+    resolver.txt(stsName), resolver.txt(rptName), resolver.resolve(hostName, 'CNAME'), resolver.resolve(hostName, 'A'), resolver.resolve(hostName, 'AAAA'),
   ]);
   for (const r of [sts, rpt, cname, a, aaaa]) if (r.status === 'error') throw new Error(r.error ?? 'DNS lookup failed');
-  if (sts.records.some((r) => /^\s*v=STSv1\b/i.test(TXT_V(r)))) return `_mta-sts.${d} already has a record (${TXT_V(sts.records.find((r) => /v=STSv1/i.test(r))!)}). Remove it before turning MTA-STS on here.`;
-  if (rpt.records.some((r) => /^\s*v=TLSRPTv1\b/i.test(TXT_V(r)))) return `_smtp._tls.${d} already has a TLS reporting record (${TXT_V(rpt.records.find((r) => /v=TLSRPTv1/i.test(r))!)}). A domain can have only one: remove it or add our address to it by hand, then try again.`;
-  const hasHost = cname.status === 'ok' || a.status === 'ok' || aaaa.status === 'ok';
-  if (hasHost) return `mta-sts.${d} already exists in DNS. Remove it before turning MTA-STS on here.`;
-  return null;
+  const cnameOurs = !want.proxied && cname.status === 'ok' && cname.answers.length === 1 && norm(cname.answers[0].data) === norm(want.target);
+  if (!cnameOurs && (cname.status === 'ok' || a.status === 'ok' || aaaa.status === 'ok')) return { clash: hostClash(cname.status === 'ok' ? `CNAME ${cname.answers.map((x) => norm(x.data)).join(', ')}` : 'an address record'), adopt: none };
+  const rptRecs = rpt.records.filter((r) => /^\s*v=TLSRPTv1\b/i.test(TXT_V(r)));
+  if (rptRecs.length && !(rptRecs.length === 1 && squash(rptRecs[0]) === wantRpt)) return { clash: rptClash(TXT_V(rptRecs[0])), adopt: none };
+  const stsRecs = sts.records.filter((r) => /^\s*v=STSv1\b/i.test(TXT_V(r)));
+  if (stsRecs.length && !(stsRecs.length === 1 && OUR_STS.test(TXT_V(stsRecs[0])) && cnameOurs)) return { clash: stsClash(TXT_V(stsRecs[0])), adopt: none };
+  return { clash: null, adopt: none };
 }
 
 type Undo = () => Promise<void>;
@@ -271,11 +316,22 @@ async function rollback(undo: Undo[]): Promise<void> {
 const auditOpts = (c: Ctx): MtaStsAuditOpts => ({ domain_name: c.domain.domain, actor_id: c.actor?.id, actor_email: c.actor?.email, actor_type: c.actor ? 'user' : 'system', ctx: c.ec });
 const who = (c: Ctx) => ({ actor_id: c.actor?.id ?? null, actor_email: c.actor?.email ?? null, actor_type: (c.actor ? 'user' : 'system') as 'user' | 'system' });
 
-/** Turn MTA-STS on, in testing. */
+/** A row still `creating` after this long is a crashed enable: the next enable or the daily job tears it down. */
+export const CREATING_STALE_SECONDS = 600;
+
+/**
+ * Turn MTA-STS on, in testing. The row is stored FIRST, in state `creating`, and gets each id as soon as it exists: the daily operator reconcile never
+ * deletes a hostname or route of a domain that has a row in any state, so it cannot take back what this is in the middle of making, and a crash
+ * leaves ids to tear down. Failure undoes what was created and deletes the row.
+ */
 export async function enableMtaSts(c: Ctx): Promise<Result> {
   const { tenant, domain } = c;
-  const existing = await tenant.scope.mtaSts.get(domain.id);
-  if (existing?.enabled) return fail(409, 'MTA-STS already enabled for this domain');
+  let existing = await tenant.scope.mtaSts.get(domain.id);
+  if (existing?.state === 'creating' && nowSeconds() - existing.created_at > CREATING_STALE_SECONDS) {
+    await teardownMtaSts(c, existing); // a crashed enable
+    existing = null;
+  }
+  if (existing?.enabled) return fail(409, existing.state === 'creating' ? 'MTA-STS is already being turned on for this domain' : 'MTA-STS already enabled for this domain');
 
   const av = await availability(tenant, domain);
   if (!av.available || !av.strategy || !av.via) return av.refusal ?? fail(403, 'MTA-STS is not available for this domain');
@@ -286,52 +342,68 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
   const mx = await readMx(domain.domain);
   if (mx.status === 'error') return fail(502, `DNS lookup failed: ${mx.error}`);
   if (mx.status === 'none') return fail(422, `No MX records found for ${domain.domain}. Configure MX records before enabling MTA-STS.`);
-  let clash: string | null;
-  try { clash = await inTheWay(domain.domain, createResolver()); } catch (e) { return fail(502, `DNS lookup failed: ${e instanceof Error ? e.message : String(e)}`); }
-  if (clash) return fail(409, clash, { code: 'mta_sts_record_in_the_way' });
   const { target, problem } = await policyTarget(tenant, domain.domain, strategy);
   if (!target) return fail(502, problem ?? 'The policy host is not configured');
+  let way: Way;
+  try { way = await inTheWay(c, via, { target, proxied: strategy.cnameProxied, address }, createResolver()); } catch (e) {
+    const f = cfFailureBody(e, 502);
+    return fail(f.status, e instanceof Error && !(f.status === 502 && f.body.error === e.message) ? f.body.error : `DNS lookup failed: ${f.body.error}`, f.body.code ? { code: f.body.code } : {});
+  }
+  if (way.clash) return fail(409, way.clash, { code: 'mta_sts_record_in_the_way' });
   if (existing) await tenant.scope.mtaSts.delete(domain.id); // a leftover row that is not enabled
 
   const undo: Undo[] = [];
-  const written = { mta_sts_record_id: null as string | null, tls_rpt_record_id: null as string | null, cname_record_id: null as string | null };
+  const written = { mta_sts_record_id: null as string | null, tls_rpt_record_id: null as string | null, cname_record_id: null as string | null }; // only what THIS call created
   const audit = auditOpts(c);
   const now = nowSeconds();
   const policyId = generatePolicyId();
   try {
-    let chId: string | null = null, chStatus: string | null = null, chSsl: string | null = null, routeId: string | null = null;
+    await tenant.scope.mtaSts.insert({
+      domain_id: domain.id, mode: 'testing', mx_hosts: mx.hosts.join(','), policy_id: policyId,
+      via, state: 'creating', policy_host: strategy.kind, mode_changed_at: now,
+    });
+  } catch {
+    return fail(409, 'MTA-STS is already being turned on for this domain');
+  }
+  const store = (set: Parameters<typeof tenant.scope.mtaSts.update>[1]) => tenant.scope.mtaSts.update(domain.id, set);
+  try {
+    let chStatus: string | null = null, chSsl: string | null = null;
     if (strategy.customHostname || strategy.route) {
       const zone = await OperatorZone.open(tenant.env);
       if (strategy.customHostname) {
         const ch = await zone.createHostname(domain.domain);
-        chId = ch.id; chStatus = ch.status; chSsl = ch.sslStatus;
         undo.push(() => zone.deleteHostname(ch.id, domain.domain).then(() => undefined));
+        chStatus = ch.status; chSsl = ch.sslStatus;
+        await store({ ch_id: ch.id, ch_status: ch.status, ch_ssl_status: ch.sslStatus });
       }
       const route = await zone.createRoute(domain.domain);
-      routeId = route.id;
       undo.push(() => zone.deleteRoute(route.id, domain.domain).then(() => undefined));
+      await store({ route_id: route.id });
     }
     const certActive = !strategy.customHostname || (chStatus === 'active' && chSsl === 'active');
     let state: MtaStsRow['state'] = 'waiting_records';
     let published: number | null = null;
     if (via === 'cloudflare') {
       undo.push(async () => { await deprovisionMtaSts(tenant, domain.domain, written); });
-      written.cname_record_id = await createPolicyHostCname(tenant, domain.domain, { target, proxied: strategy.cnameProxied }, audit);
-      written.tls_rpt_record_id = await createTlsRptRecord(tenant, domain.domain, address, audit);
+      const cname = way.adopt.cname ?? (written.cname_record_id = await createPolicyHostCname(tenant, domain.domain, { target, proxied: strategy.cnameProxied }, audit));
+      await store({ cname_record_id: cname });
+      const tls = way.adopt.tls ?? (written.tls_rpt_record_id = await createTlsRptRecord(tenant, domain.domain, address, audit));
+      await store({ tls_rpt_record_id: tls });
+      if (way.adopt.txt) await store({ mta_sts_record_id: way.adopt.txt }); // adopted: its id changes only when the policy is served
       if (certActive) {
-        written.mta_sts_record_id = await createPolicyIdRecord(tenant, domain.domain, policyId, audit);
+        let txt = way.adopt.txt;
+        if (txt) await updateMtaStsTxtRecord(tenant, domain.domain, txt, policyId, audit);
+        else txt = written.mta_sts_record_id = await createPolicyIdRecord(tenant, domain.domain, policyId, audit);
+        await store({ mta_sts_record_id: txt });
         state = 'active'; published = now;
       } else state = 'waiting_certificate';
     }
-    await tenant.scope.mtaSts.insert({
-      domain_id: domain.id, mode: 'testing', mx_hosts: mx.hosts.join(','), policy_id: policyId,
-      ...written, via, state, policy_host: strategy.kind, ch_id: chId, ch_status: chStatus, ch_ssl_status: chSsl, route_id: routeId,
-      policy_published_at: published, mode_changed_at: now,
-    });
+    await store({ state, policy_published_at: published });
     logAudit(tenant, { ...who(c), action: 'mta_sts.enable', resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
-      after_value: { mode: 'testing', mx_hosts: mx.hosts, policy_id: policyId, via, policy_host: strategy.kind, state } }, c.ec);
+      after_value: { mode: 'testing', mx_hosts: mx.hosts, policy_id: policyId, via, policy_host: strategy.kind, state, adopted: Object.entries(way.adopt).filter(([, v]) => v).map(([k]) => k) } }, c.ec);
   } catch (e) {
     await rollback(undo);
+    await tenant.scope.mtaSts.delete(domain.id).catch(() => undefined);
     console.warn(`[mta-sts] enabling ${domain.domain} failed:`, e instanceof Error ? e.message : e);
     const f = cfFailureBody(e, 502);
     return { status: f.status, body: { ...f.body, error: `MTA-STS could not be turned on and nothing was changed: ${f.body.error}` } };
@@ -415,7 +487,9 @@ export async function advanceMtaSts(c: Ctx, row: MtaStsRow, resolver: Resolver =
   if (manual && state === 'waiting_certificate' && certOk) state = 'waiting_txt';
   if (!manual && state === 'waiting_certificate' && certOk) {
     try {
-      const id = await createPolicyIdRecord(tenant, domain.domain, row.policy_id, auditOpts(c));
+      let id = row.mta_sts_record_id;
+      if (id) await updateMtaStsTxtRecord(tenant, domain.domain, id, row.policy_id, auditOpts(c)); // an adopted record: its id changes now
+      else id = await createPolicyIdRecord(tenant, domain.domain, row.policy_id, auditOpts(c));
       patch.mta_sts_record_id = id;
       patch.policy_published_at = now;
       state = 'active';
@@ -451,6 +525,7 @@ export async function advanceMtaSts(c: Ctx, row: MtaStsRow, resolver: Resolver =
 export async function verifyMtaSts(c: Ctx): Promise<Result> {
   const row = await c.tenant.scope.mtaSts.get(c.domain.id);
   if (!row?.enabled) return fail(404, 'MTA-STS not enabled for this domain');
+  if (row.state === 'creating') return fail(409, 'MTA-STS is still being turned on: try again in a moment');
   const { row: now, checks } = await advanceMtaSts(c, row);
   return { status: 200, body: { ok: true, state: now.state, checks, notice: now.notice, last_error: now.last_error } };
 }
