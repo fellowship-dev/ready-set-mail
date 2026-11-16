@@ -1,8 +1,8 @@
 import { Button, cn } from '@ready-set-mail/ui';
-import { Check, Circle, Clock } from 'lucide-react';
-import { useId, useState, type ReactNode } from 'react';
+import { Check, Circle, Clock, TriangleAlert } from 'lucide-react';
+import { createContext, useContext, useId, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { QUIET_AFTER_DAYS, type FirstDay } from '../lib/first-day';
+import { QUIET_AFTER_DAYS, type Blocker, type FirstDay } from '../lib/first-day';
 import { REVIEW_PATH } from '../lib/first-run';
 import { formatNumber, timeAgo } from '../lib/format';
 
@@ -46,13 +46,43 @@ function TestEmail({ available, text }: { available: boolean; text?: string }) {
 	);
 }
 
+/** One compact line under the card's first line: a real failure that blocks progress. Warning tone, not red (nothing here is an emergency on day one). */
+function BlockerLine({ blocker }: { blocker: Blocker }) {
+	return (
+		<p className="flex items-start gap-2 text-sm text-ink-1" data-testid="first-day-blocker">
+			<TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+			<span className="min-w-0 [overflow-wrap:anywhere]">
+				{blocker.kind === 'connection' ? (
+					<>
+						{blocker.count === 1 ? blocker.label : `${blocker.count} Cloudflare connections`} can no longer reach Cloudflare, so nothing can be written until it is reconnected.{' '}
+						<Link to="/settings" className="font-medium text-brand-ink underline underline-offset-4">
+							Reconnect in Settings
+						</Link>
+					</>
+				) : (
+					<>
+						Proof lost for {blocker.domain}: reports are not accepted until it is proven again.{' '}
+						<button type="button" className="font-medium text-brand-ink underline underline-offset-4" onClick={() => document.querySelector('[data-testid^="proof-lost-"]')?.scrollIntoView({ block: 'center' })}>
+							Prove it again
+						</button>
+					</>
+				)}
+			</span>
+		</p>
+	);
+}
+
+const BlockerContext = createContext<Blocker | null>(null);
+
 function Frame({ title, children }: { title: string; children: ReactNode }) {
 	const id = useId();
+	const blocker = useContext(BlockerContext);
 	return (
 		<section aria-labelledby={id} className="space-y-4 rounded-lg border border-line bg-surface-1 p-4 sm:p-5" data-testid="first-day">
 			<h2 id={id} className="text-lg font-semibold tracking-tight [overflow-wrap:anywhere]">
 				{title}
 			</h2>
+			{blocker ? <BlockerLine blocker={blocker} /> : null}
 			{children}
 		</section>
 	);
@@ -62,7 +92,17 @@ function Frame({ title, children }: { title: string; children: ReactNode }) {
  * The first day, in one card (spec D1): what has happened, what happens next, and the one thing to do if there is one. It goes
  * away when the normal overview takes over (the first report was seen). Plain words, no red: nothing here has failed.
  */
-export function FirstDayCard({ state, email, emailCheck, workspaceId, onSeen }: { state: FirstDay; email?: string | null; emailCheck: boolean; workspaceId: string | null; onSeen?: () => void }) {
+export function FirstDayCard({ blocker = null, ...props }: FirstDayCardProps) {
+	return (
+		<BlockerContext.Provider value={blocker}>
+			<FirstDayBody {...props} />
+		</BlockerContext.Provider>
+	);
+}
+
+type FirstDayCardProps = { state: FirstDay; email?: string | null; emailCheck: boolean; workspaceId: string | null; onSeen?: () => void; /** A real failure to say in one line under the first line. */ blocker?: Blocker | null };
+
+function FirstDayBody({ state, email, emailCheck, workspaceId, onSeen }: { state: FirstDay; email?: string | null; emailCheck: boolean; workspaceId: string | null; onSeen?: () => void }) {
 	const [hidden, setHidden] = useState(false);
 	if (hidden) return null;
 

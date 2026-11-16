@@ -107,3 +107,16 @@ export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict 
 export function onFirstDay(d: Pick<Domain, 'created_at'>, totals: ReportTotals | null | undefined, now = Math.floor(Date.now() / 1000)): boolean {
 	return !!totals && totals.total === 0 && now - d.created_at < DAY_ONE_SECONDS;
 }
+
+/** A real failure that stops progress, said as one compact line inside the first-day card (the full block stays below it). */
+export type Blocker = { kind: 'connection'; label: string; count: number } | { kind: 'proof'; domain: string };
+
+/**
+ * What truly blocks: a Cloudflare connection that stopped or was revoked, or a domain whose proof lapsed. Anything that merely waits (a record, a first report) is
+ * not a blocker. Connection first: with it nothing can be written to DNS at all.
+ */
+export function blockerOf(brokenConnections: Array<{ label: string }>, domains: Array<Pick<Domain, 'domain' | 'verified_via' | 'proof_lost_at'>>): Blocker | null {
+	if (brokenConnections.length > 0) return { kind: 'connection', label: brokenConnections[0]!.label, count: brokenConnections.length };
+	const lost = domains.find((d) => unprovenRow(d));
+	return lost ? { kind: 'proof', domain: lost.domain } : null;
+}

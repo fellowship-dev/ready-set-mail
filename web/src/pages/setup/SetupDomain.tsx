@@ -293,7 +293,8 @@ function Entered({ entered, removeError, didNotConnect, onNotThis, onVerified, h
 			</div>
 
 			</div>
-			<div className="space-y-5 lg:rounded-lg lg:border lg:border-line lg:bg-surface-1 lg:p-6" data-testid="s4-choice">
+			{/* The record path is its own card already (ClaimCard); the other choices sit in one panel on a wide screen. */}
+			<div className={claim && (manual || choice.kind === 'records') && !doesNotExist && !hostPending ? 'space-y-5' : 'space-y-5 lg:rounded-lg lg:border lg:border-line lg:bg-surface-1 lg:p-6'} data-testid="s4-choice">
 			{doesNotExist ? (
 				<p className="text-sm">
 					<button type="button" className="text-brand-ink underline underline-offset-4" onClick={onNotThis}>

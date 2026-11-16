@@ -328,6 +328,39 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		'GET /api/domains/1/stats': st,
 	});
 
+	describe('a real blocker is one line inside the first-day card (item 1 follow-up)', () => {
+		const broken = { id: 'c1', label: 'Brightwave Studio', auth_type: 'oauth', status: 'revoked', status_detail: null, cf_account_id: 'a1', cf_account_name: 'Brightwave Studio', scopes: [], zones: [] };
+		const offer = (connections: unknown[]) => ({ connections, oauth: { available: true, scopes: [], via_relay: false }, token_paste: true, encryption_configured: true });
+		const liveRoutes = (extra: Record<string, unknown> = {}) => ({ ...routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1 }), ...extra });
+
+		it('a stopped Cloudflare connection: said under the card\'s first line, once, with the way to reconnect; the full alert is not repeated below', async () => {
+			renderOverview({ routes: liveRoutes({ 'GET /api/cloudflare/connections': offer([broken]) }) });
+			const card = await dayCard();
+			const line = await within(card).findByTestId('first-day-blocker');
+			expect(line).toHaveTextContent('Brightwave Studio can no longer reach Cloudflare, so nothing can be written until it is reconnected. Reconnect in Settings');
+			expect(within(line).getByRole('link', { name: 'Reconnect in Settings' })).toHaveAttribute('href', '/settings');
+			// right under the card's first line: before the card's own paragraph
+			const heading = within(card).getByRole('heading', { name: 'Your first reports are on their way' });
+			expect(before(heading, line)).toBe(true);
+			expect(before(line, within(card).getByText(/about once a day/))).toBe(true);
+			expect(screen.queryByText('Cloudflare needs to be reconnected')).toBeNull();
+			expect(card.querySelector('.text-danger, [role="alert"]')).toBeNull();
+		});
+
+		it('a lapsed proof on another domain: one line, with the way to prove it again; the block below stays', async () => {
+			renderOverview({ routes: { ...liveRoutes(), 'GET /api/domains': { domains: [domain(1, 'example.com', { created_at: justNow(), dmarc_policy: 'none' }), domain(2, 'lapsed.org', { verified_via: 'legacy', proof_lost_at: justNow() })] }, 'GET /api/domains/2/check-summary': summary(2, 'lapsed.org'), 'GET /api/domains/2/stats': noReports } });
+			const card = await dayCard();
+			expect(await within(card).findByTestId('first-day-blocker')).toHaveTextContent('Proof lost for lapsed.org: reports are not accepted until it is proven again. Prove it again');
+			expect(await screen.findByTestId('proof-lost-2')).toBeInTheDocument();
+		});
+
+		it('nothing broken: no line', async () => {
+			renderOverview({ routes: liveRoutes({ 'GET /api/cloudflare/connections': offer([{ ...broken, status: 'active' }]) }) });
+			const card = await dayCard();
+			expect(within(card).queryByTestId('first-day-blocker')).toBeNull();
+		});
+	});
+
 	it('records live, no report yet: "Your first reports are on their way", with the timeline and Test a real email', async () => {
 		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
 		const card = await dayCard();

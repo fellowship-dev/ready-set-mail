@@ -245,14 +245,14 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  */
 async function answerWithCode(
   env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
-  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void } = {},
+  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void; /** A new sign-up attempt (S1): codes from an earlier attempt no longer work, so "use the newest one" would not be true. */ freshAttempt?: boolean } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
   // The allowance is spent for every address, account or not, so every request does the same work, and over it the answer can
   // say so plainly: it depends only on how often this address was asked for, which says nothing about who has an account.
   const wait = await codeMailWait(env, attempt.email, opts.pool ?? poolFor(attempt.purpose));
-  if (wait) return mailLimit(wait);
+  if (wait) return mailLimit(wait, opts.freshAttempt);
   const mailing = !!attempt.userId || !!attempt.create;
   const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : decoyOf(attempt));
   if (opts.afterAnswer) {
@@ -297,8 +297,13 @@ function notSent(): Response {
 const SELF_HOST_SIGNIN_NOT_SENT = "We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off with SIGNIN_CODES=off).";
 
 /** Over an address's code mail allowance. Spent the same for every address, so saying so reveals nothing about accounts. */
-function mailLimit(wait: number): Response {
-  const out = err(`Several codes were sent to this address recently. Use the newest one, or try again in ${minutesText(wait)}.`, 429, 'code_mail_limit');
+function mailLimit(wait: number, freshAttempt = false): Response {
+  // A person who pressed "Start over" and typed the same address again: the earlier attempt, and its codes, are gone (reusing a mailed code for a new
+  // attempt would let it confirm someone else's password), so the only true advice is to wait. The same words for every address.
+  const message = freshAttempt
+    ? `We sent several codes to this address recently, so we can't send another yet. Try again in ${minutesText(wait)}.`
+    : `Several codes were sent to this address recently. Use the newest one, or try again in ${minutesText(wait)}.`;
+  const out = err(message, 429, 'code_mail_limit');
   out.headers.set('retry-after', String(wait));
   return out;
 }
@@ -556,9 +561,9 @@ export async function handleAuthRoute(
     const passwordHash = await hashPassword(body.password);
     const user = await globalQueries(env.DB).users.byEmail(email);
     const terms = legal(env).termsVersion ?? undefined;
-    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup' });
+    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup', freshAttempt: true });
     // No account yet, or one still waiting for its code from before codes: the code sets this attempt's password.
-    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms });
+    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms }, { freshAttempt: true });
   }
 
   // ── Hosted sign-up, screen by screen: S1 /signup (above), S2 /signup/profile, S3 the code (/code), and the way back ──

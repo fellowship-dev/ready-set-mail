@@ -63,10 +63,24 @@ describe('one honest sign-up against the limits', () => {
     const w = hosted();
     const a = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
     const cookie = pendingCookieOf(a);
-    expect((await post(w, '/api/auth/signup/resend', { cf_turnstile_token: 'ok' }, cookie)).status).toBe(200);
-    await post(w, '/api/auth/signup/cancel', {}, cookie);
+    const resent = await post(w, '/api/auth/signup/resend', { cf_turnstile_token: 'ok' }, cookie);
+    expect(resent.status).toBe(200);
+    const latest = pendingCookieOf(resent);
+    await post(w, '/api/auth/signup/cancel', {}, latest);
     const third = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
     expect(third.status).toBe(429);
+    // Plain and true: the earlier attempt and its codes are gone, so it does not say "use the newest one"; it says how long to wait.
+    const body = await json(third);
+    expect(body.code).toBe('code_mail_limit');
+    expect(body.error).toMatch(/^We sent several codes to this address recently, so we can't send another yet\. Try again in \d+ minutes?\.$/);
+    expect(Number(third.headers.get('retry-after'))).toBeGreaterThan(0);
+    // Nothing was reused: the abandoned code opens nothing, and no attempt exists for the new request
+    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'signin-code:%'")).toHaveLength(0);
+    expect((await enterCode(w.env, latest, await lastCodeFor(w.env, 'dana@brightwave-mail.com'), { ip: IP })).status).not.toBe(200); // the abandoned code opens nothing
+    // The same words for an address that already has an account (anti-enumeration)
+    const known = hosted();
+    await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' });
+    for (let i = 0; i < 2; i++) { const r = await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' }); if (r.status === 429) expect((await json(r)).error).toBe(body.error); }
   });
 });
 

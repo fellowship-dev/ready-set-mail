@@ -224,7 +224,7 @@ describe('S4 by who hosts DNS', () => {
 		await enter('brightwave-mail.com');
 		await userEvent.setup().click(await screen.findByRole('button', { name: "I'll add the records myself" }));
 		expect(await screen.findByRole('group', { name: 'DNS record to add' })).toBeInTheDocument();
-		expect(screen.getByText(/uses Cloudflare for DNS\. Add this record there/)).toBeInTheDocument();
+		expect(screen.getByText('Add this record in Cloudflare to show you control the domain')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Connect Cloudflare' })).toBeNull();
 	});
 
@@ -264,7 +264,7 @@ describe('S4 by who hosts DNS', () => {
 		await enter('harbor-lane.org');
 		expect(await screen.findByRole('heading', { name: 'harbor-lane.org uses GoDaddy for DNS' })).toBeInTheDocument();
 		expect(await screen.findByRole('group', { name: 'DNS record to add' })).toBeInTheDocument();
-		expect(screen.getByText(/DNS is hosted at GoDaddy\. Add this record there/)).toBeInTheDocument();
+		expect(screen.getByText('Add this record at GoDaddy to show you control the domain')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Connect Cloudflare/ })).toBeNull();
 		expect(screen.getAllByRole('button', { name: 'Verify' })).toHaveLength(1);
 	});

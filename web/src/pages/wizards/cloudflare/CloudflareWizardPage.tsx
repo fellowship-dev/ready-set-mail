@@ -135,7 +135,7 @@ export function CloudflareWizardPage() {
 	}
 
 	return (
-		<div className="space-y-6">
+		<div className={hosted ? 'mx-auto max-w-3xl space-y-6' : 'space-y-6'}>
 			<header className="space-y-3">
 				<h1 className="text-2xl font-bold tracking-tight">Set up with Cloudflare</h1>
 				{/* Hosted is one screen of the first run (S4, here, C2): it has no counter of its own, so no two counters can disagree. */}

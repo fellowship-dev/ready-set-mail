@@ -271,7 +271,7 @@ describe('threat 3: mail flooding and denial', () => {
     // Within the allowance one answer; past it, one plainly worded refusal (the allowance is spent alike for every address).
     expect(answers.map(a => a[0])).toEqual([200, 200, 429, 429, 429]);
     expect(new Set(answers.slice(0, 2).map(a => a[1])).size).toBe(1);
-    expect(JSON.parse(answers[2]![1]).error).toMatch(/^Several codes were sent to this address recently\. Use the newest one, or try again in \d+ minutes?\.$/);
+    expect(JSON.parse(answers[2]![1]).error).toMatch(/^We sent several codes to this address recently, so we can't send another yet\. Try again in \d+ minutes?\.$/);
     expect(mailsTo(w.env, 'v@example.com')).toHaveLength(CODE_MAIL_CAPS.signup.hour);
   });
 

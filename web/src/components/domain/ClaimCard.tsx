@@ -132,9 +132,9 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 						<p className="text-sm text-ink-1">{covering ? `Cloudflare is connected for ${claim.domain}. Verify to prove you control it.` : `${claim.domain} uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you`}</p>
 					) : onCloudflare ? (
 						// Cloudflare, but no connection can be stored here (or the person chose to add it themselves): the record first.
-						<p className="text-sm text-ink-1">{`${claim.domain} uses Cloudflare for DNS. Add this record there to show you control the domain`}</p>
+						<p className="text-sm text-ink-1">{recordsOnly ? 'Add this record in Cloudflare to show you control the domain' : `${claim.domain} uses Cloudflare for DNS. Add this record there to show you control the domain`}</p>
 					) : provider ? (
-						<p className="text-sm text-ink-1">{`${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
+						<p className="text-sm text-ink-1">{recordsOnly ? `Add this record at ${provider.name} to show you control the domain` : `${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
 					) : (
 						<>
 							<p className="text-sm text-ink-1">Prove you control {claim.domain} by adding this DNS record</p>

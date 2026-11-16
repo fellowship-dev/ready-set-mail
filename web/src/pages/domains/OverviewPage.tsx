@@ -4,7 +4,7 @@ import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
-import type { ImportedNote } from '../../lib/cloudflare';
+import { useCfConnections, type ImportedNote } from '../../lib/cloudflare';
 import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
 import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
@@ -16,7 +16,7 @@ import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../comp
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, invalidateDomain, useDomainSummaries } from '../../lib/domain-queries';
-import { DAY_ONE_SECONDS, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
+import { DAY_ONE_SECONDS, blockerOf, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
 import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useDnsPoll } from '../../lib/poll';
 import { firstCheck } from '../../lib/dns-plan';
@@ -208,6 +208,9 @@ export function OverviewPage() {
 	);
 	const focusName = focus?.domain ?? claims.find((c) => c.status === 'pending')?.domain;
 	const handoff = focusName ? (handoffs.data ?? []).filter((h) => h.domain === focusName).sort((a, b) => b.sent_at - a.sent_at)[0] : undefined;
+	// A real failure (a stopped connection, a lapsed proof) is one line inside the first-day card, so it is on the first screen; its full block stays below.
+	const cfConns = useCfConnections(canWrite);
+	const blocker = canWrite && dayState && !(dayState.kind === 'proof' && dayState.lost) ? blockerOf((cfConns.data?.connections ?? []).filter((c) => !c.implicit && c.status !== 'active'), domains) : null;
 	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
 	// While the first-day card (or the hand-off card) speaks and nothing blocks, the card is the first thing said: no "Not yet." above it.
 	const cardSpeaks = !!(handoff && !recordsLive) || (!!dayState && dayState.kind !== 'arrived' && dayState.kind !== 'empty' && dayState.kind !== 'proof');
@@ -215,7 +218,7 @@ export function OverviewPage() {
 	const focusFirstDay = !!focus && Math.floor(Date.now() / 1000) - focus.created_at < DAY_ONE_SECONDS;
 	const headline = cardSpeaks && waiting === 0 && (focusFirstDay || !needsAttention) && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
 	const handoffOpen = !!handoff && !recordsLive;
-	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
+	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard blocker={blocker} state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
 		<div className="space-y-6">
@@ -262,7 +265,7 @@ export function OverviewPage() {
 
 					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
 					<ProofLostList domains={domains} canWrite={canWrite} />
-					{canWrite ? <CloudflareAttention /> : null}
+					{canWrite ? <CloudflareAttention hideBroken={!!blocker && blocker.kind === 'connection' && !handoffOpen} /> : null}
 					{/* While a teammate finishes a domain, the hand-off card says where it stands and is the one thing about it: no proof block or Connect button for the same domain beside it. */}
 					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain) && !(handoffOpen && c.domain === handoff?.domain))} canWrite={canWrite} />
 

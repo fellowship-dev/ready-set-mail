@@ -240,7 +240,9 @@ their own account, within the sign-up allowance.
   and 30 a day, reset 3 an hour and 10 a day, and a separate reset allowance of 3 an hour and 10 a day for a request carrying the
   account's device cookie. The allowance is spent the same way for every address, account or not, so over it the answer can say
   so without revealing anything: "Several codes were sent to this address recently. Use the newest one, or try again in N
-  minutes." (`429 code_mail_limit`); nothing is stored or sent, so only mailed codes can be guessed at. Hosted reset always needs
+  minutes." (`429 code_mail_limit`). A new sign-up attempt (S1, for example "Start over" and the same address again) says "We sent several codes to this address
+  recently, so we can't send another yet. Try again in N minutes.": the earlier attempt's codes are gone, and a mailed code is never reused for a new
+  attempt (it confirms the password of the attempt it was sent for). Nothing is stored or sent, so only mailed codes can be guessed at. Hosted reset always needs
   the bot check; without the keys it answers "Password reset isn't available right now. Try again later." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
   (D1), plus `AUTH_LIMITER`.
 * **Guessing.** Each guess is a 1-in-1,000,000 chance, and a 1% chance needs about 10,050 guesses. Against one address a day:
