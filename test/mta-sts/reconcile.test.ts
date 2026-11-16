@@ -75,6 +75,19 @@ describe('the custom hostname', () => {
   });
 });
 
+describe('a CAA record on the customer\'s domain', () => {
+  it('when Cloudflare reports it as the reason the certificate is not issued, the row says so in one sentence, and stops saying it once it is gone', async () => {
+    const w = await mtaWorld();
+    await w.mta(w.A.token, 'POST', 1);
+    w.cf.customHostnames[OP_ZONE][0].ssl = { status: 'pending_validation', validation_errors: [{ message: 'caa_error: CAA records do not allow the certificate authority' }] } as any;
+    await verify(w);
+    expect(w.row(1).last_error).toBe('A CAA record on your domain does not allow the certificate authorities Cloudflare uses (pki.goog, letsencrypt.org, ssl.com, sectigo.com): add them or remove that record.');
+    w.cf.customHostnames[OP_ZONE][0].ssl = { status: 'pending_validation', validation_errors: [] } as any;
+    await verify(w);
+    expect(w.row(1).last_error).toBeNull();
+  });
+});
+
 describe('the declared route', () => {
   it('present: nothing is written, and the id of the declared route is kept', async () => {
     const w = await mtaWorld();

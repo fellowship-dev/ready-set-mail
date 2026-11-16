@@ -15,7 +15,7 @@
 
 import type { MtaStsPatch, MtaStsRow } from '@ready-set-mail/db';
 import { getMode } from '../tenancy/mode';
-import { mtaStsHostedConfigured } from './config';
+import { CAA_BLOCKS_SENTENCE, mtaStsHostedConfigured } from './config';
 import { OperatorZone, policyHostname, POLICY_ROUTE_PATTERN, type CustomHostname, type WorkerRoute } from './policy-host';
 import { policyText } from './serve';
 import type { Ctx } from './service';
@@ -100,6 +100,10 @@ export async function reconcileMtaSts(c: Ctx, row: MtaStsRow, shared: ReconcileS
         if (row.ch_id !== ch.id) patch.ch_id = ch.id;
         if (row.ch_status !== ch.status) patch.ch_status = ch.status;
         if (row.ch_ssl_status !== ch.sslStatus) patch.ch_ssl_status = ch.sslStatus;
+        // A CAA record on the customer's domain can stop the certificate (Cloudflare says so in the hostname's validation errors): say it, once, until it is gone.
+        const caa = ch.sslStatus !== 'active' && /\bcaa\b/i.test(ch.sslErrors);
+        if (caa && row.last_error !== CAA_BLOCKS_SENTENCE) patch.last_error = CAA_BLOCKS_SENTENCE;
+        if (!caa && row.last_error === CAA_BLOCKS_SENTENCE) patch.last_error = null;
       }
       const declared = await (shared.route ??= zone.ensureDeclaredRoute());
       if (declared.created && !actions.includes('route_created')) {

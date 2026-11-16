@@ -34,6 +34,8 @@ export const DEFAULT_MAX_POLICY_HOSTS = 100;
 export const ENFORCE_AFTER_SECONDS = 7 * 86400;
 /** A setup that is not finished this long after it was turned on is stopped: Cloudflare deletes a custom hostname that was not validated within 7 days anyway. */
 export const SETUP_EXPIRES_AFTER_SECONDS = 7 * 86400;
+/** Said on the page when Cloudflare reports that a CAA record on the customer's domain blocks the certificate (https://developers.cloudflare.com/ssl/edge-certificates/caa-records/). One sentence. */
+export const CAA_BLOCKS_SENTENCE = 'A CAA record on your domain does not allow the certificate authorities Cloudflare uses (pki.goog, letsencrypt.org, ssl.com, sectigo.com): add them or remove that record.';
 export const SETUP_EXPIRED_NOTICE = 'Setup was not finished within 7 days, so it was stopped. Turn it on again to restart.';
 /** How far back TLS failures weigh on the enforce decision. */
 export const EVIDENCE_WINDOW_SECONDS = 14 * 86400;

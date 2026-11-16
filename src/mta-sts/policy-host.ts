@@ -98,13 +98,13 @@ export function operatorPolicy(zone: { name: string; id?: () => string | undefin
 
 // ── The operator's zone ──────────────────────────────────────
 
-export interface CustomHostname { id: string; hostname: string; status: string; sslStatus: string | null }
+export interface CustomHostname { id: string; hostname: string; status: string; sslStatus: string | null; /** Cloudflare's own reasons the certificate is not issued (ssl.validation_errors), joined; empty when there are none. */ sslErrors: string }
 export interface WorkerRoute { id: string; pattern: string; script: string | null }
 
-interface RawHostname { id: string; hostname: string; status?: string; ssl?: { status?: string } }
+interface RawHostname { id: string; hostname: string; status?: string; ssl?: { status?: string; validation_errors?: Array<{ message?: string }> } }
 interface RawRoute { id: string; pattern: string; script?: string | null }
 
-const toHostname = (r: RawHostname): CustomHostname => ({ id: r.id, hostname: norm(r.hostname), status: r.status ?? 'unknown', sslStatus: r.ssl?.status ?? null });
+const toHostname = (r: RawHostname): CustomHostname => ({ id: r.id, hostname: norm(r.hostname), status: r.status ?? 'unknown', sslStatus: r.ssl?.status ?? null, sslErrors: (r.ssl?.validation_errors ?? []).map((e) => e.message ?? '').join(' ') });
 const toRoute = (r: RawRoute): WorkerRoute => ({ id: r.id, pattern: r.pattern.toLowerCase(), script: r.script ?? null });
 
 export class PolicyHostError extends Error {
