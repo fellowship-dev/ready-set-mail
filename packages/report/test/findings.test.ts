@@ -228,6 +228,7 @@ describe('buildReport with report evidence', () => {
   it('regrades and softens spf-missing', () => {
     const m = buildReport({ runs: [rec], from, generatedAt: CHECKED });
     expect(m.grade.level).not.toBe(0);
+    expect(m.facts.grade).toEqual(m.grade); // the facts the agent reads carry the same grade, never the ungraded one
     expect(m.grade.label).not.toBe('Unprotected');
     expect(m.grade.reasons.join(' ')).not.toContain('SPF is checked at the return-path (MAIL FROM) domain of each message');
     expect(spf(m)).toMatchObject({ severity: 'low', impact: 0.3 });

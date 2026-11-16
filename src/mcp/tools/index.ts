@@ -109,7 +109,11 @@ export async function inspectDomain(context: ToolContext, input: DomainInput) {
  const { subject, tenant } = await resourceContext(context, input, 'diagnostics:run');
  await spendDnsCheck(context.env, subject.principalId, tenant.workspaceId);
  const resolvers = context.reportOptions?.resolvers ?? (context.reportOptions?.resolver ? [context.reportOptions.resolver] : [createResolver(), createResolver({ endpoint: DOH_ENDPOINTS.google })]);
- const dns = buildReport({ runs: await Promise.all(resolvers.map(resolver => checkDomain(input.domain, { resolver }))), generatedAt: new Date((context.reportOptions?.now ?? Date.now()/1000)*1000).toISOString() });
+ const now = context.reportOptions?.now ?? Date.now() / 1000;
+ // A domain enrolled in this workspace is graded with what its own reports show (as the dashboard and get_email_report do); a name that is not enrolled has none.
+ const enrolled = await tenant.scope.domains.getByName(input.domain);
+ const from = enrolled ? await tenant.scope.reports.checkSummary(enrolled.id, Math.floor(now / 86400) * 86400 - 30 * 86400) : null;
+ const dns = buildReport({ runs: await Promise.all(resolvers.map(resolver => checkDomain(input.domain, { resolver }))), from: from ?? undefined, generatedAt: new Date(now * 1000).toISOString() });
  return result(`Public DNS inspection for ${input.domain}: ${dns.findings.length} findings. No changes applied.`, { dns });
 }
 export async function sourceStatus(context: ToolContext, input: DomainInput) {

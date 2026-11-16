@@ -180,7 +180,7 @@ export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt, 
   const completed = (check: DomainReport['errors'][number]['check']) =>
     built[runs.findIndex(r => !r.errors.some(e => e.check === check))]?.facts ?? baseFacts;
   const facts: Facts = {
-    ...baseFacts, ...shared,
+    ...baseFacts, ...shared, grade,
     spf: completed('spf').spf, dmarc: completed('dmarc').dmarc, mx: completed('mx').mx, dkim: completed('dkim').dkim,
     mtaSts: completed('mta-sts').mtaSts, bimi: completed('bimi').bimi,
   };
