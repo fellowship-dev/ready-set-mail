@@ -62,7 +62,7 @@ export function SenderInventory({ senders, showDomains, alignment }: { senders: 
 									<code className="font-mono text-xs text-ink-2">{s.source_ip}</code>
 									{s.provider ? null : s.reverse_dns || s.org ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
 									{s.provider && (s.reverse_dns || s.org) ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
-									{showDomains ? <span className="text-xs text-ink-2">as {s.domains.join(', ')}</span> : null}
+									{showDomains ? <span className="text-xs text-ink-2">as {s.from_domains.join(', ')}</span> : null}
 								</span>
 							</TableCell>
 							<TableCell className="text-right tabular-nums">

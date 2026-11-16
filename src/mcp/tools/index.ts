@@ -2,7 +2,7 @@ import { forWorkspace } from '@ready-set-mail/db';
 import { checkDomain, createResolver, DOH_ENDPOINTS } from '@ready-set-mail/dns-checks';
 import { dmarcSteps, policyInForce, publicSuffixParent } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { dmarcEvidenceFor, type ReportConnectFacts, type VisibilityFacts } from '@ready-set-mail/dns-checks/dmarc-evidence';
-import { reportConnectFor } from '../../hosted/report-address';
+import { reportConnectFor, reportsAddressVia } from '../../hosted/report-address';
 import { reportVisibility } from '../../reports/visibility';
 import type { TenantContext } from '../../tenancy/context';
 import { buildReport } from '@ready-set-mail/report';
@@ -58,13 +58,15 @@ export async function listResources(context: ToolContext, input: { workspaceId?:
  * same public-suffix note (publicSuffixParent, from the listed parent's stored facts) as the dashboard, the same evidence
  * builder (dmarcEvidenceFor), the same per-domain answer on connecting reports (reportConnectFor, as `report_connect`) and
  * the same report visibility where nothing was counted (reportVisibility), so a refused or uncounted domain reads the same.
- * `deps` replaces those two reads (tests); by default they are made on the real tenant.
+ * A name with no connection of its own whose reports arrive through its connected parent (`reportsAddressVia`, the state the dashboard's
+ * `via_parent` shows) has the reports address in its evidence, so it is not told to connect reports.
+ * `deps` replaces those reads (tests); by default they are made on the real tenant.
  */
 export async function dmarcNextStep(
  tenant: { scope: { reports: { checkSummary(id: number, since: number): Promise<any> }; domains: { getById(id: number): Promise<any> } } },
  domain: { id: number; domain: string; rua_address: string | null; parent_id?: number | null },
  now = Date.now() / 1000,
- deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
+ deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; reportsVia?: () => Promise<string | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
 ) {
  const since = Math.floor(now) - 30 * 86400;
  const s = await tenant.scope.reports.checkSummary(domain.id, since);
@@ -77,7 +79,8 @@ export async function dmarcNextStep(
  const reportConnect = deps.reportConnect ? await deps.reportConnect() : real ? await reportConnectFor(real, domain as any) : null;
  // Where nothing was counted, why (dropped, limited, not counted), as the dashboard's summaries carry it.
  const visibility = s.total_messages === 0 ? (deps.visibility ? await deps.visibility(since) : real ? await reportVisibility(real, domain.id, since) : null) : null;
- const evidence = dmarcEvidenceFor({ ruaAddress: domain.rua_address, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect, failedNotYours: s.failed_not_yours, failedUnrecorded: s.failed_unrecorded });
+ const ruaAddress = domain.rua_address?.trim() ? domain.rua_address : deps.reportsVia ? await deps.reportsVia() : real ? await reportsAddressVia(real, domain as any) : null;
+ const evidence = dmarcEvidenceFor({ ruaAddress, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect, failedNotYours: s.failed_not_yours, failedUnrecorded: s.failed_unrecorded });
  const steps = dmarcSteps(domain.domain, policy_in_force, evidence);
  return { policy_in_force, next_step: steps[0] ?? null, steps };
 }

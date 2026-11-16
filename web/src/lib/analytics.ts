@@ -17,6 +17,8 @@ export interface Sender {
 	country_code: string | null;
 	provider: { id: string; name: string; evidence: string } | null;
 	domains: string[];
+	/** The From domains its mail was sent as (a subdomain of the monitored domain, or the domain itself). */
+	from_domains: string[];
 	messages: number;
 	share_pct: number;
 	spf_aligned_pct: number;

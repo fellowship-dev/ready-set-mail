@@ -18,7 +18,7 @@ async function renderReady(ui: Parameters<typeof renderApp>[0]) {
 
 const sender = (o: Partial<Sender> = {}): Sender => ({
 	source_ip: '198.2.180.1', reverse_dns: 'mail1.mcsv.net', base_domain: 'mcsv.net', org: 'The Rocket Science Group', country_code: 'US',
-	provider: { id: 'mailchimp', name: 'Mailchimp', evidence: 'authenticated as mcsv.net' }, domains: ['acme.com'], messages: 240, share_pct: 12, spf_aligned_pct: 0, dkim_aligned_pct: 0, dmarc_pass_pct: 0,
+	provider: { id: 'mailchimp', name: 'Mailchimp', evidence: 'authenticated as mcsv.net' }, domains: ['acme.com'], from_domains: ['acme.com'], messages: 240, share_pct: 12, spf_aligned_pct: 0, dkim_aligned_pct: 0, dmarc_pass_pct: 0,
 	spf_domain: 'mcsv.net', dkim_domain: 'mcsv.net', first_seen: 1_760_000_000, last_seen: 1_760_900_000, is_new: false, ...o,
 });
 
@@ -108,6 +108,12 @@ describe('SenderInventory', () => {
 		await renderReady(<SenderInventory senders={[sender()]} alignment={{ ...alignment, spf: 'strict', basis: 'dns' }} />);
 		expect(screen.getByText(/Checked with strict SPF and relaxed DKIM alignment, from your published DMARC record/)).toBeInTheDocument();
 	});
+	it('names the domains the mail was sent as, never the monitored domain', async () => {
+		await renderReady(<SenderInventory showDomains senders={[sender({ domains: ['readysetmail.com'], from_domains: ['app.readysetmail.com', 'rua.readysetmail.com'] })]} />);
+		expect(screen.getByText('as app.readysetmail.com, rua.readysetmail.com')).toBeInTheDocument();
+		expect(screen.queryByText(/as readysetmail\.com/)).not.toBeInTheDocument();
+	});
+
 	it('has an empty state', async () => {
 		await renderReady(<SenderInventory senders={[]} />);
 		expect(screen.getByText('No senders in this window')).toBeInTheDocument();
