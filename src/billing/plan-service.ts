@@ -470,6 +470,8 @@ export async function applySubscription(d: BillingDeps, subscriptionId: string, 
   const state = await loadPlanState(d.env, d.db, workspaceId);
   const owed = state.billable;
   const wasPending = row.status === 'incomplete';
+  // Paid at last: the plan starts and the pending domains become ordinary BEFORE the stored status says active, so nothing reads "active" while a domain is still pending.
+  if (wasPending && (f.status === 'active' || f.status === 'trialing') && planEnforced(d.env)) await activatePending(d, workspaceId, row.interval);
   await q.subscription.patch({
     status: f.status, quantity_seen: f.quantity, current_period_end: f.periodEnd, cancel_at_period_end: f.cancelAtPeriodEnd ? 1 : 0, canceled_at: f.canceledAt, synced_at: d.now(),
     ...(f.quantity !== null && f.quantity !== owed ? { dirty: 1 } : {}),
@@ -477,7 +479,7 @@ export async function applySubscription(d: BillingDeps, subscriptionId: string, 
   });
   if (wasPending) {
     // A new subscription whose first payment waited for the bank: paid → the plan starts and its domains stop being pending; never paid → they go again.
-    if ((f.status === 'active' || f.status === 'trialing') && planEnforced(d.env)) return (await activatePending(d, workspaceId, row.interval)) ? 'applied' : 'recorded';
+    if ((f.status === 'active' || f.status === 'trialing') && planEnforced(d.env)) return 'applied';
     if ((f.status === 'incomplete_expired' || f.status === 'canceled' || f.status === 'unpaid') && planEnforced(d.env)) { await abandonPending(d, workspaceId); return 'abandoned'; }
     return planEnforced(d.env) ? 'applied' : 'recorded';
   }

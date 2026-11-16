@@ -39,7 +39,7 @@ function AlsoInCloudflare({ owner, onPaid }: { owner: boolean; onPaid?: (names: 
 	const choose = useMutation({
 		mutationFn: async () => {
 			const prev = await api<PaidPreview>(`/api/billing/domains/preview?${picked.map((d) => `domain=${encodeURIComponent(d)}`).join('&')}`);
-			if (prev.needs_confirm) return 'paid' as const;
+			if (prev.reason !== 'free') return 'paid' as const; // a confirm, or the sentence that says why not (payment problem, waiting for the bank)
 			for (const s of list.filter((x) => picked.includes(x.name))) await importAll(s.connection_id, [s.zone_id]);
 			return 'free' as const;
 		},

@@ -26,8 +26,12 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 		? (create.error.body as { paid_available: boolean; help_url: string | null; unit_price: Money | null })
 		: null;
 	const card = useMutation({
-		mutationFn: () => api<{ url: string }>('/api/billing/workspace-intents', { method: 'POST', body: { name: name.trim() } }),
-		onSuccess: ({ url }) => window.location.assign(url),
+		mutationFn: () => api<{ url: string; workspace_id: string }>('/api/billing/workspace-intents', { method: 'POST', body: { name: name.trim() } }),
+		onSuccess: ({ url, workspace_id }) => {
+			// Like any workspace you just made, it starts at its own empty state, not at the first-run wizard (this tab keeps the mark across Stripe's page).
+			sessionStorage.setItem(setupSeenKey(workspace_id), '1');
+			window.location.assign(url);
+		},
 	});
 
 	function submit(e: FormEvent) {

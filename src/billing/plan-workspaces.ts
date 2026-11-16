@@ -45,7 +45,7 @@ export const MAX_OPEN_INTENTS = 3;
 const INTENT_TTL_SECONDS = 24 * 3600;
 
 /** Start "Add a card to create a workspace": the intent, the customer for the future workspace, and Stripe's hosted setup page. */
-export async function startWorkspaceIntent(d: BillingDeps, current: Ws, actor: Actor, name: string, origin: string): Promise<{ url: string }> {
+export async function startWorkspaceIntent(d: BillingDeps, current: Ws, actor: Actor, name: string, origin: string): Promise<{ url: string; workspace_id: string }> {
   if ((await createDecision(d.env, d.db, { id: actor.userId, email: actor.email })) !== 'needs_card' || !paidPathAvailable(d.env)) {
     throw new BillingError(409, 'not_needed', 'You can create this workspace without adding a card.');
   }
@@ -74,7 +74,7 @@ export async function startWorkspaceIntent(d: BillingDeps, current: Ws, actor: A
     } catch (e) { await q.sessions.drop(ref); throw e; }
     if (typeof session.url !== 'string' || !session.url) throw new Error('billing: Checkout session has no url');
     await q.sessions.attach(ref, session.id);
-    return { url: session.url };
+    return { url: session.url, workspace_id: id };
   } catch (e) {
     await lookups.intents.purge(0).catch(() => undefined); // nothing: only expired ones go; the open intent expires by itself
     throw e instanceof BillingError ? e : stripeFailure(e);
