@@ -728,6 +728,10 @@ CREATE TABLE `spf_flatten_config` (
 	`last_error_at` integer,
 	`lookups_after` integer,
 	`inline_mode` text DEFAULT 'fewest' NOT NULL,
+	`provider_state` text,
+	`pending_removed` text,
+	`pending_since` integer,
+	`pending_additions` integer,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint

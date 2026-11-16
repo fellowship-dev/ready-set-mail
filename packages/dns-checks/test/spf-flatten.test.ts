@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { flattenFromSource, type SpfFlatOptions, normalizeSpfRecord, sameSpfRecord, SPF_FLAT_MAX_BYTES } from '../src/spf-flatten';
+import { entryCovered, flattenFromSource, type SpfFlatOptions, normalizeSpfRecord, sameSpfRecord, SPF_FLAT_MAX_BYTES } from '../src/spf-flatten';
 import { fakeResolver, type Zone } from './helpers';
 import { SpfEval, type World } from './spf-eval';
 
@@ -301,5 +301,73 @@ describe('audit: what a term means once it moves into the customer\'s record', (
     const f = await okFlat('v=spf1 ip4:1.1.1.1 include:v.test -all', { 'TXT v.test': txt('v=spf1 ip4:2.2.2.2 mx a -all') });
     expect(f.record).toBe('v=spf1 ip4:1.1.1.1 ip4:2.2.2.2 mx:v.test a:v.test -all');
     expect(f.lookupsAfter).toBe(2); // the same two lookups the include cost, minus the include itself
+  });
+});
+
+describe('what a refresh would take away (previous, removed, held)', () => {
+  const zone = (a: string, b = 'v=spf1 ip4:2.2.2.2 -all'): Zone => ({ 'TXT a.test': txt(a), 'TXT b.test': txt(b) });
+  const src = 'v=spf1 include:a.test include:b.test -all';
+  const first = async (z: Zone) => okFlat(src, z);
+
+  it('reports what each inlined include contributes', async () => {
+    const f = await first(zone('v=spf1 ip4:1.1.1.1 ip6:2001:db8::/32 a -all'));
+    expect(f.providers).toEqual({ 'a.test': ['ip4:1.1.1.1', 'ip6:2001:db8::/32', 'a:a.test'], 'b.test': ['ip4:2.2.2.2'] });
+    expect(f.removed).toEqual({});
+    expect(f.held).toBeNull();
+  });
+  it('an address the provider stopped listing is removed; the held record keeps it and the new ones', async () => {
+    const before = await first(zone('v=spf1 ip4:1.1.1.1 ip4:1.1.1.2 -all'));
+    const f = await okFlat(src, zone('v=spf1 ip4:1.1.1.2 ip4:9.9.9.9 -all'), { previous: before.providers });
+    expect(f.removed).toEqual({ 'a.test': ['ip4:1.1.1.1'] });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.2 ip4:9.9.9.9 ip4:2.2.2.2 -all');
+    expect(f.held).toMatchObject({ record: 'v=spf1 ip4:1.1.1.2 ip4:9.9.9.9 ip4:1.1.1.1 ip4:2.2.2.2 -all', fits: true });
+    expect(f.held!.providers['a.test']).toEqual(['ip4:1.1.1.2', 'ip4:9.9.9.9', 'ip4:1.1.1.1']);
+  });
+  it('a provider that lists nothing now loses every address: all of them are removed', async () => {
+    const before = await first(zone('v=spf1 ip4:1.1.1.1 ip4:1.1.1.2 -all'));
+    const f = await okFlat(src, zone('v=spf1 -all'), { previous: before.providers });
+    expect(f.removed).toEqual({ 'a.test': ['ip4:1.1.1.1', 'ip4:1.1.1.2'] });
+    expect(f.record).toBe('v=spf1 ip4:2.2.2.2 -all');
+    expect(f.held!.record).toBe('v=spf1 ip4:1.1.1.1 ip4:1.1.1.2 ip4:2.2.2.2 -all');
+  });
+  it('an address a new range covers is not removed (equal or wider range, same kind)', async () => {
+    const before = await first(zone('v=spf1 ip4:10.0.1.0/24 ip4:10.0.1.5 ip6:2001:db8:1::/48 -all'));
+    const f = await okFlat(src, zone('v=spf1 ip4:10.0.0.0/23 ip6:2001:db8::/32 -all'), { previous: before.providers });
+    expect(f.removed).toEqual({});
+    const g = await okFlat(src, zone('v=spf1 ip4:10.0.1.0/25 ip6:2001:db8:1::/48 -all'), { previous: before.providers });
+    expect(g.removed).toEqual({ 'a.test': ['ip4:10.0.1.0/24'] }); // half of a /24 does not cover it; 10.0.1.5 is inside the /25
+  });
+  it('an include that is kept as an include is authorised live: nothing of it is removed', async () => {
+    const before = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'));
+    const f = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'), { previous: { ...before.providers, 'c.test': ['ip4:3.3.3.3'] } });
+    expect(f.removed).toEqual({}); // c.test is not in the source: nothing to take away from it
+    const kept = await okFlat('v=spf1 include:a.test -include:b.test -all', zone('v=spf1 ip4:7.7.7.7 -all'), { previous: { 'b.test': ['ip4:2.2.2.2'], 'a.test': ['ip4:1.1.1.1'] } });
+    expect(kept.keptIncludes).toEqual(['b.test']);
+    expect(kept.removed).toEqual({ 'a.test': ['ip4:1.1.1.1'] }); // a.test is inlined and changed; b.test is kept
+  });
+  it('held says when the combined record does not fit', async () => {
+    const old = Array.from({ length: 12 }, (_, i) => `ip4:10.1.${i}.0/24`);
+    const before = await first(zone(`v=spf1 ${old.join(' ')} -all`));
+    const fresh = Array.from({ length: 20 }, (_, i) => `ip4:10.2.${i}.0/24`);
+    const f = await okFlat(src, zone(`v=spf1 ${fresh.join(' ')} -all`), { previous: before.providers });
+    expect(f.removed).toEqual({ 'a.test': old });
+    expect(f.bytes).toBeLessThanOrEqual(450);
+    expect(f.held!.fits).toBe(false);
+    expect(f.held!.bytes).toBeGreaterThan(450);
+  });
+});
+
+describe('entryCovered', () => {
+  it('reads IPv4 and IPv6 ranges, including :: and a dotted tail', () => {
+    expect(entryCovered(['ip4:10.0.0.0/8'], 'ip4:10.2.3.4')).toBe(true);
+    expect(entryCovered(['ip4:10.2.3.4'], 'ip4:10.2.3.0/24')).toBe(false);
+    expect(entryCovered(['ip4:10.2.3.0/24'], 'ip4:10.2.3.0/24')).toBe(true);
+    expect(entryCovered(['ip6:2001:db8::/32'], 'ip6:2001:db8:ffff::1')).toBe(true);
+    expect(entryCovered(['ip6:2001:db8::/32'], 'ip6:2001:db9::')).toBe(false);
+    expect(entryCovered(['ip6:::ffff:1.2.3.4'], 'ip6:0:0:0:0:0:ffff:102:304')).toBe(true);
+    expect(entryCovered(['ip6:::/0'], 'ip6:fe80::1')).toBe(true);
+    expect(entryCovered(['ip4:0.0.0.0/0'], 'ip6:fe80::1')).toBe(false); // another kind
+    expect(entryCovered(['a:v.test'], 'a:v.test')).toBe(true);
+    expect(entryCovered(['a:v.test'], 'mx:v.test')).toBe(false);
   });
 });

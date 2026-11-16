@@ -20,6 +20,10 @@ export interface SpfPatch {
 	problem_since?: number | null;
 	last_error?: string | null;
 	last_error_at?: number | null;
+	provider_state?: string | null;
+	pending_removed?: string | null;
+	pending_since?: number | null;
+	pending_additions?: number | null;
 }
 
 const changed = (res: unknown): boolean => ((res as { meta?: { changes?: number } }).meta?.changes ?? 0) > 0;
@@ -86,10 +90,10 @@ export function spfFlattenQueries(db: Db, workspaceId: string) {
 		},
 
 		/** Turning on, step two, after the record was written. */
-		async activate(domainId: number, flattened_record: string, ip_count: number, lookups_after: number, at: number): Promise<boolean> {
+		async activate(domainId: number, flattened_record: string, ip_count: number, lookups_after: number, at: number, provider_state: string | null = null): Promise<boolean> {
 			const res = await db
 				.update(spfFlattenConfig)
-				.set({ flattened_record, ip_count, lookups_after, last_flattened_at: at, last_refreshed_at: at, last_attempt_at: at, revision: 1, updated_at: touch })
+				.set({ flattened_record, ip_count, lookups_after, provider_state, last_flattened_at: at, last_refreshed_at: at, last_attempt_at: at, revision: 1, updated_at: touch })
 				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, 0), isNull(spfFlattenConfig.flattened_record)))
 				.run();
 			return changed(res);

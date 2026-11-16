@@ -51,7 +51,8 @@ describe('SPF flattening routes', () => {
 
     w.cf.doh['mail.test'] = ['v=spf1 ip4:192.0.2.50 ~all'];
     const check = await w.send('POST', '/api/domains/1/spf-flatten/refresh', {});
-    expect(await check.json()).toMatchObject({ ok: true, outcome: 'changed', config: { previous_record: 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 -all', flattened_record: 'v=spf1 ip4:192.0.2.50 ip4:203.0.113.9 -all' } });
+    // the new address is written at once; the old one waits for a second look (ADR 0024)
+    expect(await check.json()).toMatchObject({ ok: true, outcome: 'changed', config: { previous_record: 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 -all', flattened_record: 'v=spf1 ip4:192.0.2.50 ip4:198.51.100.0/28 ip4:203.0.113.9 -all', pending: { providers: ['mail.test'], additions_written: true } } });
     expect(w.db.sqlite.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'spf_flatten.update'").get().n).toBe(1);
 
     // an apply-spf by hand is refused while it is on, with the true reason
@@ -95,5 +96,32 @@ describe('SPF flattening routes', () => {
     expect(await res.json()).toMatchObject({ code: 'include_unresolved', error: expect.stringContaining('other.test') });
     expect(w.live()).toBe(ORIGINAL);
     expect(w.db.sqlite.prepare('SELECT COUNT(*) AS n FROM spf_flatten_config').get().n).toBe(0);
+  });
+
+  it('Check again now holds a removal until four hours have passed since it was first seen, and says when', async () => {
+    const w = setup();
+    await w.send('POST', '/api/domains/1/spf-flatten', { anyway: true });
+    w.cf.doh['mail.test'] = ['v=spf1 -all'];
+    const first = await (await w.send('POST', '/api/domains/1/spf-flatten/refresh', {})).json() as any;
+    const held = 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 -all';
+    expect(first).toMatchObject({ ok: true, outcome: 'pending', config: { flattened_record: held, pending: { providers: ['mail.test'] } } });
+    const at = first.config.pending.confirm_after as number;
+    expect(first.message).toBe(`mail.test no longer lists 1 address. We are keeping it in your record until a second check agrees, which can happen after ${new Date(at * 1000).toISOString().slice(11, 16)} UTC${new Date().toISOString().slice(0, 10) === new Date(at * 1000).toISOString().slice(0, 10) ? '' : ' on ' + new Date(at * 1000).getUTCDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(at * 1000).getUTCMonth()]}.`);
+    expect(w.live()).toBe(held);
+
+    // 3 hours later: still held, and it says so
+    const setSince = (secondsAgo: number) => w.db.sqlite.prepare('UPDATE spf_flatten_config SET pending_since = ?, last_attempt_at = NULL').run(Math.floor(Date.now() / 1000) - secondsAgo);
+    setSince(3 * 3600);
+    const again = await (await w.send('POST', '/api/domains/1/spf-flatten/refresh', {})).json() as any;
+    expect(again).toMatchObject({ outcome: 'pending', config: { flattened_record: held } });
+    expect(again.message).toMatch(/after \d\d:\d\d UTC/);
+    expect(w.live()).toBe(held);
+
+    // 5 hours after the first look: confirmed and written, and nothing is pending
+    setSince(5 * 3600);
+    const done = await (await w.send('POST', '/api/domains/1/spf-flatten/refresh', {})).json() as any;
+    expect(done).toMatchObject({ ok: true, outcome: 'changed', config: { flattened_record: 'v=spf1 ip4:203.0.113.9 -all', pending: null } });
+    expect(done.message).toBeUndefined();
+    expect(w.live()).toBe('v=spf1 ip4:203.0.113.9 -all');
   });
 });

@@ -1,4 +1,4 @@
--- SPF flattening that follows providers (docs/spf-flattening.md). Additive only: ten nullable or defaulted columns on spf_flatten_config.
+-- SPF flattening that follows providers (docs/spf-flattening.md). Additive only: fourteen nullable or defaulted columns on spf_flatten_config.
 -- Nothing changes for a row that exists: it keeps its values, and the daily refresh fills the new ones.
 --
 -- revision           version for compare-and-set: +1 on every state change (turn on, refresh that wrote, turn off)
@@ -11,6 +11,10 @@
 -- last_error_at      when last_error (the one plain sentence about it) was written
 -- lookups_after      lookups the flattened record needs (lookup_count stays what the original needed)
 -- inline_mode        fewest (default) or most: how many includes the refresh inlines; kept so every run makes the same kind of choice
+-- provider_state    JSON: what the published record authorises for each inlined include (ip4:/ip6: entries and kept lookup terms, by include). A refresh compares the new resolution with it
+-- pending_removed   JSON, same shape: addresses the last check saw leave a provider and did NOT take out of the record (ADR 0024: a refresh never removes an address on first sighting); null: nothing is waiting
+-- pending_since     when that removal was first seen; it is confirmed by a later check at least four hours after (SPF_PENDING_CONFIRM_SECONDS)
+-- pending_additions 1: the record was written with the additions and the held addresses; 0: it did not fit both limits, so nothing was written
 -- last_flattened_at  keeps its column and now means "when the published record last changed" (it used to be bumped by every daily run).
 ALTER TABLE spf_flatten_config ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE spf_flatten_config ADD COLUMN lease_until INTEGER;
@@ -22,3 +26,7 @@ ALTER TABLE spf_flatten_config ADD COLUMN problem_since INTEGER;
 ALTER TABLE spf_flatten_config ADD COLUMN last_error_at INTEGER;
 ALTER TABLE spf_flatten_config ADD COLUMN lookups_after INTEGER;
 ALTER TABLE spf_flatten_config ADD COLUMN inline_mode TEXT NOT NULL DEFAULT 'fewest';
+ALTER TABLE spf_flatten_config ADD COLUMN provider_state TEXT;
+ALTER TABLE spf_flatten_config ADD COLUMN pending_removed TEXT;
+ALTER TABLE spf_flatten_config ADD COLUMN pending_since INTEGER;
+ALTER TABLE spf_flatten_config ADD COLUMN pending_additions INTEGER;

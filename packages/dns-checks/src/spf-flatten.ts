@@ -26,6 +26,9 @@ export const SPF_FLAT_MAX_FETCHES = 40;
 /** Top-level includes tried in subsets (2^12 at most). */
 export const SPF_FLAT_MAX_CANDIDATES = 12;
 
+/** The terms an inlined top-level include contributes (`ip4:`/`ip6:` entries and the lookup terms it keeps), by include target. */
+export type SpfProviderEntries = Record<string, string[]>;
+
 export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses';
 
 export interface SpfProblem {
@@ -53,6 +56,15 @@ export interface SpfFlat {
   /** The source's own `all` as written, or null: none (the record is neutral and stays so). */
   all: string | null;
   fetches: number;
+  /** What each inlined include contributes now. */
+  providers: SpfProviderEntries;
+  /**
+   * With `previous` given: what the published record authorises for an include that is inlined now and was before, and the new resolution no longer
+   * does (an old address no new entry covers). Empty: nothing would be taken away. An include kept as an include is authorised live, so it is never here.
+   */
+  removed: SpfProviderEntries;
+  /** When something is `removed`: the record that keeps those entries (everything new, nothing taken away), and whether it fits both limits. */
+  held: { record: string; bytes: number; ipCount: number; lookups: number; fits: boolean; providers: SpfProviderEntries } | null;
 }
 
 export type SpfFlatResult = { ok: true; flat: SpfFlat } | { ok: false; problems: SpfProblem[]; fetches: number };
@@ -64,6 +76,8 @@ export interface SpfFlatOptions {
   maxCandidates?: number;
   /** `fewest` (default): as few includes inlined as the limits allow. `most`: as many as fit (an owner who flattens a record that is already within the limits). */
   inline?: 'fewest' | 'most';
+  /** What the published record authorises per inlined include (`SpfFlat.providers` of the run that wrote it): turns on `removed` and `held`. */
+  previous?: SpfProviderEntries;
 }
 
 class Refuse extends Error {
@@ -276,7 +290,69 @@ class Flattener {
   }
 }
 
-function render(items: RootItem[], inlined: ReadonlySet<number>, all: string | null, exp: string | null) {
+/** An address as a number with its size in bits, or null when it is not one we can read. */
+function parseAddress(v: string): { n: bigint; bits: 32 | 128 } | null {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) {
+    const o = v.split('.').map(Number);
+    return o.some(x => x > 255) ? null : { n: o.reduce((a, x) => (a << 8n) | BigInt(x), 0n), bits: 32 };
+  }
+  if (!/^[0-9a-f:.]+$/i.test(v) || !v.includes(':')) return null;
+  let head = v;
+  let tail4: bigint[] = [];
+  const dot = v.lastIndexOf('.');
+  if (dot >= 0) { // ::ffff:1.2.3.4
+    const colon = v.lastIndexOf(':');
+    const four = parseAddress(v.slice(colon + 1));
+    if (!four) return null;
+    tail4 = [(four.n >> 16n) & 0xffffn, four.n & 0xffffn];
+    head = v.slice(0, colon + 1) + '0:0'; // placeholders, replaced below
+  }
+  const halves = head.split('::');
+  if (halves.length > 2) return null;
+  const groups = (x: string) => (x === '' ? [] : x.split(':'));
+  const a = groups(halves[0]!);
+  const b = halves.length === 2 ? groups(halves[1]!) : [];
+  if (halves.length === 1 ? a.length !== 8 : a.length + b.length > 7) return null;
+  const all = halves.length === 1 ? a : [...a, ...Array(8 - a.length - b.length).fill('0'), ...b];
+  if (tail4.length) { all[6] = tail4[0]!.toString(16); all[7] = tail4[1]!.toString(16); }
+  let n = 0n;
+  for (const g of all) { if (!/^[0-9a-f]{1,4}$/i.test(g)) return null; n = (n << 16n) | BigInt(parseInt(g, 16)); }
+  return { n, bits: 128 };
+}
+
+function parseEntry(e: string): { family: 4 | 6; n: bigint; bits: number; prefix: number } | null {
+  const m = e.match(/^ip([46]):([^/]+)(?:\/(\d+))?$/i);
+  if (!m) return null;
+  const a = parseAddress(m[2]!);
+  if (!a) return null;
+  return { family: m[1] === '4' ? 4 : 6, n: a.n, bits: a.bits, prefix: m[3] === undefined ? a.bits : Number(m[3]) };
+}
+
+/** Does one of `entries` authorise every address `old` does? An address or range is covered by an equal or wider range of its kind; any other term, by the same term. */
+export function entryCovered(entries: readonly string[], old: string): boolean {
+  const o = parseEntry(old);
+  if (!o) return entries.some(e => e.toLowerCase() === old.toLowerCase());
+  return entries.some(e => {
+    const c = parseEntry(e);
+    if (!c || c.family !== o.family || c.prefix > o.prefix) return false;
+    const shift = BigInt(c.bits - c.prefix);
+    return c.n >> shift === o.n >> shift;
+  });
+}
+
+/** Old entries of the includes inlined both before and now that nothing now covers. */
+function removedEntries(previous: SpfProviderEntries, now: SpfProviderEntries): SpfProviderEntries {
+  const out: SpfProviderEntries = {};
+  for (const [target, old] of Object.entries(previous)) {
+    const current = now[target];
+    if (!current) continue; // kept as an include now (authorised live) or no longer inlined: we remove nothing
+    const gone = old.filter(e => !entryCovered(current, e));
+    if (gone.length) out[target] = gone;
+  }
+  return out;
+}
+
+function render(items: RootItem[], inlined: ReadonlySet<number>, all: string | null, exp: string | null, hold: SpfProviderEntries = {}) {
   const out: string[] = ['v=spf1'];
   const seen = new Set<string>();
   let lookups = 0;
@@ -296,6 +372,7 @@ function render(items: RootItem[], inlined: ReadonlySet<number>, all: string | n
     if (inlined.has(i)) {
       for (const ip of it.node.ips) add(ip, true, 0);
       for (const k of it.node.kept) add(k, false, 1);
+      for (const e of hold[it.target] ?? []) add(e, /^ip[46]:/i.test(e), /^ip[46]:/i.test(e) ? 0 : 1);
     } else {
       if (!seen.has(it.text.toLowerCase())) lookups += 1 + it.node.fullCost;
       add(it.text, false, 0);
@@ -345,6 +422,18 @@ export async function flattenFromSource(domain: string, source: string, resolver
     const chosen = setOf(best.m);
     const incs = items.flatMap((it, i) => (it.t === 'inc' ? [{ i, target: it.target }] : []));
     const r = best.r;
+    const providers: SpfProviderEntries = {};
+    items.forEach((it, i) => {
+      if (it.t === 'inc' && chosen.has(i)) providers[it.target] = [...new Set([...(providers[it.target] ?? []), ...it.node.ips, ...it.node.kept])];
+    });
+    const removed = opts.previous ? removedEntries(opts.previous, providers) : {};
+    let held: SpfFlat['held'] = null;
+    if (Object.keys(removed).length) {
+      const h = render(items, chosen, st.all, st.exp, removed);
+      const withHeld: SpfProviderEntries = {};
+      for (const [t, es] of Object.entries(providers)) withHeld[t] = [...new Set([...es, ...(removed[t] ?? [])])];
+      held = { record: h.record, bytes: h.bytes, ipCount: h.ipCount, lookups: h.lookups, fits: h.lookups <= maxLookups && h.bytes <= maxBytes, providers: withHeld };
+    }
     if (r.mechanisms === 0 && items.some(it => it.t === 'inc')) {
       refuse('no_addresses', name, 'The includes in your record returned no addresses, so there is nothing to flatten to.');
     }
@@ -354,7 +443,7 @@ export async function flattenFromSource(domain: string, source: string, resolver
         record: r.record, bytes: r.bytes, ipCount: r.ipCount,
         inlined: incs.filter(x => chosen.has(x.i)).map(x => x.target),
         keptIncludes: incs.filter(x => !chosen.has(x.i)).map(x => x.target),
-        lookupsBefore: st.before, lookupsAfter: r.lookups, all: st.all, fetches: w.fetches,
+        lookupsBefore: st.before, lookupsAfter: r.lookups, all: st.all, fetches: w.fetches, providers, removed, held,
       },
     };
   } catch (e) {

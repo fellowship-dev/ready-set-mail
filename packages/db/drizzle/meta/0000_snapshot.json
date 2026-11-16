@@ -5079,6 +5079,34 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'fewest'"
+        },
+        "provider_state": {
+          "name": "provider_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_removed": {
+          "name": "pending_removed",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_since": {
+          "name": "pending_since",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pending_additions": {
+          "name": "pending_additions",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

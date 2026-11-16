@@ -139,7 +139,7 @@ import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
-import { disableSpf, enableSpf, previewSpf, refreshSpf, spfIsOn, spfView } from '../spf/refresh';
+import { disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, spfIsOn, spfView } from '../spf/refresh';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
@@ -1964,7 +1964,9 @@ async function _handleApi(
         const body = await parseBody<{ replace?: boolean }>(request).catch(() => ({} as { replace?: boolean }));
         const r = await refreshSpf(tenant, row, { manual: true, takeOver: body.replace === true, actor, ctx });
         if (r.outcome === 'skipped') return err('A check is already running for this domain. Try again in a minute.', 409);
-        return json({ ok: true, outcome: r.outcome, config: spfView((await tenant.scope.spf.get(id))!) });
+        const config = spfView((await tenant.scope.spf.get(id))!);
+        // A removal is waiting for its second look: say when it can be confirmed, truthfully, whether or not this check wrote something.
+        return json({ ok: true, outcome: r.outcome, config, ...(config.pending ? { message: pendingSentence(config.pending, Math.floor(Date.now() / 1000)) } : {}) });
       }
 
       // GET — the state, and whether the tool is available

@@ -309,6 +309,14 @@ export const spfFlattenConfig = sqliteTable(
 		lookups_after: integer('lookups_after'),
 		/** How many includes to inline: `fewest` (as few as the limits need) or `most` (an owner flattening a record that is within the limits). Kept so every refresh makes the same kind of choice. */
 		inline_mode: text('inline_mode').notNull().default('fewest'),
+		/** JSON: what the published record authorises for each inlined include, by include (entries: ip4:/ip6: terms and kept lookup terms). */
+		provider_state: text('provider_state'),
+		/** JSON, same shape: addresses a check saw leave a provider and did not take out of the record yet (ADR 0024). Null: nothing is waiting. */
+		pending_removed: text('pending_removed'),
+		/** When that removal was first seen; a later check at least SPF_PENDING_CONFIRM_SECONDS after it confirms it. */
+		pending_since: integer('pending_since'),
+		/** 1: the record was written with the additions and the held addresses; 0: the combination did not fit both limits, nothing was written. */
+		pending_additions: integer('pending_additions'),
 	},
 	(t) => [index('idx_spf_flatten_workspace').on(t.workspace_id)],
 );
