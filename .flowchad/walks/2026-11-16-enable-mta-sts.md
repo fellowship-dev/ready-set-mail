@@ -2,9 +2,9 @@
 
 - **Flow:** Hosted owner turns on MTA-STS and sees TLS reports arrive
 - **Value moment:** The first TLS report is on the page (reporter, period, successful and failed sessions) while MTA-STS is on in testing mode
-- **Walked:** 2026-11-16T16:59:52.609Z
+- **Walked:** 2026-11-16T17:32:23.351Z
 - **Target:** http://127.0.0.1:8851 (local-copy)
-- **Commit:** 2afc3d378b1be092d59735a7d241cbe2f11426cc
+- **Commit:** ab21438be5cb40f0daf8741f1efbc45e3d6797ed
 - **Kind:** screens
 - **Gate:** PASS
 - **Rules:** 0.5.0
@@ -15,7 +15,7 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 
 ### Known rough edges (3)
 
-- **FOLD-02** (should-fix) Secondary content sits beside or below — step 1 @375: before the action the main column shows a four-line explanation, the MX hosts and a three-line paragraph (the records follow below it)
+- **FOLD-02** (should-fix) Secondary content sits beside or below — step 1 @375: before the action the main column shows the six-line explanation, the MX hosts with their plain reading and a three-line testing-mode paragraph (the records follow below the action)
 - **FOLD-03** (should-fix) One dominant action — step 3: the Testing screen has no filled action: its only action, Check now, is quiet because the next step is time, not a press; step 4: the reports screen has no filled action; Switch to enforce is quiet and disabled until the reports allow it
 - **NOISE-01** (should-fix) Everything visible serves the step — step 4: not needed for reading the reports: the Check now button and the last-checked line
 
@@ -27,15 +27,15 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 | `decisions_to_value` | — | 0 |  |
 | `fields_to_value` | — | 0 |  |
 | `clicks_to_value` | — | 2 |  |
-| `words_to_value` | — | 1091 |  |
-| `reading_time_to_value_s` | — | 275 |  |
+| `words_to_value` | — | 1054 |  |
+| `reading_time_to_value_s` | — | 266 |  |
 | `max_scroll_before_primary_vh` | — | 375: 0 · 1440: 0 |  |
 | `non_task_elements_to_value` | — | 1 |  |
 | `waits` | — | 0 |  |
-| `longest_wait_ms` | — | 219 |  |
+| `longest_wait_ms` | — | 218 |  |
 | `dead_ends` | — | 0 |  |
 | `loops` | — | 0 |  |
-| `time_to_value_ms` | — | 10839 |  |
+| `time_to_value_ms` | — | 10743 |  |
 
 ### Not covered by a rule
 
@@ -49,7 +49,6 @@ Candidates for a new rule (see flow-walk/rules/README.md § Admission test):
 ### Notes
 
 - staleness not checked: no deploy time given and no deploy check configured for the target
-
 ### Record notes (how it was run)
 
 - `node /workspace/notes/walk/mta.mjs` starts `e2e/support/dev-instance.mjs` `startInstance` (wrangler dev, hosted, MODE=saas, over plain http on 127.0.0.1:8851) from the dashboard built from this branch's HEAD. Cloudflare's API is the in-memory fake `e2e/support/fake-cloudflare.mjs` (zones, DNS records, custom hostnames, worker routes, `/__activate` to issue the certificate) through `CLOUDFLARE_API_BASE_URL`, and DNS-over-HTTPS is the fake's resolver through `DOH_BASE_URL`; nothing reaches api.cloudflare.com or a live instance. Turnstile uses Cloudflare's always-pass test keys; the sign-up code is read from the Worker log.
