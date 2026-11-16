@@ -207,7 +207,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
     reports = recent.map(reportView);
     summary = {
       total_success: totals?.total_success ?? 0, total_failure: totals?.total_failure ?? 0, report_count: totals?.report_count ?? 0,
-      sts_success: recent.reduce((n, r) => n + (r.sts_success ?? 0), 0), sts_failure: recent.reduce((n, r) => n + (r.sts_failure ?? 0), 0),
+      sts_success: totals?.sts_success ?? 0, sts_failure: totals?.sts_failure ?? 0,
     };
     if (row.mode === 'testing') {
       const ready = enforceReadiness(row, evidence, mx.status === 'ok' ? mx.hosts : null, now);

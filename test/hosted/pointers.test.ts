@@ -62,7 +62,7 @@ describe('pointer verification', () => {
   });
 
   it('feeds the Level: a hosted record counts as published only once its pointer is ok', () => {
-    expect(levelInputs({ dmarc: 'ok', spf: 'wrong' })).toEqual({ dmarc_published: true, spf_published: false, mta_sts_published: false });
+    expect(levelInputs({ dmarc: 'ok', spf: 'wrong' })).toEqual({ dmarc_published: true, spf_published: false });
   });
 });
 
@@ -78,8 +78,8 @@ describe('stored status', () => {
     const tenant = makeTenant({ db: w.db, workspaceId: 'ws_a', env: HOSTED_ENV as any });
     const domain = (await tenant.scope.domains.getById(1))!;
     const view = await verifyDomainPointers(tenant, domain, { resolver: dnsFrom(inPlace()), now: () => NOW * 1000 });
-    expect(view.pointer_status).toEqual({ dmarc: 'ok', spf: 'ok', mta_sts: null, tls_rpt: 'ok', checked_at: NOW });
-    expect(view.level_inputs).toEqual({ dmarc_published: true, spf_published: true, mta_sts_published: false });
+    expect(view.pointer_status).toEqual({ dmarc: 'ok', spf: 'ok', tls_rpt: 'ok', checked_at: NOW });
+    expect(view.level_inputs).toEqual({ dmarc_published: true, spf_published: true });
     expect(w.rows('SELECT domain_id, dmarc_pointer, pointers_checked_at FROM hosted_domains ORDER BY 1')).toEqual([
       { domain_id: 1, dmarc_pointer: 'ok', pointers_checked_at: NOW },
       { domain_id: 2, dmarc_pointer: null, pointers_checked_at: null },

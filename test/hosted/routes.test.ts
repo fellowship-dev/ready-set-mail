@@ -48,21 +48,21 @@ describe('/api/domains/:id/hosted', () => {
     const { hosted, addresses } = await enable.json() as any;
     const names = hostedNames(hosted.hosted_id, APEX);
     expect(addresses.rua).toMatch(/^rua\+[a-z2-7]{32}@rua\.readysetmail\.com$/);
-    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt, mta_sts: null });
+    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt });
     expect(t.rows('SELECT workspace_id FROM hosted_domains')).toEqual([{ workspace_id: t.A.ws }]);
     expect(t.rows("SELECT resource_name FROM audit_log WHERE action = 'hosted.enable'")).toEqual([{ resource_name: 'a-corp.com' }]);
 
     // GET never shows the token again
     const status = await (await call(t.env, 'GET', '/api/domains/1/hosted', { key })).text();
     expect(status).not.toContain(addresses.rua.slice(4, 36));
-    expect(JSON.parse(status).pointer_status).toEqual({ dmarc: null, spf: null, mta_sts: null, tls_rpt: null, checked_at: null });
+    expect(JSON.parse(status).pointer_status).toEqual({ dmarc: null, spf: null, tls_rpt: null, checked_at: null });
 
     // the customer adds the CNAMEs; verify sees them
     t.cf.cname['_dmarc.a-corp.com'] = names.dmarc;
     t.cf.doh['a-corp.com'] = [`v=spf1 include:${names.spf} -all`];
     const verified = await (await call(t.env, 'POST', '/api/domains/1/hosted/verify', { key })).json() as any;
-    expect(verified.pointer_status).toMatchObject({ dmarc: 'ok', spf: 'ok', mta_sts: null, tls_rpt: 'missing' });
-    expect(verified.level_inputs).toEqual({ dmarc_published: true, spf_published: true, mta_sts_published: false });
+    expect(verified.pointer_status).toMatchObject({ dmarc: 'ok', spf: 'ok', tls_rpt: 'missing' });
+    expect(verified.level_inputs).toEqual({ dmarc_published: true, spf_published: true });
 
     const rotated = await call(t.env, 'POST', '/api/domains/1/hosted/rotate-token', { key });
     expect(rotated.status).toBe(200);

@@ -117,7 +117,7 @@ function Panel({ domainId }: { domainId: number }) {
 					if (!o) m.disable.reset();
 				}}
 				title="Disable hosted records?"
-				description="Ready Set Mail removes the hosted DMARC, SPF, TLS-RPT and MTA-STS records. Remove the pointer records from your DNS too, otherwise they point at nothing and mail authentication will break."
+				description="Ready Set Mail removes the hosted DMARC, SPF and TLS-RPT records. Remove the pointer records from your DNS too, otherwise they point at nothing and mail authentication will break."
 				confirmLabel={disableErr?.retryable ? 'Retry' : 'Disable hosted records'}
 				busyLabel="Disabling…"
 				variant="danger"
@@ -147,7 +147,7 @@ function ActiveStatus({
 	return (
 		<div className="space-y-4">
 			<p className="text-sm text-ink-2">
-				Add these records in your own DNS. They point at the records we host{status.mta_sts ? ', including MTA-STS' : ''}. Each result below comes from looking them up now.
+				Add these records in your own DNS. They point at the records we host. Each result below comes from looking them up now.
 			</p>
 			<PointerList status={status} />
 			<p className="text-sm text-ink-2">

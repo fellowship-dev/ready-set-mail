@@ -3,7 +3,7 @@ import { ApiError, api } from './api';
 import { domainKeys, invalidateDomain } from './domain-queries';
 
 /** Hosted records (docs/hosted.md, API section). All of it is dormant unless GET /api/hosted/config says enabled. */
-export type HostedPurpose = 'dmarc' | 'spf' | 'tls_rpt' | 'mta_sts';
+export type HostedPurpose = 'dmarc' | 'spf' | 'tls_rpt';
 export type PointerState = 'ok' | 'missing' | 'wrong' | 'error' | null;
 
 export interface HostedPointer {
@@ -16,11 +16,10 @@ export interface HostedPointer {
 export interface HostedStatus {
 	enabled: true;
 	hosted_id: string;
-	mta_sts: boolean;
 	records: Record<HostedPurpose, string | null | undefined>;
 	pointers: HostedPointer[];
 	pointer_status: Record<HostedPurpose, PointerState> & { checked_at: number | null };
-	level_inputs: { dmarc_published: boolean; spf_published: boolean; mta_sts_published: boolean };
+	level_inputs: { dmarc_published: boolean; spf_published: boolean };
 }
 
 export type HostedResponse = { enabled: false } | HostedStatus;
@@ -30,7 +29,6 @@ export interface HostedAddresses {
 }
 export interface EnableBody {
 	spf_record?: string;
-	mta_sts?: boolean;
 }
 
 export const hostedKey = (id: number) => [...domainKeys.all(id), 'hosted'] as const;
@@ -75,12 +73,6 @@ export function useHostedStatus(domainId: number) {
 		queryFn: () => api<HostedResponse>(`/api/domains/${domainId}/hosted`),
 		enabled: configEnabled,
 	});
-}
-
-/** The status when this domain is hosted (config on and status enabled), else null. */
-export function useHostedInfo(domainId: number): HostedStatus | null {
-	const q = useHostedStatus(domainId);
-	return q.data?.enabled ? q.data : null;
 }
 
 /**
@@ -130,8 +122,8 @@ export function useHostedMutations(domainId: number, onAddresses: (a: HostedAddr
 	return { enable, rotate, disable, verify };
 }
 
-export const PURPOSE_LABEL: Record<HostedPurpose, string> = { dmarc: 'DMARC', spf: 'SPF', tls_rpt: 'TLS-RPT', mta_sts: 'MTA-STS' };
-export const PURPOSE_ORDER: HostedPurpose[] = ['dmarc', 'spf', 'tls_rpt', 'mta_sts'];
+export const PURPOSE_LABEL: Record<HostedPurpose, string> = { dmarc: 'DMARC', spf: 'SPF', tls_rpt: 'TLS-RPT' };
+export const PURPOSE_ORDER: HostedPurpose[] = ['dmarc', 'spf', 'tls_rpt'];
 
 export const POINTER_STATE_LABEL: Record<'ok' | 'missing' | 'wrong' | 'error' | 'unchecked', string> = {
 	ok: 'Verified',

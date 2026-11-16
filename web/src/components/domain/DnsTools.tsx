@@ -1,11 +1,12 @@
 import type { KeptRecord } from '../../lib/removal-notice';
 import { Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Info, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
+import { cardState, type CardState } from '../../lib/mta-sts';
 import type { MtaStsStatus, SpfFlatStatus } from '../../lib/types';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -127,32 +128,37 @@ function spfCard(id: number, s: SpfFlatStatus) {
 	);
 }
 
-function mtaCard(id: number, s: MtaStsStatus) {
-	const active = !!s.config?.enabled;
-	const mode = s.config?.mode ?? 'testing';
+const CARD_BADGE: Record<CardState, { variant: BadgeProps['variant']; Icon: typeof CheckCircle2 }> = {
+	off: { variant: 'outline', Icon: CircleDashed },
+	setting_up: { variant: 'info', Icon: Clock },
+	testing: { variant: 'success', Icon: ShieldCheck },
+	enforced: { variant: 'success', Icon: ShieldCheck },
+	unavailable: { variant: 'outline', Icon: Info },
+};
+const CARD_LINK: Record<CardState, string> = { off: 'Set up', setting_up: 'Continue setup', testing: 'Open', enforced: 'Open', unavailable: 'See why' };
+
+/** MTA-STS: the real state in one word, and one link to the page where everything about it happens (turning it off included). */
+function MtaStsCard({ id, s }: { id: number; s: MtaStsStatus }) {
+	const { state, word, detail } = cardState(s);
+	const { variant, Icon } = CARD_BADGE[state];
 	return (
-		<ToolCard
-			domainId={id}
-			title="MTA-STS"
-			badge={
-				active ? (
-					<Badge variant={mode === 'enforce' ? 'success' : 'brand'}>
-						<ShieldCheck aria-hidden />
-						{mode}
+		<Card>
+			<CardContent className="space-y-3">
+				<div className="flex flex-wrap items-center gap-2">
+					<h3 className="font-semibold">MTA-STS</h3>
+					<Badge variant={variant}>
+						<Icon aria-hidden />
+						{word}
 					</Badge>
-				) : (
-					availableBadge
-				)
-			}
-			active={active}
-			activeText={`Requiring TLS for inbound mail (${mode} mode).`}
-			inactiveText="Require TLS and collect failure reports for inbound mail."
-			configureTo={`/domains/${id}/mta-sts`}
-			disablePath={`/api/domains/${id}/mta-sts`}
-			disableKey={domainKeys.mta(id)}
-			disableTitle="Disable MTA-STS?"
-			disableDescription="Senders stop being told to require TLS for your inbound mail, and the policy records are removed."
-		/>
+				</div>
+				<p className="text-sm text-ink-2">{detail}</p>
+				<div className="flex flex-wrap gap-2">
+					<Button asChild variant="secondary" size="sm">
+						<Link to={`/domains/${id}/mta-sts`}>{CARD_LINK[state]}</Link>
+					</Button>
+				</div>
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -162,18 +168,15 @@ function Slot<T>({ q, title, show, render }: { q: UseQueryResult<T>; title: stri
 	return show(q.data) ? <>{render(q.data)}</> : null;
 }
 
-/** SPF flattening and MTA-STS: only shown when a tool is available or configured for this instance. */
+/** SPF flattening (only where it can work) and MTA-STS (always, with its real state, so "not available" says why). */
 export function DnsTools({ domainId }: { domainId: number }) {
 	const spf = useSpfFlatten(domainId);
 	const mta = useMtaSts(domainId);
-	const spfHidden = spf.isSuccess && !spf.data.available && !spf.data.config;
-	const mtaHidden = mta.isSuccess && !mta.data.available && !mta.data.config;
-	if (spfHidden && mtaHidden) return null;
 	return (
 		<Section title="DNS tools" description="Optional tools that change your DNS for you.">
 			<div className="grid gap-3 md:grid-cols-2">
 				<Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />
-				<Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />
+				<Slot q={mta} title="MTA-STS" show={() => true} render={(d) => <MtaStsCard id={domainId} s={d} />} />
 			</div>
 		</Section>
 	);

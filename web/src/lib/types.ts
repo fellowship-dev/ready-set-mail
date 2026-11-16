@@ -158,30 +158,88 @@ export interface SpfFlatStatus {
   lookup_count: number | null;  // from domains.spf_lookup_count — populated on add + daily cron
 }
 
-export interface MtaStsConfig {
-  domain_id: number;
-  enabled: number;
-  mode: 'testing' | 'enforce';
-  mx_hosts: string;       // comma-separated
-  policy_id: string;
-  mta_sts_record_id: string | null;
-  tls_rpt_record_id: string | null;
-  cname_record_id: string | null;
-  last_error: string | null;
-  updated_at: number;
+/** GET /api/domains/:id/mta-sts (docs/mta-sts.md). */
+export type MtaStsUnavailable = 'hosted_records' | 'unproven' | 'not_configured' | 'not_allowed' | 'ceiling' | 'zone_subdomain' | 'needs_cloudflare' | 'reports_domain_missing';
+export type MtaStsState = 'creating' | 'waiting_records' | 'waiting_certificate' | 'waiting_txt' | 'active';
+export type MtaStsVia = 'cloudflare' | 'manual';
+
+export interface MtaStsRecord {
+  purpose: 'policy_host' | 'tls_rpt' | 'policy_id';
+  type: 'CNAME' | 'TXT';
+  name: string;
+  /** null: the value cannot be told (self-host: the Worker's host could not be read). */
+  value: string | null;
+  proxied?: boolean;
+  /** Ready Set Mail wrote it through the Cloudflare connection. */
+  written: boolean;
+  /** By hand: the person should add it now. */
+  add_now: boolean;
+  note?: string;
 }
 
-export interface TlsReportSummary {
-  total_success: number;
-  total_failure: number;
-  report_count: number;
+export interface MtaStsConfig {
+  enabled: number;
+  mode: 'testing' | 'enforce';
+  state: MtaStsState;
+  via: MtaStsVia;
+  policy_host: 'worker_route' | 'saas_hostname';
+  mx_hosts: string; // comma-separated
+  mx_host_list: string[];
+  policy_id: string;
+  max_age: number;
+  policy_published_at: number | null;
+  mode_changed_at: number | null;
+  left_enforce_at: number | null;
+  last_checked_at: number | null;
+  last_error: string | null;
+  notice: string | null;
+  notice_at: number | null;
+  created_at: number;
+  updated_at: number;
+  domain_id: number;
+}
+
+export interface MtaStsReport {
+  id: number;
+  reporter: string;
+  period_start: number;
+  period_end: number;
+  received_at: number;
+  successful_sessions: number;
+  failed_sessions: number;
+  /** null on reports stored before the MTA-STS sessions were kept apart. */
+  sts_successful_sessions: number | null;
+  sts_failed_sessions: number | null;
+  failure_types: string[];
 }
 
 export interface MtaStsStatus {
   available: boolean;
+  unavailable_reason: MtaStsUnavailable | 'none';
+  unavailable_message: string | null;
+  via: MtaStsVia | null;
+  policy_host: 'worker_route' | 'saas_hostname' | null;
+  mx_preview: { status: 'ok' | 'none' | 'error'; hosts: string[]; error: string | null };
+  records: MtaStsRecord[];
+  records_problem: string | null;
   config: MtaStsConfig | null;
-  summary: TlsReportSummary | null;
+  policy_host_status: { kind: 'worker_route' | 'saas_hostname'; hostname: string; route: boolean; certificate: { status: string | null; ssl_status: string | null; active: boolean } | null } | null;
+  summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null;
+  reports: MtaStsReport[];
+  enforce: { ready: boolean; allowed: boolean; reasons: string[] } | null;
+  disable: { allowed: boolean; after: number | null; reason: string | null } | null;
+  max_age: number;
 }
+
+export type MtaStsCheckState = 'ok' | 'pending' | 'missing' | 'wrong' | 'error' | 'not_applicable';
+export interface MtaStsCheck {
+  key: 'policy_host' | 'certificate' | 'tls_rpt' | 'policy_id';
+  label: string;
+  state: MtaStsCheckState;
+  detail: string | null;
+}
+export interface MtaStsVerifyResult { ok: boolean; state: MtaStsState; checks: MtaStsCheck[]; notice: string | null; last_error: string | null }
+export interface MtaStsDisableResult { ok: boolean; kept: Array<{ type: string; name: string; reason: string }>; operator: 'none' | 'removed' | 'pending'; message: string }
 
 export interface AuditLogEntry {
   id: number;

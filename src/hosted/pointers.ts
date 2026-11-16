@@ -71,7 +71,6 @@ export function levelInputs(p: { dmarc: PointerStatus | null; spf: PointerStatus
   return {
     dmarc_published: p.dmarc === 'ok',
     spf_published: p.spf === 'ok',
-    mta_sts_published: false, // MTA-STS is no longer a hosted record (ADR 0015); its state is /api/domains/:id/mta-sts
   };
 }
 

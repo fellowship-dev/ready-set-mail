@@ -21,6 +21,7 @@ A change to any of these files needs a record for that flow (rule 5). The `cover
 - **buy-fix-one-domain**: `web/src/components/billing/*`, `web/src/pages/domains/DomainDetailPage.tsx`, `web/src/pages/settings/BillingSection.tsx`, `web/src/pages/operator/OrdersPage.tsx`, `web/src/lib/billing.ts`, `web/src/lib/card-return.ts`, `src/billing/*`
 - **invited-teammate-joins**: `web/src/pages/members/MembersPage.tsx`, `web/src/pages/auth/InvitePage.tsx`, `web/src/pages/auth/CodeStep.tsx`, `web/src/pages/auth/SignupCode.tsx`, `web/src/pages/setup/HandOffPage.tsx`, `web/src/components/HandoffCard.tsx`, `web/src/lib/handoff.ts`, `web/src/pages/domains/OverviewPage.tsx`, `src/api/router.ts`, `src/auth/routes.ts`, `src/auth/codes.ts`, `src/auth/mail.ts`, `src/team/handoff.ts`
 - **agent-connects-and-reads-report**: `src/llms-txt.ts`, `web/src/pages/agent/AgentSetupPage.tsx`, `web/src/pages/auth/*`, `src/mcp/*`, `src/access/*`, `src/auth/mcp-issuer.ts`
+- **enable-mta-sts**: `web/src/pages/wizards/MtaStsPage.tsx`, `web/src/components/mta-sts/*`, `web/src/components/domain/DnsTools.tsx`, `web/src/lib/mta-sts.ts`, `src/mta-sts/*`, `src/email/mta-sts.ts`, `src/email/tls-rpt.ts`, `src/hosted/tls-intake.ts`, `src/hosted/policy-host.ts`, `packages/dns-checks/src/mta-sts.ts`
 
 So a change to the domain page (`web/src/pages/domains/DomainDetailPage.tsx`) needs records for signup-to-records-live-cloudflare and buy-fix-one-domain; a change to `src/api/router.ts` needs them for both sign-up flows and invited-teammate-joins.
 

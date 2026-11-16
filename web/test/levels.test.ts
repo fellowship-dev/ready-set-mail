@@ -29,7 +29,7 @@ describe('assessDomain', () => {
 	});
 
 	it('hosted domains keep "not found" for an unverified pointer', () => {
-		const h = { mta_sts: false, pointer_status: { dmarc: null, spf: null, mta_sts: null }, level_inputs: { dmarc_published: false, spf_published: false, mta_sts_published: false } };
+		const h = { pointer_status: { dmarc: null, spf: null }, level_inputs: { dmarc_published: false, spf_published: false } };
 		expect(statuses(assessHostedDomain(base, h)).slice(0, 2)).toEqual(['missing', 'missing']);
 	});
 

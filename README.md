@@ -34,9 +34,9 @@ SPF has a hard limit of 10 DNS lookups. Add a third mail provider and you're ove
 
 ### MTA-STS / TLS-RPT
 
-MTA-STS (RFC 8461) lets you publish a policy that tells sending MTAs to require TLS when delivering to your domain — no opportunistic downgrade. Ready Set Mail provisions the three required DNS records, serves the policy file at the required `mta-sts.yourdomain.com/.well-known/mta-sts.txt` HTTPS endpoint via Cloudflare Workers, and manages the mode lifecycle: always starts in `testing` (non-enforcing, just signaling), and the dashboard surfaces a graduation prompt once you're ready for `enforce`.
+MTA-STS (RFC 8461) lets you publish a policy that tells sending MTAs to require TLS when delivering to your domain — no opportunistic downgrade. Ready Set Mail provisions the three required DNS records, serves the policy file at the required `mta-sts.yourdomain.com/.well-known/mta-sts.txt` HTTPS endpoint via Cloudflare Workers, and manages the mode lifecycle: always starts in `testing` (non-enforcing, just signaling), and the MTA-STS page offers `enforce` only once at least 7 days of TLS reports show senders can use TLS to every mail server. On the hosted service the same page works without a Cloudflare connection (you add the records by hand). Plain-words guide, the records, the enforce rule, turning off and the operator's setup: [docs/mta-sts.md](docs/mta-sts.md).
 
-TLS-RPT (RFC 8460) is the reporting side: sending MTAs email JSON reports to `tls-rpt@reports.yourdomain.com` when they encounter TLS failures. Ready Set Mail parses and stores these, and the MTA-STS card in the dashboard shows a 30-day success/failure count so you know whether enforcement is actually breaking anything.
+TLS-RPT (RFC 8460) is the reporting side: sending MTAs email JSON reports to `tls-rpt@reports.yourdomain.com` when they encounter TLS failures. Ready Set Mail parses and stores these, and the MTA-STS page lists the last 30 days of reports (who sent each, successful and failed sessions, failure types) so you know whether enforcement is actually breaking anything.
 
 ```
 Sending MTA → attempts TLS → policy says "enforce" → must succeed or reject

@@ -189,3 +189,18 @@ describe('GET /api/hosted/config', () => {
     expect(await (await off.api(off.A.token, 'GET', '/api/hosted/config')).json()).toMatchObject({ mta_sts: false });
   });
 });
+
+describe('the health report\'s TLS history', () => {
+  it('says the sessions under the MTA-STS policy once MTA-STS is on and serving, and its old totals otherwise', async () => {
+    const w = await mtaWorld();
+    const t = Math.floor(Date.now() / 1000);
+    const ins = w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id) VALUES (1, 'Google', ?, ?, 50, 4, 45, 3, '[]', ?)");
+    ins.run(t - 2 * 86400, t - 86400, w.A.ws);
+    const tls = async () => (await w.json(await w.api(w.A.token, 'GET', '/api/domains/1/health-report'))).sections.tls;
+    expect((await tls()).data).toMatchObject({ total_success: 50, total_failure: 4, mta_sts: null });
+    await w.mta(w.A.token, 'POST', 1);
+    expect((await tls()).data.mta_sts).toBeNull(); // set up is not finished: not on yet
+    w.db.sqlite.prepare("UPDATE mta_sts_config SET state = 'active' WHERE domain_id = 1").run();
+    expect((await tls()).data).toMatchObject({ sts_success: 45, sts_failure: 3, mta_sts: { mode: 'testing' } });
+  });
+});

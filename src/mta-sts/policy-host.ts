@@ -118,7 +118,7 @@ export class OperatorZone {
     if (!cfg) throw new PolicyHostError('MTA-STS policy hosting is not configured');
     let zoneId: string | undefined;
     const policy = operatorPolicy({ name: cfg.zone, id: () => zoneId });
-    const cf = new CfClient(cfg.token, { fetch: opts.fetch, mode: 'saas', policy });
+    const cf = new CfClient(cfg.token, { fetch: opts.fetch, mode: 'saas', policy, apiBaseUrl: env.CLOUDFLARE_API_BASE_URL });
     const zone = await cf.zoneFor(cfg.zone);
     zoneId = zone.id;
     return new OperatorZone(cf, zone, workerName(env));

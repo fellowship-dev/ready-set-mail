@@ -1,0 +1,44 @@
+name: Hosted owner turns on MTA-STS and sees TLS reports arrive
+goal: MTA-STS is on in testing mode for a domain, its policy is served, and the page shows the first TLS report a sender sent
+value_moment: The first TLS report is on the page (reporter, period, successful and failed sessions) while MTA-STS is on in testing mode
+# Pages and server files on the path. A change to any of them needs a fresh walk record.
+covers:
+  - web/src/pages/wizards/MtaStsPage.tsx
+  - web/src/components/mta-sts/*
+  - web/src/components/domain/DnsTools.tsx
+  - web/src/lib/mta-sts.ts
+  # Server files that implement the steps: availability, enable, the checks, the policy host, the reports.
+  - src/mta-sts/*
+  - src/email/mta-sts.ts
+  - src/email/tls-rpt.ts
+  - src/hosted/tls-intake.ts
+  - src/hosted/policy-host.ts
+  - packages/dns-checks/src/mta-sts.ts
+url: /#/domains/1
+tags: [mta-sts, value, protected]
+priority: P1
+viewports: [1440, 375]
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+  cloudflare: connected, zone reached
+steps:
+  - action: navigate
+    url: /#/domains/1
+    expect: The domain page; under DNS tools the MTA-STS card says Off and links to Set up
+  - action: click
+    selector: "text=Set up"
+    expect: The MTA-STS page - one plain sentence of what it is, the MX hosts found now, the exact records it will write in the Cloudflare zone, testing mode explained, and one action "Turn on in testing mode"
+  - action: click
+    selector: "text=Turn on in testing mode"
+    effect: write
+    expect: The same page says Setting up (waiting for the certificate), with a Check now action; no TLS report yet
+  - action: click
+    selector: "text=Check now"
+    effect: write
+    expect: The setup checks each say In place, and the page says Testing, with the empty state "No TLS report yet. Senders usually send one a day after they deliver mail to you."
+  - action: navigate
+    url: /#/domains/1/mta-sts
+    expect: After a sender's first report has arrived, the TLS reports of the last 30 days list who sent it, the period, successful sessions, failed sessions and failure types
+    first_value: true

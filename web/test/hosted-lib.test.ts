@@ -5,9 +5,8 @@ import { applyHostedInputs, assessDomain, assessHostedDomain, type HostedLevelIn
 
 const base = { dmarc_policy: 'reject', spf_record: 'v=spf1 -all', dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null };
 const hosted = (over: Partial<HostedLevelInput> = {}): HostedLevelInput => ({
-	mta_sts: false,
-	pointer_status: { dmarc: 'ok', spf: 'ok', mta_sts: null },
-	level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false },
+	pointer_status: { dmarc: 'ok', spf: 'ok' },
+	level_inputs: { dmarc_published: true, spf_published: true },
 	...over,
 });
 
@@ -31,7 +30,7 @@ describe('hostedError', () => {
 
 describe('labels', () => {
 	it('names purposes', () => {
-		expect(PURPOSE_LABEL).toEqual({ dmarc: 'DMARC', spf: 'SPF', tls_rpt: 'TLS-RPT', mta_sts: 'MTA-STS' });
+		expect(PURPOSE_LABEL).toEqual({ dmarc: 'DMARC', spf: 'SPF', tls_rpt: 'TLS-RPT' });
 	});
 	it('reads a failed lookup as "Lookup failed", never "missing"', () => {
 		expect(POINTER_STATE_LABEL.error).toBe('Lookup failed');
@@ -51,20 +50,18 @@ describe('applyHostedInputs', () => {
 	});
 	it('does not count a record whose pointer is not ok', () => {
 		for (const state of ['missing', 'wrong', 'error', null] as const) {
-			const { summary, unverified } = applyHostedInputs(base, hosted({ pointer_status: { dmarc: state, spf: 'ok', mta_sts: null } }));
+			const { summary, unverified } = applyHostedInputs(base, hosted({ pointer_status: { dmarc: state, spf: 'ok' } }));
 			expect(summary.dmarc_policy).toBeNull();
 			expect(unverified).toEqual(['dmarc']);
 		}
 	});
 	it('does not count a record that level_inputs says is unpublished', () => {
-		const { summary } = applyHostedInputs(base, hosted({ level_inputs: { dmarc_published: true, spf_published: false, mta_sts_published: false } }));
+		const { summary } = applyHostedInputs(base, hosted({ level_inputs: { dmarc_published: true, spf_published: false } }));
 		expect(summary.spf_record).toBeNull();
 	});
-	it('only asks for an MTA-STS pointer when MTA-STS is hosted', () => {
+	it('never asks for an MTA-STS pointer: MTA-STS is not a hosted record (ADR 0015)', () => {
 		expect(applyHostedInputs(base, hosted()).unverified).toEqual([]);
-		expect(applyHostedInputs(base, hosted({ mta_sts: true })).unverified).toEqual(['mta_sts']);
-		const ok = applyHostedInputs(base, hosted({ mta_sts: true, pointer_status: { dmarc: 'ok', spf: 'ok', mta_sts: 'ok' }, level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: true } }));
-		expect(ok.summary.mta_sts_enabled).toBe(1);
+		expect(applyHostedInputs({ ...base, mta_sts_enabled: 1, mta_sts_mode: 'enforce' }, hosted()).summary.mta_sts_enabled).toBe(0);
 	});
 });
 
@@ -73,7 +70,7 @@ describe('assessHostedDomain', () => {
 		expect(assessHostedDomain({ ...base, spf_record: null, dmarc_policy: 'reject' }, hosted()).level).toBe(2);
 	});
 	it('drops the level and explains "pointer not verified yet"', () => {
-		const a = assessHostedDomain(base, hosted({ pointer_status: { dmarc: 'missing', spf: 'ok', mta_sts: null } }));
+		const a = assessHostedDomain(base, hosted({ pointer_status: { dmarc: 'missing', spf: 'ok' } }));
 		expect(a.level).toBe(0);
 		expect(a.findings.map((f) => f.label)).toContain('DMARC pointer not verified yet');
 	});

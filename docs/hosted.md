@@ -444,7 +444,7 @@ published in the hosted records. Then the customer adds pointers in their own DN
 | TXT (edit the existing SPF) | `customer.com` | add `include:<id>._spf.h.readysetmail.com` |
 | CNAME | `_smtp._tls.customer.com` | `<id>._tlsrpt.h.readysetmail.com` |
 
-MTA-STS is not hosted with these records: it has its own three records in the customer's zone (see [MTA-STS](#mta-sts)).
+MTA-STS is not hosted with these records: it has its own three records in the customer's zone (see [mta-sts.md](mta-sts.md)).
 
 Notes for the customer:
 
@@ -691,7 +691,7 @@ All under `/api/domains/:id/hosted`, authenticated like every other route and sc
 
 ### MTA-STS
 
-`/api/domains/:id/mta-sts` (src/mta-sts/routes.ts; writes need an owner/admin; members can `GET`; delegated API keys are refused). The three records go into the customer's own zone: `mta-sts.<d>` CNAME to `POLICY_HOST_TARGET` (DNS only) when hosted, `_smtp._tls.<d>` TXT `v=TLSRPTv1; rua=mailto:tls-rpt@<INTAKE_DOMAIN>`, `_mta-sts.<d>` TXT `v=STSv1; id=<time>` last, once the certificate is active. Through the workspace's Cloudflare connection when one reaches the zone (`via: cloudflare`), by hand otherwise (`via: manual`). A domain with hosted records cannot use it (409).
+What it is, the records, the enforce rule, turning off and the operator's setup are in [mta-sts.md](mta-sts.md). `/api/domains/:id/mta-sts` (src/mta-sts/routes.ts; writes need an owner/admin; members can `GET`; delegated API keys are refused). The three records go into the customer's own zone: `mta-sts.<d>` CNAME to `POLICY_HOST_TARGET` (DNS only) when hosted, `_smtp._tls.<d>` TXT `v=TLSRPTv1; rua=mailto:tls-rpt@<INTAKE_DOMAIN>`, `_mta-sts.<d>` TXT `v=STSv1; id=<time>` last, once the certificate is active. Through the workspace's Cloudflare connection when one reaches the zone (`via: cloudflare`), by hand otherwise (`via: manual`). A domain with hosted records cannot use it (409).
 
 | Method & path | Does |
 |---|---|
@@ -705,7 +705,7 @@ All under `/api/domains/:id/hosted`, authenticated like every other route and sc
 
 The policy file says `max_age: 86400`, read from the row. Errors: `400` no connection reaches the zone (self-host), reports domain missing · `403` gate or not proven · `409` something already at `_mta-sts`, `mta-sts` or `_smtp._tls`, or already on · `422` no MX · `502` DNS or Cloudflare.
 
-Errors: `409` already enabled · `422` SPF cannot be resolved, several SPF records · `502` Cloudflare/DNS failure · `507` records zone full. `mta_sts` in the body is answered `400` (see [MTA-STS](#mta-sts)).
+Errors: `409` already enabled · `422` SPF cannot be resolved, several SPF records · `502` Cloudflare/DNS failure · `507` records zone full. `mta_sts` in the body is answered `400` (see [MTA-STS](#mta-sts) and [mta-sts.md](mta-sts.md)).
 Enabling is all-or-nothing: if Cloudflare fails part-way, the records already written are removed.
 
 `POST /api/check-sessions` (public) returns `{ token, email, expires_at }` in `saas` (`email` is the `check+…@canary…` address), or `404` when `CANARY_DOMAIN` is not set.

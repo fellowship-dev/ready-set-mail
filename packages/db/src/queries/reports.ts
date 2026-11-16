@@ -200,8 +200,8 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			COALESCE(rr.dkim_pass, 0) AS dkim_pass,
 			COALESCE(rr.total, 0)     AS spf_total,
 			COALESCE(rr.spf_pass, 0)  AS spf_pass,
-			COALESCE(m.enabled, 0)    AS mta_sts_enabled,
-			m.mode                    AS mta_sts_mode
+			CASE WHEN m.enabled = 1 AND m.state = 'active' THEN 1 ELSE 0 END AS mta_sts_enabled, -- on only once set up; a setup in progress is not protection
+			CASE WHEN m.enabled = 1 AND m.state = 'active' THEN m.mode END   AS mta_sts_mode
 		FROM domains d
 		LEFT JOIN (
 			SELECT domain_id, SUM(total_count) AS total, SUM(pass_count) AS pass, SUM(fail_count) AS fail
@@ -654,10 +654,12 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		},
 
 		async tlsSummary(domainId: number, since: number, until?: number) {
-			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number }>(sql`
+			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number }>(sql`
 				SELECT
 					COALESCE(SUM(total_success), 0) AS total_success,
 					COALESCE(SUM(total_failure), 0) AS total_failure,
+					COALESCE(SUM(sts_success), 0) AS sts_success,
+					COALESCE(SUM(sts_failure), 0) AS sts_failure,
 					COUNT(*) AS report_count
 				FROM tls_reports
 				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since}

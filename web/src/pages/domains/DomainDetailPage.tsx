@@ -26,7 +26,7 @@ import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, ty
 import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
 import { recordAlignment } from '../../lib/dmarc-coverage';
 import { spTag, sumStats, wizardProgress } from '../../lib/dmarc';
-import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
+import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useOnboardingStatus, useRolloutNext, useStats, useWizardState } from '../../lib/domain-queries';
 import { listedParentFinder } from '../../lib/listed-parent';
 import { useReportsRefusal } from '../../lib/report-address';
 import type { ReportsRefusal } from '../../lib/dmarc-step';
@@ -272,8 +272,6 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const spfTool = useSpfFlatten(domain.id);
-	const mtaTool = useMtaSts(domain.id);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
@@ -336,7 +334,6 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const selectors = onboarding.data?.dkim.selectors.length;
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
-	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
 	const failing = sources.data?.length ?? 0;
 
 	return (
@@ -525,11 +522,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				</Disclosure>
 				)}
 
-				{toolsShown ? (
-					<Disclosure title="DNS tools" summary="Optional tools that change your DNS for you: SPF flattening and MTA-STS.">
-						<DnsTools domainId={domain.id} />
-					</Disclosure>
-				) : null}
+				<Disclosure title="DNS tools" summary="Optional tools that change your DNS for you: SPF flattening and MTA-STS.">
+					<DnsTools domainId={domain.id} />
+				</Disclosure>
 			</div>
 		</div>
 	);

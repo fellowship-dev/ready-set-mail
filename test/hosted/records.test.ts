@@ -173,7 +173,7 @@ describe('hosted records for a domain', () => {
       `TXT a-corp.com include:${names.spf}`,
       `CNAME _smtp._tls.a-corp.com ${names.tlsRpt}`,
     ]);
-    expect(hosted.level_inputs).toEqual({ dmarc_published: false, spf_published: false, mta_sts_published: false });
+    expect(hosted.level_inputs).toEqual({ dmarc_published: false, spf_published: false });
   });
 
   it('hosted records no longer host MTA-STS: three records, and none of its pointers (ADR 0015)', async () => {
@@ -184,7 +184,8 @@ describe('hosted records for a domain', () => {
     expect(zoneRecords(cf).filter(r => r.name === names.mtaSts)).toEqual([]);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
     expect(hosted.pointers.map(p => p.purpose)).not.toContain('mta_sts');
-    expect(hosted).toMatchObject({ mta_sts: false, records: { mta_sts: null } });
+    expect(hosted).not.toHaveProperty('mta_sts');
+    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt });
     expect(w.rows("SELECT record_count FROM hosted_zones")).toEqual([{ record_count: 3 }]);
   });
 

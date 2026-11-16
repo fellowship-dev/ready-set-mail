@@ -62,13 +62,12 @@ async function writerFor(tenant: TenantContext, zoneKey: string, deps: HostedDep
 export interface HostedView {
   enabled: true;
   hosted_id: string;
-  records: { dmarc: string; spf: string; tls_rpt: string; mta_sts: string | null };
+  records: { dmarc: string; spf: string; tls_rpt: string };
   /** What the customer adds to their own DNS. */
   pointers: ReturnType<typeof customerPointers>;
-  pointer_status: { dmarc: PointerStatus | null; spf: PointerStatus | null; mta_sts: PointerStatus | null; tls_rpt: PointerStatus | null; checked_at: number | null };
+  pointer_status: { dmarc: PointerStatus | null; spf: PointerStatus | null; tls_rpt: PointerStatus | null; checked_at: number | null };
   /** For the domain's Level: a hosted record counts as published once its pointer is in place. */
   level_inputs: ReturnType<typeof levelInputs>;
-  mta_sts: boolean;
 }
 
 async function view(tenant: TenantContext, domain: DomainRow): Promise<HostedView | null> {
@@ -80,11 +79,10 @@ async function view(tenant: TenantContext, domain: DomainRow): Promise<HostedVie
   return {
     enabled: true,
     hosted_id: h.hosted_id,
-    records: { dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt, mta_sts: null },
+    records: { dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt },
     pointers: customerPointers(domain.domain, h.hosted_id, apex),
-    pointer_status: { ...status, mta_sts: null, checked_at: h.pointers_checked_at },
+    pointer_status: { ...status, checked_at: h.pointers_checked_at },
     level_inputs: levelInputs(status),
-    mta_sts: false,
   };
 }
 

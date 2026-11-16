@@ -13,6 +13,8 @@ export interface PolicyHostEnv extends HostedEnv {
   POLICY_HOST_TOKEN?: string;
   MAX_POLICY_HOSTS?: string;
   WORKER_NAME?: string;
+  /** Localhost only (cfApiBase ignores anything else): a local run's fake Cloudflare. */
+  CLOUDFLARE_API_BASE_URL?: string;
 }
 
 /** What a policy file says senders may cache it for. One day in both modes (ADR 0015): a mistake or an MX change heals within a day. */
