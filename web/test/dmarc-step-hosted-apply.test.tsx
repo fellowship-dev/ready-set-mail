@@ -171,3 +171,13 @@ describe('"live" is said only after a re-read of public DNS', () => {
 		expect(await screen.findByText('Written to Cloudflare. Waiting to show in public DNS.')).toBeInTheDocument();
 	});
 });
+
+describe('setup step 4: the record comes first (FOLD-01, FOLD-02)', () => {
+	it('the record to paste is above the sentences about it, so Copy record is in the first screen at 375 wide', async () => {
+		step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false) }));
+		const record = await screen.findByText('Recommended record');
+		const sentence = await screen.findByText(/No DMARC policy applies to this name/);
+		expect(record.compareDocumentPosition(sentence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Copy record' }).compareDocumentPosition(sentence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+});

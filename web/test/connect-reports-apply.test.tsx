@@ -161,6 +161,9 @@ describe('Cloudflare does not reach the zone', () => {
 		expect(await screen.findByText(/Add these at GoDaddy, where example\.com's DNS is hosted\./)).toBeInTheDocument();
 		expect(screen.queryByRole('link', { name: /Connect Cloudflare/ })).not.toBeInTheDocument();
 		expect(writes(calls)).toEqual(['POST /api/domains/1/report-address']);
+		// FOLD-01 at 375 wide: Check again sits with the status, above the long record to publish.
+		const again = screen.getByRole('button', { name: 'Check again' });
+		expect(again.compareDocumentPosition(screen.getByText(/TXT record at/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it('with Cloudflare name servers, Connect Cloudflare is the alternative', async () => {

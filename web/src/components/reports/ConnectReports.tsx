@@ -139,7 +139,17 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 					<p className="text-sm text-ink-2">{apply.data.reports.reason}</p>
 				) : null
 			) : null}
-			<StateLine s={s} written={written} />
+			<StateLine
+				s={s}
+				written={written}
+				// Next to the status it refreshes, so it is in the first screen at 375 wide (the record to publish is long).
+				action={
+					<Button variant="secondary" size="sm" onClick={checkAgain} disabled={q.isFetching}>
+						<RefreshCw aria-hidden />
+						{q.isFetching ? 'Checking…' : 'Check again'}
+					</Button>
+				}
+			/>
 			<CopyField label="Report address" value={s.address} />
 			{written ? null : canApply ? (
 				<ReviewRecord plan={livePlan as ApplyPlan} pending={apply.isPending} onApply={onApply} />
@@ -151,10 +161,6 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 			) : null}
 			{applyFailed}
 			<div className="flex flex-wrap gap-2">
-				<Button variant="secondary" size="sm" onClick={checkAgain} disabled={q.isFetching}>
-					<RefreshCw aria-hidden />
-					{q.isFetching ? 'Checking…' : 'Check again'}
-				</Button>
 				<WriteButton variant="danger" size="sm" onClick={() => setDisconnectOpen(true)}>
 					Disconnect reports
 				</WriteButton>
@@ -239,7 +245,7 @@ function ReviewRecord({ plan, pending, onApply, onCancel }: { plan: ApplyPlan; p
 	return plan.kind === 'choose' ? <ChooseView plan={plan}>{body}</ChooseView> : body(plan.record);
 }
 
-function StateLine({ s, written = false }: { s: ReportAddressView; written?: boolean }) {
+function StateLine({ s, written = false, action }: { s: ReportAddressView; written?: boolean; action?: ReactNode }) {
 	const dot = STATE_DOT[s.state];
 	let detail: ReactNode = null;
 	if (s.state === 'not_published' && written) {
@@ -274,6 +280,7 @@ function StateLine({ s, written = false }: { s: ReportAddressView; written?: boo
 		<div className="space-y-1">
 			<StatusDot status={dot.status} label={dot.label} className="font-semibold" />
 			{detail ? <p className="text-sm text-ink-2">{detail}</p> : null}
+			{action ? <div className="pt-1">{action}</div> : null}
 			{notes.map((n) => (
 				<p key={n} className="text-sm text-ink-2" data-testid="reports-notice">
 					{n}

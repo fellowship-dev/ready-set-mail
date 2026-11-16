@@ -103,9 +103,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 
 	return (
 		<StepCard title="DMARC policy" badge={<SeverityBadge severity={applied ? 'info' : recordProblem ? 'error' : severity} />}>
-			<DnsHostLine domain={status.domain} />
 			{dmarcFailed.length > 0 ? (
 				<>
+					<DnsHostLine domain={status.domain} />
 					<CheckResultList>
 						<CheckResult
 							status="error"
@@ -128,6 +128,39 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 					)}
 					{hostedNoReports ? (
 						<>
+							<div className="space-y-1">
+								<StatusDot status="unknown" label="Reports not connected yet" className="font-medium" />
+								<p className="text-sm text-ink-2">No reports reach Ready Set Mail for this name, so nobody can confirm yet that every service sending as it passes.</p>
+								{/* Why reports cannot be connected here, in the connect panel's own words (nothing when this deployment takes no hosted reports). */}
+								<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
+							</div>
+						</>
+					) : null}
+					{/* The record to publish comes first (FOLD-01, FOLD-02): where to add it and the sentences about it follow. */}
+					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
+						<div className="space-y-3">
+							{/* Apply writes this record itself: nothing to copy. Without Cloudflare it is the record to paste. */}
+							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
+							<div className="flex flex-col gap-2 sm:flex-row">
+								{cf_available ? (
+									<WriteButton loading={apply.isPending} onClick={applyRecord}>
+										Apply via Cloudflare
+									</WriteButton>
+								) : (
+									<CopyButton text={recommended} />
+								)}
+							</div>
+							{!cf_available ? <ConnectCloudflareLink /> : null}
+							{apply.isError ? (
+								<Alert variant="danger" title="Could not apply the record">
+									{errorMessage(apply.error)}
+								</Alert>
+							) : null}
+						</div>
+					) : null}
+					<DnsHostLine domain={status.domain} />
+					{hostedNoReports ? (
+						<>
 							{coverage.kind === 'none' ? (
 								<p className="text-sm text-ink-2">
 									No DMARC policy applies to this name, so receiving servers have no instruction for mail that fails SPF and DKIM. Publish this record with{' '}
@@ -142,12 +175,6 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 									{applied ? 'The record was written to Cloudflare. Public DNS can take a few minutes to show it.' : recordProblem ?? 'Your DMARC record is published, read from public DNS.'}
 								</p>
 							)}
-							<div className="space-y-1">
-								<StatusDot status="unknown" label="Reports not connected yet" className="font-medium" />
-								<p className="text-sm text-ink-2">No reports reach Ready Set Mail for this name, so nobody can confirm yet that every service sending as it passes.</p>
-								{/* Why reports cannot be connected here, in the connect panel's own words (nothing when this deployment takes no hosted reports). */}
-								<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
-							</div>
 						</>
 					) : null}
 					{!rua && !applied && !hostedNoReports ? (
@@ -200,27 +227,6 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 					{/* A record of its own is in place: the next step toward enforcement, from the shared rule. */}
 					{dmarc.found && dmarc.current_record && !applied && ((severity !== 'error' && severity !== 'warning') || recordProblem) ? (
 						<NextDmarcStep domain={{ id: status.domain_id, domain: status.domain, rua_address: status.rua_address }} />
-					) : null}
-					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
-						<div className="space-y-3">
-							{/* Apply writes this record itself: nothing to copy. Without Cloudflare it is the record to paste. */}
-							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
-							<div className="flex flex-col gap-2 sm:flex-row">
-								{cf_available ? (
-									<WriteButton loading={apply.isPending} onClick={applyRecord}>
-										Apply via Cloudflare
-									</WriteButton>
-								) : (
-									<CopyButton text={recommended} />
-								)}
-							</div>
-							{!cf_available ? <ConnectCloudflareLink /> : null}
-							{apply.isError ? (
-								<Alert variant="danger" title="Could not apply the record">
-									{errorMessage(apply.error)}
-								</Alert>
-							) : null}
-						</div>
 					) : null}
 				</>
 			)}
