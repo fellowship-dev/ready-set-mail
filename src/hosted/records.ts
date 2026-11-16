@@ -146,4 +146,4 @@ export async function openHostedZone(env: HostedEnv, zoneName: string, opts: { f
 export { hostedApex };
 
 /** Flattening options for the record behind `include:<id>._spf.h.<zone>`: the customer's own record spends one lookup on that include, so the flattened record may use nine, and the whole source is flattened into it. */
-export const HOSTED_SPF_OPTS = { inline: 'most', maxLookups: 9 } as const;
+export const HOSTED_SPF_OPTS = { inline: 'most', maxLookups: 9, publishedAs: 'include' } as const;

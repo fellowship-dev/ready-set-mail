@@ -29,9 +29,9 @@ export class SpfEval {
   voids = 0;
   /**
    * @param enforceLookups apply the 10-lookup limit (the original is evaluated without it: that limit is what flattening escapes)
-   * The void-lookup limit of 2 (§4.6.4) is always applied.
+   * @param enforceVoids apply the void-lookup limit of 2 (§4.6.4); on by default. Both off: the record as it would evaluate with no processing limit at all.
    */
-  constructor(private w: World, private ip: string, private enforceLookups: boolean, private sender = 'sender.test') {}
+  constructor(private w: World, private ip: string, private enforceLookups: boolean, private sender = 'sender.test', private enforceVoids = true) {}
 
   private count(): void {
     this.lookups++;
@@ -40,7 +40,7 @@ export class SpfEval {
   private void_(empty: boolean): void {
     if (!empty) return;
     this.voids++;
-    if (this.voids > 2) throw new Err('permerror');
+    if (this.enforceVoids && this.voids > 2) throw new Err('permerror');
   }
   /** RFC 7208 §7: macro letters; `d` is the CURRENT domain (§7.3), the others do not depend on it. */
   private expand(spec: string, d: string): string {

@@ -44,7 +44,7 @@ export const ROLES = ['owner', 'admin', 'member'] as const;
 /** DNS hosts the product recognises (src/domains/dns-host.ts DNS_PROVIDERS ids), plus what detection can say otherwise. */
 export const DNS_PROVIDERS = ['cloudflare', 'godaddy', 'porkbun', 'namecheap', 'route53', 'google-cloud-dns', 'squarespace', 'digitalocean', 'vercel', 'ns1', 'other', 'mixed', 'unknown'] as const;
 /** Why SPF flattening could not keep a record current (src/spf/problems.ts). */
-export const SPF_PROBLEMS = ['include_unresolved', 'too_large', 'macro', 'no_addresses', 'connection_lost', 'edited_outside', 'record_missing', 'restore_failed', 'connection_gone', 'proof_lost'] as const;
+export const SPF_PROBLEMS = ['include_unresolved', 'too_large', 'macro', 'no_addresses', 'connection_lost', 'edited_outside', 'record_missing', 'restore_failed', 'connection_gone', 'proof_lost', 'not_hostable'] as const;
 /** The agent tools (src/mcp/server.ts). */
 export const AGENT_TOOLS = ['whoami', 'list_products', 'list_domains', 'inspect_domain', 'add_domain', 'verify_domain', 'get_email_report', 'query_email_metrics', 'plan_remediation', 'get_source_status'] as const;
 

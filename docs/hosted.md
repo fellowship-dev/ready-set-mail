@@ -450,7 +450,7 @@ published in the hosted records. Then the customer adds pointers in their own DN
 Notes for the customer:
 
 * **SPF:** keep a single `v=spf1` record. Replace the includes Ready Set Mail flattened with `include:<id>._spf.h.readysetmail.com`; the hosted record is built from the SPF
-  the domain published when hosting was enabled (or the `spf_record` given then) and carries no DNS lookups of its own beyond what could not be flattened.
+  the domain published when hosting was enabled (or the `spf_record` given then) and carries no DNS lookups of its own beyond what could not be flattened. Keep your own `all` in your record: the hosted record carries none (an include never matches on its `all`). A source with a macro, or a term with a `-`, `~` or `?` qualifier before its `all`, cannot be hosted (the enable is refused with the reason): an include cannot say "fail" ([spf-flattening.md](spf-flattening.md), "Hosted records").
 * **DMARC:** the hosted record starts at the domain's stored policy (`p=none` by default). Moving a hosted domain through the rollout steps (`rollout-advance`) does not rewrite the hosted record yet.
 * A `CNAME` cannot sit next to other records at the same name. If `_dmarc.customer.com` already has a TXT, remove it when adding the CNAME.
 * Ready Set Mail checks the pointers daily and on demand (`POST …/hosted/verify`). Each is `ok`, `missing`, `wrong` (something else is there) or `error` (could not be read; the previous status is kept).

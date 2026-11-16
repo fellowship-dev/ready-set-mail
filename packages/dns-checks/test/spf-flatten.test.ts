@@ -396,3 +396,39 @@ describe('lookupBreakdown: where the lookups go', () => {
     expect(r).toMatchObject({ ok: false, message: expect.stringContaining('gone.test') });
   });
 });
+
+describe('a record published as the target of an include (publishedAs: include, the hosted record)', () => {
+  const asInclude = (source: string, zone: Zone = {}) => flattenFromSource('x.com', source, fakeResolver(zone), { inline: 'most', maxLookups: 9, publishedAs: 'include' });
+  const ok = async (source: string, zone: Zone = {}) => { const r = await asInclude(source, zone); if (!r.ok) throw new Error(`refused: ${r.problems[0]!.message}`); return r.flat; };
+  const refusedAs = async (source: string, zone: Zone = {}) => { const r = await asInclude(source, zone); if (r.ok) throw new Error(`flattened to ${r.flat.record}`); return r.problems[0]!; };
+
+  it('bare a, mx and ptr at the root are pinned to the customer\'s domain: published as an include they would mean the include\'s name', async () => {
+    const f = await ok('v=spf1 a mx/24 ptr ip4:1.1.1.1 ~all');
+    expect(f.record).toBe('v=spf1 a:x.com mx:x.com/24 ptr:x.com ip4:1.1.1.1');
+  });
+  it('the original\'s all is not carried (the customer\'s own record keeps it), except +all, which an include passes everyone with; exp= is not carried either', async () => {
+    expect((await ok('v=spf1 ip4:1.1.1.1 -all exp=why.example.test')).record).toBe('v=spf1 ip4:1.1.1.1');
+    expect((await ok('v=spf1 ip4:1.1.1.1 ?all')).record).toBe('v=spf1 ip4:1.1.1.1');
+    expect((await ok('v=spf1 ip4:1.1.1.1 +all')).record).toBe('v=spf1 ip4:1.1.1.1 all');
+    expect((await ok('v=spf1 ip4:1.1.1.1')).record).toBe('v=spf1 ip4:1.1.1.1');
+    expect((await ok('v=spf1 ip4:1.1.1.1 redirect=t.test', { 'TXT t.test': txt('v=spf1 ip4:2.2.2.2 -all') })).all).toBe('-all'); // the pointer record takes it
+  });
+  it('a macro at the root is refused in one sentence', async () => {
+    const p = await refusedAs('v=spf1 exists:%{i}._e.%{d} -all');
+    expect(p.kind).toBe('not_hostable');
+    expect(p.message).toMatch(/uses a macro, which would mean another domain once the record is published as an include, so it cannot be hosted\./);
+  });
+  it('a qualifier other than + before the all is refused: an include turns fail, softfail and neutral into "no match"', async () => {
+    for (const t of ['-ip4:1.1.1.1', '~a', '?mx', '-include:a.test']) {
+      const p = await refusedAs(`v=spf1 ${t} ip4:2.2.2.2 -all`, { 'TXT a.test': txt('v=spf1 ip4:3.3.3.3 -all') });
+      expect([t, p.kind]).toEqual([t, 'not_hostable']);
+      expect(p.message).toMatch(/has a qualifier/);
+    }
+    // the same record, as a plain flattened record, is fine
+    expect((await okFlat('v=spf1 -ip4:1.1.1.1 ip4:2.2.2.2 -all', {})).record).toBe('v=spf1 -ip4:1.1.1.1 ip4:2.2.2.2 -all');
+  });
+  it('after a redirect the chain\'s own terms are pinned to their own domain and held to the same rules', async () => {
+    expect((await ok('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 a ip4:2.2.2.2 -all') })).record).toBe('v=spf1 a:t.test ip4:2.2.2.2');
+    expect((await refusedAs('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 -a ip4:2.2.2.2 -all') })).kind).toBe('not_hostable');
+  });
+});

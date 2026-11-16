@@ -29,7 +29,7 @@ export const SPF_FLAT_MAX_CANDIDATES = 12;
 /** The terms an inlined top-level include contributes (`ip4:`/`ip6:` entries and the lookup terms it keeps), by include target. */
 export type SpfProviderEntries = Record<string, string[]>;
 
-export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses';
+export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses' | 'not_hostable';
 
 export interface SpfProblem {
   kind: SpfProblemKind;
@@ -74,6 +74,12 @@ export interface SpfFlatOptions {
   maxLookups?: number;
   maxFetches?: number;
   maxCandidates?: number;
+  /**
+   * `include`: the flattened record will be published as the target of an include (the hosted record, `include:<id>._spf.h.<zone>`) and the customer's own record keeps
+   * the original's `all`. Bare a/mx/ptr are pinned to the customer's domain; a macro or a qualifier other than `+` at the root is refused; the root `all` is dropped
+   * unless it is `+all` (an include that passes everything), so the include gives `pass` only where the original gives `pass` and the customer's `all` decides the rest.
+   */
+  publishedAs?: 'record' | 'include';
   /** `fewest` (default): as few includes inlined as the limits allow. `most`: as many as fit (an owner who flattens a record that is already within the limits). */
   inline?: 'fewest' | 'most';
   /** What the published record authorises per inlined include (`SpfFlat.providers` of the run that wrote it): turns on `removed` and `held`. */
@@ -128,7 +134,7 @@ class Flattener {
   private cache = new Map<string, Promise<string>>();
   /** Includes read to the end without a refusal: what one says does not depend on how we got to it, so a lattice of includes is read once. */
   private nodes = new Map<string, Node>();
-  constructor(private resolver: Resolver, private rootName: string, private maxFetches: number) {}
+  constructor(private resolver: Resolver, private rootName: string, private maxFetches: number, private asInclude = false) {}
 
   private async record(domain: string): Promise<string> {
     const key = normalizeName(domain);
@@ -242,6 +248,16 @@ class Flattener {
     }
   }
 
+  /**
+   * A record published as an include target (`publishedAs: 'include'`) answers only `pass` or no match to the record that includes it, so it can carry only what the
+   * original says with a `+`: a term with another qualifier (`-ip4:`, `~a`, `?include:`) would be a fail, softfail or neutral that an include turns into "no match", and a
+   * macro would expand with the include's name instead of the customer's. Both are refused, in one sentence.
+   */
+  private hostable(t: SpfTerm, domain: string): void {
+    if (t.qualifier !== '+') refuse('not_hostable', domain, `${t.raw} in the record of ${domain} has a qualifier ("${t.qualifier}") before the all, which a record published as an include cannot carry: it would change what the sender gets, so it cannot be hosted.`);
+    if (hasMacro(t.raw)) refuse('not_hostable', domain, `${t.raw} in the record of ${domain} uses a macro, which would mean another domain once the record is published as an include, so it cannot be hosted.`);
+  }
+
   /** A bare a/mx/ptr means "the current domain": copied out of an include it would point at the customer's domain, so name the include's. */
   private pin(t: SpfTerm, domain: string): string {
     if (t.value !== null && t.value !== '') return lower(t.raw);
@@ -272,6 +288,7 @@ class Flattener {
       }
       if (ended) continue;
       if (t.name === 'all') { st.all = `${qual(t)}all`; ended = true; continue; }
+      if (this.asInclude) this.hostable(t, domain);
       if (t.name === 'ip4' || t.name === 'ip6') {
         items.push({ t: 'text', text: ipEntry(t), ip: true, cost: 0 });
       } else if (t.name === 'include') {
@@ -284,7 +301,8 @@ class Flattener {
           refuse('macro', domain, `The record of ${domain}, which your record hands over to with redirect=, uses a macro that depends on that name, so it cannot be copied into your record.`);
         }
         st.before += 1;
-        items.push({ t: 'text', text: inChain ? this.pin(t, domain) : lower(t.raw), ip: false, cost: 1 });
+        // A record published as an include target is evaluated with the include's own name as the current domain: a bare a, mx or ptr must name the customer's.
+        items.push({ t: 'text', text: inChain || this.asInclude ? this.pin(t, inChain ? domain : this.rootName) : lower(t.raw), ip: false, cost: 1 });
       }
     }
     if (redirect) {
@@ -398,12 +416,15 @@ export async function flattenFromSource(domain: string, source: string, resolver
   const maxBytes = opts.maxBytes ?? SPF_FLAT_MAX_BYTES;
   const maxLookups = opts.maxLookups ?? SPF_FLAT_MAX_LOOKUPS;
   const maxCandidates = opts.maxCandidates ?? SPF_FLAT_MAX_CANDIDATES;
-  const w = new Flattener(withSource(resolver, name, source), name, opts.maxFetches ?? SPF_FLAT_MAX_FETCHES);
+  const asInclude = opts.publishedAs === 'include';
+  const w = new Flattener(withSource(resolver, name, source), name, opts.maxFetches ?? SPF_FLAT_MAX_FETCHES, asInclude);
   try {
     if (!isSpfRecord(source)) refuse('include_unresolved', name, 'The record does not start with v=spf1.');
     const items: RootItem[] = [];
     const st = { all: null as string | null, exp: null as string | null, before: 0 };
     await w.root(name, source.trim(), [name], items, st);
+    // As an include target the record carries no `all` of its own (the customer's keeps the original's), except `+all`, and no exp= (an include's explanation is never used).
+    const out = asInclude ? { all: st.all === 'all' ? 'all' : null, exp: null } : { all: st.all, exp: st.exp };
 
     const cands = items.flatMap((it, i) => (it.t === 'inc' && it.inlineable ? [i] : []));
     if (cands.length > maxCandidates) refuse('too_large', name, `Your record has ${cands.length} includes that could be flattened; we handle up to ${maxCandidates}.`);
@@ -416,11 +437,11 @@ export async function flattenFromSource(domain: string, source: string, resolver
     let best: { m: number; r: ReturnType<typeof render> } | null = null;
     for (const m of masks) {
       if (best && pop(m) !== pop(best.m)) break; // the next size class is not wanted once one fits
-      const r = render(items, setOf(m), st.all, st.exp);
+      const r = render(items, setOf(m), out.all, out.exp);
       if (r.lookups <= maxLookups && r.bytes <= maxBytes && (!best || r.bytes < best.r.bytes)) best = { m, r };
     }
     if (!best) {
-      const r = render(items, setOf((1 << cands.length) - 1), st.all, st.exp);
+      const r = render(items, setOf((1 << cands.length) - 1), out.all, out.exp);
       return refuseResult(w, 'too_large', name,
         `Even with every include replaced by its addresses, your record would need ${r.lookups} ${r.lookups === 1 ? 'lookup' : 'lookups'} and ${r.bytes} bytes. A record should stay within ${maxLookups} lookups and ${maxBytes} bytes, so we left it as it is.`);
     }
@@ -434,7 +455,7 @@ export async function flattenFromSource(domain: string, source: string, resolver
     const removed = opts.previous ? removedEntries(opts.previous, providers) : {};
     let held: SpfFlat['held'] = null;
     if (Object.keys(removed).length) {
-      const h = render(items, chosen, st.all, st.exp, removed);
+      const h = render(items, chosen, out.all, out.exp, removed);
       const withHeld: SpfProviderEntries = {};
       for (const [t, es] of Object.entries(providers)) withHeld[t] = [...new Set([...es, ...(removed[t] ?? [])])];
       held = { record: h.record, bytes: h.bytes, ipCount: h.ipCount, lookups: h.lookups, fits: h.lookups <= maxLookups && h.bytes <= maxBytes, providers: withHeld };
