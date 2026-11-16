@@ -31,7 +31,21 @@ describe('reports.checkSummary', () => {
       total_messages: 1000, pass_messages: 980, fail_messages: 20,
       dkim_total: 1000, dkim_pass: 950, spf_total: 1000, spf_pass: 950,
       mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: null, dmarc_pct: null, dmarc_p: null, dmarc_sp: null, dmarc_rua: null,
+      dkim_aligned_pass: 0, aligned_total: 0, // these records were stored without the receiver's alignment verdict
     });
+  });
+
+  it('counts the messages whose DKIM aligned, and those that carry the receiver\'s verdict at all', async () => {
+    const { q, id } = await seed();
+    const rep = await q.reports.insertAggregate({
+      domain_id: id, org_name: 'microsoft', report_id: 'r3', date_begin: NOW - 3600, date_end: NOW,
+      total_count: 200, pass_count: 150, fail_count: 50, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'counted',
+    });
+    await q.reports.insertRecords([
+      { report_id: Number(rep.meta.last_row_id), source_ip: '6.6.6.6', count: 150, disposition: 'none', dkim_result: 'pass', spf_result: 'pass', dkim_domain: 'example.com', spf_domain: 'cf-bounce.example.com', header_from: 'example.com', spf_aligned: 0, dkim_aligned: 1 },
+      { report_id: Number(rep.meta.last_row_id), source_ip: '7.7.7.7', count: 50, disposition: 'none', dkim_result: 'pass', spf_result: 'pass', dkim_domain: 'esp.example', spf_domain: 'esp.example', header_from: 'example.com', spf_aligned: 0, dkim_aligned: 0 },
+    ]);
+    expect(await q.reports.checkSummary(id, NOW - 30 * 86400)).toMatchObject({ dkim_aligned_pass: 150, aligned_total: 200 });
   });
 
   it('counts each report once however many records it has, and records once however many reports there are', async () => {

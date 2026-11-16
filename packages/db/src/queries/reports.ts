@@ -33,10 +33,28 @@ export interface AnomalySource {
 	total: number;
 	spf_pass: number; // 1 if any record had spf pass in window
 	dkim_pass: number; // 1 if any record had dkim pass in window
+	/** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: stored before 0017. */
+	spf_aligned: number | null;
+	dkim_aligned: number | null;
+	/** 1 if any record failed DMARC (neither identifier aligned). */
+	dmarc_fail: number;
+	/** The alignment modes of the policy the receiver applied ('s' if any report said strict); null: not stored. */
+	aspf: string | null;
+	adkim: string | null;
 	first_seen: string; // YYYY-MM-DD
 	last_seen: string; // YYYY-MM-DD
 	base_domain: string | null;
 	org: string | null;
+}
+
+/** One subdomain of a domain seen in its reports: as the From domain or as the SPF (return-path) domain, with what the receivers decided. */
+export interface NameSeenRow {
+	name: string;
+	role: 'from' | 'return-path';
+	messages: number;
+	/** Messages the receiver passed (SPF or DKIM aligned) and failed (neither); the rest were stored before the receiver's verdict was kept. */
+	passed: number;
+	failed: number;
 }
 
 export interface DailyDomainStat {
@@ -54,6 +72,11 @@ export interface ReportSource {
 	count: number;
 	spf_pass: number;
 	dkim_pass: number;
+	spf_aligned: number | null;
+	dkim_aligned: number | null;
+	dmarc_fail: number;
+	aspf: string | null;
+	adkim: string | null;
 	disposition: string;
 	reporters: string; // comma-separated org names
 }
@@ -100,6 +123,12 @@ export interface DomainCheckSummary {
 	dkim_pass: number;
 	spf_total: number;
 	spf_pass: number;
+	/**
+	 * Messages whose DKIM aligned with the From domain (the receiver's policy_evaluated, 0017) and the messages that carry that
+	 * verdict at all (reports stored before 0017 carry none). The share says whether DKIM alignment alone carries DMARC.
+	 */
+	dkim_aligned_pass?: number;
+	aligned_total?: number;
 	mta_sts_enabled: number; // 0 or 1
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
@@ -185,6 +214,8 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			COALESCE(rr.dkim_pass, 0) AS dkim_pass,
 			COALESCE(rr.total, 0)     AS spf_total,
 			COALESCE(rr.spf_pass, 0)  AS spf_pass,
+			COALESCE(rr.dkim_aligned_pass, 0) AS dkim_aligned_pass,
+			COALESCE(rr.aligned_total, 0)     AS aligned_total,
 			COALESCE(m.enabled, 0)    AS mta_sts_enabled,
 			m.mode                    AS mta_sts_mode
 		FROM domains d
@@ -198,7 +229,9 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			SELECT a.domain_id,
 				SUM(r.count) AS total,
 				SUM(CASE WHEN r.dkim_result = 'pass' THEN r.count ELSE 0 END) AS dkim_pass,
-				SUM(CASE WHEN r.spf_result  = 'pass' THEN r.count ELSE 0 END) AS spf_pass
+				SUM(CASE WHEN r.spf_result  = 'pass' THEN r.count ELSE 0 END) AS spf_pass,
+				SUM(CASE WHEN r.dkim_aligned = 1 THEN r.count ELSE 0 END) AS dkim_aligned_pass,
+				SUM(CASE WHEN r.dkim_aligned IS NOT NULL OR r.spf_aligned IS NOT NULL THEN r.count ELSE 0 END) AS aligned_total
 			FROM report_records r
 			JOIN aggregate_reports a ON a.id = r.report_id AND a.workspace_id = ${A}
 			WHERE r.workspace_id = ${A} AND a.date_begin >= ${since} AND ${C('a')}
@@ -436,7 +469,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				JOIN aggregate_reports ar ON ar.id = rr.report_id
 				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
 				  AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
-				  AND (rr.dkim_result = 'fail' OR rr.spf_result = 'fail')
+				  AND (rr.dkim_result = 'fail' OR rr.spf_result = 'fail' OR (rr.spf_aligned = 0 AND rr.dkim_aligned = 0))
 				GROUP BY rr.source_ip
 				ORDER BY total DESC
 				LIMIT ${limit}
@@ -453,6 +486,11 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS total,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
+					MAX(rr.spf_aligned) AS spf_aligned,
+					MAX(rr.dkim_aligned) AS dkim_aligned,
+					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					MAX(ar.aspf) AS aspf,
+					MAX(ar.adkim) AS adkim,
 					MIN(date(datetime(ar.date_begin, 'unixepoch'))) AS first_seen,
 					MAX(date(datetime(ar.date_begin, 'unixepoch'))) AS last_seen,
 					MAX(rr.base_domain) AS base_domain,
@@ -462,7 +500,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
 				  AND ar.domain_id = ${domainId}
 				  AND ar.date_begin >= ${since}
-				  AND (rr.spf_result != 'pass' OR rr.dkim_result != 'pass')
+				  AND (rr.spf_result != 'pass' OR rr.dkim_result != 'pass' OR (rr.spf_aligned = 0 AND rr.dkim_aligned = 0))
 				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain
 				ORDER BY total DESC
 			`);
@@ -478,6 +516,11 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS total,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
+					MAX(rr.spf_aligned) AS spf_aligned,
+					MAX(rr.dkim_aligned) AS dkim_aligned,
+					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					MAX(ar.aspf) AS aspf,
+					MAX(ar.adkim) AS adkim,
 					MIN(date(datetime(ar.date_begin, 'unixepoch'))) AS first_seen,
 					MAX(date(datetime(ar.date_begin, 'unixepoch'))) AS last_seen,
 					MAX(rr.base_domain) AS base_domain,
@@ -489,6 +532,32 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				  AND ar.date_begin >= ${since}
 				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain
 				ORDER BY total DESC
+			`);
+		},
+
+		/**
+		 * Every subdomain of `domain` seen in this domain's counted reports, as a From domain (`header_from`) or as the SPF domain
+		 * (the return-path, what the report calls the envelope), with its volume and the receiver's pass / fail. The domain itself is not a
+		 * subdomain and is left out. One row per name and role.
+		 */
+		namesSeen(domainId: number, domain: string, since: number) {
+			const suffix = `.${domain}`;
+			return db.all<NameSeenRow>(sql`
+				SELECT n.name AS name, n.role AS role, SUM(n.count) AS messages,
+				       SUM(CASE WHEN n.spf_aligned = 1 OR n.dkim_aligned = 1 THEN n.count ELSE 0 END) AS passed,
+				       SUM(CASE WHEN n.spf_aligned = 0 AND n.dkim_aligned = 0 THEN n.count ELSE 0 END) AS failed
+				FROM (
+					SELECT lower(rr.header_from) AS name, 'from' AS role, rr.count, rr.spf_aligned, rr.dkim_aligned
+					FROM report_records rr JOIN aggregate_reports ar ON ar.id = rr.report_id
+					WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
+					UNION ALL
+					SELECT lower(rr.spf_domain), 'return-path', rr.count, rr.spf_aligned, rr.dkim_aligned
+					FROM report_records rr JOIN aggregate_reports ar ON ar.id = rr.report_id
+					WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
+				) n
+				WHERE n.name IS NOT NULL AND length(n.name) > ${suffix.length} AND substr(n.name, -${suffix.length}) = ${suffix}
+				GROUP BY n.name, n.role
+				ORDER BY messages DESC, n.name
 			`);
 		},
 
@@ -516,6 +585,11 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS count,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
+					MAX(rr.spf_aligned) AS spf_aligned,
+					MAX(rr.dkim_aligned) AS dkim_aligned,
+					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					MAX(ar.aspf) AS aspf,
+					MAX(ar.adkim) AS adkim,
 					rr.disposition,
 					GROUP_CONCAT(DISTINCT ar.org_name) AS reporters
 				FROM report_records rr
