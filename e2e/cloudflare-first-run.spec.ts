@@ -216,6 +216,8 @@ test('hosted with report intake: step 4 writes only the policy record; Connect r
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual([`v=DMARC1; p=none; rua=mailto:rua@${intake}`]);
 		expect(inst.d1(`SELECT rua_address, reports_connected_at IS NOT NULL AS connected FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: `rua@${intake}`, connected: 1 }]);
 	} finally {
+		// The handler of publicDnsHasNoDmarc may still be fetching from the Worker: remove the route and wait for it before the Worker is stopped.
+		await page.unrouteAll({ behavior: 'wait' });
 		await inst.stop();
 	}
 });
@@ -239,6 +241,8 @@ test('hosted where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the 
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
 		expect(inst.d1(`SELECT rua_address FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: '' }]);
 	} finally {
+		// The handler of publicDnsHasNoDmarc may still be fetching from the Worker: remove the route and wait for it before the Worker is stopped.
+		await page.unrouteAll({ behavior: 'wait' });
 		await inst.stop();
 	}
 });
