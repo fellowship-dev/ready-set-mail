@@ -23,6 +23,10 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 - **Hosted change alerts are off until `LIFECYCLE_EMAILS_ON=change_alerts`.** New setting `LIFECYCLE_EMAILS_ON` (hosted only); `LIFECYCLE_EMAILS_OFF` also takes `change_alerts` and `connection_alerts`, on self-host too. Self-host sends them as before.
 - **`GET /api/unsubscribe` no longer unsubscribes.** It shows a page with a button; the button (and the one-click `POST` of RFC 8058, with or without its body) unsubscribes. Mail scanners that open links can no longer unsubscribe anyone.
 
+### Fixed
+
+- **The "first report received" email now sends on the hosted service.** It was sent from a workspace sender that hosted workspaces never have, so it failed; it now uses the platform sender that sign-in emails use (a self-hosted workspace's own sender still wins). Its link now goes to the domain's page on the configured public origin instead of the Worker's workers.dev address, and the email is no longer cut off when the report handler returns. Subject and copy no longer promise things that are not true (an emoji, "24-48 hours"). No migration.
+
 ### Removed
 
 - **The opt-in self-host usage telemetry** (`src/telemetry.ts`, the "Share anonymous usage stats" checkbox at owner setup and its line in Settings, the daily heartbeat). Its endpoint never resolved, so it never sent anything. A stored `telemetry_opted_in` setting is ignored (and still exported). Settings now says whether usage analytics is on ("Off" on every self-hosted installation).

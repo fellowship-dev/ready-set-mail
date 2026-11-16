@@ -253,7 +253,8 @@ async function sendNoReports(w: W): Promise<void> {
     const m = w.milestones.get(d.id);
     if (!m?.records_live_at || w.now - m.records_live_at < NO_REPORT_AFTER_SECONDS || w.now - m.records_live_at > LIVE_WATCH_SECONDS) continue;
     if (!milestoneRecipients(w.people, w.adders.get(d.id) ?? new Set(), w.requireVerified).some((r) => !hasClaim(w, r.userId, d.id, 'no_reports', 'once'))) continue;
-    const stored = await w.q.reports.storedSince(d.id, m.records_live_at);
+    // Any report ever stored, not only since the records were seen: the job can see a domain live long after its first report arrived.
+    const stored = await w.q.reports.storedSince(d.id, 0);
     if (stored.counted || stored.uncounted) {
       // Reports are arriving, only some are not counted: the domain is not silent, so this email would not be true.
       if (!stored.counted) log('no-report email skipped', `domain ${d.id} receives reports that are not counted`);

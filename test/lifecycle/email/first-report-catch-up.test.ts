@@ -1,0 +1,112 @@
+// The first-report catch-up, for the owner whose first counted report was stored by code that could not send the email (no lifecycle_sends row).
+// Window: the daily job (`0 11 * * *`) sends it for a first counted report whose `aggregate_reports.created_at` (when it was STORED, not the report's
+// date_end) is at most FIRST_REPORT_CATCHUP_SECONDS (3 days) before the run: created_at >= run - 3 days. After that, never.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { storeReport } from '../../../src/dmarc/store-report';
+import { FIRST_REPORT_CATCHUP_SECONDS } from '../../../src/lifecycle/email/kinds';
+import { DAY, MON_16_NOV, lifecycleWorld, recordNamingUs, BASE, WS, type World } from './world';
+
+const D = 'brightwave-mail.com';
+const T0 = MON_16_NOV - 25 * 3600; // Sun 15 Nov 10:00 UTC: the counted report is stored; the next 0 11 run is 25 hours later
+const google = { ip: '192.0.2.10', count: 40, spf: ['pass', D] as [string, string], dkim: ['pass', D] as [string, string], org: 'Google Workspace' };
+const sendgrid = { ip: '198.51.100.7', count: 8, spf: ['pass', 'sendgrid.net'] as [string, string], dkim: ['pass', 'sendgrid.net'] as [string, string], org: 'SendGrid' };
+
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+const firstReports = (w: World) => w.mailer.sent.filter((m) => m.subject.startsWith('First DMARC report'));
+const claim = (w: World) => w.rows("SELECT * FROM lifecycle_sends WHERE kind = 'first_report'");
+const setNow = (w: World, t: number) => { w.clock.now = t; vi.setSystemTime(t * 1000); };
+
+/** The owner's instance: one proven domain, reports connected, ONE counted report (Google, with a source that did not pass) stored at T0 without the email, two TEST (uncounted) reports before it. */
+async function owner(milestone: 'seen-by-app' | 'seen-by-job' | 'none') {
+  const w = await lifecycleWorld();
+  setNow(w, T0);
+  const id = w.addDomain({ domain: D, createdAt: T0 - 3 * DAY, connectedAt: T0 - 3 * DAY });
+  w.addReport({ domain: D, day: T0 - 9 * DAY, tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: T0 - 8 * DAY, records: [google] });
+  w.addReport({ domain: D, day: T0 - 5 * DAY, tier: 'unknown', org: 'test.example', knownAs: null, storedAt: T0 - 4 * DAY, records: [google] });
+  w.addReport({ domain: D, day: T0 - DAY - 3600, storedAt: T0, records: [google, sendgrid] });
+  if (milestone !== 'none') w.sql.prepare('INSERT INTO domain_milestones (domain_id, workspace_id, records_live_at, live_seen_by) VALUES (?, ?, ?, ?)').run(id, WS, T0 - 2 * DAY, milestone === 'seen-by-app' ? 'app' : 'job');
+  w.dns.set(D, recordNamingUs());
+  setNow(w, T0 + 25 * 3600);
+  return { w, id };
+}
+
+describe.each(['seen-by-app', 'seen-by-job', 'none'] as const)('first-report catch-up, records seen live before T0: %s', (milestone) => {
+  it('(a) the 0 11 run 25 h later sends it once, to the verified owner, with that report\'s numbers and the public origin', async () => {
+    const { w, id } = await owner(milestone);
+    expect(claim(w)).toEqual([]);
+    await w.run({ schedule: 'daily' });
+    const sent = firstReports(w);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].to).toBe('dana@brightwave-mail.com');
+    expect(sent[0].subject).toBe(`First DMARC report for ${D}: 48 messages, 40 passed`);
+    expect(JSON.stringify(sent[0])).toContain('Google');
+    expect(JSON.stringify(sent[0])).toContain(`${BASE}/#/w/${WS}/domains/${id}`);
+    expect(JSON.stringify(sent[0])).not.toContain('workers.dev');
+    expect(claim(w)).toHaveLength(1);
+  });
+
+  it('(b) a second 0 11 run the same day, and every later one, send nothing more', async () => {
+    const { w } = await owner(milestone);
+    await w.run({ schedule: 'daily' });
+    await w.run({ schedule: 'daily' });
+    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run({ schedule: 'daily' }); }
+    expect(firstReports(w)).toHaveLength(1);
+  });
+
+  it('(e) no records-live and no no-reports email goes to this owner: a report exists', async () => {
+    const { w } = await owner(milestone);
+    await w.run({ schedule: 'daily' });
+    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run({ schedule: 'daily' }); }
+    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report'))).toEqual([]);
+    expect((w.rows('SELECT kind FROM lifecycle_sends') as Array<{ kind: string }>).map((r) => r.kind)).toEqual(['first_report']);
+  });
+
+  it('(c) a SECOND counted report through the intake path (storeReport) sends no first-report email', async () => {
+    const { w, id } = await owner(milestone);
+    await w.run({ schedule: 'daily' });
+    expect(firstReports(w)).toHaveLength(1);
+    const waited: Promise<unknown>[] = [];
+    const report = {
+      xml_schema: 'draft' as const,
+      report_metadata: { org_name: 'google.com', org_email: 'noreply@google.com', org_extra_contact_info: null, report_id: 'second', begin_date: '2026-11-15T00:00:00Z', end_date: '2026-11-15T23:59:59Z', errors: [] },
+      policy_published: { domain: D, adkim: 'r' as const, aspf: 'r' as const, p: 'none' as const, sp: 'none' as const, pct: 100, fo: '0' },
+      records: [{
+        source: { ip: '192.0.2.10', reverse_dns: null, base_domain: null, country_code: null, country_name: null, subdivision: null, city: null },
+        count: 5, alignment: { spf: true, dkim: true, dmarc: true },
+        policy_evaluated: { disposition: 'none' as const, dkim: 'pass' as const, spf: 'pass' as const, policy_override_reasons: [] },
+        identifiers: { header_from: D, envelope_from: null, envelope_to: null },
+        auth_results: { dkim: [{ domain: D, selector: 's', result: 'pass' as const }], spf: [{ domain: D, scope: 'mfrom' as const, result: 'pass' as const }] },
+      }],
+    };
+    const stored = await storeReport(w.tenant(), id, report, null, true, { tier: 'counted', identity: 'google.com', auth: 'dkim', domain: 'google.com', reason: null, knownAs: 'Google' } as any, { waitUntil: (p) => { waited.push(p); } });
+    expect(stored.stored).toBe(true);
+    await Promise.all(waited);
+    expect(waited).toHaveLength(0);
+    expect(firstReports(w)).toHaveLength(1);
+  });
+});
+
+describe('(d) the window: created_at >= run time - 3 days (when the report was STORED, not its date_end)', () => {
+  const run = async (storedAgo: number, dayAgo = 0) => {
+    const w = await lifecycleWorld();
+    setNow(w, MON_16_NOV);
+    w.addDomain({ domain: D });
+    w.addReport({ domain: D, day: MON_16_NOV - dayAgo - DAY, storedAt: MON_16_NOV - storedAgo, records: [google] });
+    await w.run({ schedule: 'daily' });
+    return firstReports(w).length;
+  };
+  it('is 3 days', () => expect(FIRST_REPORT_CATCHUP_SECONDS).toBe(3 * DAY));
+  it('stored exactly 3 days before the run (and one second inside it): sent', async () => {
+    expect(await run(FIRST_REPORT_CATCHUP_SECONDS)).toBe(1);
+    expect(await run(FIRST_REPORT_CATCHUP_SECONDS - 1)).toBe(1);
+  });
+  it('stored one second beyond 3 days: never', async () => {
+    expect(await run(FIRST_REPORT_CATCHUP_SECONDS + 1)).toBe(0);
+  });
+  it('the report\'s own date does not matter: an old report stored just now is sent, a recent one stored long ago is not', async () => {
+    expect(await run(60, 30 * DAY)).toBe(1);
+    expect(await run(FIRST_REPORT_CATCHUP_SECONDS + 1, 0)).toBe(0);
+  });
+});
