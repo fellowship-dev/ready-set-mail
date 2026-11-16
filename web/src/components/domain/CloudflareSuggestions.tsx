@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router';
 import { ZoneChoice } from '../billing/PaidAdd';
 import { api } from '../../lib/api';
 import { useBilling } from '../../lib/billing';
-import { planEnforced, usd, WORDS, type PaidPreview } from '../../lib/plan';
+import { addSelectedLabel, planEnforced, usd, WORDS, type PaidPreview } from '../../lib/plan';
 import { useState } from 'react';
 import { PlanLimitNotice, planLimitOf } from '../PlanLimitNotice';
 import { errorMessage } from '../../lib/api';
@@ -61,7 +61,7 @@ function AlsoInCloudflare({ owner, onPaid }: { owner: boolean; onPaid?: (names: 
 					<div className="divide-y divide-line">{list.map((s) => <ZoneChoice key={s.zone_id} name={s.name} checked={picked.includes(s.name)} onChange={(v) => setPicked((p) => (v ? [...p, s.name].slice(0, 10) : p.filter((n) => n !== s.name)))} />)}</div>
 					{choose.isError ? <p className="text-sm text-danger">{errorMessage(choose.error)}</p> : null}
 					<div className="flex flex-wrap gap-2">
-						<Button disabled={picked.length === 0} loading={choose.isPending} onClick={() => choose.mutate()}>{picked.length > 1 ? `Add ${picked.length} domains` : 'Add'}</Button>
+						<Button disabled={picked.length === 0} loading={choose.isPending} onClick={() => choose.mutate()}>{addSelectedLabel(picked.length, unit)}</Button>
 						<Button variant="secondary" loading={dismiss.isPending} onClick={() => dismiss.mutate()}>Not now</Button>
 					</div>
 				</>

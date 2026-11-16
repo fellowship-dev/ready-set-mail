@@ -1,10 +1,10 @@
 import { Alert, Button, Checkbox, Label, RecordBlock, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ExternalLink } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { billingKeys, openPortal, startCardSession, useBilling } from '../../lib/billing';
-import { cardMask, confirmLabel, confirmSentence, errorCode, perInterval, usePaidPreview, usePlan, WORDS, type PaidAddResult, type PaidPreview } from '../../lib/plan';
+import { cardMask, confirmLabel, confirmSentence, errorCode, perInterval, usd, usePaidPreview, usePlan, WORDS, type PaidAddResult, type PaidPreview, type PlanView } from '../../lib/plan';
+import { PlanAlert } from './PlanAlerts';
 import { keys } from '../../lib/queries';
 
 /**
@@ -13,7 +13,7 @@ import { keys } from '../../lib/queries';
  * (Stripe's page, then back to this same step). A bank that wants to confirm the first payment leaves the domain pending, visibly, until it has.
  * `domains`: one name, or several (the Cloudflare zones: one confirm for the total). Only the workspace owner can confirm; everyone else is told whom to ask.
  */
-export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancelLabel = 'Cancel' }: { domains: string[]; returnPath: string; onAdded: (r: PaidAddResult) => void; onCancel?: () => void; /** The names turn out to fit the free domain: nothing to confirm (the caller adds them the plain way). */ onFree?: () => void; cancelLabel?: string }) {
+export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancelLabel = 'Cancel' }: { domains: string[]; returnPath: string; onAdded: (r: PaidAddResult, chargedNow: number | null) => void; onCancel?: () => void; /** The names turn out to fit the free domain: nothing to confirm (the caller adds them the plain way). */ onFree?: () => void; cancelLabel?: string }) {
 	const qc = useQueryClient();
 	const billing = useBilling();
 	const plan = usePlan();
@@ -42,7 +42,7 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 				if (r.payment.action_url && !opened.current) { opened.current = true; window.open(r.payment.action_url, '_blank', 'noopener,noreferrer'); }
 				return;
 			}
-			if (r.added.length > 0) { onAdded(r); return; }
+			if (r.added.length > 0) { onAdded(r, p && p.plan_starts ? p.charge_now : null); return; }
 			// Nothing was added and nothing was charged: the proof is not there yet, or the server said why.
 			const why = r.failed[0]?.error ?? null;
 			if (why) setProblem(why);
@@ -69,32 +69,30 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	// The confirm waits for the bank: it is done when the server says the plan has started (the page polls the plan).
 	useEffect(() => {
 		// Done when the plan has STARTED (Stripe says paid), not merely when no payment is pending: the cached plan is the one from before the click.
-		if (waiting && plan && plan.name === 'payg' && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null });
+		if (waiting && plan && plan.name === 'payg' && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null }, p && p.plan_starts ? p.charge_now : null);
 	}, [waiting, plan?.pending]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	useEffect(() => { if (p && !p.needs_confirm && p.reason === 'free') onFree?.(); }, [p?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
 	if (!b) return <Skeleton className="h-40 w-full" />;
 	if (!owner) return <Alert variant="info">{WORDS.askOwner}</Alert>;
 	if (waiting) {
-		return (
-			<div className="space-y-3" aria-live="polite">
-				<Alert variant="info" title={WORDS.waitingBank}>
-					Your bank needs you to confirm this payment. We opened its page in a new tab; this updates by itself once you have.
-				</Alert>
-				{waiting.action_url ? (
-					<Button asChild variant="secondary" size="sm">
-						<a href={waiting.action_url} target="_blank" rel="noopener noreferrer">
-							Open the confirmation page again
-							<ExternalLink aria-hidden />
-						</a>
-					</Button>
-				) : null}
-			</div>
-		);
+		// ONE alert for the wait, here (the banner and Settings stay quiet on this page): what is happening, "Try again" for the bank's page, "Cancel" to give the domain up.
+		const waitingPlan: PlanView | null = plan ? { ...plan, can_manage: true, pending: { domains: waiting.added, action_url: waiting.action_url } } : null;
+		return <div aria-live="polite">{waitingPlan ? <PlanAlert plan={waitingPlan} onCancelled={() => { setWaiting(null); onCancel?.(); }} /> : <Alert variant="info" title={WORDS.waitingBank}>Your bank needs you to confirm this payment. This updates by itself once you have.</Alert>}</div>;
 	}
 	if (preview.isPending) return <div aria-busy="true" role="status"><Skeleton className="h-40 w-full" /><span className="sr-only">Reading the price…</span></div>;
 	if (preview.isError || !p) return <Alert variant="danger" title="That did not work">{preview.error ? errorMessage(preview.error) : WORDS.noPreview}<Button variant="secondary" size="sm" className="mt-3" onClick={() => void preview.refetch()}>Try again</Button></Alert>;
 
+	// Adding is paused (a payment problem) or waiting (the bank): say so first, before asking for any DNS record that could not be used yet.
+	if (!p.needs_confirm && p.reason === 'payment_problem') {
+		return (
+			<div className="space-y-3">
+				<Alert variant="warning" title="Adding more domains is paused">{WORDS.paymentProblem}</Alert>
+				<div className="flex flex-wrap gap-2"><Button loading={portal.isPending} onClick={() => portal.mutate()}>Update your card</Button>{onCancel ? <Button variant="secondary" onClick={onCancel}>{cancelLabel}</Button> : null}</div>
+			</div>
+		);
+	}
+	if (!p.needs_confirm && p.reason === 'payment_pending') return plan?.pending ? <PlanAlert plan={plan} /> : <Alert variant="info" title={WORDS.waitingBank}>Your bank needs you to confirm the first payment. This updates by itself once you have.</Alert>;
 	// A domain that is not proven yet: the record first (one decision: check it), the money after.
 	if (p.proof.state === 'unverified' && p.proof.txt_name && p.proof.txt_value) {
 		return (
@@ -110,15 +108,6 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 		);
 	}
 
-	if (!p.needs_confirm && p.reason === 'payment_problem') {
-		return (
-			<div className="space-y-3">
-				<Alert variant="warning" title="Adding more domains is paused">{WORDS.paymentProblem}</Alert>
-				<div className="flex flex-wrap gap-2"><Button loading={portal.isPending} onClick={() => portal.mutate()}>Update your card</Button>{onCancel ? <Button variant="secondary" onClick={onCancel}>{cancelLabel}</Button> : null}</div>
-			</div>
-		);
-	}
-	if (!p.needs_confirm && p.reason === 'payment_pending') return <Alert variant="info" title={WORDS.waitingBank}>Your bank needs you to confirm the first payment. This updates by itself once you have.</Alert>;
 	if (!p.needs_confirm && p.reason === 'free' && onFree) return <Skeleton className="h-10 w-full" />;
 	if (!p.needs_confirm) return <Alert variant="info">{p.reason === 'no_paid_path' ? 'More domains: talk to us.' : 'Nothing to confirm here.'}</Alert>;
 
@@ -131,6 +120,7 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	const grandfather = p.grandfather && p.grandfather.units > 1 ? p.grandfather : null;
 
 	return (
+		<div className="grid gap-6 lg:grid-cols-[minmax(0,36rem)_minmax(0,22rem)] lg:items-start">
 		<div className="space-y-4">
 			{grandfather ? (
 				<p className="text-sm text-ink-1">
@@ -163,6 +153,32 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 				{onCancel ? <Button variant="secondary" onClick={onCancel} disabled={add.isPending}>{cancelLabel}</Button> : null}
 			</div>
 		</div>
+		{plan ? <WorkspaceBill plan={plan} adding={domains} /> : null}
+		</div>
+	);
+}
+
+/**
+ * Beside the confirm, on a wide screen only: what the workspace holds and what each domain is, so the person sees the bill this add leads to. Facts from the
+ * plan (the unit price is Stripe's; the free domain is the workspace's allowance). Nothing here is asked or decided.
+ */
+function WorkspaceBill({ plan, adding }: { plan: PlanView; adding: string[] }) {
+	const unit = plan.price ?? null;
+	const price = unit ? `${usd(unit.amount, unit.currency)} a ${unit.interval}` : 'Billed monthly';
+	const held = plan.domains.filter((d) => !adding.includes(d.name));
+	return (
+		<aside aria-label="This workspace" className="hidden space-y-3 rounded-lg border border-line p-4 lg:block">
+			<h2 className="text-sm font-semibold tracking-tight">In this workspace</h2>
+			<ul className="divide-y divide-line text-sm">
+				{held.map((d) => (
+					<li key={d.id} className="flex items-baseline justify-between gap-3 py-2"><span className="font-mono [overflow-wrap:anywhere]">{d.name}</span><span className="shrink-0 text-ink-2">{d.billable ? price : 'Free'}</span></li>
+				))}
+				{adding.map((name) => (
+					<li key={name} className="flex items-baseline justify-between gap-3 py-2"><span className="font-mono [overflow-wrap:anywhere]">{name}</span><span className="shrink-0 text-ink-1">{price}</span></li>
+				))}
+			</ul>
+			<p className="text-sm text-ink-2">Subdomains of a domain are part of it: they never add to the bill.</p>
+		</aside>
 	);
 }
 

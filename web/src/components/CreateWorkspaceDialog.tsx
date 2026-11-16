@@ -41,11 +41,12 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: { open: boolean; o
 
 	return (
 		<Dialog open={open} onOpenChange={(o) => (create.isPending ? undefined : onOpenChange(o))}>
-			<DialogContent>
+			<DialogContent {...(needs ? { 'aria-describedby': undefined } : {})}>
 				<form onSubmit={submit} className="space-y-4">
 					<DialogHeader>
 						<DialogTitle>Create workspace</DialogTitle>
-						<WorkspaceDescription />
+						{/* With the card notice the dialog is about the card: the generic description would be words the person did not ask for. */}
+						{needs ? null : <WorkspaceDescription />}
 					</DialogHeader>
 					<Field id="workspace-name" label="Workspace name">
 						<Input id="workspace-name" required autoFocus maxLength={80} placeholder="Lexgo" value={name} onChange={(e) => setName(e.target.value)} />

@@ -7,7 +7,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { PaidAdd } from '../../components/billing/PaidAdd';
 import { useBilling } from '../../lib/billing';
-import { planEnforced, planRequiredOf, usd, WORDS, type PaidPreview, type PaidAddResult } from '../../lib/plan';
+import { addedText, planEnforced, planRequiredOf, WORDS, type PaidPreview, type PaidAddResult } from '../../lib/plan';
 import { useCardReturn } from '../../lib/card-return';
 import { ClaimCard } from '../../components/domain/ClaimCard';
 import { InheritanceBanner } from '../../components/domain/InheritanceBanner';
@@ -242,7 +242,8 @@ export function AddDomainPage() {
 				// A domain that would be a paid one is proven and confirmed in one place, so the money is asked when it would move.
 				if (planEnforced(plan) && isOwner && plan.paid_available) {
 					const prev = await api<PaidPreview>(`/api/billing/domains/preview?domain=${encodeURIComponent(domain)}`).catch(() => null);
-					if (prev?.needs_confirm) { setPaid(domain); return; }
+					// A confirm, or the sentence that says why adding is paused (a payment problem, the bank): said by the confirm step, not after a DNS record that could not be used.
+					if (prev && (prev.needs_confirm || prev.reason === 'payment_problem' || prev.reason === 'payment_pending')) { setPaid(domain); return; }
 				}
 				setPending(res);
 			} else setResult(res as AddDomainResult);
@@ -255,18 +256,15 @@ export function AddDomainPage() {
 	});
 
 	// "Added. $5 a month from today." lands on the domain list (src/components/billing/PlanBanners.tsx shows it).
-	function added(r: PaidAddResult) {
-		const unit = plan?.price;
-		const each = unit ? `${usd(unit.amount, unit.currency)} a ${unit.interval}` : null;
-		const text = r.added.length > 1 ? `Added ${r.added.length} domains.${each ? ` ${each} each from today.` : ''}` : `Added.${each ? ` ${each} from today.` : ''}`;
+	function added(r: PaidAddResult, chargedNow: number | null) {
 		void qc.invalidateQueries({ queryKey: ['domains'] });
-		navigate('/', { state: { planFlash: { domains: r.added.map((a) => a.domain), text } } });
+		navigate('/', { state: { planFlash: { domains: r.added.map((a) => a.domain), text: addedText(r.added.length, plan?.price, chargedNow) } } });
 	}
 
 	if (result) return <SetupStep result={result} />;
 	if (paidMany) {
 		return (
-			<div className="max-w-2xl space-y-6">
+			<div className="space-y-6">
 				<PageHeader title={paidMany.length > 1 ? `Add ${paidMany.length} domains` : `Add ${paidMany[0]}`} />
 				<PaidAdd domains={paidMany} returnPath={`/add?zones=${paidMany.join(',')}`} onAdded={added} onCancel={() => setPaidMany(null)} />
 			</div>
@@ -274,7 +272,7 @@ export function AddDomainPage() {
 	}
 	if (paid) {
 		return (
-			<div className="max-w-2xl space-y-6">
+			<div className="space-y-6">
 				<PageHeader title={`Add ${paid}`} />
 				<PaidAdd domains={[paid]} returnPath={`/add?domain=${encodeURIComponent(paid)}`} onAdded={added} onCancel={() => { setPaid(null); add.reset(); }} />
 			</div>

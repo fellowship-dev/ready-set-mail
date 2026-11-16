@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PaidAdd } from '../src/components/billing/PaidAdd';
 import { PlanCard } from '../src/components/billing/PlanCard';
-import { confirmLabel, confirmSentence, invoiceMoney, planRequiredOf, usd, WORDS, type PaidPreview, type PlanView } from '../src/lib/plan';
+import { PlanBanners } from '../src/components/billing/PlanBanners';
+import { BillingSection } from '../src/pages/settings/BillingSection';
+import { addedText, addSelectedLabel, confirmLabel, confirmSentence, invoiceMoney, planRequiredOf, usd, WORDS, type PaidPreview, type PlanView } from '../src/lib/plan';
 import { ApiError } from '../src/lib/api';
 import { fail, renderApp } from './render';
 
@@ -31,12 +33,14 @@ describe('the words of the confirm: Stripe\'s numbers, never made up here', () =
 	});
 	it('that starts the plan: what is charged now and the day of the next one, both Stripe\'s', () => {
 		const p = preview({ plan_starts: true, charge_now: 500, then: { amount: 500, currency: 'usd', date: DEC16 } });
-		expect(confirmSentence(p, 'Visa ···4242')).toEqual(['$5 now to Visa ···4242, then $5 a month from Dec 16.', 'Subdomains included. Cancel any time.']);
+		expect(confirmSentence(p, 'Visa ···4242')).toEqual(['$5 now, then $5 a month from Dec 16. Card Visa ···4242.', 'Subdomains included. Cancel any time.']);
+		expect(confirmLabel(p)).toBe('Pay $5 and add'); // the button names what happens at the click
 	});
 	it('several domains: the total is not a sum made here', () => {
 		const p = preview({ plan_starts: true, charge_now: 1500, then: { amount: 1500, currency: 'usd', date: DEC16 }, domains: ['a.com', 'b.com', 'c.com'] });
-		expect(confirmSentence(p, 'Visa ···4242', 3)[0]).toBe('$15 now to Visa ···4242, then $15 a month from Dec 16.');
-		expect(confirmLabel(p, 3)).toBe('Add 3 domains');
+		expect(confirmSentence(p, 'Visa ···4242', 3)[0]).toBe('$15 now, then $15 a month from Dec 16. Card Visa ···4242.');
+		expect(confirmLabel(p, 3)).toBe('Pay $15 and add');
+		expect(confirmLabel(preview({ next_invoice: { amount_due: 1000, currency: 'usd', date: null } }), 3)).toBe('Add 3 domains');
 		expect(confirmSentence(preview({ next_invoice: { amount_due: 1000, currency: 'usd', date: null } }), 'Visa ···4242', 2)[0]).toBe('$5 a month for each of these 2 domains, from today.');
 	});
 	it('when Stripe could not be asked: the plain price and "billed with your next invoice", or no amount at all where the add charges now', () => {
@@ -67,9 +71,9 @@ describe('the paid-domain confirm', () => {
 			status: { mode: 'saas' },
 			routes: { 'GET /api/billing': billing(), 'GET /api/billing/domains/preview?domain=second.example.org': p, 'POST /api/billing/domains': { added: [{ domain: 'second.example.org', domain_id: 2 }], pending: [], resumed: [], failed: [], payment: null } },
 		});
-		expect(await screen.findByText('$5 now to Visa ···4242, then $5 a month from Dec 16.')).toBeTruthy();
-		expect(screen.getAllByRole('button').filter((b) => /Add for|Add a card/.test(b.textContent ?? ''))).toHaveLength(1);
-		await userEvent.click(screen.getByRole('button', { name: 'Add for $5 a month' }));
+		expect(await screen.findByText('$5 now, then $5 a month from Dec 16. Card Visa ···4242.')).toBeTruthy();
+		expect(screen.getAllByRole('button').filter((b) => /Add for|Pay \$|Add a card/.test(b.textContent ?? ''))).toHaveLength(1);
+		await userEvent.click(screen.getByRole('button', { name: /^(Add for \$5 a month|Pay \$5 and add)$/ }));
 		await waitFor(() => expect(added).toHaveBeenCalled());
 		const post = calls.find((c) => c.method === 'POST' && c.path === '/api/billing/domains')!;
 		expect(post.body).toEqual({ domain: 'second.example.org', expected_amount: 500, expected_currency: 'usd', expected_charge: 500 });
@@ -86,14 +90,14 @@ describe('the paid-domain confirm', () => {
 	it('a preview that could not be read: the button cannot be pressed (never a guessed amount)', async () => {
 		run(billing(), preview({ plan_starts: true, preview_failed: true, charge_now: null, can_confirm: false }));
 		expect(await screen.findByText(WORDS.noPreview)).toBeTruthy();
-		expect((screen.getByRole('button', { name: 'Add for $5 a month' }) as HTMLButtonElement).disabled).toBe(true);
+		expect((screen.getByRole('button', { name: /^(Add for \$5 a month|Pay \$5 and add)$/ }) as HTMLButtonElement).disabled).toBe(true);
 	});
 
 	it('a declined card says so in the plan\'s words and offers the card, not a code', async () => {
 		const p = preview({ plan_starts: true, charge_now: 500, then: { amount: 500, currency: 'usd', date: DEC16 } });
 		run(billing(), p, { 'POST /api/billing/domains': { __status: 402, body: { code: 'payment_failed', error: WORDS.declined, action: 'update_card' } } });
-		await screen.findByText('$5 now to Visa ···4242, then $5 a month from Dec 16.');
-		await userEvent.click(screen.getByRole('button', { name: 'Add for $5 a month' }));
+		await screen.findByText('$5 now, then $5 a month from Dec 16. Card Visa ···4242.');
+		await userEvent.click(screen.getByRole('button', { name: /^(Add for \$5 a month|Pay \$5 and add)$/ }));
 		expect(await screen.findByText(/Your card was declined\. Use another card\. Nothing was added\./)).toBeTruthy();
 		expect(screen.getByRole('button', { name: 'Change card' })).toBeTruthy();
 		expect(document.body.textContent).not.toMatch(/card_declined|generic_decline|402/);
@@ -103,11 +107,15 @@ describe('the paid-domain confirm', () => {
 		const open = vi.fn();
 		vi.stubGlobal('open', open);
 		run(billing(), preview({ plan_starts: true, charge_now: 500, then: { amount: 500, currency: 'usd', date: DEC16 } }), { 'POST /api/billing/domains': { added: [{ domain: 'second.example.org', domain_id: 2 }], pending: [], resumed: [], failed: [], payment: { state: 'requires_action', action_url: 'https://stripe.fake/i/in_1' } } });
-		await screen.findByText('$5 now to Visa ···4242, then $5 a month from Dec 16.');
-		await userEvent.click(screen.getByRole('button', { name: 'Add for $5 a month' }));
+		await screen.findByText('$5 now, then $5 a month from Dec 16. Card Visa ···4242.');
+		await userEvent.click(screen.getByRole('button', { name: /^(Add for \$5 a month|Pay \$5 and add)$/ }));
 		expect(await screen.findByText("Waiting for your bank's confirmation")).toBeTruthy();
 		expect(open).toHaveBeenCalledWith('https://stripe.fake/i/in_1', '_blank', 'noopener,noreferrer');
-		expect(screen.getByRole('link', { name: /Open the confirmation page again/ }).getAttribute('href')).toBe('https://stripe.fake/i/in_1');
+		// ONE alert, ONE way back to the bank's page, and the way out
+		expect(screen.getAllByText("Waiting for your bank's confirmation")).toHaveLength(1);
+		expect(screen.getAllByRole('link', { name: /Try again/ })).toHaveLength(1);
+		expect(screen.getByRole('link', { name: /Try again/ }).getAttribute('href')).toBe('https://stripe.fake/i/in_1');
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
 	});
 
 	it('a domain whose record is not there yet: the record first, then the check, and no money asked', async () => {
@@ -194,6 +202,107 @@ describe('Settings → Billing, the plan', () => {
 		show(plan({ paid_available: false }));
 		expect(await screen.findByText('More domains: talk to us.')).toBeTruthy();
 		expect(screen.queryByRole('button')).toBeNull();
+	});
+});
+
+describe('the words that name what a click does', () => {
+	it('the Add button of the zone list says how many and the total; nothing ticked says only Add', () => {
+		expect(addSelectedLabel(0, UNIT)).toBe('Add');
+		expect(addSelectedLabel(1, UNIT)).toBe('Add 1: $5 a month');
+		expect(addSelectedLabel(2, UNIT)).toBe('Add 2: $10 a month');
+		expect(addSelectedLabel(3, null)).toBe('Add 3');
+	});
+	it('the result after an add says what was true: paid now, or prorated onto the next invoice', () => {
+		expect(addedText(1, UNIT, 500)).toBe('Added. $5 paid now, then $5 a month.');
+		expect(addedText(2, UNIT, 1000)).toBe('Added 2 domains. $10 paid now, then $10 a month.');
+		expect(addedText(1, UNIT, 0)).toBe('Added. $5 a month from today.');
+		expect(addedText(2, UNIT, null)).toBe('Added 2 domains. $5 a month each from today.');
+	});
+});
+
+describe('one payment alert, one way forward', () => {
+	const banners = (p: PlanView, path = '/') => renderApp(<PlanBanners />, { status: { mode: 'saas' }, route: path, routes: { 'GET /api/billing': billing({}, p) } });
+	const pending = { domains: ['second.example.org'], action_url: 'https://stripe.fake/i/in_1' };
+
+	it('a first payment waiting for the bank: one alert says so for this domain, with Try again and Cancel; no "renewal"', async () => {
+		banners(plan({ pending, action_required_url: 'https://stripe.fake/i/in_1' }));
+		expect(await screen.findByText("Waiting for your bank's confirmation")).toBeTruthy();
+		expect(screen.getAllByRole('link')).toHaveLength(1);
+		expect(screen.getByRole('link', { name: /Try again/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+		expect(document.body.textContent).not.toMatch(/renewal/i);
+		expect(document.body.textContent).toMatch(/second\.example\.org will be added once your bank has confirmed the payment/);
+	});
+	it('Cancel gives the domain up: it asks the server once and says nothing was charged', async () => {
+		const { calls } = renderApp(<PlanBanners />, { status: { mode: 'saas' }, routes: { 'GET /api/billing': billing({}, plan({ pending })), 'POST /api/billing/plan/cancel-pending': { cancelled: true, domains: ['second.example.org'] } } });
+		await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+		await waitFor(() => expect(calls.filter((c) => c.path === '/api/billing/plan/cancel-pending')).toHaveLength(1));
+	});
+	it('a renewal that needs the bank is its own sentence and its own button', async () => {
+		banners(plan({ name: 'payg', status: 'past_due', action_required_url: 'https://stripe.fake/i/in_9', billable: 1 }));
+		expect(await screen.findByText(WORDS.renewalWaiting)).toBeTruthy();
+		expect(screen.getAllByRole('link')).toHaveLength(1);
+		expect(screen.getByRole('link', { name: /Confirm the payment/ })).toBeTruthy();
+	});
+	it('a payment problem, once: one Update your card', async () => {
+		banners(plan({ name: 'payg', status: 'past_due', payment_problem: true, billable: 1 }));
+		expect(await screen.findAllByRole('button', { name: /Update your card/ })).toHaveLength(1);
+	});
+	it('on Settings and on Add domain the banner stays quiet: the page says it in its own place', async () => {
+		banners(plan({ name: 'payg', status: 'past_due', payment_problem: true, billable: 1 }), '/settings');
+		await new Promise((r) => setTimeout(r, 50));
+		expect(screen.queryByRole('button', { name: /Update your card/ })).toBeNull();
+	});
+});
+
+describe('Settings → Billing: one portal button, plain facts', () => {
+	const section = (p: PlanView, b: Record<string, unknown> = {}) => renderApp(<BillingSection />, { status: { mode: 'saas' }, route: '/settings', routes: { 'GET /api/billing': billing(b, p) } });
+	const portalish = () => screen.queryAllByRole('button').filter((x) => /Change card|Update your card|see invoices/.test(x.textContent ?? ''));
+
+	it('pay as you go: exactly one button to Stripe\'s portal; the card box is the card and the billing email', async () => {
+		section(plan({ name: 'payg', status: 'active', quantity: 1, billable: 1, units: 2, domains: [{ id: 1, name: 'one.example.com', billable: false, paused: false }, { id: 2, name: 'two.example.org', billable: true, paused: false }] }));
+		expect(await screen.findByText('two.example.org')).toBeTruthy();
+		expect(portalish().map((x) => x.textContent)).toEqual(['Change card, see invoices or cancel']);
+		expect(screen.getByText('Billing email')).toBeTruthy();
+		expect(screen.getByText('o@x.co')).toBeTruthy();
+		// the billed domains are a plain list, not a bordered input-like box
+		const li = screen.getByText('two.example.org');
+		expect(li.closest('ul')!.className).not.toMatch(/border|rounded/);
+	});
+	it('free with a card: the card box keeps its own way to the portal (there is no plan button for it)', async () => {
+		section(plan());
+		await screen.findByRole('heading', { name: 'Free' });
+		expect(portalish().map((x) => x.textContent)).toEqual(['Change card or see invoices']);
+	});
+	it('a payment problem: the box of facts is plain and "Update your card" appears once', async () => {
+		section(plan({ name: 'payg', status: 'past_due', payment_problem: true, billable: 1, quantity: 1, units: 2 }));
+		await screen.findByText('Your last payment did not go through');
+		expect(portalish().map((x) => x.textContent)).toEqual(['Update your card']);
+		expect(screen.getAllByText('Your last payment did not go through')).toHaveLength(1);
+	});
+	it('a renewal that needs the bank: Confirm the payment is the action; the card box keeps its portal', async () => {
+		section(plan({ name: 'payg', status: 'past_due', action_required_url: 'https://stripe.fake/i/in_9', billable: 1, quantity: 1 }));
+		expect(await screen.findByRole('link', { name: /Confirm the payment/ })).toBeTruthy();
+		expect(screen.getAllByText(WORDS.bank)).toHaveLength(1);
+	});
+	it('a first payment waiting for the bank: one alert on the page, no second one', async () => {
+		section(plan({ pending: { domains: ['second.example.org'], action_url: 'https://stripe.fake/i/in_1' } }));
+		await screen.findByText("Waiting for your bank's confirmation");
+		expect(screen.getAllByText("Waiting for your bank's confirmation")).toHaveLength(1);
+		expect(screen.getAllByRole('link', { name: /Try again/ })).toHaveLength(1);
+	});
+	it('lapsed after a declined card: the fact "This card was declined." sits beside the card and the one action there is Update your card', async () => {
+		section(plan({ lapsed: true, paused_domains: 1, resume_by_starting: true, card_declined: true }));
+		await screen.findByText(/Pay as you go ended because a payment did not go through/);
+		expect(screen.getByText(/ending 4242.*This card was declined\./)).toBeTruthy();
+		expect(portalish().map((x) => x.textContent)).toEqual(['Update your card']);
+		// starting again is still possible, but it is not the primary action while the card is the problem
+		expect(screen.getByRole('button', { name: 'Start pay as you go again' })).toBeTruthy();
+	});
+	it('lapsed because the owner cancelled: no card complaint', async () => {
+		section(plan({ lapsed: true, paused_domains: 1, resume_by_starting: true, card_declined: false }));
+		await screen.findByText(/Pay as you go ended\./);
+		expect(document.body.textContent).not.toMatch(/declined/);
 	});
 });
 
