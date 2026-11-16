@@ -82,11 +82,11 @@ describe('Settings: password', () => {
 });
 
 describe('Members', () => {
-	const team = (current: string, other = { m1: 0, a1: 1 }) => ({
+	const team = (current: string) => ({
 		users: [
-			{ id: 'o1', email: 'owner@example.com', name: 'Olive', role: 'owner', last_login_at: 1_700_000_000, created_at: 1_690_000_000, other_workspaces: 0 },
-			{ id: 'a1', email: 'admin@example.com', name: 'Adam', role: 'admin', last_login_at: null, created_at: 1_690_000_001, other_workspaces: other.a1 },
-			{ id: 'm1', email: 'member@example.com', name: 'Mo', role: 'member', last_login_at: null, created_at: 1_690_000_002, other_workspaces: other.m1 },
+			{ id: 'o1', email: 'owner@example.com', name: 'Olive', role: 'owner', last_login_at: 1_700_000_000, created_at: 1_690_000_000 },
+			{ id: 'a1', email: 'admin@example.com', name: 'Adam', role: 'admin', last_login_at: null, created_at: 1_690_000_001 },
+			{ id: 'm1', email: 'member@example.com', name: 'Mo', role: 'member', last_login_at: null, created_at: 1_690_000_002 },
 		],
 		current_user_id: current,
 	});
@@ -168,20 +168,17 @@ describe('Members', () => {
 	});
 
 	describe('removing someone', () => {
-		const open = async (email: string, other: { m1: number; a1: number }) => {
-			renderApp(<MembersPage />, { role: 'owner', routes: { 'GET /api/team': team('o1', other) } });
-			const user = userEvent.setup();
-			await user.click(await screen.findByRole('button', { name: `Remove ${email}` }));
-			return within(await screen.findByRole('dialog'));
-		};
-
-		it('says plainly that the login is deleted when this is the only workspace they belong to', async () => {
-			const dialog = await open('member@example.com', { m1: 0, a1: 1 });
-			expect(dialog.getByText(/This is the only workspace member@example\.com belongs to, so removing them also deletes their login: they would have to sign up again\./)).toBeInTheDocument();
+		it('says they lose this workspace and keep their account, whatever else they belong to', async () => {
+			renderApp(<MembersPage />, { role: 'owner', routes: { 'GET /api/team': team('o1') } });
+			await userEvent.setup().click(await screen.findByRole('button', { name: 'Remove member@example.com' }));
+			const dialog = within(await screen.findByRole('dialog'));
+			expect(dialog.getByText(/They lose access to this workspace immediately/)).toBeInTheDocument();
+			expect(dialog.getByText(/They keep their account\./)).toBeInTheDocument();
+			expect(document.body.textContent).not.toMatch(/deletes their login|sign up again/);
 		});
 
 		it('names what ends per mode: agents hosted (no key screen), API keys self-hosted', async () => {
-			for (const [mode, say, not] of [['saas', /any agents they connected stop working/, /API key/], ['self-host', /their API keys stop working/, /agents/]] as const) {
+			for (const [mode, say, not] of [['saas', /any agents they connected to it stop working/, /API key/], ['self-host', /their API keys for it stop working/, /agents/]] as const) {
 				const r = renderApp(<MembersPage />, { role: 'owner', status: { mode }, routes: { 'GET /api/team': team('o1') } });
 				await userEvent.setup().click(await screen.findByRole('button', { name: 'Remove member@example.com' }));
 				const dialog = within(await screen.findByRole('dialog'));
@@ -189,12 +186,6 @@ describe('Members', () => {
 				expect(dialog.queryByText(not)).toBeNull();
 				r.unmount();
 			}
-		});
-
-		it('says nothing of the kind when they have another workspace to keep their login for', async () => {
-			const dialog = await open('admin@example.com', { m1: 0, a1: 2 });
-			expect(dialog.getByText(/They lose access immediately/)).toBeInTheDocument();
-			expect(document.body.textContent).not.toMatch(/deletes their login/);
 		});
 	});
 });
@@ -209,10 +200,13 @@ describe('Settings: delete my account names what exists in the mode', () => {
 });
 
 describe('Settings: your only workspace', () => {
-	it('says what to do in one sentence: start another (hosted, or the instance owner) or ask the instance owner (self-host member)', async () => {
-		const { onlyWorkspaceNote } = await import('../src/pages/settings/WorkspaceSection');
-		expect(onlyWorkspaceNote(true)).toBe('This is your only workspace, so it cannot be left or deleted: start another one from the workspace menu first, or delete your account below to leave altogether.');
-		expect(onlyWorkspaceNote(false)).toBe('This is your only workspace, so it cannot be left or deleted: ask the owner of this instance to add you to another one first, or delete your account below to leave altogether.');
+	it('says where leaving leads: start your own (hosted, or the instance owner) or wait for an invitation (self-host member); an owner hands ownership on first', async () => {
+		const { onlyWorkspaceNote, leaveNote } = await import('../src/pages/settings/WorkspaceSection');
+		expect(onlyWorkspaceNote(true, false)).toBe('This is your only workspace. If you leave it: you keep your account and land on a page where you can start a workspace of your own.');
+		expect(onlyWorkspaceNote(false, false)).toBe('This is your only workspace. If you leave it: you keep your account and land on a page where you wait for an invitation, because only the owner of this instance can create workspaces.');
+		expect(onlyWorkspaceNote(true, true)).toBe('This is your only workspace, so it cannot be deleted. To leave it, make another member an owner first. You keep your account and land on a page where you can start a workspace of your own.');
+		expect(leaveNote(false, true)).toBe('You lose access to its domains and reports. An owner can invite you back.');
+		expect(leaveNote(true, false)).toMatch(/An owner can invite you back\. You keep your account and land on a page where you wait for an invitation/);
 		const { canCreateWorkspace } = await import('../src/lib/workspaces');
 		const only = [{ id: 'ws_x', role: 'owner' as const }];
 		expect(canCreateWorkspace('saas', only)).toBe(true);

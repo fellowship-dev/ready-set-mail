@@ -7,7 +7,8 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { downloadFile } from '../../lib/download';
 import { useHosted, useSession } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
-import { DeleteButton, LeaveButton, useCurrentWorkspace } from './WorkspaceSection';
+import { canCreateWorkspace, useWorkspaces } from '../../lib/workspaces';
+import { DeleteButton, LeaveButton, leaveNote, useCurrentWorkspace } from './WorkspaceSection';
 
 interface Blocking {
 	id: string;
@@ -32,20 +33,22 @@ function DangerRow({ title, children, action }: { title: string; children: React
 
 /** Export the workspace's data (owners); leave or delete the open workspace; delete your own account (everyone signed in as a user). */
 export function DangerZone() {
-	const { me, role } = useSession();
+	const { me, role, status } = useSession();
 	const hosted = useHosted();
 	const { current, others, goElsewhere } = useCurrentWorkspace();
+	const all = useWorkspaces(!!me?.user).data ?? [];
 	if (!me?.user) return null;
-	const canLeave = others.length > 0;
+	const canDelete = others.length > 0;
+	const canCreate = canCreateWorkspace(status?.mode, all);
 	return (
 		<Section title="Danger zone" description="Take your data with you, leave or delete this workspace, or delete your account.">
 			{role === 'owner' && me.workspace_id ? <ExportCard workspaceId={me.workspace_id} /> : null}
-			{current && canLeave ? (
-				<DangerRow title="Leave this workspace" action={<LeaveButton id={current.id} name={current.name} then={goElsewhere} />}>
-					You lose access to its domains and reports. An owner can invite you back.
+			{current ? (
+				<DangerRow title="Leave this workspace" action={<LeaveButton id={current.id} name={current.name} only={!canDelete} canCreate={canCreate} then={goElsewhere} />}>
+					{leaveNote(!canDelete, canCreate)}
 				</DangerRow>
 			) : null}
-			{current && canLeave && role === 'owner' ? (
+			{current && canDelete && role === 'owner' ? (
 				<DangerRow title="Delete this workspace" action={<DeleteButton id={current.id} name={current.name} then={goElsewhere} />}>
 					Removes its domains, reports, members&apos; access and Cloudflare connections for everyone. This cannot be undone.
 				</DangerRow>

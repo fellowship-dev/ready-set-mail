@@ -37,8 +37,6 @@ interface TeamMember {
 	role: Role;
 	last_login_at: number | null;
 	created_at: number;
-	/** In how many other workspaces they are a member: with none, removing them deletes their login. */
-	other_workspaces?: number;
 }
 interface TeamResponse {
 	users: TeamMember[];
@@ -200,7 +198,6 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 						<DialogTitle>Remove {member.email}?</DialogTitle>
 						<DialogDescription>
 							{removalEndsNote(hosted)}
-							{member.other_workspaces === 0 ? ` This is the only workspace ${member.email} belongs to, so removing them also deletes their login: they would have to sign up again.` : ''}
 						</DialogDescription>
 					</DialogHeader>
 					{remove.isError ? <FieldError>{errorMessage(remove.error)}</FieldError> : null}
@@ -220,7 +217,9 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 
 /** What removing someone ends, per mode: hosted has agents they connected and no key screen; self-host has API keys. */
 export const removalEndsNote = (hosted: boolean): string =>
-	hosted ? 'They lose access immediately, and any agents they connected stop working. This cannot be undone.' : 'They lose access immediately, and their API keys stop working. This cannot be undone.';
+	hosted
+		? 'They lose access to this workspace immediately, and any agents they connected to it stop working. They keep their account. You can invite them again later.'
+		: 'They lose access to this workspace immediately, and their API keys for it stop working. They keep their account. You can invite them again later.';
 
 /** What this form does about email, true on both modes: it sends nothing. (Handing a domain's setup to a teammate, hosted, is another invite with its own screen, and is emailed.) */
 export const INVITE_NOT_EMAILED = 'This invite is not emailed: you get a one-time link to pass on. It expires in 7 days.';

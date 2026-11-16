@@ -43,6 +43,12 @@ export function onUnauthorized(handler: (() => void) | null): void {
 	unauthorizedHandler = handler;
 }
 
+let noWorkspaceHandler: (() => void) | null = null;
+/** The session provider registers here: a 403 `no_workspace` (access removed while the page was open) makes it ask again who and where the person is. */
+export function onNoWorkspace(handler: (() => void) | null): void {
+	noWorkspaceHandler = handler;
+}
+
 export interface RequestOptions {
 	method?: string;
 	/** Request-specific headers, including installer proof during first-run setup. */
@@ -91,6 +97,7 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
 	const serverMessage = answered?.error ?? (typeof answered?.message === 'string' ? answered.message : undefined);
 	// Credential-less endpoints (login, setup …) answer 401 for a wrong password: that is not "session ended".
 	if (res.status === 401 && !opts.quiet401 && !path.startsWith('/api/auth/') && !path.startsWith('/api/invites/')) unauthorizedHandler?.();
+	if (res.status === 403 && (body as { code?: string } | undefined)?.code === 'no_workspace' && path !== '/api/me') noWorkspaceHandler?.();
 	throw new ApiError(res.status, serverMessage ?? FALLBACK[res.status] ?? `Unexpected error (${res.status})`, body);
 }
 

@@ -17,11 +17,19 @@ export function useCurrentWorkspace() {
 	return { current, others, goElsewhere };
 }
 
-/** Your only workspace cannot be left or deleted: the one sentence says what to do instead, for whoever can start another workspace and whoever cannot. */
-export const onlyWorkspaceNote = (canCreate: boolean): string =>
-	canCreate
-		? 'This is your only workspace, so it cannot be left or deleted: start another one from the workspace menu first, or delete your account below to leave altogether.'
-		: 'This is your only workspace, so it cannot be left or deleted: ask the owner of this instance to add you to another one first, or delete your account below to leave altogether.';
+/** What follows leaving your only workspace: you keep your account and land on "No workspace yet", whose next step depends on who may create workspaces. */
+const afterLeavingOnly = (canCreate: boolean): string =>
+	`You keep your account and land on a page ${canCreate ? 'where you can start a workspace of your own' : 'where you wait for an invitation, because only the owner of this instance can create workspaces'}.`;
+
+/** The Settings sentence for your only workspace: it can be left (an owner hands ownership on first) but not deleted. */
+export const onlyWorkspaceNote = (canCreate: boolean, owner: boolean): string =>
+	owner
+		? `This is your only workspace, so it cannot be deleted. To leave it, make another member an owner first. ${afterLeavingOnly(canCreate)}`
+		: `This is your only workspace. If you leave it: ${afterLeavingOnly(canCreate).replace(/^You/, 'you')}`;
+
+/** The leave dialog: what is lost, and, when it is the only workspace, where you end up. */
+export const leaveNote = (only: boolean, canCreate: boolean): string =>
+	`You lose access to its domains and reports. An owner can invite you back.${only ? ` ${afterLeavingOnly(canCreate)}` : ''}`;
 
 /** Name and rename (owners) for the workspace that is open. Leaving and deleting it are in the danger zone. */
 export function WorkspaceSection() {
@@ -39,7 +47,7 @@ export function WorkspaceSection() {
 					<p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
 						Your role here: {role ? <Badge variant="brand">{role}</Badge> : null} · {current.member_count} {current.member_count === 1 ? 'member' : 'members'}
 					</p>
-					{others.length === 0 ? <p className="text-sm text-ink-2">{onlyWorkspaceNote(canCreateWorkspace(status?.mode, all))}</p> : null}
+					{others.length === 0 ? <p className="text-sm text-ink-2">{onlyWorkspaceNote(canCreateWorkspace(status?.mode, all), isOwner)}</p> : null}
 				</CardContent>
 			</Card>
 		</Section>
@@ -68,7 +76,7 @@ function RenameForm({ id, name }: { id: string; name: string }) {
 	);
 }
 
-export function LeaveButton({ id, name, then }: { id: string; name: string; then: () => void }) {
+export function LeaveButton({ id, name, only, canCreate, then }: { id: string; name: string; only: boolean; canCreate: boolean; then: () => void }) {
 	const [open, setOpen] = useState(false);
 	const leave = useLeaveWorkspace(id, then);
 	return (
@@ -80,7 +88,7 @@ export function LeaveButton({ id, name, then }: { id: string; name: string; then
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>Leave {name}?</DialogTitle>
-						<DialogDescription>You lose access to its domains and reports. An owner can invite you back.</DialogDescription>
+						<DialogDescription>{leaveNote(only, canCreate)}</DialogDescription>
 					</DialogHeader>
 					{leave.isError ? <FieldError>{errorMessage(leave.error)}</FieldError> : null}
 					<DialogFooter>

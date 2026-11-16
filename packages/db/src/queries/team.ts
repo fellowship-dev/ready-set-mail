@@ -1,6 +1,6 @@
-import { and, eq, gt, inArray, isNull, ne, notExists, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { invites, memberships, users, type MembershipRole } from '../schema';
+import { accessCredentials, accessGrants, accessPrincipals, apiKeys, invites, memberships, users, type MembershipRole } from '../schema';
 
 export interface TeamMember {
 	id: string;
@@ -101,22 +101,27 @@ export function teamQueries(db: Db, workspaceId: string) {
 			await db.batch([db.insert(users).values(u), db.insert(memberships).values({ workspace_id: workspaceId, user_id: u.id, role })]);
 		},
 
-		/** Remove a member; the user row goes too once they belong to no workspace. */
-		async removeUser(userId: string) {
-			await db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId)));
-			await db.delete(users).where(
-				and(
-					eq(users.id, userId),
-					notExists(
-						db.select({ x: sql`1` }).from(memberships /* workspace-scope-exempt: "belongs to no workspace at all" is deliberately cross-workspace */).where(eq(memberships.user_id, users.id)),
-					),
-				),
-			);
+		/**
+		 * End what a person holds in this workspace: their API keys, and their agent approvals (human access principals with
+		 * their grants and credentials). Nothing else of theirs or of the workspace changes.
+		 */
+		async revokeAccessOf(userId: string, now: number) {
+			const principals = db.select({ id: accessPrincipals.id }).from(accessPrincipals).where(and(eq(accessPrincipals.workspace_id, workspaceId), eq(accessPrincipals.user_id, userId), eq(accessPrincipals.kind, 'human')));
+			await db.batch([
+				db.update(apiKeys).set({ revoked_at: now }).where(and(eq(apiKeys.workspace_id, workspaceId), eq(apiKeys.user_id, userId), isNull(apiKeys.revoked_at))),
+				db.update(accessGrants).set({ revoked_at: now }).where(and(eq(accessGrants.workspace_id, workspaceId), isNull(accessGrants.revoked_at), inArray(accessGrants.principal_id, principals))),
+				db.update(accessCredentials).set({ revoked_at: now }).where(and(eq(accessCredentials.workspace_id, workspaceId), isNull(accessCredentials.revoked_at), inArray(accessCredentials.principal_id, principals))),
+				db.update(accessPrincipals).set({ disabled_at: now }).where(and(eq(accessPrincipals.workspace_id, workspaceId), eq(accessPrincipals.user_id, userId), eq(accessPrincipals.kind, 'human'), isNull(accessPrincipals.disabled_at))),
+			]);
 		},
 
-		/** Remove only the membership (the user keeps their login and other workspaces). */
-		removeMembership(userId: string) {
-			return db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId))).run();
+		/**
+		 * Remove a member from this workspace (removed by an admin; leaving goes through `lifecycle.leave` and `revokeAccessOf`).
+		 * Their access here ends at once; they keep their login, their sessions and their other workspaces.
+		 */
+		async removeMembership(userId: string, now: number) {
+			await this.revokeAccessOf(userId, now);
+			await db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId))).run();
 		},
 
 		// ── Invites ───────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@ready-set-mail/ui';
 import { api, errorMessage } from './api';
 import type { Role } from './types';
+import { useSession } from './session';
 import { hashFor, workspaceStore } from './workspace';
 
 export interface WorkspaceSummary {
@@ -58,14 +59,15 @@ export function useRenameWorkspace(id: string) {
 	});
 }
 
-/** Leave or delete: afterwards the person is somewhere that still exists. */
+/** Leave or delete: afterwards the person is somewhere that still exists (another workspace, or "No workspace yet" when it was their only one). */
 export function useLeaveWorkspace(id: string, then: () => void) {
 	const qc = useQueryClient();
+	const { signedIn } = useSession();
 	return useMutation({
 		mutationFn: () => api(`/api/workspaces/${id}/leave`, { method: 'POST', body: {} }),
 		onSuccess: async () => {
 			workspaceStore.forget();
-			await qc.invalidateQueries({ queryKey: workspaceKeys.all });
+			await signedIn();
 			toast({ variant: 'success', title: 'You left the workspace' });
 			then();
 		},

@@ -162,10 +162,11 @@ export async function handleWorkspaceRoutes(
     return json({ ok: true, id, name });
   }
 
-  // POST /api/workspaces/:id/leave — remove your own membership. Never your last workspace, never the last owner.
+  // POST /api/workspaces/:id/leave — remove your own membership; never as the last owner. Leaving your only workspace is allowed:
+  // you keep your login and land on "No workspace yet". Your keys and agent approvals for it end.
   if (m[2] === 'leave' && method === 'POST') {
-    if ((await lifecycle.listForUser(user.id)).length <= 1) return err('you cannot leave your only workspace — create another first, or delete this one', 409, 'only_workspace');
-    if (!(await lifecycle.leave(user.id, id))) return err('you are the only owner — make someone else an owner or delete the workspace', 409, 'last_owner');
+    if (!(await lifecycle.leave(user.id, id))) return err('you are the only owner — make someone else an owner first', 409, 'last_owner');
+    await (await deps.tenantFor(id)).scope.team.revokeAccessOf(user.id, Math.floor(Date.now() / 1000));
     audit(id, { action: 'workspace.left', resource_type: 'user', resource_id: user.id, resource_name: user.email, before_value: { role } });
     return json({ ok: true });
   }

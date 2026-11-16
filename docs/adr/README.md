@@ -18,5 +18,10 @@ Short records of decisions already made, with who made them. A change that contr
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
+| 0015 | reserved for open pull request #180 (#184 and #181 also add a 0015: whichever lands second renumbers) | not yet written |
+| 0016 | reserved for open pull request #180 | not yet written |
+| 0017 | reserved for open pull request #180 | not yet written |
+| 0018 | reserved for open pull request #186 | not yet written |
+| 0019 | [A person removed from, or leaving, their only workspace keeps their account](0019-removed-or-leaving-keeps-the-account.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

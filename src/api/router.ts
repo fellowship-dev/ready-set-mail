@@ -57,7 +57,7 @@
 //   GET    /api/workspaces                    — the caller's workspaces (role, member count)
 //   POST   /api/workspaces                    — create a workspace (caller becomes owner)
 //   PATCH  /api/workspaces/:id                — rename (owner)
-//   POST   /api/workspaces/:id/leave          — leave (never the last owner / only workspace)
+//   POST   /api/workspaces/:id/leave          — leave (never as the last owner; your only workspace may be left)
 //   DELETE /api/workspaces/:id                — delete (owner; ?confirm=<name> when it has domains); revokes Cloudflare OAuth grants
 //   GET    /api/workspaces/:id/export         — JSON export of everything the workspace holds (owner)
 //   POST   /api/workspaces/:id/transfer-ownership — hand ownership to another member (owner)
@@ -748,7 +748,8 @@ async function _handleApi(
         return json({ user: { id: me.id, email: me.email, name: me.name }, role: null, workspace_id: null, kind: 'session', pending_invites: pending });
       }
     }
-    if (e instanceof AuthError) return err(e.message, e.status);
+    // `no_workspace` travels with the 403: a dashboard still open for a workspace the person lost goes to "No workspace yet" on it.
+    if (e instanceof AuthError) return json({ error: e.message, ...(e.code ? { code: e.code } : {}) }, e.status);
     return err('authentication error', 401);
   }
   if (!workspace) return err('Unauthorized — sign in, or provide an X-Api-Key header', 401);
@@ -1818,10 +1819,7 @@ async function _handleApi(
     if (path === '/api/team' && method === 'GET') {
       if (!isAdmin) return err('admin required', 403);
       const results = await tenant.scope.team.list();
-      // Removing someone who is in no other workspace deletes their login (team.removeUser): the page says so when that applies.
-      const lifecycle = workspaceLifecycle(env.DB);
-      const users = await Promise.all(results.map(async (u) => ({ ...u, other_workspaces: (await lifecycle.listForUser(u.id)).filter((w) => w.id !== tenant.workspaceId).length })));
-      return json({ users, current_user_id: userBySession?.id ?? null });
+      return json({ users: results, current_user_id: userBySession?.id ?? null });
     }
 
     // POST /api/team/invite — generate one-time invite link (admin only)
@@ -1927,7 +1925,8 @@ async function _handleApi(
       if (!removed) return err('team member not found', 404);
       if (removed?.role === 'owner') return err('the owner cannot be removed', 403);
       if (removed?.role === 'admin' && workspace.role !== 'owner') return err('only the owner can remove an admin', 403);
-      await tenant.scope.team.removeUser(teamMemberMatch[1]);
+      // They lose this workspace (their keys and agent approvals for it end); they keep their login and any other workspace.
+      await tenant.scope.team.removeMembership(teamMemberMatch[1], Math.floor(Date.now() / 1000));
       // Invites they sent stop working with them.
       await tenant.scope.team.revokeInvitesBy(removed.email);
       logAudit(tenant, {

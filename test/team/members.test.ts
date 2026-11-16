@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, inviteAndAccept, makeEnv, setupOwner } from '../auth/helpers';
+import { delegatedKey } from '../auth/grant-fixture';
 
 const rows = (db: any, sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
 const json = async (res: Response) => (await res.json()) as any;
@@ -88,15 +89,83 @@ describe('POST /api/team/invite twice for the same address', () => {
   });
 });
 
-describe('GET /api/team', () => {
-  it('says how many other workspaces each person is in, so the page can warn before a removal deletes a login', async () => {
+describe('removing a member keeps their login', () => {
+  const removeMember = (w: Awaited<ReturnType<typeof world>>, email: string) => call(w.env, 'DELETE', `/api/team/${w.id(email)}`, { key: w.owner });
+
+  it('their user row and session stay, their keys and agent approvals for the workspace end, the workspace keeps its data', async () => {
     const w = await world();
-    const lexgo = (await json(await call(w.env, 'POST', '/api/workspaces', { key: w.owner, body: { name: 'Lexgo' } }))).id as string;
-    w.db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES (?, ?, 'member')").run(lexgo, w.id('member@example.com'));
+    const userId = w.id('member@example.com');
+    const domain = (await json(await call(w.env, 'POST', '/api/domains', { key: w.owner, body: { domain: 'acme-test.com' } })));
+    expect(domain.error).toBeUndefined();
+    // What they hold here: an agent approval (principal + grant + credential) and an API key.
+    // (Only an owner approves agents; this person was one before ownership moved on.)
+    const setMemberRole = (role: string) => w.db.sqlite.prepare("UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = 'ws_default'").run(role, userId);
+    setMemberRole('owner');
+    const agent = await delegatedKey(w.db as any, { workspaceId: 'ws_default', userId, name: 'Their agent', domain: 'acme-test.com' });
+    w.db.sqlite.prepare("INSERT INTO api_keys (id, workspace_id, user_id, name, prefix, key_hash) VALUES ('k1', 'ws_default', ?, 'old', 'rsm_', 'hash1')").run(userId);
+    setMemberRole('member');
+    expect((await call(w.env, 'GET', '/api/resources', { key: agent.key })).status).toBe(200);
+
+    expect((await removeMember(w, 'member@example.com')).status).toBe(200);
+
+    expect(rows(w.db, 'SELECT id FROM users WHERE id = ?', userId)).toEqual([{ id: userId }]);
+    expect(rows(w.db, 'SELECT * FROM memberships WHERE user_id = ?', userId)).toEqual([]);
+    expect(rows(w.db, "SELECT revoked_at IS NOT NULL AS r FROM api_keys WHERE id = 'k1'")).toEqual([{ r: 1 }]);
+    expect(rows(w.db, 'SELECT disabled_at IS NOT NULL AS d FROM access_principals WHERE user_id = ?', userId)).toEqual([{ d: 1 }]);
+    expect(rows(w.db, 'SELECT revoked_at IS NOT NULL AS r FROM access_grants WHERE workspace_id = ?', 'ws_default')).toEqual([{ r: 1 }]);
+    expect(rows(w.db, 'SELECT revoked_at IS NOT NULL AS r FROM access_credentials WHERE workspace_id = ?', 'ws_default')).toEqual([{ r: 1 }]);
+    expect((await call(w.env, 'GET', '/api/resources', { key: agent.key })).status).toBe(401);
+    // The workspace's data is untouched.
+    expect(rows(w.db, "SELECT domain FROM domains WHERE workspace_id = 'ws_default'")).toEqual([{ domain: 'acme-test.com' }]);
+
+    // Their session still works: signed in, in no workspace, with nothing offered but a way to start or accept one.
+    const me = await call(w.env, 'GET', '/api/me', { key: w.member });
+    expect(me.status).toBe(200);
+    expect(await json(me)).toMatchObject({ user: { email: 'member@example.com' }, workspace_id: null, role: null });
+    const data = await call(w.env, 'GET', '/api/domains', { key: w.member });
+    expect(data.status).toBe(403);
+    expect(await json(data)).toMatchObject({ code: 'no_workspace' });
+    // The owner's list no longer has them, and the team page no longer says anything about other workspaces.
     const { users } = await json(await call(w.env, 'GET', '/api/team', { key: w.owner }));
-    const other = (email: string) => users.find((u: any) => u.email === email).other_workspaces;
-    expect(other('member@example.com')).toBe(1);
-    expect(other('admin@example.com')).toBe(0);
-    expect(other('owner@example.com')).toBe(1);
+    expect(users.map((u: any) => u.email)).not.toContain('member@example.com');
+    expect(users.every((u: any) => !('other_workspaces' in u))).toBe(true);
+  });
+
+  it('invited again, they accept the new invite and are back in', async () => {
+    const w = await world();
+    await removeMember(w, 'member@example.com');
+    const inv = await call(w.env, 'POST', '/api/team/invite', { key: w.owner, body: { email: 'member@example.com', role: 'member' } });
+    expect(inv.status).toBe(201);
+    const { token } = await json(inv);
+    const me = await json(await call(w.env, 'GET', '/api/me', { key: w.member }));
+    expect(me.pending_invites.map((i: any) => i.token)).toContain(token);
+    const accepted = await call(w.env, 'POST', `/api/invites/${token}`, { key: w.member, body: {} });
+    expect([200, 201]).toContain(accepted.status);
+    expect(w.roleOf('member@example.com')).toBe('member');
+    expect((await call(w.env, 'GET', '/api/domains', { key: w.member })).status).toBe(200);
   });
 });
+
+describe('leaving your only workspace', () => {
+  it('a member or admin may; they keep their login and session, their keys end, they land on "no workspace"', async () => {
+    const w = await world();
+    for (const [email, key] of [['member@example.com', w.member], ['admin@example.com', w.admin]] as const) {
+      const userId = w.id(email);
+      w.db.sqlite.prepare("INSERT INTO api_keys (id, workspace_id, user_id, name, prefix, key_hash) VALUES (?, 'ws_default', ?, 'old', 'rsm_', ?)").run(`k-${userId}`, userId, `h-${userId}`);
+      const left = await call(w.env, 'POST', '/api/workspaces/ws_default/leave', { key, body: {} });
+      expect(left.status).toBe(200);
+      expect(rows(w.db, 'SELECT id FROM users WHERE id = ?', userId)).toEqual([{ id: userId }]);
+      expect(rows(w.db, 'SELECT revoked_at IS NOT NULL AS r FROM api_keys WHERE user_id = ?', userId)).toEqual([{ r: 1 }]);
+      expect(await json(await call(w.env, 'GET', '/api/me', { key }))).toMatchObject({ workspace_id: null });
+    }
+  });
+
+  it('the only owner may not, whether or not it is their only workspace: they hand ownership on first', async () => {
+    const w = await world();
+    const res = await call(w.env, 'POST', '/api/workspaces/ws_default/leave', { key: w.owner, body: {} });
+    expect(res.status).toBe(409);
+    expect((await json(res)).code).toBe('last_owner');
+    expect(w.roleOf('owner@example.com')).toBe('owner');
+  });
+});
+

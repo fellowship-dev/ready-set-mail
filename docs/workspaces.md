@@ -19,11 +19,12 @@ A **workspace** holds domains, reports, members, Cloudflare connections and (lat
 ### Roles and removal
 
 * Only the **owner** changes a role: `POST /api/workspaces/:id/members/:userId/role {role: "admin" | "member"}`. Never the owner's own row, never yourself, never to `owner` (that is `transfer-ownership`). Audited as `team.role_changed`.
-* Removing a member who belongs to **no other workspace** also deletes their login (`teamQueries.removeUser`). `GET /api/team` answers `other_workspaces` for every member so the confirmation can say so before it happens.
+* Removing a member ends only their membership (`teamQueries.removeMembership`): they keep their login, their sessions and any other workspace. Their API keys and agent approvals for this workspace end at once (`teamQueries.revokeAccessOf`: keys revoked; human access principals disabled with their grants and credentials); nothing of the workspace's data goes with them. If it was their only workspace they land on "No workspace yet" (see below). ADR 0019.
 
 ### Leaving and deleting
 
-* You cannot leave your **only** workspace, and the **last owner** cannot leave a workspace (make someone else an owner, or delete it).
+* Any member or admin may leave, including their **only** workspace (`POST /api/workspaces/:id/leave`): they keep their login and sessions, and their keys and agent approvals for it end, as with removal. The **last owner** cannot leave (`409 last_owner`): make someone else an owner first. So an owner of a workspace that is their only one can neither leave (alone) nor delete it; deleting the account is their exit.
+* **No workspace yet.** A signed-in person with no membership gets `GET /api/me` with `workspace_id: null` and any pending invitations, and every other call `403 no_workspace`; the dashboard (`NoWorkspacePage`) shows the invitations and, where they may, **Create workspace**, which leads into the first-run setup. Hosted: anyone may create one. Self-host: only the owner of the instance (owner of `ws_default`) may, so everyone else is told to ask that owner to invite them.
 * Only an owner can delete a workspace; the default workspace (`ws_default`) and your only workspace cannot be deleted.
 * A workspace **with domains** is deleted only when the request repeats its name (`?confirm=<name>`). Before anything is deleted, Cloudflare (and the hosted-records zone, for hosted domains) is checked for **every** domain; if any cannot be reached, nothing is deleted (`502 cloudflare_preflight_failed`, naming the domain). Domains are then deleted one at a time through the normal domain delete (DNS records and hosted records first). Each of those is final, so if one fails part-way the answer says how many were already deleted (`502 domain_cleanup_failed`); the workspace and its remaining data are kept and the delete can be retried. People who belonged only to that workspace are removed with it.
 
@@ -54,7 +55,7 @@ All routes need a signed-in **user** (a session, not an API key or the instance 
 | `GET /api/workspaces` | any user | `{workspaces: [{id, name, role, member_count, created_at}]}` |
 | `POST /api/workspaces` `{name}` | any user (self-host: the instance owner only, else `403 instance_owner_required`) | create; caller becomes owner. `201 {id, name, role, member_count}` |
 | `PATCH /api/workspaces/:id` `{name}` | owner | rename |
-| `POST /api/workspaces/:id/leave` | any member | `409 only_workspace` / `409 last_owner` |
+| `POST /api/workspaces/:id/leave` | any member | `409 last_owner` |
 | `POST /api/workspaces/:id/members/:userId/role` `{role}` | owner | `200 {ok, role, changed}`; `400` yourself, owner as the new role, bad role; `403` not owner, or the owner's row; `404` not a member |
 | `DELETE /api/workspaces/:id[?confirm=<name>]` | owner | `409 confirm_required` when it has domains; `502 cloudflare_preflight_failed` / `domain_cleanup_failed`; `400 default_workspace`; `409 only_workspace` |
 | `GET /api/invites/:token` | token | adds `workspace_id`, `workspace_name`, `user_exists`, `signed_in_as` |

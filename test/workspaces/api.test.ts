@@ -130,7 +130,7 @@ describe('rename', () => {
 });
 
 describe('leave', () => {
-  it('a member leaves their workspace; the last owner cannot; nobody leaves their only workspace', async () => {
+  it('a member leaves their workspace; the last owner cannot; a member may leave their only workspace and keeps their login', async () => {
     const { env, owner, db } = await selfHost();
     const member = await inviteAndAccept(env, owner, 'm@example.com', 'member');
     const lexgo = await create(env, owner, 'Lexgo');
@@ -140,19 +140,13 @@ describe('leave', () => {
     expect(last.status).toBe(409);
     expect((await json(last)).code).toBe('last_owner');
 
-    // the member's only workspace
-    const only = await call(env, 'POST', '/api/workspaces/ws_default/leave', { key: member, body: {} });
-    expect(only.status).toBe(409);
-    expect((await json(only)).code).toBe('only_workspace');
-
-    // once they have another one, leaving works and keeps their login
-    grant(db, 'm@example.com', 'Mine');
+    // leaving even their only workspace works, and keeps their login
     expect((await call(env, 'POST', '/api/workspaces/ws_default/leave', { key: member, body: {} })).status).toBe(200);
     expect(rows(db, "SELECT COUNT(*) n FROM memberships WHERE workspace_id = 'ws_default'")).toEqual([{ n: 1 }]);
     expect(rows(db, "SELECT COUNT(*) n FROM users WHERE email = 'm@example.com'")).toEqual([{ n: 1 }]);
     // and the workspace they left is no longer reachable
     expect((await call(env, 'GET', '/api/domains', { key: member, headers: ws('ws_default') })).status).toBe(403);
-    expect((await call(env, 'POST', '/api/workspaces/ws_default/leave', { key: member, body: {} })).status).toBe(404);
+    expect((await call(env, 'POST', '/api/workspaces/ws_default/leave', { key: member, body: {} })).status).toBe(403);
   });
 
   it('an owner may leave once another owner exists', async () => {
