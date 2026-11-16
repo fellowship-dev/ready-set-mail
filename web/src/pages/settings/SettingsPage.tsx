@@ -11,6 +11,7 @@ import { Field } from '../auth/AuthLayout';
 import { DangerZone } from './DangerZone';
 import { WorkspaceSection } from './WorkspaceSection';
 import { BillingSection } from './BillingSection';
+import { EmailSection } from './EmailSection';
 import { AgentConnectionsSection } from './AgentConnectionsSection';
 import { MetricConnectionsSection } from './MetricConnectionsSection';
 import { CloudflareSection } from './CloudflareSection';
@@ -116,6 +117,8 @@ export function SettingsPage() {
 			<WorkspaceSection />
 
 			<BillingSection />
+
+			<EmailSection />
 
 			<CloudflareSection />
 			<AgentConnectionsSection />
