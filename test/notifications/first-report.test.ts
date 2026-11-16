@@ -11,7 +11,7 @@ const quiet = () => { vi.spyOn(console, 'log').mockImplementation(() => {}); vi.
 
 // ── Self-host: the workspace's own sender, the instance's own address ─
 
-function selfHost(o: { owner?: boolean; customDomain?: string | null; sendEmail?: boolean; publicBaseUrl?: string } = {}) {
+function selfHost(o: { owner?: boolean; customDomain?: string | null; sendEmail?: boolean; publicBaseUrl?: string | null } = {}) {
   const db = createMigratedD1();
   if (o.owner !== false) {
     db.sqlite.prepare("INSERT INTO users (id, email, name, role) VALUES ('u1', 'admin@acme.com', 'Acme Admin', 'admin')").run();
@@ -22,7 +22,7 @@ function selfHost(o: { owner?: boolean; customDomain?: string | null; sendEmail?
   const send = vi.fn().mockResolvedValue(undefined);
   const tenant = makeTenant({
     db,
-    env: { ...(o.sendEmail === false ? {} : { SEND_EMAIL: { send } as any }), ...(o.publicBaseUrl ? { PUBLIC_BASE_URL: o.publicBaseUrl } : {}) },
+    env: { ...(o.sendEmail === false ? {} : { SEND_EMAIL: { send } as any }), ...(o.publicBaseUrl === null ? {} : { PUBLIC_BASE_URL: o.publicBaseUrl ?? 'https://app.acme.com' }) },
     settings: { fromEmail: 'noreply@reports.acme.com', workersSubdomain: 'testaccount' },
   });
   return { db, send, tenant };
@@ -36,7 +36,7 @@ function addReport(db: ReturnType<typeof createMigratedD1>, over: { total?: numb
 }
 
 describe('sendFirstReportNotification (self-host)', () => {
-  it('sends the new email to the owner from the workspace\'s own address, with the dashboard link at its custom domain', async () => {
+  it('sends the new email to the owner from the workspace\'s own address, with the dashboard link on the public origin', async () => {
     quiet();
     const s = selfHost();
     addReport(s.db);
@@ -49,21 +49,24 @@ describe('sendFirstReportNotification (self-host)', () => {
     expect(m.text).toContain('Hi Acme,');
     expect(m.text).toContain('Google sent the first DMARC report for acme.com.');
     expect(m.text).toContain('Worth a look: 10 messages from SendGrid (198.51.100.7) did not pass DMARC. They passed DKIM for sendgrid.net, but not for acme.com.');
-    expect(m.text).toContain('https://inbox.acme.com/#/w/ws_default/domains/1');
+    expect(m.text).toContain('https://app.acme.com/#/w/ws_default/domains/1');
+    expect(m.text + m.html).not.toContain('inbox.acme.com'); // the custom domain setting is not where links point: PUBLIC_BASE_URL is
     // The old copy is gone: no celebration, no emoji, no "24-48 hours".
     expect(m.subject + m.text + m.html).not.toMatch(/Great news|\p{Extended_Pictographic}|24-48/u);
   });
 
-  it('uses the public address when there is one, else workers.dev with the workers subdomain', async () => {
+  it('every link is the public origin; with none configured the email goes without a button, never with a workers.dev or custom-domain address', async () => {
     quiet();
     const pub = selfHost({ publicBaseUrl: 'https://mail.example.org' });
     addReport(pub.db);
     await sendFirstReportNotification(pub.tenant, undefined, 1, 1);
     expect(pub.send.mock.calls[0][0].text).toContain('https://mail.example.org/#/w/ws_default/domains/1');
-    const dev = selfHost({ customDomain: null });
+    const dev = selfHost({ publicBaseUrl: null });
     addReport(dev.db);
     await sendFirstReportNotification(dev.tenant, undefined, 1, 1);
-    expect(dev.send.mock.calls[0][0].text).toContain('https://ready-set-mail-worker.testaccount.workers.dev/#/w/ws_default/domains/1');
+    expect(dev.send).toHaveBeenCalledOnce();
+    const m = dev.send.mock.calls[0][0];
+    expect(m.text + m.html).not.toMatch(/workers\.dev|inbox\.acme\.com|https?:\/\//);
   });
 
   it('sends once: a second call for the same report sends nothing', async () => {
@@ -106,7 +109,7 @@ describe('hosted: the platform sender, never the per-workspace setting that does
     const tenant = w.tenant();
     expect(tenant.settings.fromEmail).toBeUndefined();
     const { sendFirstReportNow } = await import('../../src/lifecycle/email/run');
-    await sendFirstReportNow(tenant, w.ctx, id, rid, 'https://app.readysetmail.com', w.deps);
+    await sendFirstReportNow(tenant, w.ctx, id, rid, w.deps);
     expect(w.mailer.sent).toHaveLength(1);
     expect(w.mailer.sent[0].from.email).toBe('noreply@app.readysetmail.com');
     expect(w.mailer.sent[0].to).toBe('dana@brightwave-mail.com');

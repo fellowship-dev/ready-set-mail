@@ -139,7 +139,8 @@ export interface Env {
   BOOKING_URL?: string;          // booking link in the day-14 note; that step is held until it is set
   HOSTED_SERVICE_URL?: string;   // https URL of the maker-run hosted free tier; unset = no surface mentions a hosted service (src/hosted-service.ts)
   SERVICE_PRICES?: string;       // JSON {"fix":"$…","keepFixed":"$…/mo","bimi":"$…/mo"}: the prices in the day-10 email
-  LIFECYCLE_EMAILS_OFF?: string; // hosted lifecycle emails (src/lifecycle/email/): comma list of kinds to stop (records_live,first_report,no_reports,summary,tips) or "all"; empty: all on
+  LIFECYCLE_EMAILS_OFF?: string; // hosted lifecycle emails (src/lifecycle/email/): comma list of kinds to stop (records_live,first_report,no_reports,summary,tips,change_alerts,connection_alerts) or "all"; empty: all on (except change_alerts on hosted, below)
+  LIFECYCLE_EMAILS_ON?: string; // hosted only: kinds that are off until named here (today: change_alerts); LIFECYCLE_EMAILS_OFF wins
   LIFECYCLE_TIPS_DEFAULT?: string; // "on" (default) or "off": whether an owner who never chose gets the tips email
   ONBOARDING_SEQUENCE_ENABLED?: string; // "1" turns the onboarding sequence on (self-host and hosted); off otherwise
   PUBLIC_REPORTS_ENABLED?: string; // '1': POST /api/public/reports makes dated public reports (src/public-reports/routes.ts); reading and deleting work either way

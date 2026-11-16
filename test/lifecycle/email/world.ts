@@ -5,7 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { parseDmarcRecord, type DmarcLookup } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../../../src/index';
 import { TenantContext } from '../../../src/tenancy/context';
-import { newBudget, runLifecycleForWorkspace, type Budget, type LifecycleDeps } from '../../../src/lifecycle/email/run';
+import { newBudget, runLifecycleForWorkspace, type Budget, type LifecycleDeps, type Schedule } from '../../../src/lifecycle/email/run';
 import { fakeMailer, type FakeMailer } from '../../funnel/world';
 import { HOSTED_ENV } from '../../hosted/world';
 
@@ -72,10 +72,10 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
   const tenant = () => new TenantContext({ env, workspaceId: WS, mode: 'saas', settings: {} });
   let budget: Budget = newBudget();
   const ctxFake = { waitUntil: (p: Promise<unknown>) => { void p.catch(() => {}); } } as unknown as ExecutionContext;
-  /** One daily 11:00 run (a new invocation, so a new budget). */
-  const run = async (opts: { budget?: Budget } = {}) => {
+  /** One run (a new invocation, so a new budget): both halves, unless `schedule` says which cron branch it is (`daily` 0 11 * * *, `weekly` 0 9 * * 1). */
+  const run = async (opts: { budget?: Budget; schedule?: Schedule } = {}) => {
     budget = opts.budget ?? newBudget();
-    await runLifecycleForWorkspace(tenant(), ctxFake, budget, deps);
+    await runLifecycleForWorkspace(tenant(), ctxFake, budget, deps, opts.schedule);
     await new Promise((r) => setTimeout(r, 0));
   };
   /** Jump to a later day at 11:00 UTC. */

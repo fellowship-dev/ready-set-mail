@@ -278,54 +278,62 @@ describe('buildFreeCheckHtml', () => {
 
 // ── DNS change alert ──────────────────────────────────────────
 
+const OPEN = 'https://app.readysetmail.com/#/w/ws_default/domains/1';
 describe('buildDnsAlertHtml', () => {
   const degraded: DomainChange = { field: 'DMARC policy', was: 'reject', now: 'none', severity: 'degraded' };
   const improved: DomainChange = { field: 'DMARC policy', was: 'none', now: 'reject', severity: 'improved' };
   const changed:  DomainChange = { field: 'SPF record', was: 'v=spf1 ~all', now: 'v=spf1 -all', severity: 'changed' };
 
   it('shows domain name in heading', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
     expect(html).toContain('acme.com');
   });
 
   it('shows degraded badge in red', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
     expect(html).toContain('degraded');
     expect(html).toContain('#b91c1c');
   });
 
   it('shows improved badge in green', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], openUrl: OPEN });
     expect(html).toContain('improved');
     expect(html).toContain('#147a3a');
   });
 
   it('shows changed badge in orange', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [changed], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [changed], openUrl: OPEN });
     expect(html).toContain('changed');
     expect(html).toContain('#aa4f08');
   });
 
   it('shows old and new values in change table', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
     expect(html).toContain('reject');
     expect(html).toContain('none');
     expect(html).toContain('DMARC policy');
   });
 
   it('shows warning CTA when changes include degraded', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
-    expect(html).toContain('exposed to spoofing');
-    expect(html).toContain('acme.com'); // strip reports. prefix
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
+    expect(html).toContain('weaken the domain');
+    expect(html).toContain(`href="${OPEN}"`);
+    expect(html).not.toMatch(/spoof|exposed|reports\.acme\.com|Sign up|\p{Extended_Pictographic}/u);
+  });
+
+  it('has no link at all when no public origin is configured', () => {
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: null });
+    expect(html).toContain('weaken the domain');
+    expect(html).not.toContain('Open acme.com in Ready Set Mail');
   });
 
   it('shows no-action message when no degraded changes', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [improved], openUrl: OPEN });
     expect(html).toContain('No action required');
   });
 
   it('is valid HTML with doctype', () => {
-    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], reportsDomain: 'reports.acme.com' });
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
     expect(html).toMatch(/^<!DOCTYPE html>/);
     expect(html).toContain('</html>');
   });
@@ -369,7 +377,7 @@ describe('default-brand HTML emails load nothing remote', () => {
   const emails: (readonly [string, string])[] = [
     ['weekly digest', buildWeeklyDigestHtml({ recipientName: 'Ada', weekLabel: 'Jan 1', stats: [STAT_REJECT], sourcesByDomain: new Map(), ruaAddress: 'rua@r.example.test', reportsDomain: 'reports.example.test' })],
     ['free check', buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary, auth: AUTH_PASS, dns })],
-    ['dns alert', buildDnsAlertHtml({ domain: 'acme.com', changes, reportsDomain: 'reports.example.test' })],
+    ['dns alert', buildDnsAlertHtml({ domain: 'acme.com', changes, openUrl: OPEN })],
     ['letter', buildLetterHtml({ title: 'Hi', blocks: ['Hello', { cta: { label: 'Go', url: 'https://example.test/' } }] })],
     ...sequence,
   ];

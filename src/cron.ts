@@ -71,16 +71,18 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 /** One cron tick for one workspace. */
 async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, lifecycle: Budget): Promise<void> {
   // Every day 11am UTC. Product analytics: hosted with PostHog configured only (docs/analytics.md). Lifecycle emails: hosted only
-  // (src/lifecycle/email/run.ts): records live, first-report catch-up, no reports yet, the weekly summary and tips. Both are no-ops elsewhere.
+  // (src/lifecycle/email/run.ts): records live, first-report catch-up, no reports yet. Both are no-ops elsewhere.
   if (event.cron === '0 11 * * *') {
     dailyAnalytics(tenant, ctx);
-    await runLifecycleForWorkspace(tenant, ctx, lifecycle);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle, {}, 'daily');
     return;
   }
 
-  // Weekly digest — every Monday 9am UTC
+  // Every Monday 9am UTC: the weekly digest on self-host (sendWeeklyDigests returns at once on hosted), and on hosted the weekly summary and the
+  // tips (src/lifecycle/email/run.ts), for the ISO week that ended at 00:00 UTC that day. Its period key makes a re-run send nothing twice.
   if (event.cron === '0 9 * * 1') {
     await sendWeeklyDigests(tenant);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle, {}, 'weekly');
     return;
   }
 

@@ -79,7 +79,8 @@ export interface FirstReportData {
 
 export interface FirstReportItem { domain: string; data: FirstReportData }
 
-export function firstReport(p: Who & { items: FirstReportItem[]; domainUrl: string }): Mail {
+/** `domainUrl` is null only on self-host with no public origin configured: the email goes without its button rather than with a guessed address. */
+export function firstReport(p: Who & { items: FirstReportItem[]; domainUrl: string | null }): Mail {
   if (p.items.length > 1) return firstReports(p);
   const { domain, data: d } = p.items[0];
   const failed = Math.max(0, d.total - d.passed);
@@ -104,7 +105,7 @@ export function firstReport(p: Who & { items: FirstReportItem[]; domainUrl: stri
   }
   blocks.push(
     'Reports from other mail providers will follow, usually once a day each.',
-    { cta: { label: `See who sends as ${domain}`, url: p.domainUrl } },
+    ...(p.domainUrl ? [{ cta: { label: `See who sends as ${domain}`, url: p.domainUrl } }] : []),
     ...footer(p.footer),
   );
   return {
@@ -115,7 +116,7 @@ export function firstReport(p: Who & { items: FirstReportItem[]; domainUrl: stri
 }
 
 /** Several domains whose first report arrived in the same run. */
-function firstReports(p: Who & { items: FirstReportItem[]; domainUrl: string }): Mail {
+function firstReports(p: Who & { items: FirstReportItem[]; domainUrl: string | null }): Mail {
   return {
     kind: 'first_report',
     subject: `First DMARC reports for ${p.items.length} domains`,
@@ -124,7 +125,7 @@ function firstReports(p: Who & { items: FirstReportItem[]; domainUrl: string }):
       'The first DMARC report has arrived for each of these domains:',
       { table: { head: ['Domain', 'Reporter', 'Messages', 'Passed DMARC'], rows: p.items.map((i) => ({ cells: [i.domain, i.data.reporter, n(i.data.total), n(i.data.passed)] })) } },
       'Each domain page lists who sends as that domain, with their numbers. Reports from other mail providers will follow, usually once a day each.',
-      { cta: { label: 'Open Ready Set Mail', url: p.domainUrl } },
+      ...(p.domainUrl ? [{ cta: { label: 'Open Ready Set Mail', url: p.domainUrl } }] : []),
       ...footer(p.footer),
     ],
   };

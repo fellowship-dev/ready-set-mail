@@ -111,9 +111,9 @@ describe('first report (c)', () => {
     const w = await lifecycleWorld();
     const id = w.addDomain({ domain: D });
     const rid = w.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, records: [ok(14)] });
-    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, 'https://app.readysetmail.com', w.deps);
+    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, w.deps);
     expect(subjects(w)).toEqual(['First DMARC report for brightwave-mail.com: 14 messages, all passed']);
-    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, 'https://app.readysetmail.com', w.deps);
+    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, w.deps);
     w.dns.set(D, recordNamingUs());
     await w.run();
     expect(subjects(w).filter((s) => s.startsWith('First DMARC'))).toHaveLength(1);
@@ -473,6 +473,40 @@ describe('tips (f)', () => {
     off.pref('u_dana', 'tips', true);
     await off.run();
     expect(tips(off)).toHaveLength(1);
+  });
+});
+
+describe('which cron runs what', () => {
+  it('the daily branch (0 11 * * *) sends the milestones and never the summary or a tip; the weekly branch (0 9 * * 1) the reverse', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]); // a summary is due
+    w.addDomain({ domain: 'new.example' });
+    w.dns.set('new.example', recordNamingUs());
+    await w.run({ schedule: 'daily' });
+    expect(subjects(w)).toEqual(['new.example is set up: reports are on their way']);
+    await w.run({ schedule: 'weekly' });
+    expect(subjects(w).filter((s) => s.startsWith('Week of'))).toHaveLength(1);
+    expect(subjects(w)).toHaveLength(2);
+    // The weekly branch does not look at the milestones: a domain going live waits for the daily one.
+    const only = await lifecycleWorld();
+    only.addDomain({ domain: 'new.example' });
+    only.dns.set('new.example', recordNamingUs());
+    await only.run({ schedule: 'weekly' });
+    expect(only.mailer.sent).toHaveLength(0);
+    expect(only.reads).toEqual([]);
+  });
+
+  it('the weekly summary is keyed by the ISO week, so the Monday 09:00 run and a later re-run send it once', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]);
+    w.at(0, 9); // Monday 16 Nov 09:00 UTC: the week of 9 Nov ended at 00:00
+    await w.run({ schedule: 'weekly' });
+    await w.run({ schedule: 'weekly' });
+    w.at(0, 11); await w.run({ schedule: 'daily' }); await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('Week of'))).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed']);
+    expect(w.rows("SELECT period FROM lifecycle_sends WHERE kind = 'summary'")).toEqual([{ period: '2026-W46' }]);
   });
 });
 

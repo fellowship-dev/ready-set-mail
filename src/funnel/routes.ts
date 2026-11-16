@@ -1,7 +1,8 @@
 // HTTP routes of the email funnel.
 //
 // Public (no login; the signed token is the credential):
-//   GET|POST /api/unsubscribe?t=<token>     unsubscribe the address (GET: the link in the email body; POST: RFC 8058 one-click)
+//   GET  /api/unsubscribe?t=<token>         a confirm page with a button (changes nothing: link scanners open links)
+//   POST /api/unsubscribe?t=<token>         unsubscribe the address (the button; RFC 8058 one-click, with or without its body)
 //   GET|POST /api/monitor/confirm?t=<token> confirm a change-alert subscription (double opt-in; GET shows a button, POST confirms)
 // Instance owner only:
 //   GET  /api/leads                         leads, counts, and whether the sequence can send
@@ -40,8 +41,14 @@ export async function handlePublicFunnelRoute(request: Request, env: BoundEnv): 
   if (url.pathname === '/api/unsubscribe' && (method === 'GET' || method === 'POST')) {
     const p = await verifyToken(env, url.searchParams.get('t') ?? '');
     if (!p || p.p !== 'unsub') return method === 'POST' ? new Response('invalid token', { status: 400 }) : page('This link is not valid', 'The unsubscribe link is incomplete or has been altered. Reply to the email you received and we will remove you by hand.', 400);
+    // A GET only shows a button. Mail security scanners open links in emails; they must not be able to unsubscribe someone. The POST (the button, or
+    // the RFC 8058 one-click with or without its `List-Unsubscribe=One-Click` body) is what unsubscribes.
+    if (method === 'GET') {
+      const t = encodeURIComponent(url.searchParams.get('t') ?? '');
+      return page('Unsubscribe?', 'Nothing changes until you press the button. You will not get any more emails of this kind from Ready Set Mail, and any follow-up series and change alerts for this address are removed.', 200, `<form method="post" action="/api/unsubscribe?t=${t}"><button type="submit" style="padding:10px 18px;font-size:15px;cursor:pointer;">Unsubscribe</button></form>`);
+    }
     await unsubscribeEmail(env, p.e);
-    return method === 'POST' ? new Response('unsubscribed', { status: 200 }) : page('You are unsubscribed', 'You will not get any more emails of this kind from Ready Set Mail. Any follow-up series and change alerts for this address have been removed.');
+    return new Response('unsubscribed', { status: 200 });
   }
 
   if (url.pathname === '/api/monitor/confirm' && (method === 'GET' || method === 'POST')) {

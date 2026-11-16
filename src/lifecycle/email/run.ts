@@ -19,9 +19,9 @@ import { dmarcFactsFromLookup } from '../../email/dns-snapshot';
 import { postalAddress, publicBaseUrl } from '../../funnel/config';
 import { emailCheckAvailable, hostedEnabled } from '../../hosted/config';
 import type { BoundEnv } from '../../index';
+import { accountSender } from '../../mail/compliance';
 import type { Mailer } from '../../mail/mailer';
 import { ownerMailer } from '../../mail/mailer';
-import { senderAddress } from '../../auth/mail';
 import { capture } from '../../product-analytics/capture';
 import { recordsSeenLive, sendsReportsHere } from '../../product-analytics/steps';
 import { provenDomainIds } from '../../domains/ownership';
@@ -62,7 +62,7 @@ export interface LifecycleDeps {
   now?: () => number;
   /** Default: the Worker's send_email binding (src/mail/mailer.ts `ownerMailer`), like the other owner-facing mail. */
   mailer?: Mailer | null;
-  /** Default: the platform sender (src/auth/mail.ts `senderAddress`). */
+  /** Default: `accountSender` (src/mail/compliance.ts): the platform sender; on self-host the workspace's own first. */
   from?: string;
   /** Default: a live DNS-over-HTTPS read. */
   readDmarc?: (domain: string) => Promise<DmarcLookup>;
@@ -161,15 +161,16 @@ function milestoneFooter(w: W, to: Recipient, domains: string[], added: boolean)
 }
 
 const who = (to: Recipient, footer: Footer): Who => ({ name: to.name, footer });
-const domainLink = (w: W, domains: DomainRow[]) => (domains.length === 1 ? appUrl(w.base!, w.tenant.workspaceId, `/domains/${domains[0].id}`) : appUrl(w.base!, w.tenant.workspaceId, '/'));
+const domainLink = (w: W, domains: DomainRow[]) => (!w.base ? null : domains.length === 1 ? appUrl(w.base!, w.tenant.workspaceId, `/domains/${domains[0].id}`) : appUrl(w.base!, w.tenant.workspaceId, '/'));
 
 // ── Milestone emails: records live, first report, no reports ─
 
 interface Item<T> { domain: DomainRow; data: T }
 
 /** One email per recipient covering every item they are due: claims are per domain, so a domain is never mailed twice. */
-async function milestone<T>(w: W, kind: 'records_live' | 'first_report' | 'no_reports', items: Item<T>[], make: (who: Who, items: Item<T>[], url: string) => Mail): Promise<void> {
-  if (!w.base || items.length === 0) return;
+async function milestone<T>(w: W, kind: 'records_live' | 'first_report' | 'no_reports', items: Item<T>[], make: (who: Who, items: Item<T>[], url: string | null) => Mail): Promise<void> {
+  // Every milestone but the first report is hosted only, where the public origin is always set; a self-host first report goes without a button.
+  if ((!w.base && kind !== 'first_report') || items.length === 0) return;
   for (const to of new Map(items.flatMap((i) => milestoneRecipients(w.people, w.adders.get(i.domain.id) ?? new Set(), w.requireVerified)).map((r) => [r.userId, r])).values()) {
     const mine = items.filter((i) => milestoneRecipients(w.people, w.adders.get(i.domain.id) ?? new Set(), w.requireVerified).some((r) => r.userId === to.userId) && !hasClaim(w, to.userId, i.domain.id, kind, 'once'));
     if (mine.length === 0) continue;
@@ -216,7 +217,7 @@ async function sendRecordsLive(w: W): Promise<void> {
     if (stored.counted || stored.uncounted) continue;
     items.push({ domain: d, data: { seenAt: w.milestones.get(d.id)!.records_live_at! } });
   }
-  await milestone(w, 'records_live', items, (who, sent, url) => copy.recordsLive({ ...who, items: sent.map((i) => ({ domain: i.domain.domain, seenAt: i.data.seenAt })), domainUrl: url }));
+  await milestone(w, 'records_live', items, (who, sent, url) => copy.recordsLive({ ...who, items: sent.map((i) => ({ domain: i.domain.domain, seenAt: i.data.seenAt })), domainUrl: url! }));
 }
 
 // c. first report -----------------------------------------------
@@ -266,7 +267,7 @@ async function sendNoReports(w: W): Promise<void> {
     const check: copy.LiveCheck = !facts ? { outcome: 'failed' } : sendsReportsHere(d.rua_address, facts) ? { outcome: 'names_us' } : { outcome: 'does_not', record: lookup?.record?.raw ?? null, address: d.rua_address };
     items.push({ domain: d, data: { liveAt: m.records_live_at, check } });
   }
-  await milestone(w, 'no_reports', items, (who, sent, url) => copy.noReports({ ...who, items: sent.map((i) => ({ domain: i.domain.domain, liveAt: i.data.liveAt, check: i.data.check })), domainUrl: url, emailCheck: emailCheckAvailable(w.env) }));
+  await milestone(w, 'no_reports', items, (who, sent, url) => copy.noReports({ ...who, items: sent.map((i) => ({ domain: i.domain.domain, liveAt: i.data.liveAt, check: i.data.check })), domainUrl: url!, emailCheck: emailCheckAvailable(w.env) }));
 }
 
 // ── Weekly facts, shared by the summary and the tips ─────────
@@ -465,7 +466,7 @@ async function sendTips(w: W): Promise<void> {
 // ── Entry points ─────────────────────────────────────────────
 
 /** `requireVerified`: the hosted rules (verified addresses, proven domains); self-host, which has neither, passes false (the first-report email only). */
-async function load(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps, requireVerified: boolean, base: string | null): Promise<W | null> {
+async function load(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps, requireVerified: boolean): Promise<W | null> {
   const env = tenant.env;
   const now = Math.floor((deps.now?.() ?? Date.now()) / 1000);
   const all = await tenant.scope.domains.list();
@@ -480,32 +481,39 @@ async function load(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: Lifec
   for (const a of adders) adderMap.set(a.domain_id, new Set([...(adderMap.get(a.domain_id) ?? []), a.actor_id]));
   const name = (await workspaceLifecycle(env.DB).get(tenant.workspaceId).catch(() => null))?.name;
   return {
-    tenant, env, ctx, budget, deps, now, q, base, requireVerified, workspaceName: name ?? 'your workspace',
+    tenant, env, ctx, budget, deps, now, q, base: publicBaseUrl(env), requireVerified, workspaceName: name ?? 'your workspace',
     mailer: deps.mailer !== undefined ? deps.mailer : ownerMailer(env),
-    from: deps.from ?? tenant.settings.fromEmail ?? (await senderAddress(env)),
+    from: deps.from ?? (await accountSender(env, tenant)),
     domains, people, prefs, sends, adders: adderMap, milestones: new Map(milestones.map((m) => [m.domain_id, m])),
   };
 }
 
 /**
- * The daily lifecycle work of one workspace (hosted only). Each part is on its own: one failing never stops the next, and nothing here throws.
+ * Which cron expression runs which part: the milestones in the daily `0 11 * * *` branch, the weekly summary and the tips in the weekly
+ * `0 9 * * 1` branch (src/cron.ts; docs/hosted.md has the table). 'both': everything, for a caller that has no cron (tests).
+ */
+export type Schedule = 'daily' | 'weekly' | 'both';
+const PARTS: ReadonlyArray<readonly [string, Exclude<Schedule, 'both'>, (w: W) => Promise<void>]> = [
+  ['watch', 'daily', watchForLive], ['records live', 'daily', sendRecordsLive], ['first report', 'daily', (x) => sendFirstReports(x)],
+  ['no reports', 'daily', sendNoReports], ['summary', 'weekly', sendSummaries], ['tips', 'weekly', sendTips],
+];
+
+/**
+ * The lifecycle work of one workspace (hosted only). Each part is on its own: one failing never stops the next, and nothing here throws.
  * The order is the order of importance: when the invocation's budget runs out, the milestones were sent first.
  */
-export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps = {}): Promise<void> {
+export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps = {}, schedule: Schedule = 'both'): Promise<void> {
   if (!hostedEnabled(tenant.env)) return;
   let w: W | null;
   try {
-    w = await load(tenant, ctx, budget, deps, true, publicBaseUrl(tenant.env));
+    w = await load(tenant, ctx, budget, deps, true);
   } catch (e) {
     console.error('[lifecycle] could not load the workspace:', e instanceof Error ? e.name : 'error');
     return;
   }
   if (!w) return;
-  const parts: Array<[string, (w: W) => Promise<void>]> = [
-    ['watch', watchForLive], ['records live', sendRecordsLive], ['first report', (x) => sendFirstReports(x)],
-    ['no reports', sendNoReports], ['summary', sendSummaries], ['tips', sendTips],
-  ];
-  for (const [name, part] of parts) {
+  const parts = PARTS.filter(([, runs]) => schedule === 'both' || runs === schedule);
+  for (const [name, , part] of parts) {
     if (budget.sends <= 0) break;
     try { await part(w); } catch (e) { console.error(`[lifecycle] ${name} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'error'); }
   }
@@ -514,10 +522,10 @@ export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, 
 /**
  * The first counted report of a domain has just been stored: tell the people it concerns, now (src/notifications/first-report.ts). One module for
  * both modes: on self-host the recipients are the owners (no verified-address rule, nobody is asked to verify one), the sender the workspace's own
- * or the platform's, the link the instance's own address.
+ * or the platform's, the link the public origin (PUBLIC_BASE_URL, else BETTER_AUTH_URL).
  */
-export async function sendFirstReportNow(tenant: TenantContext, ctx: Ctx, domainId: number, reportId: number, base: string | null, deps: LifecycleDeps = {}): Promise<void> {
-  const w = await load(tenant, ctx, newBudget(), deps, getMode(tenant.env) === 'saas', base);
+export async function sendFirstReportNow(tenant: TenantContext, ctx: Ctx, domainId: number, reportId: number, deps: LifecycleDeps = {}): Promise<void> {
+  const w = await load(tenant, ctx, newBudget(), deps, getMode(tenant.env) === 'saas');
   if (!w) return;
   await sendFirstReports(w, { domainId, reportId });
 }

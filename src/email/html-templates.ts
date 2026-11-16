@@ -345,7 +345,8 @@ export function buildFreeCheckHtml(p: FreeCheckHtmlParams): string {
 export interface DnsAlertHtmlParams {
   domain: string;
   changes: DomainChange[];
-  reportsDomain: string;
+  /** The dashboard page to open (src/mail/compliance.ts `appLink`); none: no link. */
+  openUrl: string | null;
   brand?: Brand;
 }
 
@@ -371,8 +372,8 @@ export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
 
   if (hasDegraded) {
     body += `<p style="background:${c['danger-subtle']};border:1px solid ${c.danger};border-radius:4px;padding:12px;margin:0 0 12px;">
-Some changes may leave your domain exposed to spoofing.
-<a href="https://${esc(p.reportsDomain.replace(/^reports\./, ''))}" style="color:${esc(accent)};">Fix it with Ready Set Mail →</a>
+Some of these changes weaken the domain&rsquo;s email security settings.${p.openUrl ? `
+<a href="${esc(p.openUrl)}" style="color:${esc(accent)};">Open ${esc(p.domain)} in Ready Set Mail &rarr;</a>` : ''}
 </p>`;
   } else {
     body += `<p style="color:${c['ink-2']};font-size:13px;">No action required — these look like improvements or routine updates.</p>`;

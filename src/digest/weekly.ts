@@ -140,7 +140,7 @@ async function sendDigest(
 
 export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now()): Promise<void> {
   // The hosted service has no digest: its address (rua@<reports domain>), its sender and its "fix it" link are the self-host forms, and none of them
-  // exists per workspace there. Account holders get the weekly summary instead (src/lifecycle/email/run.ts, the daily 11:00 UTC job).
+  // exists per workspace there. Account holders get the weekly summary instead (src/lifecycle/email/run.ts, under this same cron, `0 9 * * 1`).
   if (hostedEnabled(tenant.env)) {
     console.log('[digest] hosted: skipped, the weekly summary replaces the digest');
     return;
