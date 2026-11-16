@@ -162,7 +162,10 @@ export function explain(src: AuthSource, policy: KnownPolicy = null, live?: Live
 		const other = ok === 'SPF' ? 'DKIM' : 'SPF';
 		return (
 			`${service} passed DMARC as ${from} on ${ok} alone. ${otherCheck(src, other)} ` +
-			`Worth fixing so there is a backup: if ${ok} breaks on the way (forwarding usually breaks SPF), this mail fails DMARC.`
+			// RFC 9989 section 7.4: relayed mail most likely fails SPF; DKIM signatures generally survive.
+			(ok === 'SPF'
+				? 'Worth fixing so there is a backup: forwarded mail usually fails SPF, and then this mail fails DMARC.'
+				: 'Worth fixing so there is a backup: if the DKIM signature breaks on the way, this mail fails DMARC.')
 		);
 	}
 	// Failed (RFC 9989 section 5.3.5): neither identifier passed and aligned.

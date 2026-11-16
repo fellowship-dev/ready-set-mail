@@ -79,7 +79,7 @@ describe('explain by the receiver\'s verdict', () => {
 		const t = explain(one({ spf_domain: 'bounces.esp.example', dkim_domain: 'example.com' }));
 		expect(t).toContain('passed DMARC as "example.com" on DKIM alone.');
 		expect(t).toContain('SPF did not pass for its return-path (MAIL FROM) domain bounces.esp.example, the name where SPF is checked for this mail, so an SPF record at example.com does not apply to it.');
-		expect(t).toContain('Worth fixing so there is a backup: if DKIM breaks on the way (forwarding usually breaks SPF), this mail fails DMARC.');
+		expect(t).toContain('Worth fixing so there is a backup: if the DKIM signature breaks on the way, this mail fails DMARC.');
 	});
 	it('the return-path is the From domain itself: its SPF record must authorize the server, and never "does not apply"', () => {
 		const t = explain(one({ spf_domain: 'Example.com' }));
@@ -90,7 +90,7 @@ describe('explain by the receiver\'s verdict', () => {
 		const t = explain(src({ spf_pass: 1, dkim_pass: 1, spf_domain: 'example.com', dkim_domain: 'esp.example', spf_aligned: 1, dkim_aligned: 0, verdict: 'passed-one' }));
 		expect(t).toContain('on SPF alone.');
 		expect(t).toContain('DKIM passed for the signing domain d=esp.example, which is not in the same organization as example.com');
-		expect(t).toContain('Worth fixing so there is a backup: if SPF breaks on the way');
+		expect(t).toContain('Worth fixing so there is a backup: forwarded mail usually fails SPF, and then this mail fails DMARC.');
 	});
 	it('not recorded: says so, and nothing about passing or failing', () => {
 		expect(explain(src({ verdict: 'not-recorded' }))).toBe("This report was stored before Ready Set Mail kept each receiver's DMARC verdict, so whether this mail passed DMARC is not recorded.");
