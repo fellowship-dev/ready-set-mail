@@ -13,7 +13,8 @@
 // so never a pending or lost claim (those live in domain_claims), never an evicted row, and never a row whose
 // ownership was not proven ('legacy', from before ownership checks).
 
-import { createResolver, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { resolverFor } from '../dns/resolver';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
@@ -206,12 +207,12 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
     counts = await tenant.scope.intake.reportsAround(domain.id, connected_at);
     // Since the connection began, by when we RECEIVED the reports: a report covers the previous day, so its period starts before the connection.
     visibility = await reportVisibility(tenant, domain.id, connected_at ?? 0, undefined, 'received');
-    const lookup = await lookupDmarc(deps.resolver ?? createResolver(), domain.domain);
+    const lookup = await lookupDmarc(deps.resolver ?? resolverFor(tenant.env), domain.domain);
     const checked_at = Math.floor((deps.now?.() ?? Date.now()) / 1000);
     dns = { checked_at, error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, address) };
   }
   if (!address && apply_via_cloudflare) {
-    const lookup = await lookupDmarc(deps.resolver ?? createResolver(), domain.domain);
+    const lookup = await lookupDmarc(deps.resolver ?? resolverFor(tenant.env), domain.domain);
     preview = { checked_at: Math.floor((deps.now?.() ?? Date.now()) / 1000), error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, fixedReportAddress(intakeDomain)) };
   }
   let parent: ReportAddressView['parent'] = null;
