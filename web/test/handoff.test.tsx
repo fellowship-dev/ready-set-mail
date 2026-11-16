@@ -111,7 +111,7 @@ describe('H1: the hand-off page', () => {
 		expect(await screen.findByRole('heading', { name: 'Hand setup to a teammate' })).toBeInTheDocument();
 		expect(await screen.findByText(/They join/)).toHaveTextContent('They join Brightwave Studio as an admin and pick up where you are: brightwave-mail.com. You keep full access as the owner.');
 		expect(screen.getByLabelText('Their work email')).toBeInTheDocument();
-		expect(screen.getAllByRole('button', { name: 'Send invitation' })).toHaveLength(1);
+		expect(screen.getAllByRole('button', { name: 'Invite them' })).toHaveLength(1);
 		expect(screen.getByText("We email them a fixed invitation when they're at your company's domain; otherwise you get a link to send. The link works for 7 days. An admin can add domains, connect Cloudflare and apply changes; only you, the owner, can add other admins, manage API keys and agents, or hand over ownership.")).toBeInTheDocument();
 		expect(document.querySelectorAll('textarea')).toHaveLength(0); // no free text: nobody can put their own words in a message from us
 	});
@@ -120,7 +120,7 @@ describe('H1: the hand-off page', () => {
 		const { calls } = open();
 		const user = userEvent.setup();
 		await user.type(await screen.findByLabelText('Their work email'), 'sam@brightwave-mail.com');
-		await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+		await user.click(screen.getByRole('button', { name: 'Invite them' }));
 		expect(await screen.findByRole('heading', { name: 'Invitation sent' })).toBeInTheDocument();
 		expect(screen.getByText(/sam@brightwave-mail\.com/)).toBeInTheDocument();
 		expect(calls.find((c) => c.path === '/api/team/invite')?.body).toEqual({ email: 'sam@brightwave-mail.com', role: 'admin', handoff_domain: 'brightwave-mail.com' });
@@ -134,7 +134,7 @@ describe('H1: the hand-off page', () => {
 		const user = userEvent.setup();
 		const writeText = vi.spyOn(navigator.clipboard, 'writeText');
 		await user.type(await screen.findByLabelText('Their work email'), 'dev@pixelforge.dev');
-		await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+		await user.click(screen.getByRole('button', { name: 'Invite them' }));
 		expect(await screen.findByRole('heading', { name: 'Send dev@pixelforge.dev this link' })).toBeInTheDocument();
 		expect(screen.getByText(/Send it to them yourself\./)).toHaveTextContent('Send it to them yourself. It works once, for 7 days, and lets them join Brightwave Studio as an admin to finish brightwave-mail.com.');
 		expect(screen.getByLabelText('Invitation link')).toHaveValue(url);
@@ -152,7 +152,7 @@ describe('H1: the hand-off page', () => {
 		const { calls } = open();
 		const user = userEvent.setup();
 		await user.type(await screen.findByLabelText('Their work email'), 'sam');
-		await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+		await user.click(screen.getByRole('button', { name: 'Invite them' }));
 		expect(screen.getByLabelText('Their work email')).toHaveAccessibleDescription('Enter an email address like name@company.com');
 		expect(calls.some((c) => c.path === '/api/team/invite')).toBe(false);
 	});
@@ -166,7 +166,7 @@ describe('H1: the hand-off page', () => {
 			const { unmount } = open({ routes: { 'POST /api/team/invite': res } });
 			const user = userEvent.setup();
 			await user.type(await screen.findByLabelText('Their work email'), 'sam@brightwave-mail.com');
-			await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+			await user.click(screen.getByRole('button', { name: 'Invite them' }));
 			expect((await screen.findAllByText(text)).length).toBeGreaterThan(0);
 			expect(screen.queryByRole('heading', { name: 'Invitation sent' })).toBeNull();
 			unmount();
@@ -185,7 +185,7 @@ describe('H1: the hand-off page', () => {
 		const { calls } = open({ route: '/setup/hand-off?domain=evil.example' });
 		const user = userEvent.setup();
 		await user.type(await screen.findByLabelText('Their work email'), 'sam@brightwave-mail.com');
-		await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+		await user.click(screen.getByRole('button', { name: 'Invite them' }));
 		await screen.findByRole('heading', { name: 'Invitation sent' });
 		expect(calls.find((c) => c.path === '/api/team/invite')?.body).toMatchObject({ handoff_domain: 'brightwave-mail.com' });
 	});
@@ -361,6 +361,36 @@ describe('H2: the inviter\'s dashboard', () => {
 		await userEvent.setup().click(within(c).getByRole('button', { name: 'Get a new link' }));
 		expect(await screen.findByText('Here is a new link. The previous link no longer works.')).toBeInTheDocument();
 		expect(screen.getByLabelText('Invitation link')).toHaveValue('https://app.example/#/invite/t2');
+	});
+
+	it('a dashboard left open: once the teammate joins, the card says so on the next look (focus), not only after a reload', async () => {
+		let joined = false;
+		dash({ routes: { 'GET /api/team/handoffs': () => ({ handoffs: [handoff(joined ? { joined_at: now() - 5 } : {})] }) } });
+		expect(within(await card()).getByText(/Not yet; the link works until /)).toBeInTheDocument();
+		joined = true;
+		window.dispatchEvent(new Event('visibilitychange')); // the owner comes back to the tab, well inside the 30 s the list is "fresh"
+		expect(await within(await card()).findByText('sam@brightwave-mail.com joined')).toBeInTheDocument();
+		expect(within(await card()).queryByRole('button', { name: 'Resend invitation' })).toBeNull();
+	});
+
+	it('a dashboard left open looks again every 15 seconds while a link waits, and stops once they joined', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			let joined = false;
+			const { calls } = dash({ routes: { 'GET /api/team/handoffs': () => ({ handoffs: [handoff(joined ? { joined_at: now() - 5 } : {})] }) } });
+			await card();
+			const looks = () => calls.filter((c) => c.path === '/api/team/handoffs').length;
+			const first = looks();
+			joined = true;
+			await vi.advanceTimersByTimeAsync(15_500);
+			expect(await screen.findByText('sam@brightwave-mail.com joined')).toBeInTheDocument();
+			const after = looks();
+			expect(after).toBeGreaterThan(first);
+			await vi.advanceTimersByTimeAsync(45_000);
+			expect(looks()).toBe(after); // nothing waits any more: no more looks
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('joined, the record not proven yet: who joined and what they are waiting for; no Resend', async () => {

@@ -27,7 +27,7 @@ test('hand setup to a teammate: invitation, I1 to that domain\'s S4, and the own
 		await expect(owner.getByRole('heading', { name: 'Hand setup to a teammate' })).toBeVisible();
 		await expect(owner.getByText(/They join Harbor Lane as an admin and pick up where you are: harbor-lane\.org/)).toBeVisible();
 		await owner.getByLabel('Their work email').fill('sam@harbor-lane.org');
-		await owner.getByRole('button', { name: 'Send invitation' }).click();
+		await owner.getByRole('button', { name: 'Invite them' }).click();
 		await expect(owner.getByRole('heading', { name: 'Invitation sent' })).toBeVisible({ timeout: 30_000 });
 		expect(inst.d1("SELECT email, role FROM invites")).toEqual([{ email: 'sam@harbor-lane.org', role: 'admin' }]);
 		const token = inst.d1('SELECT token FROM invites')[0]!.token as string;

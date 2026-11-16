@@ -128,7 +128,7 @@ export function HandOffPage() {
 				</div>
 				{send.isError && (send.error instanceof ApiError ? send.error.status >= 500 : true) ? <Alert variant="warning">{errorMessage(send.error)}</Alert> : null}
 				<Button type="submit" className="w-full sm:w-auto" loading={send.isPending}>
-					Send invitation
+					Invite them
 				</Button>
 			</form>
 			<FieldHint className="max-w-prose">
