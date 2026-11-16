@@ -297,7 +297,7 @@ export function AddDomainPage() {
 	}
 
 	return (
-		<div className="max-w-2xl space-y-6">
+		<div className="max-w-6xl space-y-6">
 			<PageHeader
 				eyebrow={
 					<Link to="/" className="inline-flex items-center gap-1 underline-offset-4 hover:underline">
@@ -309,7 +309,9 @@ export function AddDomainPage() {
 				description="Enter the domain you send email from. We check its current security settings and guide you through the setup."
 			/>
 			<ReadOnlyNotice />
-			<form onSubmit={submit} className="space-y-4" noValidate>
+			{/* A wide screen uses its width: the form on the left, the zones of the Cloudflare account beside it; one column on a narrow one (same order). */}
+			<div className="grid gap-6 lg:grid-cols-[minmax(0,36rem)_minmax(0,28rem)] lg:gap-x-10 lg:items-start">
+			<form onSubmit={submit} className="space-y-4 lg:col-start-1" noValidate>
 				<div className="space-y-1.5">
 					<Label htmlFor="domain-input">Your domain</Label>
 					{cf.pending ? (
@@ -350,8 +352,9 @@ export function AddDomainPage() {
 				</WriteButton>
 			</form>
 
-			<CloudflareSuggestions onPaid={setPaidMany} />
+			<div className="lg:col-start-2 lg:row-span-2 lg:row-start-1"><CloudflareSuggestions onPaid={setPaidMany} /></div>
 
+			<div className="space-y-6 lg:col-start-1">
 			<p className="text-sm text-ink-2">
 				Adding many at once? <Link className="text-brand-ink underline underline-offset-4" to="/bulk-import">Import a list of domains</Link>, or{' '}
 				<Link className="text-brand-ink underline underline-offset-4" to="/ct-discover">find subdomains from certificate logs</Link>.
@@ -369,6 +372,8 @@ export function AddDomainPage() {
 					<strong>Clear next steps.</strong> Once data starts coming in, the dashboard tells you exactly what to do and when it is safe.
 				</li>
 			</ul>
+			</div>
+			</div>
 		</div>
 	);
 }
