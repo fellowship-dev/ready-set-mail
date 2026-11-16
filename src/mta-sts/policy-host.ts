@@ -1,13 +1,20 @@
-// The policy host: how `mta-sts.<customer domain>` reaches this Worker with a certificate a sender trusts (RFC 8461 §3.3).
+// The policy host: how `mta-sts.<customer domain>` reaches this Worker with a certificate a sender trusts (RFC 8461 section 3.3).
 //
 // Two ways, one seam (`strategyFor`):
 //   worker_route   a PROXIED CNAME `mta-sts.<d>` → a target in the same Cloudflare account as the Worker; Universal SSL covers `mta-sts.<d>`.
 //                  Self-host: the target is the Worker's own host (getWorkerRoute). The operator's own zone apex on the hosted service:
-//                  the target is POLICY_HOST_TARGET and a Worker route `mta-sts.<d>/*` is created in POLICY_HOST_ZONE.
+//                  the target is POLICY_HOST_TARGET.
 //   saas_hostname  every other hosted domain: a DNS-ONLY CNAME `mta-sts.<d>` → POLICY_HOST_TARGET in the customer's zone, plus, in the
-//                  operator's zone, a Cloudflare for SaaS custom hostname `mta-sts.<d>` (HTTP validation, TLS 1.2 minimum) and a Worker route
-//                  `mta-sts.<d>/*` to this Worker. A custom hostname is NEVER created inside POLICY_HOST_ZONE (Cloudflare refuses a name that
-//                  matches the zone, and the operator's own names do not need one).
+//                  operator's zone, a Cloudflare for SaaS custom hostname `mta-sts.<d>` (HTTP validation, TLS 1.2 minimum). A custom hostname is
+//                  NEVER created inside POLICY_HOST_ZONE (Cloudflare refuses a name that matches the zone, and the operator's own names do not need one).
+//
+// ONE Worker route serves every policy host on the hosted service: POLICY_ROUTE_PATTERN in POLICY_HOST_ZONE, DECLARED in the hosted deploy config
+// (`routes: [{ "pattern": "*/.well-known/mta-sts.txt", "zone_name": "<POLICY_HOST_ZONE>" }]`, docs/hosted.md). Cloudflare: "Cloudflare dashboard-defined routes will
+// not be added alongside Wrangler-defined routes. If both are defined, only routes defined in wrangler.toml will be valid"
+// (developers.cloudflare.com/workers/wrangler/deprecations/), so a route made through the API is gone at the next `wrangler deploy` of a config that
+// declares routes. Custom hostnames enter that zone and "The `*/*` route pattern matches all traffic entering your zone" (cloudflare-for-platforms,
+// worker-as-origin). This product therefore makes no route per domain; the reconcile (src/mta-sts/reconcile.ts) only CHECKS that the declared one exists and
+// re-creates that exact pattern, loudly, when a deploy lost it.
 //
 // Everything that touches the operator's zone goes through OperatorZone, whose client carries its own exact-path policy (below): custom
 // hostnames and Worker routes of that one zone, nothing else, and never a DNS record. Deletes read the object first and refuse anything that
@@ -24,8 +31,6 @@ export interface PolicyHostStrategy {
   kind: PolicyHostKind;
   /** A custom hostname is registered in the operator's zone. */
   customHostname: boolean;
-  /** A Worker route is created in the operator's zone. */
-  route: boolean;
   /** The customer's `mta-sts.<d>` CNAME goes through Cloudflare's proxy (orange cloud). */
   cnameProxied: boolean;
 }
@@ -44,16 +49,19 @@ export function inOperatorZone(domain: string, cfg: Pick<PolicyHostConfig, 'zone
  * hostname either: null (the caller says so). Everything else: saas_hostname.
  */
 export function strategyFor(env: PolicyHostEnv, domain: string): PolicyHostStrategy | null {
-  if (getMode(env) !== 'saas') return { kind: 'worker_route', customHostname: false, route: false, cnameProxied: true };
+  if (getMode(env) !== 'saas') return { kind: 'worker_route', customHostname: false, cnameProxied: true };
   const cfg = policyHostConfig(env);
   if (!cfg) return null;
-  if (norm(domain) === cfg.zone) return { kind: 'worker_route', customHostname: false, route: true, cnameProxied: true };
+  if (norm(domain) === cfg.zone) return { kind: 'worker_route', customHostname: false, cnameProxied: true };
   if (inOperatorZone(domain, cfg)) return null;
-  return { kind: 'saas_hostname', customHostname: true, route: true, cnameProxied: false };
+  return { kind: 'saas_hostname', customHostname: true, cnameProxied: false };
 }
 
 export const policyHostname = (domain: string): string => `mta-sts.${norm(domain)}`;
-export const routePattern = (domain: string): string => `${policyHostname(domain)}/*`;
+/** The ONE route every policy host of the hosted service is served through (declared in the hosted deploy config; see the header). */
+export const POLICY_ROUTE_PATTERN = '*/.well-known/mta-sts.txt';
+/** The route an earlier build made for one domain (`mta-sts.<d>/*`): no longer made, still recognised so the reconcile can take it away. */
+export const legacyRoutePattern = (domain: string): string => `${policyHostname(domain)}/*`;
 
 // ── The operator client's policy ─────────────────────────────
 
@@ -61,7 +69,8 @@ const ID = '[A-Za-z0-9_-]+';
 
 /**
  * What the operator token may ask Cloudflare, before anything leaves the Worker: reads of the zone, its custom hostnames and routes; writes
- * only to create or delete one custom hostname or one Worker route of the configured zone. No DNS record write, no other zone, no other path.
+ * only to create, refresh (PATCH) or delete one custom hostname, and to create or delete one Worker route of the configured zone. No DNS record write,
+ * no other zone, no other path.
  */
 export function operatorPolicy(zone: { name: string; id?: () => string | undefined }): CfPolicy {
   const refuse = (method: string, path: string, why: string): never => { throw new CfRecordNotAllowedError(why, { method, path }); };
@@ -76,7 +85,8 @@ export function operatorPolicy(zone: { name: string; id?: () => string | undefin
       if (!zoneId) return refuse(method, p, 'the policy-host zone is not resolved yet');
       const create = new RegExp(`^/zones/${zoneId}/(custom_hostnames|workers/routes)$`);
       const remove = new RegExp(`^/zones/${zoneId}/(custom_hostnames|workers/routes)/${ID}$`);
-      if ((method === 'POST' && create.test(p)) || (method === 'DELETE' && remove.test(p))) return;
+      const refresh = new RegExp(`^/zones/${zoneId}/custom_hostnames/${ID}$`);
+      if ((method === 'POST' && create.test(p)) || (method === 'DELETE' && remove.test(p)) || (method === 'PATCH' && refresh.test(p))) return;
       return refuse(method, p, `the policy-host token may not ${method} ${p}`);
     },
     lookup: (name) => norm(name) === norm(zone.name),
@@ -132,12 +142,6 @@ export class OperatorZone {
     return host;
   }
 
-  #assertPattern(domain: string): string {
-    const pattern = routePattern(domain);
-    if (!/^mta-sts\.[a-z0-9_.-]+\/\*$/.test(pattern) || pattern.includes('*.')) throw new PolicyHostError(`refusing route pattern ${JSON.stringify(pattern)}`);
-    return pattern;
-  }
-
   // ── custom hostnames ──────────────────────────────────────
 
   /** The custom hostname of `domain`, if one exists in the zone. */
@@ -178,6 +182,16 @@ export class OperatorZone {
     return true;
   }
 
+  /** Refresh custom hostname `id`: Cloudflare validates it again (a hostname that gave up, status "moved", goes back to pending). */
+  async refreshHostname(id: string, domain: string): Promise<CustomHostname | null> {
+    const host = this.#assertHostname(domain);
+    const found = await this.getHostname(id);
+    if (!found) return null;
+    if (found.hostname !== host) throw new PolicyHostError(`refusing to refresh custom hostname ${id}: it is ${found.hostname}, not ${host}`);
+    await this.#cf.request('PATCH', `/zones/${this.zone.id}/custom_hostnames/${id}`, { body: { ssl: { method: 'http', type: 'dv', settings: { min_tls_version: '1.2' } } } });
+    return this.getHostname(id);
+  }
+
   /** Every custom hostname of the zone (read-only, bounded), for the daily reconcile. */
   async listHostnames(): Promise<CustomHostname[]> {
     return (await this.#cf.listAll<RawHostname>(`/zones/${this.zone.id}/custom_hostnames`, {}, { maxPages: 20, maxItems: 1000 })).map(toHostname);
@@ -189,28 +203,32 @@ export class OperatorZone {
     return ((await this.#cf.request<RawRoute[]>('GET', `/zones/${this.zone.id}/workers/routes`)) ?? []).map(toRoute);
   }
 
-  /** Route `mta-sts.<domain>/*` to this Worker. An identical route that is already there is reused. */
-  async createRoute(domain: string): Promise<WorkerRoute> {
-    const pattern = this.#assertPattern(domain);
-    const have = (await this.listRoutes()).find((r) => r.pattern === pattern);
-    if (have) {
-      if (have.script !== this.#script) throw new PolicyHostError(`route ${pattern} already goes to ${have.script ?? 'no Worker'}`);
-      return have;
-    }
-    return toRoute(await this.#cf.request<RawRoute>('POST', `/zones/${this.zone.id}/workers/routes`, { body: { pattern, script: this.#script } }));
+  /** The declared route (POLICY_ROUTE_PATTERN) in the zone, or null when a deploy lost it. A route with that pattern that goes to another Worker is an error. */
+  async findDeclaredRoute(): Promise<WorkerRoute | null> {
+    const have = (await this.listRoutes()).find((r) => r.pattern === POLICY_ROUTE_PATTERN);
+    if (have && have.script !== this.#script) throw new PolicyHostError(`route ${POLICY_ROUTE_PATTERN} already goes to ${have.script ?? 'no Worker'}`);
+    return have ?? null;
   }
 
-  /** Delete route `id`, after reading it: it must be exactly this domain's pattern and go to this Worker. True when deleted. */
+  /** Make the declared route (the one pattern, nothing else) when it is missing. `created` tells the caller to say so loudly: a deploy without it. */
+  async ensureDeclaredRoute(): Promise<{ route: WorkerRoute; created: boolean }> {
+    const have = await this.findDeclaredRoute();
+    if (have) return { route: have, created: false };
+    return { route: toRoute(await this.#cf.request<RawRoute>('POST', `/zones/${this.zone.id}/workers/routes`, { body: { pattern: POLICY_ROUTE_PATTERN, script: this.#script } })), created: true };
+  }
+
+  /** Delete a per-domain route an earlier build made, after reading it: it must be exactly `mta-sts.<domain>/*` and go to this Worker (never the declared route). True when deleted. */
   async deleteRoute(id: string, domain: string): Promise<boolean> {
-    const pattern = this.#assertPattern(domain);
+    const pattern = legacyRoutePattern(domain);
+    if (!/^mta-sts\.[a-z0-9_.-]+\/\*$/.test(pattern) || pattern.includes('*.')) throw new PolicyHostError(`refusing route pattern ${JSON.stringify(pattern)}`);
     const found = (await this.listRoutes()).find((r) => r.id === id);
-    if (!found) return false;
+    if (!found || found.pattern === POLICY_ROUTE_PATTERN) return false; // the declared route is shared by every policy host: never taken away here
     if (found.pattern !== pattern || found.script !== this.#script) throw new PolicyHostError(`refusing to delete route ${id}: it is ${found.pattern} → ${found.script ?? 'none'}, not ${pattern} → ${this.#script}`);
     await this.#cf.request('DELETE', `/zones/${this.zone.id}/workers/routes/${id}`);
     return true;
   }
 
-  /** Is this route one this product created (an mta-sts pattern to this Worker)? */
+  /** Is this a per-domain route an earlier build created (an `mta-sts.<d>/*` pattern to this Worker)? */
   ownsRoute(r: WorkerRoute): boolean {
     return r.script === this.#script && /^mta-sts\.[a-z0-9_.-]+\/\*$/.test(r.pattern);
   }

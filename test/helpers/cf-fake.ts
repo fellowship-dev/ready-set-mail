@@ -42,6 +42,12 @@ export class FakeCloudflare {
   readonly routes: Record<string, { id?: string; pattern: string; script: string }[]> = {};
   /** Cloudflare for SaaS custom hostnames per zone id, served at /zones/:id/custom_hostnames (list with ?hostname=, GET one, POST, DELETE). */
   readonly customHostnames: Record<string, { id: string; hostname: string; status: string; ssl: { status: string } }[]> = {};
+  /**
+   * What answers `https://mta-sts.<name>/.well-known/mta-sts.txt` (the policy fetch of src/mta-sts/reconcile.ts): a Response, or a throw for a TLS or network
+   * failure. Unset: 404. `policyFetches` lists the URLs asked, in order.
+   */
+  policyServer?: (url: URL, init?: RequestInit) => Promise<Response> | Response;
+  readonly policyFetches: string[] = [];
   /** Make a custom hostname's certificate active (what happens minutes after the customer's CNAME resolves). */
   activateHostname(hostname: string): void {
     for (const list of Object.values(this.customHostnames)) for (const h of list) if (h.hostname === hostname) { h.status = 'active'; h.ssl.status = 'active'; }
@@ -88,6 +94,10 @@ export class FakeCloudflare {
     const method = (init?.method ?? 'GET').toUpperCase();
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     const headers = new Headers(init?.headers as HeadersInit | undefined);
+    if (url.hostname.startsWith('mta-sts.') && url.pathname === '/.well-known/mta-sts.txt') {
+      this.policyFetches.push(url.toString());
+      return this.policyServer ? this.policyServer(url, init) : new Response('Not found', { status: 404 });
+    }
     if (url.hostname === 'cloudflare-dns.com' || url.hostname === 'dns.google') {
       this.dohHosts.push(url.hostname);
       const name = url.searchParams.get('name') ?? '';
@@ -189,6 +199,13 @@ export class FakeCloudflare {
       if (oneHost && method === 'GET') {
         const h = (this.customHostnames[zoneId] ?? []).find(x => x.id === oneHost[1]);
         return h ? ok(h) : fail(404, 'custom hostname not found');
+      }
+      if (oneHost && method === 'PATCH') {
+        // Refresh: Cloudflare tries the validation again; a hostname that had given up (moved) goes back to pending.
+        const h = (this.customHostnames[zoneId] ?? []).find(x => x.id === oneHost[1]);
+        if (!h) return fail(404, 'custom hostname not found');
+        if (h.status === 'moved') { h.status = 'pending'; h.ssl.status = 'pending_validation'; }
+        return ok(h);
       }
       if (oneHost && method === 'DELETE') {
         if (!(this.customHostnames[zoneId] ?? []).some(x => x.id === oneHost[1])) return fail(404, 'custom hostname not found');

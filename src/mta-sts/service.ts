@@ -30,8 +30,9 @@ import {
 } from './config';
 import { disableRule, enforceReadiness, EVIDENCE_RULE, NO_REPORTS_NOTE, maxAgeWords, splitHosts, type Readiness } from './evidence';
 import { authservConfigured } from '../dmarc/reporter-auth';
-import { servedMode } from './serve';
+import { policyText, servedMode } from './serve';
 import { OperatorZone, policyHostname, strategyFor, type PolicyHostStrategy } from './policy-host';
+import { fetchPolicyProof, policyUrl, reconcileMtaSts, servedMessage, type FetchReason, type ReconcileShared } from './reconcile';
 
 export interface Result { status: number; body: Record<string, unknown> }
 export interface Actor { id?: string | null; email?: string | null }
@@ -163,6 +164,13 @@ function recordsFor(domain: string, o: { target: string | null; proxied: boolean
   ];
 }
 
+/** The page's "served": null `ok` until the policy was fetched once; else the last fetch, with the one sentence and the one action when it failed. */
+export function servedStatus(r: Pick<MtaStsRow, 'fetch_ok' | 'fetch_checked_at' | 'fetch_reason'>, domain: string) {
+  const reason = (r.fetch_ok === 0 ? r.fetch_reason ?? 'unreachable' : null) as FetchReason | null;
+  const say = servedMessage(domain, reason);
+  return { ok: r.fetch_ok === null ? null : r.fetch_ok === 1, checked_at: r.fetch_checked_at, reason, message: say?.message ?? null, action: say?.action ?? null, url: policyUrl(domain) };
+}
+
 const certificateOf = (r: MtaStsRow) => (r.policy_host === 'saas_hostname' ? { status: r.ch_status, ssl_status: r.ch_ssl_status, active: r.ch_status === 'active' && r.ch_ssl_status === 'active' } : null);
 
 function configView(r: MtaStsRow) {
@@ -198,7 +206,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
   const mx = await readMx(domain.domain, resolverFor(tenant.env));
   const now = nowSeconds();
   const strategy = row ? { kind: row.policy_host, cnameProxied: row.policy_host === 'worker_route' } : av.strategy ? { kind: av.strategy.kind, cnameProxied: av.strategy.cnameProxied } : null;
-  const target = row || av.strategy ? await policyTarget(tenant, domain.domain, row ? { kind: row.policy_host, customHostname: row.policy_host === 'saas_hostname', route: true, cnameProxied: row.policy_host === 'worker_route' } : av.strategy!) : { target: null, problem: null };
+  const target = row || av.strategy ? await policyTarget(tenant, domain.domain, row ? { kind: row.policy_host, customHostname: row.policy_host === 'saas_hostname', cnameProxied: row.policy_host === 'worker_route' } : av.strategy!) : { target: null, problem: null };
 
   let reports: ReturnType<typeof reportView>[] = [];
   let summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null = null;
@@ -243,6 +251,8 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       records_problem: target.problem,
       config: row ? configView(row) : null,
       policy_host_status: row ? { kind: row.policy_host, hostname: policyHostname(domain.domain), certificate: certificateOf(row), route: !!row.route_id } : null,
+      // "Served" is the last FETCH of the policy URL (src/mta-sts/reconcile.ts) and nothing else: not the certificate, not the route, not a record.
+      served: row ? servedStatus(row, domain.domain) : null,
       summary,
       reports,
       enforce,
@@ -380,7 +390,7 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
   const store = (set: Parameters<typeof tenant.scope.mtaSts.update>[1]) => tenant.scope.mtaSts.update(domain.id, set);
   try {
     let chStatus: string | null = null, chSsl: string | null = null;
-    if (strategy.customHostname || strategy.route) {
+    if (getMode(tenant.env) === 'saas') {
       const zone = await OperatorZone.open(tenant.env);
       if (strategy.customHostname) {
         const ch = await zone.createHostname(domain.domain);
@@ -388,9 +398,10 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
         chStatus = ch.status; chSsl = ch.sslStatus;
         await store({ ch_id: ch.id, ch_status: ch.status, ch_ssl_status: ch.sslStatus });
       }
-      const route = await zone.createRoute(domain.domain);
-      undo.push(() => zone.deleteRoute(route.id, domain.domain).then(() => undefined));
-      await store({ route_id: route.id });
+      // No route of its own: every policy host goes through the ONE route the hosted deploy config declares (src/mta-sts/policy-host.ts). It is only checked here.
+      const declared = await zone.ensureDeclaredRoute();
+      if (declared.created) console.error('[mta-sts] the declared policy-host route was missing and was created again: a deploy without it? See docs/hosted.md.');
+      await store({ route_id: declared.route.id });
     }
     const certActive = !strategy.customHostname || (chStatus === 'active' && chSsl === 'active');
     let state: MtaStsRow['state'] = 'waiting_records';
@@ -403,11 +414,16 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
       await store({ tls_rpt_record_id: tls });
       if (way.adopt.txt) await store({ mta_sts_record_id: way.adopt.txt }); // adopted: its id changes only when the policy is served
       if (certActive) {
-        let txt = way.adopt.txt;
-        if (txt) await updateMtaStsTxtRecord(tenant, domain.domain, txt, policyId, audit);
-        else txt = written.mta_sts_record_id = await createPolicyIdRecord(tenant, domain.domain, policyId, audit);
-        await store({ mta_sts_record_id: txt });
-        state = 'active'; published = now;
+        // The id is published only once the policy is SERVED: fetch it first (the CNAME was written just now, so this may need another try: waiting_policy).
+        const proof = await fetchPolicyProof(domain.domain, policyText({ mode: 'testing', mx_hosts: mx.hosts.join(',') }));
+        await store({ fetch_checked_at: nowSeconds(), fetch_ok: proof.ok ? 1 : 0, fetch_reason: proof.reason });
+        if (proof.ok) {
+          let txt = way.adopt.txt;
+          if (txt) await updateMtaStsTxtRecord(tenant, domain.domain, txt, policyId, audit);
+          else txt = written.mta_sts_record_id = await createPolicyIdRecord(tenant, domain.domain, policyId, audit);
+          await store({ mta_sts_record_id: txt });
+          state = 'active'; published = now;
+        } else state = 'waiting_policy';
       } else state = 'waiting_certificate';
     }
     await store({ state, policy_published_at: published });
@@ -427,7 +443,7 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
 // ── Verify and advance ───────────────────────────────────────
 
 export type CheckState = 'ok' | 'pending' | 'missing' | 'wrong' | 'error' | 'not_applicable';
-export interface Check { key: 'policy_host' | 'certificate' | 'tls_rpt' | 'policy_id'; label: string; state: CheckState; detail: string | null }
+export interface Check { key: 'policy_host' | 'certificate' | 'policy_fetch' | 'tls_rpt' | 'policy_id'; label: string; state: CheckState; detail: string | null }
 
 async function cnameCheck(resolver: Resolver, name: string, target: string | null, proxied: boolean): Promise<{ state: CheckState; detail: string | null }> {
   if (proxied) {
@@ -446,14 +462,17 @@ async function cnameCheck(resolver: Resolver, name: string, target: string | nul
 }
 
 /**
- * Read DNS and the policy host, and move setup forward when the evidence allows: the certificate becoming active publishes the `_mta-sts` TXT
- * (Cloudflare connection) or asks the person to (by hand); the TXT showing our id makes it active. Returns the checks and the stored row.
+ * The policy host first (the reconcile, src/mta-sts/reconcile.ts: hostname, declared route, and the FETCH that proves the policy is served), then DNS, and move
+ * setup forward when the evidence allows: the policy being served publishes the `_mta-sts` TXT (Cloudflare connection) or asks the person to (by hand); the TXT
+ * showing our id makes it active. Returns the checks and the stored row.
  */
-export async function advanceMtaSts(c: Ctx, row: MtaStsRow, injected?: Resolver): Promise<{ row: MtaStsRow; checks: Check[] }> {
+export async function advanceMtaSts(c: Ctx, row: MtaStsRow, injected?: Resolver, shared?: ReconcileShared): Promise<{ row: MtaStsRow; checks: Check[] }> {
   const { tenant, domain } = c;
   const resolver = injected ?? resolverFor(tenant.env);
   const d = norm(domain.domain);
   const now = nowSeconds();
+  const rec = await reconcileMtaSts(c, row, shared);
+  row = rec.row;
   const patch: Parameters<typeof tenant.scope.mtaSts.update>[1] = { last_checked_at: now };
   const checks: Check[] = [];
   const proxied = row.policy_host === 'worker_route';
@@ -467,18 +486,20 @@ export async function advanceMtaSts(c: Ctx, row: MtaStsRow, injected?: Resolver)
   let certOk = true;
   if (row.policy_host === 'saas_hostname') {
     let state: CheckState = 'pending', detail: string | null = 'Cloudflare issues the certificate after the CNAME resolves; this takes a few minutes.';
-    try {
-      const zone = await OperatorZone.open(tenant.env);
-      const ch = row.ch_id ? await zone.getHostname(row.ch_id) : await zone.findHostname(domain.domain);
-      if (!ch) { state = 'missing'; detail = 'Cloudflare has no custom hostname for this name.'; certOk = false; }
-      else {
-        patch.ch_id = ch.id; patch.ch_status = ch.status; patch.ch_ssl_status = ch.sslStatus;
-        certOk = ch.status === 'active' && ch.sslStatus === 'active';
-        if (certOk) { state = 'ok'; detail = null; } else if (/fail|deleted|blocked|moved/.test(`${ch.status} ${ch.sslStatus}`)) { state = 'wrong'; detail = `Cloudflare reports the certificate as ${ch.sslStatus ?? ch.status}.`; }
-      }
-    } catch (e) { certOk = false; state = 'error'; detail = `The certificate status could not be read: ${e instanceof Error ? e.message : String(e)}`; }
+    const ch = rec.hostname;
+    if (rec.operatorError && !ch) { certOk = false; state = 'error'; detail = rec.operatorError; }
+    else if (!ch) { state = 'missing'; detail = 'Cloudflare has no custom hostname for this name.'; certOk = false; }
+    else {
+      certOk = ch.status === 'active' && ch.sslStatus === 'active';
+      if (certOk) { state = 'ok'; detail = null; } else if (/fail|deleted|blocked|moved/.test(`${ch.status} ${ch.sslStatus}`)) { state = 'wrong'; detail = `Cloudflare reports the certificate as ${ch.sslStatus ?? ch.status}.`; }
+    }
     checks.push({ key: 'certificate', label: 'Certificate for the policy host', state, detail });
   } else checks.push({ key: 'certificate', label: 'Certificate for the policy host', state: 'not_applicable', detail: null });
+
+  // The policy is served: the fetch of the policy URL, the only proof.
+  const fetched = rec.proof.ok;
+  const servedNote = servedMessage(domain.domain, rec.proof.reason);
+  checks.push({ key: 'policy_fetch', label: 'The policy file is reachable', state: fetched ? 'ok' : rec.proof.reason === 'certificate' || rec.proof.reason === 'unreachable' || rec.proof.reason === 'timeout' ? 'error' : 'wrong', detail: servedNote?.message ?? null });
 
   // TLS-RPT record.
   const rpt = await resolver.txt(`_smtp._tls.${d}`);
@@ -492,36 +513,40 @@ export async function advanceMtaSts(c: Ctx, row: MtaStsRow, injected?: Resolver)
   }
   checks.push({ key: 'tls_rpt', label: 'TLS reports are sent to Ready Set Mail', state: rptState, detail: rptDetail });
 
-  // Where setup stands, by evidence.
+  // Where setup stands, by evidence. The id is never published (or asked for) before the policy is SERVED.
   const manual = row.via === 'manual';
   let state = row.state;
   const stage1 = cname.state === 'ok' && rptState === 'ok';
-  if (manual && state === 'waiting_records' && stage1) state = row.policy_host === 'saas_hostname' && !certOk ? 'waiting_certificate' : 'waiting_txt';
-  if (manual && state === 'waiting_certificate' && certOk) state = 'waiting_txt';
-  if (!manual && state === 'waiting_certificate' && certOk) {
-    try {
-      let id = row.mta_sts_record_id;
-      if (id) await updateMtaStsTxtRecord(tenant, domain.domain, id, row.policy_id, auditOpts(c)); // an adopted record: its id changes now
-      else id = await createPolicyIdRecord(tenant, domain.domain, row.policy_id, auditOpts(c));
-      patch.mta_sts_record_id = id;
-      patch.policy_published_at = now;
-      state = 'active';
-    } catch (e) {
-      patch.last_error = `The _mta-sts record could not be written: ${cfFailureBody(e, 502).body.error}`;
+  const settingUp = state === 'waiting_certificate' || state === 'waiting_policy' || (manual && (state === 'waiting_txt' || (state === 'waiting_records' && stage1)));
+  if (settingUp) {
+    const next = !certOk ? 'waiting_certificate' : !fetched ? 'waiting_policy' : manual ? 'waiting_txt' : 'active';
+    if (next !== 'active') state = next;
+    else {
+      try {
+        let id = row.mta_sts_record_id;
+        if (id) await updateMtaStsTxtRecord(tenant, domain.domain, id, row.policy_id, auditOpts(c)); // an adopted record: its id changes now
+        else id = await createPolicyIdRecord(tenant, domain.domain, row.policy_id, auditOpts(c));
+        patch.mta_sts_record_id = id;
+        patch.policy_published_at = now;
+        state = 'active';
+      } catch (e) {
+        patch.last_error = `The _mta-sts record could not be written: ${cfFailureBody(e, 502).body.error}`;
+      }
     }
   }
+  if (rec.operatorError && !patch.last_error) patch.last_error = rec.operatorError;
 
   // The policy id.
   const sts = await resolver.txt(`_mta-sts.${d}`);
   let stsState: CheckState = 'missing', stsDetail: string | null = null;
   if (sts.status === 'error') { stsState = 'error'; stsDetail = sts.error ?? 'DNS lookup failed'; }
   else {
-    const rec = sts.records.map(TXT_V).find((r) => /^v=STSv1\b/i.test(r));
-    const id = rec?.match(/(?:^|;)\s*id=([A-Za-z0-9]{1,32})/)?.[1];
-    stsState = !rec ? 'missing' : id === row.policy_id ? 'ok' : 'wrong';
+    const recd = sts.records.map(TXT_V).find((r) => /^v=STSv1\b/i.test(r));
+    const id = recd?.match(/(?:^|;)\s*id=([A-Za-z0-9]{1,32})/)?.[1];
+    stsState = !recd ? 'missing' : id === row.policy_id ? 'ok' : 'wrong';
     if (stsState === 'wrong') stsDetail = `_mta-sts.${d} has id ${id ?? '(none)'}, not ${row.policy_id}.`;
     if (stsState === 'missing') {
-      stsDetail = state === 'waiting_certificate' || state === 'waiting_records' ? 'Published last, once the certificate is active.' : `There is no _mta-sts record at _mta-sts.${d}.`;
+      stsDetail = state === 'waiting_certificate' || state === 'waiting_records' || state === 'waiting_policy' ? 'Published last, once the policy file is reachable.' : `There is no _mta-sts record at _mta-sts.${d}.`;
       if (patch.mta_sts_record_id) { stsState = 'pending'; stsDetail = 'Just published: DNS can take a few minutes to show it.'; }
     }
   }
@@ -540,13 +565,46 @@ export async function verifyMtaSts(c: Ctx): Promise<Result> {
   if (!row?.enabled) return fail(404, 'MTA-STS not enabled for this domain');
   if (row.state === 'creating') return fail(409, 'MTA-STS is still being turned on: try again in a moment');
   const { row: now, checks } = await advanceMtaSts(c, row);
-  return { status: 200, body: { ok: true, state: now.state, checks, notice: now.notice, last_error: now.last_error } };
+  return { status: 200, body: { ok: true, state: now.state, checks, served: servedStatus(now, c.domain.domain), notice: now.notice, last_error: now.last_error } };
 }
 
 // ── Changing it ──────────────────────────────────────────────
 
+const REASON_WORDS: Record<FetchReason, string> = {
+  not_found: 'it answers 404', unexpected_status: 'it answers with an error', redirect: 'it redirects', wrong_content_type: 'it is not plain text', wrong_body: 'it is not the policy we publish',
+  certificate: 'its certificate is not valid yet', unreachable: 'nothing answers', timeout: 'it does not answer in time',
+};
+
+/** The policy cannot be fetched, so an id that points senders at it is not published (and the person is not asked to publish one). */
+export class PolicyUnreachable extends Error {
+  constructor(readonly reason: FetchReason | null, domain: string) {
+    super(`The policy cannot be reached at ${policyUrl(domain)}${reason ? ` (${REASON_WORDS[reason]})` : ''}, so its new id was not published.`);
+    this.name = 'PolicyUnreachable';
+  }
+}
+
+/** An error of a change, as the response: the policy not reachable is its own sentence and code; anything else is a Cloudflare failure. */
+function changeFailure(e: unknown, prefix: string): Result {
+  if (e instanceof PolicyUnreachable) return { status: 502, body: { error: `${prefix}: ${e.message}`, code: 'mta_sts_policy_unreachable', reason: e.reason } };
+  const f = cfFailureBody(e, 502);
+  return { status: f.status, body: { ...f.body, error: `${prefix}: ${f.body.error}` } };
+}
+
+/**
+ * Before an id is published (RFC 8461 section 8.1: a sender that sees it must find the policy): fetch the policy URL again, now that the new policy is stored. A row with
+ * no record of ours and nobody to ask (by hand with no TXT yet) has no id going out, so nothing is gated.
+ */
+async function assertServed(c: Ctx, row: MtaStsRow): Promise<void> {
+  if (row.via !== 'manual' && !row.mta_sts_record_id) return;
+  const current = (await c.tenant.scope.mtaSts.get(c.domain.id)) ?? row;
+  const proof = await fetchPolicyProof(c.domain.domain, policyText(current));
+  await c.tenant.scope.mtaSts.update(c.domain.id, { fetch_checked_at: nowSeconds(), fetch_ok: proof.ok ? 1 : 0, fetch_reason: proof.reason });
+  if (!proof.ok) throw new PolicyUnreachable(proof.reason, c.domain.domain);
+}
+
 /** Write the new id to the customer's record (when a connection owns it). The stored policy was changed first (RFC 8461 §8.1); on failure the caller reverts. */
 async function publishId(c: Ctx, row: MtaStsRow, newId: string): Promise<void> {
+  await assertServed(c, row);
   if (row.via === 'manual' || !row.mta_sts_record_id) return;
   await updateMtaStsTxtRecord(c.tenant, c.domain.domain, row.mta_sts_record_id, newId, { ...auditOpts(c), oldPolicyId: row.policy_id });
 }
@@ -584,8 +642,7 @@ export async function changeMode(c: Ctx, mode: 'testing' | 'enforce'): Promise<R
       mode: row.mode, max_age: row.max_age, policy_id: row.policy_id, mode_changed_at: row.mode_changed_at, left_enforce_at: row.left_enforce_at,
       policy_published_at: row.policy_published_at, state: row.state,
     });
-    const f = cfFailureBody(e, 502);
-    return { status: f.status, body: { ...f.body, error: `The mode was not changed: ${f.body.error}` } };
+    return changeFailure(e, 'The mode was not changed');
   }
   logAudit(tenant, { ...who(c), action: 'mta_sts.mode_change', resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
     before_value: { mode: row.mode, policy_id: row.policy_id }, after_value: { mode, policy_id: newId } }, c.ec);
@@ -642,8 +699,7 @@ export async function refreshMx(c: Ctx): Promise<Result> {
     const r = await applyMxChange(c, row, mx.hosts);
     return { status: 200, body: { ok: true, mx_hosts: r.mx_hosts, policy_id: r.policy_id ?? row.policy_id, changed: r.changed, mode: r.mode } };
   } catch (e) {
-    const f = cfFailureBody(e, 502);
-    return { status: f.status, body: { ...f.body, error: `The MX hosts were not changed: ${f.body.error}` } };
+    return changeFailure(e, 'The MX hosts were not changed');
   }
 }
 

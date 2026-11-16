@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
-import { OperatorZone, PolicyHostError, operatorPolicy, strategyFor, policyHostname, routePattern } from '../../src/mta-sts/policy-host';
+import { OperatorZone, PolicyHostError, operatorPolicy, strategyFor, policyHostname, legacyRoutePattern, POLICY_ROUTE_PATTERN } from '../../src/mta-sts/policy-host';
 import { maxPolicyHosts, mtaStsHostedConfigured, policyHostConfig } from '../../src/mta-sts/config';
 import { CfRecordNotAllowedError } from '../../src/tenancy/cf-client';
 
@@ -36,14 +36,14 @@ describe('settings', () => {
 
 describe('strategyFor: which way a domain gets its policy host', () => {
   it('self-host: a proxied CNAME to the Worker, nothing in an operator zone', () => {
-    expect(strategyFor({}, 'acme.com')).toEqual({ kind: 'worker_route', customHostname: false, route: false, cnameProxied: true });
+    expect(strategyFor({}, 'acme.com')).toEqual({ kind: 'worker_route', customHostname: false, cnameProxied: true });
   });
-  it('hosted: a custom hostname and a route, with a DNS-only CNAME, for every ordinary domain', () => {
-    expect(strategyFor(HOSTED, 'customer.com')).toEqual({ kind: 'saas_hostname', customHostname: true, route: true, cnameProxied: false });
+  it('hosted: a custom hostname with a DNS-only CNAME for every ordinary domain (and no route of its own: the declared one serves them all)', () => {
+    expect(strategyFor(HOSTED, 'customer.com')).toEqual({ kind: 'saas_hostname', customHostname: true, cnameProxied: false });
     expect(strategyFor(HOSTED, 'sub.customer.com')).toMatchObject({ kind: 'saas_hostname' });
   });
-  it('hosted: the operator\'s own zone apex is a worker_route with a route and no custom hostname', () => {
-    expect(strategyFor(HOSTED, 'readysetmail.com')).toEqual({ kind: 'worker_route', customHostname: false, route: true, cnameProxied: true });
+  it('hosted: the operator\'s own zone apex is a worker_route with no custom hostname', () => {
+    expect(strategyFor(HOSTED, 'readysetmail.com')).toEqual({ kind: 'worker_route', customHostname: false, cnameProxied: true });
     expect(strategyFor(HOSTED, 'ReadySetMail.com.')).toMatchObject({ kind: 'worker_route' });
   });
   it('hosted: a name below the operator\'s zone has no way (no certificate, and never a custom hostname inside the zone)', () => {
@@ -63,8 +63,9 @@ describe('the operator client\'s own write policy', () => {
       expect(req('GET', p), p).not.toThrow();
     }
   });
-  it('allows creating and deleting exactly a custom hostname or a route of this zone', () => {
+  it('allows creating, refreshing and deleting exactly a custom hostname, and creating or deleting a route, of this zone', () => {
     expect(req('POST', `/zones/${ZONE}/custom_hostnames`)).not.toThrow();
+    expect(req('PATCH', `/zones/${ZONE}/custom_hostnames/ch-1`)).not.toThrow();
     expect(req('POST', `/zones/${ZONE}/workers/routes`)).not.toThrow();
     expect(req('DELETE', `/zones/${ZONE}/custom_hostnames/ch-1`)).not.toThrow();
     expect(req('DELETE', `/zones/${ZONE}/workers/routes/r1`)).not.toThrow();
@@ -73,7 +74,7 @@ describe('the operator client\'s own write policy', () => {
     for (const [m, p] of [
       ['POST', `/zones/${ZONE}/dns_records`], ['DELETE', `/zones/${ZONE}/dns_records/x`], ['PATCH', `/zones/${ZONE}/dns_records/x`],
       ['POST', '/zones/other-zone/custom_hostnames'], ['DELETE', '/zones/other-zone/workers/routes/r1'],
-      ['PATCH', `/zones/${ZONE}/custom_hostnames/ch-1`], ['PUT', `/zones/${ZONE}/workers/routes/r1`], ['DELETE', `/zones/${ZONE}/custom_hostnames`],
+      ['PATCH', '/zones/other-zone/custom_hostnames/ch-1'], ['PATCH', `/zones/${ZONE}/custom_hostnames`], ['PATCH', `/zones/${ZONE}/workers/routes/r1`], ['PUT', `/zones/${ZONE}/workers/routes/r1`], ['DELETE', `/zones/${ZONE}/custom_hostnames`],
       ['POST', `/zones/${ZONE}/settings`], ['DELETE', `/zones/${ZONE}`], ['GET', `/zones/${ZONE}/dns_records`], ['GET', '/user/tokens/verify'],
     ]) expect(req(m, p), `${m} ${p}`).toThrow(CfRecordNotAllowedError);
   });
@@ -86,16 +87,18 @@ describe('the operator client\'s own write policy', () => {
 describe('OperatorZone', () => {
   const open = () => OperatorZone.open({ ...HOSTED });
 
-  it('registers a custom hostname with HTTP validation and TLS 1.2, and a route to this Worker', async () => {
+  it('registers a custom hostname with HTTP validation and TLS 1.2, and checks the ONE declared route to this Worker', async () => {
     const cf = world();
     const zone = await open();
     const ch = await zone.createHostname('customer.com');
-    const route = await zone.createRoute('customer.com');
+    const { route, created } = await zone.ensureDeclaredRoute();
     expect(ch).toMatchObject({ hostname: 'mta-sts.customer.com', status: 'pending' });
     expect(cf.calls.find((c) => c.method === 'POST' && c.url.includes('custom_hostnames'))!.body).toEqual({
       hostname: 'mta-sts.customer.com', ssl: { method: 'http', type: 'dv', settings: { min_tls_version: '1.2' } },
     });
-    expect(route).toMatchObject({ pattern: 'mta-sts.customer.com/*', script: 'rsm-worker' });
+    expect(created).toBe(true);
+    expect(route).toMatchObject({ pattern: POLICY_ROUTE_PATTERN, script: 'rsm-worker' });
+    expect(POLICY_ROUTE_PATTERN).toBe('*/.well-known/mta-sts.txt');
     expect(cf.calls.every((c) => c.auth === 'Bearer operator-token')).toBe(true);
     expect(cf.calls.every((c) => c.zoneId === undefined || c.zoneId === ZONE)).toBe(true);
   });
@@ -105,10 +108,11 @@ describe('OperatorZone', () => {
     const zone = await open();
     const a = await zone.createHostname('customer.com');
     const b = await zone.createHostname('customer.com');
-    const r1 = await zone.createRoute('customer.com');
-    const r2 = await zone.createRoute('customer.com');
+    const r1 = await zone.ensureDeclaredRoute();
+    const r2 = await zone.ensureDeclaredRoute();
     expect(b.id).toBe(a.id);
-    expect(r2.id).toBe(r1.id);
+    expect(r2.route.id).toBe(r1.route.id);
+    expect(r2.created).toBe(false);
     expect(cf.customHostnames[ZONE]).toHaveLength(1);
     expect(cf.routes[ZONE]).toHaveLength(1);
   });
@@ -123,28 +127,48 @@ describe('OperatorZone', () => {
 
   it('refuses a route that is already pointed at another Worker', async () => {
     const cf = world();
-    cf.routes[ZONE] = [{ id: 'r9', pattern: 'mta-sts.customer.com/*', script: 'someone-else' }];
+    cf.routes[ZONE] = [{ id: 'r9', pattern: POLICY_ROUTE_PATTERN, script: 'someone-else' }];
     const zone = await open();
-    await expect(zone.createRoute('customer.com')).rejects.toThrow(/already goes to someone-else/);
+    await expect(zone.ensureDeclaredRoute()).rejects.toThrow(/already goes to someone-else/);
   });
 
   it('deletes by id after reading it, and only exactly the hostname or route of that domain', async () => {
     const cf = world();
     const zone = await open();
     const ch = await zone.createHostname('customer.com');
-    const route = await zone.createRoute('customer.com');
+    cf.routes[ZONE] = [{ id: 'old1', pattern: 'mta-sts.customer.com/*', script: 'rsm-worker' }]; // a per-domain route of an earlier build
     await expect(zone.deleteHostname(ch.id, 'other.com')).rejects.toThrow(/it is mta-sts\.customer\.com, not mta-sts\.other\.com/);
-    await expect(zone.deleteRoute(route.id, 'other.com')).rejects.toThrow(/refusing to delete route/);
+    await expect(zone.deleteRoute('old1', 'other.com')).rejects.toThrow(/refusing to delete route/);
     expect(cf.calls.filter((c) => c.method === 'DELETE')).toEqual([]);
     expect(await zone.deleteHostname(ch.id, 'customer.com')).toBe(true);
-    expect(await zone.deleteRoute(route.id, 'customer.com')).toBe(true);
+    expect(await zone.deleteRoute('old1', 'customer.com')).toBe(true);
     expect(cf.customHostnames[ZONE]).toEqual([]);
     expect(cf.routes[ZONE]).toEqual([]);
     // already gone: false, no delete request
     const before = cf.calls.length;
     expect(await zone.deleteHostname(ch.id, 'customer.com')).toBe(false);
-    expect(await zone.deleteRoute(route.id, 'customer.com')).toBe(false);
+    expect(await zone.deleteRoute('old1', 'customer.com')).toBe(false);
     expect(cf.calls.slice(before).filter((c) => c.method === 'DELETE')).toEqual([]);
+  });
+
+  it('never deletes the declared route, which every policy host shares', async () => {
+    const cf = world();
+    cf.routes[ZONE] = [{ id: 'r1', pattern: POLICY_ROUTE_PATTERN, script: 'rsm-worker' }];
+    const zone = await open();
+    expect(await zone.deleteRoute('r1', 'customer.com')).toBe(false);
+    expect(cf.routes[ZONE]).toHaveLength(1);
+    expect(cf.calls.filter((c) => c.method === 'DELETE')).toEqual([]);
+  });
+
+  it('refreshes a custom hostname by id after reading it, only when it is exactly that domain\'s', async () => {
+    const cf = world();
+    const zone = await open();
+    const ch = await zone.createHostname('customer.com');
+    cf.customHostnames[ZONE][0].status = 'moved';
+    await expect(zone.refreshHostname(ch.id, 'other.com')).rejects.toThrow(/refusing to refresh/);
+    expect((await zone.refreshHostname(ch.id, 'customer.com'))!.status).toBe('pending');
+    expect(cf.calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+    expect(await zone.refreshHostname('gone', 'customer.com')).toBeNull();
   });
 
   it('refuses to delete a route that points at another Worker', async () => {
@@ -165,7 +189,7 @@ describe('OperatorZone', () => {
     expect(OperatorZone.domainOf('mta-sts.customer.com')).toBe('customer.com');
     expect(OperatorZone.domainOf('www.customer.com')).toBeNull();
     expect(policyHostname('Customer.COM.')).toBe('mta-sts.customer.com');
-    expect(routePattern('customer.com')).toBe('mta-sts.customer.com/*');
+    expect(legacyRoutePattern('customer.com')).toBe('mta-sts.customer.com/*');
   });
 
   it('cannot be opened without the settings', async () => {

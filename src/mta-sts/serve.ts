@@ -15,11 +15,11 @@ import { splitHosts } from './evidence';
 const POLICY_PATH = '/.well-known/mta-sts.txt';
 const notFound = (text = 'Not found') => new Response(text, { status: 404, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
 
-/** The mode the policy file says: the stored mode, or `none` while the policy is being retired (RFC 8461 section 8.3, src/mta-sts/service.ts). */
-export const servedMode = (config: Pick<MtaStsRow, 'mode' | 'state'>): 'testing' | 'enforce' | 'none' => (config.state === 'retiring' ? 'none' : config.mode);
+/** The mode the policy file says. */
+export const servedMode = (config: Pick<MtaStsRow, 'mode'>): 'testing' | 'enforce' | 'none' => config.mode;
 
 /** The policy file of a stored config: its mode, its MX hosts and the max_age OF THAT MODE (one place builds it; the row's own max_age column is only a copy). */
-export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts' | 'state'>): string {
+export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts'>): string {
   const mode = servedMode(config);
   return buildPolicyFile(mode, splitHosts(config.mx_hosts), maxAgeFor(mode));
 }

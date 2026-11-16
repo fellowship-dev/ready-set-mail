@@ -25,6 +25,8 @@ async function selfHost(opts: { token?: string; reports?: boolean; env?: Record<
   seedSettings(db, { ...(opts.reports === false ? {} : { base_domain: 'acme.com', reports_domain: 'reports.acme.com' }), zone_id: 'zone-acme', zone_name: 'acme.com', cf_account_id: 'cf-acct' });
   const cf = stubCloudflare(new FakeCloudflare({ 'acme.com': { id: 'zone-acme', cfAccountId: 'cf-acct' } }));
   cf.mx['acme.com'] = ['10 mx.acme.com.'];
+  // The policy URL is answered by this very Worker, as the customer's proxied CNAME makes it in production (the fetch proves it before the id is published).
+  cf.policyServer = (url) => worker.fetch(new Request(url), env, ctx);
   cf.routes['zone-acme'] = [{ pattern: 'inbox.acme.com/*', script: 'rsm-worker' }];
   const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
   const mta = (method: string, id = 1, body?: unknown, sub = '') => call(env, method, `/api/domains/${id}/mta-sts${sub}`, { key, body });

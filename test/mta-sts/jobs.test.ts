@@ -7,7 +7,8 @@ import { reconcileOperatorZone, refreshMtaStsHosted } from '../../src/mta-sts/re
 import { withdrawProof } from '../../src/domains/proof-recheck';
 import { removeMtaSts } from '../../src/domains/remove';
 import { loadTenant } from '../../src/tenancy/load';
-import { INTAKE, OP, OP_ZONE, mtaWorld, quietLogs, type MtaWorld } from './world';
+import { INTAKE, OP, OP_ZONE, mtaWorld, quietLogs, type MtaWorld, onlyDeclaredRoute } from './world';
+import { POLICY_ROUTE_PATTERN } from '../../src/mta-sts/policy-host';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
@@ -108,6 +109,7 @@ describe('refreshMtaStsHosted', () => {
     await active(w);
     await w.mta(w.A.token, 'POST', 2);
     w.db.sqlite.prepare("UPDATE mta_sts_config SET mx_hosts = 'old.a-two.org' WHERE domain_id = 2").run();
+    w.cf.activateHostname('mta-sts.a-two.org'); // its policy is served, so the new id may go out
     w.cf.failZone = { zoneId: w.Z.a1, status: 500, message: 'down' };
     const stats = await refreshMtaStsHosted(w.env);
     expect(stats.visited).toBe(2);
@@ -128,7 +130,7 @@ describe('the cron wiring (one function, the cron that is on for each mode)', ()
 });
 
 describe('reconcileOperatorZone', () => {
-  it('removes product routes (and the custom hostname of the same name) that no enabled row owns; leaves everything else', async () => {
+  it('removes the custom hostnames mta-sts.<d> and the per-domain routes of an earlier build that no row owns; leaves the declared route and everything else', async () => {
     const w = await mtaWorld();
     await active(w);
     w.cf.routes[OP_ZONE].push(
@@ -141,12 +143,10 @@ describe('reconcileOperatorZone', () => {
       { id: 'ch-theirs', hostname: 'mta-sts.other.example', status: 'active', ssl: { status: 'active' } },
       { id: 'ch-shop', hostname: 'shop.customer.example', status: 'active', ssl: { status: 'active' } },
     );
-    expect(await reconcileOperatorZone(w.env)).toBe(1);
-    const ids = w.cf.routes[OP_ZONE].map((r) => r.id!);
-    expect(ids).toHaveLength(3);
-    expect(ids).toEqual(expect.arrayContaining(['r-other', 'r-site']));
-    expect(ids.filter((i) => i.startsWith('route-'))).toHaveLength(1); // a-corp.com's own
-    expect(w.cf.customHostnames[OP_ZONE].map((h) => h.hostname).sort()).toEqual(['mta-sts.a-corp.com', 'mta-sts.other.example', 'shop.customer.example']);
+    // two hostnames and one route: the hostname of a name with no row is a leftover whoever's route it had (the zone is dedicated to policy hosts)
+    expect(await reconcileOperatorZone(w.env)).toBe(3);
+    expect(w.cf.routes[OP_ZONE].map((r) => r.id!).sort()).toEqual(['r-other', 'r-site', 'route-declared']);
+    expect(w.cf.customHostnames[OP_ZONE].map((h) => h.hostname).sort()).toEqual(['mta-sts.a-corp.com', 'shop.customer.example']);
     expect(await reconcileOperatorZone(w.env)).toBe(0);
   });
 
@@ -154,7 +154,7 @@ describe('reconcileOperatorZone', () => {
     const w = await mtaWorld();
     for (let i = 0; i < 5; i++) w.cf.routes[OP_ZONE] = [...(w.cf.routes[OP_ZONE] ?? []), { id: `r${i}`, pattern: `mta-sts.gone${i}.example/*`, script: 'rsm-worker' }];
     expect(await reconcileOperatorZone(w.env, 2)).toBe(2);
-    expect(w.cf.routes[OP_ZONE]).toHaveLength(3);
+    expect(w.cf.routes[OP_ZONE]).toHaveLength(4); // the declared route and three left
   });
 
   it('does nothing on self-host or when policy hosting is not configured', async () => {
@@ -173,7 +173,7 @@ describe('taking a domain out of service tears MTA-STS down', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, kept: [{ type: 'TXT', name: '_smtp._tls.a-corp.com' }] });
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.cf.records.get(w.Z.a1)!.map((r) => r.name)).toEqual(['_smtp._tls.a-corp.com']);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
   });
@@ -186,7 +186,7 @@ describe('taking a domain out of service tears MTA-STS down', () => {
     expect(w.rows('SELECT verified_via, proof_lost_at FROM domains WHERE id = 1')[0]).toMatchObject({ verified_via: 'legacy' });
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
   });
 
   it('an eviction (another workspace proves the name this workspace held unproven) removes the policy host and the records first', async () => {
@@ -202,7 +202,7 @@ describe('taking a domain out of service tears MTA-STS down', () => {
     expect(w.rows("SELECT workspace_id FROM domains WHERE domain = 'a-corp.com'")).toEqual([{ workspace_id: w.B.ws }]);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     // The evicted workspace's row is detached by the new owner's insert, so its connection no longer reaches the name: the records in DNS are
     // left (best effort, as for the report-authorisation record) and each is said to be kept in the evicted workspace's audit log.
     expect(w.cf.records.get(w.Z.a1)!.map((r) => r.name).sort()).toEqual(['_smtp._tls.a-corp.com', 'mta-sts.a-corp.com', '_mta-sts.a-corp.com'].sort());

@@ -2013,7 +2013,7 @@ async function _handleApi(
     }
 
     // MTA-STS: /api/domains/:id/mta-sts[/verify|/policy] (src/mta-sts/routes.ts; the member read-only gate above has already run)
-    const mtaStsResponse = await handleMtaStsRoutes(request, tenant, { actor: userBySession ? { id: userBySession.id, email: userBySession.email } : undefined, ctx });
+    const mtaStsResponse = await handleMtaStsRoutes(request, tenant, { actor: userBySession ? { id: userBySession.id, email: userBySession.email } : undefined, ctx, instanceOwner });
     if (mtaStsResponse) return mtaStsResponse;
 
     // GET /api/audit-log — admin only

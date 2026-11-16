@@ -28,11 +28,11 @@ describe('via Cloudflare: the order of work', () => {
     const res = await w.mta(w.A.token, 'POST', 1);
     expect(res.status).toBe(201);
 
-    // The operator's zone: one custom hostname and one route, with the operator's token only.
+    // The operator's zone: one custom hostname, with the operator's token only. No route of its own: the ONE declared route (a deploy keeps it) serves every policy host.
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([expect.objectContaining({ hostname: 'mta-sts.a-corp.com', status: 'pending' })]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([expect.objectContaining({ pattern: 'mta-sts.a-corp.com/*', script: 'rsm-worker' })]);
+    expect(w.cf.routes[OP_ZONE].map((r) => r.pattern)).toEqual(['*/.well-known/mta-sts.txt']);
     expect(w.calls(OP_ZONE).every((c) => c.auth === `Bearer ${OP.token}`)).toBe(true);
-    expect(w.writes(OP_ZONE).map((c) => `${c.method} ${c.url.split('/zones/')[1].replace(OP_ZONE, 'Z')}`)).toEqual(['POST Z/custom_hostnames', 'POST Z/workers/routes']);
+    expect(w.writes(OP_ZONE).map((c) => `${c.method} ${c.url.split('/zones/')[1].replace(OP_ZONE, 'Z')}`)).toEqual(['POST Z/custom_hostnames']);
 
     // The customer's zone: exactly the CNAME (DNS only, to the operator's target) and the TLS-RPT TXT.
     const customer = w.cf.records.get(w.Z.a1)!;
@@ -43,7 +43,7 @@ describe('via Cloudflare: the order of work', () => {
 
     expect(w.row(1)).toMatchObject({ state: 'waiting_certificate', via: 'cloudflare', policy_host: 'saas_hostname', mode: 'testing', mx_hosts: 'mx.a-corp.com', mta_sts_record_id: null, policy_published_at: null, workspace_id: w.A.ws });
     expect(w.row(1).ch_id).toBeTruthy();
-    expect(w.row(1).route_id).toBeTruthy();
+    expect(w.row(1).route_id).toBe('route-declared');
     expect(w.rows("SELECT action FROM audit_log WHERE action IN ('mta_sts.enable')")).toHaveLength(1);
   });
 
@@ -55,7 +55,7 @@ describe('via Cloudflare: the order of work', () => {
 
     const pending = await w.json(await w.mta(w.A.token, 'POST', 1, undefined, '/verify'));
     expect(pending).toMatchObject({ ok: true, state: 'waiting_certificate' });
-    expect(pending.checks.map((c: any) => [c.key, c.state])).toEqual([['policy_host', 'ok'], ['certificate', 'pending'], ['tls_rpt', 'ok'], ['policy_id', 'missing']]);
+    expect(pending.checks.map((c: any) => [c.key, c.state])).toEqual([['policy_host', 'ok'], ['certificate', 'pending'], ['policy_fetch', 'error'], ['tls_rpt', 'ok'], ['policy_id', 'missing']]);
     expect(w.cf.records.get(w.Z.a1)!.some((r) => r.name === '_mta-sts.a-corp.com')).toBe(false);
 
     w.cf.activateHostname('mta-sts.a-corp.com');

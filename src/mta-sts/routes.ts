@@ -7,19 +7,24 @@
 //   DELETE  turn off (only in testing; 409 says when)   → { ok, kept, operator, message }
 //   POST    …/verify                                    read DNS and the policy host now, and move setup forward
 //   GET     …/policy                                    the policy file this domain publishes (for the dashboard)
+//   POST    /api/instance/mta-sts/reconcile             instance owner only: run the daily job's reconcile now (after a deploy: docs/releasing.md)
 
 import { cfFailureBody } from '../api/cf-failure';
 import type { TenantContext } from '../tenancy/context';
 import { disableMtaSts, dismissNotice, changeMode, enableMtaSts, mtaStsView, refreshMx, verifyMtaSts, type Actor, type Result } from './service';
 import { policyText } from './serve';
+import { refreshMtaStsForTenant, refreshMtaStsHosted } from './refresh';
+import { getMode } from '../tenancy/mode';
+import type { BoundEnv } from '../index';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const send = (r: Result): Response => (r.status === 204 ? new Response(null, { status: 204 }) : json(r.body, r.status));
 
-export interface MtaStsRouteDeps { actor?: Actor; ctx?: ExecutionContext }
+export interface MtaStsRouteDeps { actor?: Actor; ctx?: ExecutionContext; instanceOwner?: boolean }
 
 /** The response for an MTA-STS API request, or null when the path is not one. */
 export async function handleMtaStsRoutes(request: Request, tenant: TenantContext, deps: MtaStsRouteDeps = {}): Promise<Response | null> {
+  if (new URL(request.url).pathname === '/api/instance/mta-sts/reconcile') return runReconcile(request, tenant, deps);
   const match = new URL(request.url).pathname.match(/^\/api\/domains\/([^/]+)\/mta-sts(\/verify|\/policy)?$/);
   if (!match) return null;
   const method = request.method.toUpperCase();
@@ -54,4 +59,15 @@ export async function handleMtaStsRoutes(request: Request, tenant: TenantContext
     console.warn(`[mta-sts] ${method} ${domain.domain}:`, e instanceof Error ? e.message : e);
     return json(f.body, f.status);
   }
+}
+
+/**
+ * The reconcile on demand, for the one person who runs this instance (the same `instanceOwner` check as /api/instance/preflight; no new authority): what the 11:00 UTC
+ * job does for the MTA-STS rows (the hostname, the declared route, the fetch that proves the policy), now. After every deploy: deploy, call this, read `not_served`.
+ */
+async function runReconcile(request: Request, tenant: TenantContext, deps: MtaStsRouteDeps): Promise<Response> {
+  if (request.method.toUpperCase() !== 'POST') return json({ error: 'method not allowed' }, 405);
+  if (!deps.instanceOwner) return json({ error: 'instance owner only' }, 403);
+  const stats = getMode(tenant.env) === 'saas' ? await refreshMtaStsHosted(tenant.env as BoundEnv, deps.ctx) : await refreshMtaStsForTenant(tenant, deps.ctx);
+  return json({ ok: true, visited: stats.visited, changed: stats.changed, errors: stats.errors, removed: stats.removed, served: stats.served, not_served: stats.notServed });
 }

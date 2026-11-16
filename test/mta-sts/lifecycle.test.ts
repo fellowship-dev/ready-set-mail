@@ -1,7 +1,8 @@
 // Gates, refusals, rollback, mode changes, disable and removal on a hosted instance.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { resetSchemaReadyCache } from '@ready-set-mail/db';
-import { INTAKE, OP, OP_ZONE, mtaWorld, quietLogs, type MtaWorld } from './world';
+import { INTAKE, OP, OP_ZONE, mtaWorld, quietLogs, type MtaWorld, onlyDeclaredRoute } from './world';
+import { POLICY_ROUTE_PATTERN } from '../../src/mta-sts/policy-host';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 
@@ -224,13 +225,14 @@ describe('all or nothing: what was created is undone', () => {
     expect(res.status).toBe(502);
     expect((await w.json(res)).error).toMatch(/nothing was changed/);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.cf.records.get(w.Z.a1) ?? []).toEqual([]);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
   });
 
-  it('an operator zone that refuses the hostname leaves nothing behind', async () => {
+  it('an operator zone that refuses the declared route (a deploy lost it) after the hostname was made leaves nothing behind', async () => {
     const w = await mtaWorld();
+    w.cf.routes[OP_ZONE] = [];
     const inner = w.cf.fetch;
     vi.stubGlobal('fetch', async (input: any, init: any) => (init?.method === 'POST' && String(input).includes('/workers/routes')
       ? new Response(JSON.stringify({ success: false, errors: [{ message: 'route refused' }] }), { status: 400 })
@@ -244,7 +246,7 @@ describe('all or nothing: what was created is undone', () => {
 });
 
 describe('the operator\'s own domain (worker_route)', () => {
-  it('uses a proxied CNAME to the target and a route, never a custom hostname, and publishes straight away', async () => {
+  it('uses a proxied CNAME to the target and the declared route, never a custom hostname, and publishes once the policy is fetched', async () => {
     const w = await mtaWorld();
     w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (7, ?, 'readysetmail.com', 'x', 'txt')").run(w.A.ws);
     w.cf.zones['readysetmail.com'] = { id: OP_ZONE, cfAccountId: 'cf-1' };
@@ -255,7 +257,7 @@ describe('the operator\'s own domain (worker_route)', () => {
     expect(res.status).toBe(201);
     expect(await w.json(res)).toMatchObject({ policy_host: 'worker_route', config: { state: 'active', mx_hosts: 'mail.protonmail.ch,mailsec.protonmail.ch' } });
     expect(w.cf.customHostnames[OP_ZONE] ?? []).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([expect.objectContaining({ pattern: 'mta-sts.readysetmail.com/*', script: 'rsm-worker' })]);
+    expect(w.cf.routes[OP_ZONE]).toEqual([expect.objectContaining({ pattern: POLICY_ROUTE_PATTERN, script: 'rsm-worker' })]); // the declared one, not one for this name
     const recs = w.cf.records.get(OP_ZONE)!;
     expect(recs.map((r) => `${r.type} ${r.name}`).sort()).toEqual(['CNAME mta-sts.readysetmail.com', 'TXT _mta-sts.readysetmail.com', 'TXT _smtp._tls.readysetmail.com']);
     expect(w.writes(OP_ZONE).find((c) => c.body?.type === 'CNAME')!.body).toMatchObject({ proxied: true, content: OP.target });
@@ -409,7 +411,7 @@ describe('disable', () => {
     expect(await w.json(res)).toEqual({ ok: true, kept: [], operator: 'removed', message: 'Senders that already fetched the policy may keep it for up to 1 day.' });
     expect(w.cf.records.get(w.Z.a1)).toEqual([]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
     expect(w.rows("SELECT action FROM audit_log WHERE action = 'mta_sts.disable'")).toHaveLength(1);
     expect((await w.mta(w.A.token, 'DELETE', 1)).status).toBe(204);
@@ -462,7 +464,7 @@ describe('disable', () => {
     vi.stubGlobal('fetch', inner);
     const { reconcileOperatorZone } = await import('../../src/mta-sts/refresh');
     expect(await reconcileOperatorZone(w.env)).toBe(1);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
   });
 });
@@ -538,7 +540,7 @@ describe('enable stores its row first, so the operator reconcile cannot take bac
     await refreshMtaStsHosted(w.env);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toEqual([]);
+    expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.cf.records.get(w.Z.a1)).toEqual([]);
   });
 
