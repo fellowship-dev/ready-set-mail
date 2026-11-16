@@ -93,7 +93,9 @@ export function planQueries(db: Db, workspaceId: string) {
 
 		subscription: {
 			get: () => db.select().from(workspaceSubscriptions).where(mySub).get().then((r) => r ?? null),
-			insert: (row: Omit<SubscriptionRow, 'workspace_id' | 'created_at' | 'updated_at'>) => db.insert(workspaceSubscriptions).values({ ...row, workspace_id: workspaceId }).run(),
+			/** Insert, or replace the row when the webhook adopted the same subscription first (two writers, one subscription: no error, one row). */
+			insert: (row: Omit<SubscriptionRow, 'workspace_id' | 'created_at' | 'updated_at'>) =>
+				db.insert(workspaceSubscriptions).values({ ...row, workspace_id: workspaceId }).onConflictDoUpdate({ target: workspaceSubscriptions.workspace_id, set: { ...row, updated_at: now as unknown as number } }).run(),
 			patch: (fields: SubscriptionPatch) => db.update(workspaceSubscriptions).set({ ...fields, updated_at: now as unknown as number }).where(mySub).run(),
 			remove: () => db.delete(workspaceSubscriptions).where(mySub).run(),
 			markDirty: () => db.update(workspaceSubscriptions).set({ dirty: 1, updated_at: now as unknown as number }).where(mySub).run(),
@@ -124,7 +126,7 @@ export function planLookups(dbLike: DbLike) {
 
 		/** Subscriptions the daily job should look at: never synced first, then the longest since a sync, plus every dirty one. */
 		dueForSync: (limit: number) =>
-			db.select().from(workspaceSubscriptions).where(/* workspace-scope-exempt: the daily job reconciles every pay-as-you-go workspace */ sql`1 = 1`)
+			db.select().from(workspaceSubscriptions).where(/* workspace-scope-exempt: the daily job reconciles every pay-as-you-go workspace */ sql`${workspaceSubscriptions.status} <> 'canceled'`)
 				.orderBy(sql`${workspaceSubscriptions.dirty} DESC`, sql`${workspaceSubscriptions.synced_at} IS NOT NULL`, asc(workspaceSubscriptions.synced_at)).limit(limit).all(),
 
 		/** Workspaces that still have domain rows without an organizational domain (the daily sweep fills them in). */

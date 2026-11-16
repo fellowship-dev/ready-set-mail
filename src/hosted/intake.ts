@@ -31,7 +31,7 @@ import { hashToken, isTokenShaped, parseRecipient } from './tokens';
 import { handleCanaryEmail } from './canary';
 import { logAuthservDiscovery, logIntake, type IntakeKind } from './intake-log';
 import { OWNER_VISIBLE, rawTooLarge, REASONS, type Outcome, type ReasonCode } from './reasons';
-import { isFreePlan } from './plan';
+import { isFreePlan, planEnforced } from './plan';
 import { checkVolumeAlerts } from './volume-alerts';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -213,7 +213,8 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
 
   // A domain paused on the plan keeps its history, but its new reports are not processed: the owner is told how many (reason domain_paused). A registry
   // reporter is accepted and dropped like over a cap (no 5xx); anyone else is refused. Nothing is charged against any cap for it.
-  if (tgt.paused) {
+  const planOn = planEnforced(env); // everything below that is the plan's (summarising, the free limit, pausing) happens only while HOSTED_PLAN is on
+  if (tgt.paused && planOn) {
     if (carrier.class !== 'registry') return refuseAndMark('domain_paused');
     await q.markFailure(tgt.domain_id, day, 'domain_paused', now()).catch(() => 0);
     seen.reporter = registryId;
@@ -228,8 +229,8 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
 
   // The free plan counts the customer's OWN passing mail only (docs/adr/0016): failing rows never reach its limit, and are summarised, not refused, when
   // the room for them is used up. Passing rows have all the room there is.
-  const freePlan = kind === 'rua' && (await isFreePlan(env, env.DB, tgt.workspace_id).catch(() => false));
-  const summarise = kind === 'rua' ? {
+  const freePlan = kind === 'rua' && planOn && (await isFreePlan(env, env.DB, tgt.workspace_id).catch(() => false));
+  const summarise = kind === 'rua' && planOn ? {
     hardMaxRecords: limits.hardMaxRecordsPerReport,
     room: async ({ passing, failing }: { passing: number; failing: number }): Promise<{ refuse?: ReasonCode; keepFailing: number }> => {
       if (quota.addressRecordsToday + passing > limits.addressRecordsPerDay) return { refuse: 'cap_address_records', keepFailing: 0 };

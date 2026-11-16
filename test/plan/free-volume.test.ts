@@ -151,11 +151,17 @@ describe('the free plan counts the customer\'s own passing mail only', () => {
     expect(w.rows('SELECT COUNT(*) AS n FROM aggregate_reports')[0].n).toBe(2);
   });
 
-  it('with the plan off nothing of this applies (the limit is not read)', async () => {
+  it('with the plan off nothing of this applies: not the limit, not the summarising (a report over 2,000 rows is refused as before), not the pause', async () => {
     const w = await world({ INTAKE_FREE_PASSING_ROWS_PER_DAY: '10', HOSTED_PLAN: 'off' });
     await deliver(w, report('p1', 60, 0));
     await deliver(w, report('p2', 60, 0));
     expect(failures(w)).toEqual([]);
+    const big = await deliver(w, report('big', 2_001, 0));
+    expect(big.setReject).toHaveBeenCalledOnce(); // today's rule: a report over 2,000 rows is refused whole
+    expect(failures(w)).toEqual([{ reason: 'too_many_records', messages: 1 }]);
+    w.db.sqlite.prepare('UPDATE domains SET paused_at = 1 WHERE id = 1').run();
+    expect((await deliver(w, report('after-pause', 5, 0))).setReject).not.toHaveBeenCalled();
+    expect(w.rows("SELECT COUNT(*) AS n FROM aggregate_reports WHERE report_id = 'google|after-pause'")[0].n).toBe(1);
   });
 
   it('the operator hears once a day of a heavy legitimate free workspace', async () => {

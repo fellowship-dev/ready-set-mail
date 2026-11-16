@@ -106,15 +106,18 @@ describe('per-token caps (a counted registry reporter over a cap is accepted and
     expect(dropped(w)).toEqual([{ reason: 'over_cap_accepted_dropped', messages: 2 }]);
   });
 
-  it('records per report: a counted report over the limit is accepted and, its rows all passing, every row is kept', async () => {
+  it('records per report: refused before any IP enrichment fetch; nothing stored', async () => {
     const w = await twoWorkspaces({ INTAKE_MAX_RECORDS_PER_REPORT: '5' });
     const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ Status: 3 })));
     vi.stubGlobal('fetch', fetchSpy);
     const m = await send(w, manyRecords('a-corp.com', 'big', 6), GOOGLE);
-    expect(m.setReject).not.toHaveBeenCalled();
-    expect(w.rows('SELECT record_count, summarised_rows FROM aggregate_reports')).toEqual([{ record_count: 6, summarised_rows: null }]);
+    expect(m.setReject).toHaveBeenCalledOnce();
+    expect(m.setReject.mock.calls[0][0]).toMatch(/6 records; the limit is 5/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(w.rows('SELECT * FROM aggregate_reports')).toEqual([]);
+
     expect((await send(w, manyRecords('a-corp.com', 'ok', 5), GOOGLE)).setReject).not.toHaveBeenCalled();
-    expect(w.rows('SELECT COUNT(*) AS n FROM report_records')[0].n).toBe(11);
+    expect(w.rows('SELECT COUNT(*) AS n FROM report_records')[0].n).toBe(5);
   });
 
   it('new-IP enrichment is capped per message but every record is still stored', async () => {

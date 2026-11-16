@@ -87,6 +87,35 @@ describe('invitations', () => {
   });
 });
 
+describe('product events', () => {
+  it('the plan\'s moments carry categories only: never an amount, a domain or an id', async () => {
+    const { allowed } = await import('../../src/product-analytics/events');
+    expect(allowed('Plan Started', { interval: 'month', via: 'add_domain', amount: 500, domain: 'a.com', workspace_id: 'ws_1' })).toEqual({ interval: 'month', via: 'add_domain' });
+    expect(allowed('Paid Domain Added', { via: 'cloudflare', added: '2-5', domain: 'a.com' })).toEqual({ via: 'cloudflare', added: '2-5' });
+    expect(allowed('Subscription Failed', { reason: 'action_required', card: '4242' })).toEqual({ reason: 'action_required' });
+    expect(allowed('Subscription Ended', { reason: 'lapsed' })).toEqual({ reason: 'lapsed' });
+    expect(allowed('Subscription Ended', { reason: 'made up' })).toEqual({});
+  });
+});
+
+describe('the export', () => {
+  it('carries the plan and the subscription\'s state, and no Stripe id or link', async () => {
+    const w = await planWorld();
+    await w.addFree(w.owner, 'one.example.com');
+    await w.addCard(w.owner);
+    await w.addPaid(w.owner, 'two.example.org');
+    const text = await (await w.api(w.owner, 'GET', `/api/workspaces/${w.owner.workspaceId}/export`)).text();
+    const body = JSON.parse(text);
+    expect(body.workspace).toBeTruthy();
+    expect(JSON.stringify(body.workspace)).toMatch(/"plan":"payg"/);
+    expect(body.workspace_subscriptions).toEqual([expect.objectContaining({ interval: 'month', status: 'active', quantity_sent: 1 })]);
+    expect(JSON.stringify(body.workspace_subscriptions)).not.toMatch(/sub_fake|si_fake|price_fake|action_url|stripe_/);
+    expect(JSON.stringify(body.workspace)).not.toMatch(/plan_lock|plan_revision/);
+    expect(body.domains.map((d: any) => d.domain)).toEqual(['one.example.com', 'two.example.org']);
+    expect(body.domains[0]).toHaveProperty('org_domain', 'example.com');
+  });
+});
+
 describe('the quantity has one writer', () => {
   it('only the plan service sends a subscription quantity', () => {
     const root = join(import.meta.dirname, '../..');
