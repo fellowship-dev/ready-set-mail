@@ -18,7 +18,8 @@
 #   - E2E_MAIL_LOG is the Worker's log, where the local send_email simulation records each message's subject: a
 #     sign-in that asks for the emailed code (once a spec gives the instance a sender address) reads it there.
 #     A fresh instance has no sender address, so sign-in is the password alone until then.
-# It ends with a per-spec summary and exits non-zero when any test failed. Every Worker's process group is
+# It ends with a per-spec summary (scripts/e2e-summary.mjs) and exits non-zero when any test failed or any spec did not run (a load
+# error, no test, only skipped tests, no results, or a Playwright exit code with no failed test to explain it). Every Worker's process group is
 # stopped and every temporary file removed, also on Ctrl-C.
 set -euo pipefail
 
@@ -126,32 +127,17 @@ for spec in "${SPECS[@]}"; do
     E2E_OPERATOR_FILE="$RUN/operator.json" E2E_SESSION_FILE="$RUN/session.json" E2E_MAIL_LOG="$RUN/wrangler.log" \
     PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN/results.json" \
     npx playwright test --workers=1 --reporter=list,json --output="$RUN/test-results" "$spec"
-  [ $? -eq 0 ] || FAILED=1
+  PW_EXIT=$?
   set -e
+  echo "$PW_EXIT" > "$RUN/exit"
+  [ "$PW_EXIT" -eq 0 ] || FAILED=1
   stop_worker
   for _ in $(seq 1 15); do port_free && break; sleep 1; done
 done
 
 echo ""
 echo "Per spec:"
-node -e '
-  const fs = require("node:fs");
-  const total = { passed: 0, failed: 0, skipped: 0, flaky: 0 };
-  let files = 0;
-  for (const [i, spec] of process.argv.slice(2).entries()) {
-    const row = { passed: 0, failed: 0, skipped: 0, flaky: 0 };
-    let r = null;
-    try { r = JSON.parse(fs.readFileSync(`${process.argv[1]}/run-${i + 1}/results.json`, "utf8")); } catch {}
-    const walk = (suite) => {
-      for (const s of suite.specs ?? []) for (const t of s.tests ?? []) row[t.status === "expected" ? "passed" : t.status === "unexpected" ? "failed" : t.status] += 1;
-      for (const c of suite.suites ?? []) walk(c);
-    };
-    if (r) for (const s of r.suites ?? []) walk(s); else row.failed += 1;
-    files += 1;
-    for (const k in total) total[k] += row[k];
-    console.log(`  ${row.failed ? "FAIL" : "ok  "}  ${spec.padEnd(42)} ${r ? `${row.passed} passed` : "no results"}${row.failed && r ? `, ${row.failed} failed` : ""}${row.skipped ? `, ${row.skipped} skipped` : ""}${row.flaky ? `, ${row.flaky} flaky` : ""}`);
-  }
-  console.log(`  total: ${files} spec files, ${total.passed} passed, ${total.failed} failed, ${total.skipped} skipped, ${total.flaky} flaky`);
-' "$WORK" "${SPECS[@]}"
+# scripts/e2e-summary.mjs: a spec is ok only when tests ran and passed and Playwright exited 0 (a file that failed to load, holds no test or ran only skipped ones is a FAIL that says why).
+node scripts/e2e-summary.mjs "$WORK" "${SPECS[@]}" || FAILED=1
 echo "  time: $(( $(date +%s) - STARTED )) s"
 exit "$FAILED"

@@ -4,7 +4,6 @@ import { call, makeEnv, setupOwner } from '../auth/helpers';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { hosted, json, nxdomain } from './helpers';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 beforeEach(nxdomain);
 afterEach(() => vi.unstubAllGlobals());
 

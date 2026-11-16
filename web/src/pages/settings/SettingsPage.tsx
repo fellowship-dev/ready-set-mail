@@ -174,7 +174,7 @@ export function SettingsPage() {
 									</span>
 								)}
 							</Row>
-							<Row label="Anonymous usage stats">{status?.telemetry_default ? 'Shared' : 'Not shared'}</Row>
+							<Row label="Usage analytics">{status?.product_analytics ? 'On: a few steps are counted with a random number in place of your account. Never your email address, domains, DNS records or IP address.' : 'Off: this installation sends no usage analytics.'}</Row>
 						</dl>
 					</CardContent>
 				</Card>

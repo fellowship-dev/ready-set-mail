@@ -7,7 +7,6 @@ import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
 import { quiet } from '../hosted/world';
 import { AUTHSERV_CUSTOMER_NOTICE, AUTHSERV_NOTICE } from '../../src/reports/visibility';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const SAAS = { MODE: 'saas', SAAS_ENABLED: '1', INTAKE_DOMAIN: 'rua.readysetmail.com', OWNER_EMAIL: 'operator@example.com', HOSTED_CONNECT_REPORTS: 'owner' };
 const CUSTOMER = 'Reports for this domain cannot be counted yet. This is on our side; there is nothing for you to do.';

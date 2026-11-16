@@ -3,7 +3,7 @@ import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
 import { EVICTED_KEEP_DAYS, admitDomain, claimView, freeingFor, proofColumns, restoreInPlace, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
-import { track } from '../telemetry';
+import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
 import { isClaimProof, recordFirstDnsCheck } from './first-check';
 import { planLimitBody, planLimits } from '../hosted/plan-limits';
@@ -54,7 +54,8 @@ export const EVICTED_NOTICE = (domain: string, evictedAtSeconds: number) =>
 /** The Cloudflare proof could not be kept whole (no zone or name servers recorded): the add fails and the TXT record is the way. */
 export const proofIncomplete = (domain: string) => new DomainServiceError(`Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, 409, { error: `Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, code: 'proof_incomplete' });
 
-export interface EnrollmentOptions { productId?: string }
+/** `analyticsCtx`: where a caller with no request lifetime of its own for the other side effects (an agent tool call) lets the analytics event run. */
+export interface EnrollmentOptions { productId?: string; analyticsCtx?: ExecutionContext }
 
 /** Delegated enrollment cannot authorize the legacy transfer's DNS writes or owner email. */
 export async function assertAgentEnrollmentSafe(tenant: TenantContext, domain: string): Promise<void> {
@@ -155,7 +156,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   }
   await settleClaims(tenant, domain);
 
-  track(tenant, { event: 'domain.add' }); // fire-and-forget, non-blocking
+  ownershipVerified(tenant, ctx ?? options.analyticsCtx, domain, via); // docs/analytics.md
 
   logAudit(tenant, {
     actor_id: actorId ?? null, actor_email: userEmail ?? null, actor_type: 'user',

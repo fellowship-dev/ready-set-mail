@@ -9,7 +9,6 @@ import { SIGNIN_FAILURE_LIMIT, SIGNIN_FAILURE_WINDOW_SECONDS } from '../../src/a
 import { CODE_MAIL_CAPS } from '../../src/auth/codes';
 import { cleanName } from '../../src/auth/names';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });

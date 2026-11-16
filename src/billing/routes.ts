@@ -19,6 +19,7 @@ import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView 
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
 import { handleStripeWebhook } from './webhook';
+import { offerViewed } from '../product-analytics/steps';
 
 export interface RouteOpts { fetch?: typeof fetch; now?: () => number }
 
@@ -138,6 +139,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const stillOpen = openNow && (openNow.status === 'pending' || openNow.status === 'paid' || openNow.status === 'started') ? openNow : null;
     const [view, { offer, offer_problem }] = await Promise.all([readCard(d, me.ws, isOwner ? me.email : null), offerView(d)]);
     const history = await scope.billing.orders.forDomain(domain.domain);
+    if (isOwner && offer && !stillOpen) offerViewed(env, ctx, me.ws.id, !!view.card);
     return json({
       domain: { id: domain.id, name: domain.domain }, role: me.role, can_buy: isOwner && !!offer && !stillOpen,
       has_customer: view.customer, ...cardFields(isOwner, view), ...(view.unavailable ? { card_unavailable: true } : {}),

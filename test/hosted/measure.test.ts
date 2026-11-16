@@ -7,7 +7,6 @@ import { gzipSync, strToU8 } from 'fflate';
 
 vi.setConfig({ testTimeout: 300_000 });
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import worker from '../../src/index';
 import { parseDmarcEmail } from '../../src/dmarc/parse-email';

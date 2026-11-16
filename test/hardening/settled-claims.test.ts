@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { hosted, json, nxdomain, provenDns } from './helpers';
 import { runRetention } from '../../src/lifecycle/retention';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 vi.mock('../../src/dns/provision', () => ({
   provisionDomain: vi.fn().mockResolvedValue({ recordId: null, recordName: null, manual: true }),
   deprovisionDomain: vi.fn().mockResolvedValue(undefined),

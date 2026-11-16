@@ -6,7 +6,6 @@ import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from './world';
 import { planLimitBody, planLimitResponse, planLimits } from '../../src/hosted/plan-limits';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 vi.mock('../../src/dns/provision', () => ({
   provisionDomain: vi.fn().mockResolvedValue({ recordId: null, recordName: null, manual: true }),
 }));

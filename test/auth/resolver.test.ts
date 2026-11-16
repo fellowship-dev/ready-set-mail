@@ -13,7 +13,6 @@ vi.mock('../../src/env-utils', async (importOriginal) => {
     fromEmail: vi.fn().mockReturnValue('noreply@reports.example.com'),
   };
 });
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, ctx, makeEnv, setupOwner, inviteAndAccept, req, signupVerified } from './helpers';

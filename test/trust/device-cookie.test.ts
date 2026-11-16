@@ -6,7 +6,6 @@ import { call, enterCode, lastCodeFor, makeEnv, pendingCookieOf, signupVerified 
 import { HOSTED_ENV } from '../hosted/world';
 import { SIGNIN_FAILURE_LIMIT } from '../../src/auth/welcome';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
 afterEach(() => vi.restoreAllMocks());

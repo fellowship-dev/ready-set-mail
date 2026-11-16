@@ -6,7 +6,7 @@ import type { AccessAction, AccessResource } from '../access/grant';
 import { loadTenant } from '../tenancy/load';
 import { ToolError } from './errors';
 import type { ReportOptions } from '../reports/service';
-export interface ToolContext { env: BoundEnv; identity: McpIdentity; reportOptions?: ReportOptions }
+export interface ToolContext { env: BoundEnv; identity: McpIdentity; reportOptions?: ReportOptions; ctx?: ExecutionContext }
 export async function freshSubject(context: ToolContext) {
  const subject = await resolveMcpIdentity(context.env, context.identity);
  if (!subject) throw new ToolError('forbidden', 'Connection revoked or expired');

@@ -11,7 +11,7 @@ Short records of decisions already made, with who made them. A change that contr
 | 0005 | [A workspace can hold several Cloudflare connections, shown by account](0005-several-cloudflare-accounts-per-workspace.md) | accepted |
 | 0006 | [Hosted customers that connect reports publish one shared report address](0006-one-shared-hosted-report-address.md) | accepted, owner sign-off not recorded |
 | 0007 | [Billing: one card per workspace, Stripe-hosted pages, Stripe decides paid](0007-billing-one-card-per-workspace-stripe-hosted.md) | accepted |
-| 0008 | reserved for PR #178 (hosted product analytics); the record lands with that pull request | — |
+| 0008 | [Hosted product analytics, when enabled, are sent server-side from the Worker to PostHog; off by default](0008-hosted-product-analytics-server-side-off-by-default.md) | accepted |
 | 0009 | [Emails carry no remote images of ours](0009-emails-carry-no-remote-images.md) | accepted |
 | 0010 | [A filled brand-blue surface means "press this" or "you are here"](0010-filled-brand-blue-means-action.md) | accepted |
 | 0011 | [Reviews of the hosted service judge what can happen with today's customers](0011-reviews-judge-todays-customers.md) | accepted |

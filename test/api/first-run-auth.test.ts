@@ -3,7 +3,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Env } from '../../src/index';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { handleApi } from '../../src/api/router';
