@@ -135,7 +135,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (isOwner && sub?.status === 'incomplete' && planEnforced(env)) { await applySubscription(d, sub.stripe_subscription_id).catch(() => undefined); sub = await scope.plan.subscription.get(); }
     // The owner's Billing page repairs a quantity that drifted (a removal that lost the lease): bounded, skipped when busy, never failing the read.
     if (isOwner && sub && (await repairQuantity(d, me.ws.id))) sub = await scope.plan.subscription.get();
-    const plan = planEnforced(env) || sub ? await planView(d, me.ws, { isOwner }) : null;
+    const plan = planEnforced(env) || sub ? await planView(d, me.ws, { isOwner, cardAddedAt: view.added_at ?? null }) : null;
     // The one-time notice (a first payment that never completed): shown to the owner once.
     let notice: string | null = null;
     if (plan && isOwner) { notice = (await scope.settings.get(PLAN_NOTICE_KEY))?.value || null; if (notice) await scope.settings.set(PLAN_NOTICE_KEY, ''); }

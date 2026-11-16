@@ -87,7 +87,17 @@ export async function ensureCustomer(d: BillingDeps, ws: Ws, email: string): Pro
   return stored;
 }
 
-export interface CardView { customer: boolean; card: Card | null; email: string | null; unavailable?: boolean }
+export interface CardView {
+  customer: boolean; card: Card | null; email: string | null; unavailable?: boolean;
+  /** When the card on file was added at Stripe (unix seconds): a card added after a failed payment is not the card that failed. */
+  added_at?: number | null;
+}
+
+function addedAtOf(customer: StripeObject): number | null {
+  const pm = (customer.invoice_settings as { default_payment_method?: unknown } | undefined)?.default_payment_method;
+  const created = pm && typeof pm === 'object' ? (pm as { created?: unknown }).created : undefined;
+  return typeof created === 'number' ? created : null;
+}
 
 function cardOf(customer: StripeObject): Card | null {
   const pm = (customer.invoice_settings as { default_payment_method?: unknown } | undefined)?.default_payment_method;
@@ -104,7 +114,7 @@ export async function readCard(d: BillingDeps, ws: Ws, fallbackEmail: string | n
   try {
     const c = await d.stripe.retrieveCustomer(id);
     if (c.deleted === true) { await q.clear(id); return { customer: false, card: null, email: fallbackEmail }; }
-    return { customer: true, card: cardOf(c), email: typeof c.email === 'string' ? c.email : fallbackEmail };
+    return { customer: true, card: cardOf(c), email: typeof c.email === 'string' ? c.email : fallbackEmail, added_at: addedAtOf(c) };
   } catch (e) {
     if (e instanceof StripeError && e.isNotFound) { await q.clear(id); return { customer: false, card: null, email: fallbackEmail }; }
     console.error('[billing] card read failed');

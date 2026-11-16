@@ -217,3 +217,19 @@ describe('S11: an admin can remove a billable domain (it lowers the bill; admins
     expect(itemQty(w)).toEqual([0]);
   });
 });
+
+describe('S9: a new card after the failure is not a declined card', () => {
+  it('the declined fact goes away when the card on file was added after the payment failed', async () => {
+    const { w, ws } = await ready();
+    const subId = [...w.fake.state.subscriptions.values()][0].id as string;
+    const cus = [...w.fake.state.customers.keys()].find((id) => w.fake.state.customers.get(id)?.metadata?.workspace_id === ws)!;
+    w.fake.setCardBehavior(cus, 'decline');
+    w.fake.advancePeriod(subId);
+    w.fake.exhaustRetries(subId, { to: 'canceled' });
+    await w.fake.flush();
+    expect((await json(await w.api(w.owner, 'GET', '/api/billing'))).plan.card_declined).toBe(true);
+    await new Promise((r) => setTimeout(r, 1100)); // Stripe stamps whole seconds
+    await w.addCard(w.owner); // another card, added after the failure
+    expect((await json(await w.api(w.owner, 'GET', '/api/billing'))).plan).toMatchObject({ lapsed: true, card_declined: false });
+  });
+});

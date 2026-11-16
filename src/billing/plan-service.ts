@@ -641,7 +641,7 @@ async function nextInvoiceOf(d: BillingDeps, sub: SubscriptionRow, customerId: s
 }
 
 /** The `plan` object of GET /api/billing. Owners get the money; everyone gets the plan's name, what it includes and "ask the owner". */
-export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean }) {
+export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean; cardAddedAt?: number | null }) {
   const st = await loadPlanState(d.env, d.db, ws.id);
   const sub = st.subscription;
   const interval: PlanInterval = sub?.interval ?? 'month';
@@ -671,8 +671,9 @@ export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean }
     ...(who.isOwner ? {
       price, quantity: sub?.quantity_sent ?? null, monthly_amount: price && st.plan === 'payg' && interval === 'month' ? price.amount * st.billable : null,
       next_invoice: next, action_required_url: sub?.action_url ?? null, can_manage: true,
-      // The plan ended because the card was declined (the last payment failed, Stripe gave up): the card on file is the one that failed.
-      card_declined: state === 'lapsed' && !!sub?.last_failed_at,
+      // The plan ended because the card was declined (the last payment failed, Stripe gave up) and the card on file is still the one that failed: a card
+      // added after the failure is a new chance, not a declined card.
+      card_declined: state === 'lapsed' && !!sub?.last_failed_at && !(typeof who.cardAddedAt === 'number' && who.cardAddedAt > sub.last_failed_at),
     } : { ask_owner: true, can_manage: false }),
   };
 }

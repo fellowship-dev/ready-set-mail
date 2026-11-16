@@ -136,6 +136,13 @@ describe('the paid-domain confirm', () => {
 		expect(await screen.findByText(/This workspace already holds 3 domains, and only one is free\./)).toBeTruthy();
 	});
 
+	it('a plan that ended on a declined card: the confirm asks for another card first, never a payment with the card that failed', async () => {
+		run(billing({}, plan({ lapsed: true, card_declined: true, paused_domains: 1 })), preview({ plan_starts: true, charge_now: 1000, then: { amount: 1000, currency: 'usd', date: DEC16 } }));
+		expect(await screen.findByText('This card was declined.')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Change card' })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /^Pay/ })).toBeNull();
+	});
+
 	it('a payment problem pauses adding with the plain sentence and the card button', async () => {
 		run(billing({}, plan({ name: 'payg', payment_problem: true })), preview({ needs_confirm: false, reason: 'payment_problem', can_confirm: false }));
 		expect(await screen.findByText(WORDS.paymentProblem)).toBeTruthy();

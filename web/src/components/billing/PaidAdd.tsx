@@ -112,6 +112,8 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	if (!p.needs_confirm) return <Alert variant="info">{p.reason === 'no_paid_path' ? 'More domains: talk to us.' : 'Nothing to confirm here.'}</Alert>;
 
 	const hasCard = !!b.card_on_file;
+	// The card on file is the one that failed (the plan ended on it): paying with it would only fail again, so the way forward is a card, first.
+	const cardFailed = declined || plan?.card_declined === true;
 	const cardName = cardMask(b.card);
 	// No card yet: the plain unit price and what happens next; the exact amount comes with the card, before anything is charged.
 	const lines = hasCard ? confirmSentence(p, cardName, domains.length)
@@ -134,13 +136,13 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 			</div>
 			{domains.length > 1 ? <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">{domains.join(', ')}</p> : null}
 			{b.terms_url ? <p className="text-sm text-ink-2"><a className="text-brand-ink underline underline-offset-4" href={b.terms_url} target="_blank" rel="noreferrer">Terms</a></p> : null}
-			{declined ? (
-				<Alert variant="danger" title="The payment did not go through">{WORDS.declined} Nothing was added.</Alert>
+			{cardFailed ? (
+				<Alert variant="danger" title={declined ? 'The payment did not go through' : WORDS.declinedCard}>{declined ? `${WORDS.declined} Nothing was added.` : 'Use another card to add this domain.'}</Alert>
 			) : null}
 			{problem ? <Alert variant="danger" title="That did not work">{problem}</Alert> : null}
 			<div className="flex flex-wrap gap-2">
-				{!hasCard || declined ? (
-					<Button loading={card.isPending} onClick={() => card.mutate()}>{declined ? 'Change card' : 'Add a card to continue'}</Button>
+				{!hasCard || cardFailed ? (
+					<Button loading={card.isPending} onClick={() => card.mutate()}>{cardFailed ? 'Change card' : 'Add a card to continue'}</Button>
 				) : (
 					<Button
 						loading={add.isPending}
