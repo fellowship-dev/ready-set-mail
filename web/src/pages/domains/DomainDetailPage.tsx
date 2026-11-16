@@ -386,9 +386,10 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
-			{/* The same order at every width: the steps, the offer, then the reports panel. The first screen gets the action from the connect-reports step
-			    itself, whose button presses the panel's. The offer stays where it always was. */}
-			<div className="flex flex-col gap-8">
+			{/* The same order at every width: the steps, the offer, then the reports panel, so the offer sits where it always did. With no offer on the page there is
+			    nothing to protect and the panel is first, where its statement and action are in the first screen. The panel also comes first once there is something to Apply
+			    (ConnectReports). The connect-reports step in "Do this next" presses the panel's button. */}
+			<div className="flex flex-col gap-8 [&:not(:has(#fix-offer-title))>:last-child]:order-first">
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
