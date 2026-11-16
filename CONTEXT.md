@@ -93,7 +93,7 @@ Home: `handleTlsRptReport` in `src/email/tls-rpt.ts`; the numbers `reports.tlsSu
 **Policy host**:
 The hostname `mta-sts.<domain>` that serves a domain's MTA-STS policy over HTTPS from this Worker, and how it gets a certificate a sender trusts (RFC 8461 section 3.3): `worker_route` (a proxied CNAME in the same Cloudflare account, plus a Worker route on the operator's own zone) or `saas_hostname` (a DNS-only CNAME, a Cloudflare for SaaS custom hostname and a Worker route in the operator's zone). It answers one request, the policy file; everything else on it is a 404. The word "policy server" in older code comments means this.
 _Avoid_: MTA-STS server, policy endpoint
-Home: `strategyFor` and `OperatorZone` in `src/mta-sts/policy-host.ts`; serving `src/mta-sts/serve.ts`; which workspace owns a name `resolvePolicyHost` in `src/hosted/policy-host.ts`. Decision: ADR 0015.
+Home: `strategyFor` and `OperatorZone` in `src/mta-sts/policy-host.ts`; serving `src/mta-sts/serve.ts`; which workspace owns a name `resolvePolicyHost` in `src/hosted/policy-host.ts`. Decision: ADR 0021.
 
 **Intake**:
 Receiving report mail: authenticating the sender, attributing the report to a workspace, applying caps, storing.

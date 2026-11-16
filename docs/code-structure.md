@@ -118,7 +118,7 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
 | `src/email/spf-flattener.ts` | `collectIps` (throws on incomplete resolution) + Cloudflare DNS PATCH/restore |
 | `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + the customer's three records (`createPolicyHostCname`, `createTlsRptRecord`, `createPolicyIdRecord`, `deprovisionMtaSts`) |
-| `src/mta-sts/` | MTA-STS (ADR 0015): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
+| `src/mta-sts/` | MTA-STS (ADR 0021): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |
 
 Public Suffix List data comes from the `tldts` dependency; update it with `npm update tldts`.

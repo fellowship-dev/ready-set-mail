@@ -1,4 +1,4 @@
-// MTA-STS settings (ADR 0015). The hosted service serves `https://mta-sts.<customer domain>/.well-known/mta-sts.txt` from this Worker, which
+// MTA-STS settings (ADR 0021). The hosted service serves `https://mta-sts.<customer domain>/.well-known/mta-sts.txt` from this Worker, which
 // needs three operator settings besides the hosted ones (docs/hosted.md, Environment):
 //   POLICY_HOST_ZONE    the operator's Cloudflare for SaaS zone, e.g. readysetmail.com
 //   POLICY_HOST_TARGET  the hostname customers point `mta-sts.<domain>` at (a proxied, originless record in that zone, set as its fallback origin)
@@ -17,7 +17,7 @@ export interface PolicyHostEnv extends HostedEnv {
   CLOUDFLARE_API_BASE_URL?: string;
 }
 
-/** What a policy file says senders may cache it for. One day in both modes (ADR 0015): a mistake or an MX change heals within a day. */
+/** What a policy file says senders may cache it for. One day in both modes (ADR 0021): a mistake or an MX change heals within a day. */
 export const DEFAULT_MAX_AGE = 86400;
 /** Policy hosts (Cloudflare for SaaS custom hostnames) one instance holds: the hostnames the Cloudflare plan includes. */
 export const DEFAULT_MAX_POLICY_HOSTS = 100;

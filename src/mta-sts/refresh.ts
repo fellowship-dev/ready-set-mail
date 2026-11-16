@@ -1,4 +1,4 @@
-// The daily MTA-STS job: ONE function for both modes (ADR 0015).
+// The daily MTA-STS job: ONE function for both modes (ADR 0021).
 //   saas       runHostedCron (11:00 UTC, once for the whole database): `refreshMtaStsHosted`
 //   self-host  the per-workspace 08:00 branch of src/cron.ts: `refreshMtaStsForTenant`
 // For every enabled row, oldest check first and at most REFRESH_PER_RUN per run (about ten subrequests each, so the run stays well inside a

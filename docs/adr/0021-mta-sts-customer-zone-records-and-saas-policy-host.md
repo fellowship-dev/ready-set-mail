@@ -23,5 +23,5 @@ Basis: Cloudflare cannot answer HTTPS for `mta-sts.<customer domain>` from the o
 
 **Consequences**
 - New automatic writes, in addition to the list in ADR 0004: the daily MTA-STS refresh (id and MX list, mode back to testing), and the operator-side custom hostname and Worker route (created on enable, deleted on disable, domain removal, eviction, a lapsed proof, or by the daily reconcile). They pass `operatorPolicy` in `src/mta-sts/policy-host.ts` (custom hostnames and Worker routes of one zone, never a DNS record) and the customer's records still pass `assertDnsWriteAllowed`.
-- Migration `migrations/0019_mta_sts_hosted.sql` is additive (`packages/db/UPGRADING.md`).
+- Migration `migrations/0020_mta_sts_hosted.sql` is additive (`packages/db/UPGRADING.md`).
 - The hosted records' MTA-STS parts (the hosted writers for the MTA-STS record, its refresh job, the hosted-id policy host) are gone. This is a breaking change for anyone who sent `mta_sts: true` to the hosted route (CHANGELOG).

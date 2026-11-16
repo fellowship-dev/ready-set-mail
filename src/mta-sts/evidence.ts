@@ -74,7 +74,7 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   return { ready: reasons.length === 0, reasons };
 }
 
-/** Disable rule (ADR 0015): only in testing, and only once senders that fetched an enforce policy no longer hold it. */
+/** Disable rule (ADR 0021): only in testing, and only once senders that fetched an enforce policy no longer hold it. */
 export function disableRule(cfg: Pick<MtaStsRow, 'mode' | 'left_enforce_at' | 'max_age'>, now: number): { allowed: boolean; after: number | null; reason: string | null } {
   if (cfg.mode === 'enforce') {
     return { allowed: false, after: null, reason: `Switch to testing first. Senders keep the enforce policy for up to ${maxAgeWords(cfg.max_age)}; you can disable it after that.` };

@@ -176,7 +176,7 @@ describe('hosted records for a domain', () => {
     expect(hosted.level_inputs).toEqual({ dmarc_published: false, spf_published: false });
   });
 
-  it('hosted records no longer host MTA-STS: three records, and none of its pointers (ADR 0015)', async () => {
+  it('hosted records no longer host MTA-STS: three records, and none of its pointers (ADR 0021)', async () => {
     const { w, cf, tenant, domain } = await setup();
     cf.mx['a-corp.com'] = ['10 mx1.mail.example.'];
     const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE }, { resolver });

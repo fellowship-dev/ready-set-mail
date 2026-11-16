@@ -18,6 +18,12 @@ Short records of decisions already made, with who made them. A change that contr
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
-| 0015 | [MTA-STS writes the customer's own records and is served from a Cloudflare for SaaS policy host](0015-mta-sts-customer-zone-records-and-saas-policy-host.md) | proposed: owner confirms |
+| 0015 | reserved: open pull requests #180, #181, #184 and #186 each hold a 0015 of their own; they renumber when they merge | reserved |
+| 0016 | reserved: open pull request #180 | reserved |
+| 0017 | reserved: open pull request #180 | reserved |
+| 0018 | reserved: open pull request #189 | reserved |
+| 0019 | reserved: open pull requests #187 and #189 | reserved |
+| 0020 | reserved: open pull request #183 | reserved |
+| 0021 | [MTA-STS writes the customer's own records and is served from a Cloudflare for SaaS policy host](0021-mta-sts-customer-zone-records-and-saas-policy-host.md) | proposed: owner confirms |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.
