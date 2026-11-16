@@ -1,6 +1,6 @@
 // Outbound mail, by purpose.
 //
-//   funnel mail         the onboarding sequence (marketing), from MAIL_FROM: Resend only (RESEND_API_KEY).
+//   funnel mail         the monitor confirmation (double opt-in), from MAIL_FROM: Resend only (RESEND_API_KEY).
 //                       Cloudflare Email Service is transactional-only per its FAQ, so it is never used for this.
 //   owner-facing mail   change alerts, weekly digests, resets, invites: the Worker's `send_email` binding, as before.
 //                       It reaches verified destinations (self-host), or any recipient once a sending domain is onboarded.
@@ -127,9 +127,4 @@ export function ownerMailer(env: MailEnv): Mailer | null {
 /** Transactional mail to an arbitrary address (the monitor confirmation): the binding if present, else Resend. */
 export function transactionalMailer(env: MailEnv, fetchFn?: typeof fetch): Mailer | null {
   return ownerMailer(env) ?? funnelMailer(env, fetchFn);
-}
-
-/** Why the sequence cannot send right now because of the provider, in words for the dashboard. */
-export function providerProblem(env: MailEnv): string | null {
-  return env.RESEND_API_KEY ? null : 'No mail provider is configured: set RESEND_API_KEY (the sequence is sent with Resend; Cloudflare Email Service is transactional-only)';
 }

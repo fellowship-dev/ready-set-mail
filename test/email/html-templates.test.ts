@@ -8,7 +8,6 @@ import {
   buildCodeEmailHtml,
   buildHandoffEmailHtml,
 } from '../../src/email/html-templates';
-import { stepCopy, SEQUENCE_DAYS } from '../../src/funnel/copy';
 import type { DomainWeeklyStat, FailingSource } from '@ready-set-mail/db';
 import type { CheckSummary } from '../../src/email/report-formatter';
 import type { DomainChange } from '../../src/monitor/check';
@@ -198,19 +197,14 @@ describe('buildFreeCheckHtml', () => {
 
   it('the body ends with the help line, after the disclosure', () => {
     for (const status of ['protected', 'at_risk', 'exposed'] as const) {
-      const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary(status), auth: null, dns: DNS_FULL, disclosure: { text: 'We will send you 5 short emails.', unsubscribeUrl: 'https://w.example/u' } });
+      const html = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary(status), auth: null, dns: DNS_FULL });
       expect(bodyText(html).endsWith(`Need help? Any doubts? Reply. ${LAYOUT_FOOTER}`)).toBe(true);
-      expect(html.indexOf('Need help?')).toBeGreaterThan(html.indexOf('We will send you 5 short emails.'));
     }
   });
 
-  it('states retention truthfully for each enrolment outcome', () => {
+  it('states how long the address and result are kept', () => {
     const plain = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('exposed'), auth: null, dns: DNS_FULL, retentionDays: 14 });
     expect(bodyText(plain)).toContain('We keep your address and this result for 14 days, then delete them.');
-    const enrolled = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('exposed'), auth: null, dns: DNS_FULL, disclosure: { text: 'x', unsubscribeUrl: 'https://w.example/u' } });
-    expect(bodyText(enrolled)).toContain('after you unsubscribe we keep only your address, on a do-not-contact list. The full result is deleted after');
-    const suppressed = buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary: makeSummary('exposed'), auth: null, dns: DNS_FULL, retentionDays: 14, lead: 'suppressed' });
-    expect(bodyText(suppressed)).toContain('Your address is on our do-not-contact list and stays there');
   });
 
   it('omits CTA for protected status', () => {
@@ -386,10 +380,6 @@ describe('default-brand HTML emails load nothing remote', () => {
   const dns = DNS_FULL;
   const summary = { status: 'protected', domain: 'acme.com', spfPass: true, dkimPass: true, dmarcPass: true, dmarcPolicy: 'reject', dkimPresent: true } as CheckSummary;
   const changes: DomainChange[] = [{ field: 'dmarc', was: 'p=none', now: 'p=reject', severity: 'improved' } as DomainChange];
-  const sequence = SEQUENCE_DAYS.map((_, i) => {
-    const copy = stepCopy(i, { domain: 'acme.com', summary, bookingUrl: 'https://cal.example.test/x', prices: {} });
-    return [`funnel step ${i}`, buildLetterHtml({ title: copy.subject, blocks: copy.blocks, brand: { color: DEFAULT_BRAND_COLOR } })] as const;
-  });
   const emails: (readonly [string, string])[] = [
     ['weekly digest', buildWeeklyDigestHtml({ recipientName: 'Ada', weekLabel: 'Jan 1', stats: [STAT_REJECT], sourcesByDomain: new Map(), ruaAddress: 'rua@r.example.test', reportsDomain: 'reports.example.test' })],
     ['free check', buildFreeCheckHtml({ fromEmail: 'user@acme.com', summary, auth: AUTH_PASS, dns })],
@@ -397,7 +387,6 @@ describe('default-brand HTML emails load nothing remote', () => {
     ['sign-in code', buildCodeEmailHtml({ code: '482190', sentence: 'Enter this code.', validity: 'It works for 10 minutes.', notes: ['Ignore it if not you.'], fine: ['Asked for from near Santiago, CL.'], footer: 'Ready Set Mail is operated by Fellowship.dev, Inc.' })],
     ['hand-off invitation', buildHandoffEmailHtml({ paragraph: 'Dana invited you.', validity: 'The link works for 7 days.', url: 'https://app.example/#/invite/t', footer: 'Ready Set Mail' })],
     ['letter', buildLetterHtml({ title: 'Hi', blocks: ['Hello', { cta: { label: 'Go', url: 'https://example.test/' } }] })],
-    ...sequence,
   ];
 
   it.each(emails)('%s', (_name, html) => {

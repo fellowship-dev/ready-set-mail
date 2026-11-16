@@ -3,7 +3,6 @@
 import { funnelQueries } from '@ready-set-mail/db';
 import type { BoundEnv } from '../index';
 import type { TenantContext } from '../tenancy/context';
-import { runOnboardingSequence } from './sequence';
 
 const DAY = 86400;
 /** Leads are deleted 12 months after their last activity (and at once on unsubscribe, see unsubscribeEmail). */
@@ -11,15 +10,9 @@ export const LEAD_RETENTION_SECONDS = 365 * DAY;
 /** A monitor subscription nobody confirmed is deleted after this long. */
 export const MONITOR_CONFIRM_WINDOW_SECONDS = 7 * DAY;
 
-/** Global funnel work, once per cron tick (not per workspace): the sequence run, then lead retention. */
+/** Global funnel work, once per cron tick (not per workspace): retention of lead rows the retired follow-up sequence left behind. Nothing writes leads any more. */
 export async function runFunnelCron(event: Pick<ScheduledController, 'cron'>, env: BoundEnv, now = Math.floor(Date.now() / 1000)): Promise<void> {
   if (event.cron !== '0 8 * * *') return;
-  try {
-    const r = await runOnboardingSequence(env, now);
-    if (r.sent || r.stopped || r.failed || r.held) console.log(`[funnel] sequence: sent ${r.sent}, held ${r.held}, stopped ${r.stopped}, failed ${r.failed}`);
-  } catch (e) {
-    console.error('[funnel] sequence run failed:', e instanceof Error ? e.message : 'error');
-  }
   try {
     const deleted = await funnelQueries(env.DB).leads.deleteInactiveBefore(now - LEAD_RETENTION_SECONDS);
     if (deleted) console.log(`[funnel] retention: deleted ${deleted} leads inactive for 12 months`);

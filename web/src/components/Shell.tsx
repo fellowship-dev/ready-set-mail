@@ -14,7 +14,7 @@ import {
 	type RenderNavLink,
 } from '@ready-set-mail/ui';
 import { useBilling } from '../lib/billing';
-import { BarChart3, Bot, Globe, History, LogOut, Mail, Megaphone, Moon, Receipt, Settings, Sun, UserCircle, Users } from 'lucide-react';
+import { BarChart3, Bot, Globe, History, LogOut, Mail, Moon, Receipt, Settings, Sun, UserCircle, Users } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { cleanName } from '../lib/names';
@@ -52,7 +52,6 @@ export function Shell() {
 		{ label: 'Agents', href: '/agents', icon: <Bot /> },
 		{ label: 'Members', href: '/members', icon: <Users /> },
 		{ label: 'Audit log', href: '/audit', icon: <History /> },
-		...(me?.instance_owner ? [{ label: 'Leads', href: '/leads', icon: <Megaphone /> }] : []),
 		// Hosted orders: only the instance owner, and only where billing is on (the server answers 404 otherwise).
 		...(me?.instance_owner && billing.data ? [{ label: 'Orders', href: '/orders', icon: <Receipt /> }] : []),
 		{ label: 'Settings', href: '/settings', icon: <Settings /> },

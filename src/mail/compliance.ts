@@ -1,4 +1,4 @@
-// What every non-transactional email (onboarding sequence, change alerts, weekly digests) goes through:
+// What every non-transactional email (change alerts, weekly digests) goes through:
 //   - a suppression check before the send,
 //   - a one-click unsubscribe link (signed token, no login) in the body and in List-Unsubscribe / List-Unsubscribe-Post,
 //   - the postal address (POSTAL_ADDRESS) in the footer.

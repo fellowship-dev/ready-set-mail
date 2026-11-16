@@ -112,25 +112,13 @@ export interface CheckReportOptions {
   siteUrl?: string | null;
   /** How long check results are kept (the lifecycle setting that purges check_results). Defaults to that setting's default. */
   retentionDays?: number;
-  /** Set when the sender was enrolled in the follow-up emails: the disclosure line and its unsubscribe link. */
-  enrolled?: { text: string; unsubscribeUrl: string };
   /** BOOKING_URL: where "or we do it for you" points first. */
   bookingUrl?: string | null;
-  /** Set when the sender is not enrolled but already known: a finished/stopped lead, or a suppressed address. */
-  lead?: 'inactive' | 'suppressed';
 }
 
-/**
- * What we keep about the sender, truthfully, for each enrolment outcome: check results go after `retentionDays`
- * (check_results); an enrolled address stays until unsubscribe, then only on the suppression list (unsubscribeEmail);
- * a lead no longer in the sequence stays up to 12 months after its last activity (src/funnel/cron.ts); a suppressed
- * address stays suppressed.
- */
-export function retentionSentence(o: Pick<CheckReportOptions, 'retentionDays' | 'enrolled' | 'lead'>): string {
+/** What we keep about the sender, truthfully: the address and the check result (check_results) go after `retentionDays`. */
+export function retentionSentence(o: Pick<CheckReportOptions, 'retentionDays'>): string {
   const days = o.retentionDays ?? retentionPolicy({}).checkResultsDays;
-  if (o.enrolled) return `We keep your address and a summary of this result for our follow-up emails until you unsubscribe (or 12 months after your last check); after you unsubscribe we keep only your address, on a do-not-contact list. The full result is deleted after ${days} days.`;
-  if (o.lead === 'inactive') return 'We keep your address and a summary of this result for up to 12 months after your last check, then delete them.';
-  if (o.lead === 'suppressed') return `Your address is on our do-not-contact list and stays there, so you get no follow-up emails. We delete this result after ${days} days.`;
   return `We keep your address and this result for ${days} days, then delete them.`;
 }
 
@@ -297,7 +285,6 @@ export function formatCheckReport(
   if (todo) lines.push(todo);
   const share = shareLinks(summary, opts.siteUrl);
   if (share.length) lines.push('', `${SHARE_IT} (optional, nothing is posted unless you post it):`, ...share.map(l => `${l.label}: ${l.url}`));
-  if (opts.enrolled) lines.push('', opts.enrolled.text, `Unsubscribe: ${opts.enrolled.unsubscribeUrl}`);
   lines.push('');
   lines.push('─'.repeat(48));
   lines.push('This report was generated automatically by Ready Set Mail.');

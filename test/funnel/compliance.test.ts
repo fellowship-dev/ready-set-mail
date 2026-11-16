@@ -52,7 +52,7 @@ describe('signed tokens', () => {
 describe('GET|POST /api/unsubscribe', () => {
   async function seeded() {
     const w = funnelWorld();
-    await w.enroll('a@acme.com');
+    w.seedLead('a@acme.com');
     w.db.sqlite.prepare("INSERT INTO monitor_subscriptions (email, domain, workspace_id) VALUES ('a@acme.com', 'acme.com', 'ws_default')").run();
     const link = (await unsubscribeUrl(w.env, 'A@acme.com'))!;
     return { w, link, path: link.replace('https://app.readysetmail.com', '') };

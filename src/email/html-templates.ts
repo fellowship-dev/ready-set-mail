@@ -85,7 +85,7 @@ function htmlLayout(title: string, bodyHtml: string, brand: Brand, footer = 'Rea
 </html>`;
 }
 
-// ── Plain letter (onboarding sequence) ────────────────────────
+// ── Plain letter (lifecycle emails) ───────────────────────────
 
 /** A small plain table: `indent` rows are nested under the row above (a subdomain under its registrable domain). */
 export interface LetterTable { head: string[]; rows: Array<{ cells: string[]; indent?: boolean }> }
@@ -302,14 +302,10 @@ export interface FreeCheckHtmlParams {
   auth: AuthResultsHeader | null;
   dns: DnsCheckResult;
   brand?: Brand;
-  /** The line telling the sender about the follow-up emails, with its unsubscribe link. */
-  disclosure?: { text: string; unsubscribeUrl: string };
   /** The marketing site (SITE_URL); no marketing link when unset. */
   siteUrl?: string | null;
-  /** Days check results are kept, for the retention line when the sender is not enrolled. */
+  /** Days check results are kept, for the retention line. */
   retentionDays?: number;
-  /** Not enrolled but already known (see CheckReportOptions.lead), for the retention line. */
-  lead?: 'inactive' | 'suppressed';
   /** BOOKING_URL: where "or we do it for you" points first. */
   bookingUrl?: string | null;
 }
@@ -386,12 +382,8 @@ export function buildFreeCheckHtml(p: FreeCheckHtmlParams): string {
     body += `<p style="margin:16px 0 0;font-size:14px;">${SHARE_IT} (optional, nothing is posted unless you post it): ${links}</p>`;
   }
 
-  if (p.disclosure) {
-    body += `<p style="margin:16px 0 0;font-size:13px;color:${c['ink-2']};">${esc(p.disclosure.text)} <a href="${esc(p.disclosure.unsubscribeUrl)}" style="color:${c['ink-2']};">Unsubscribe</a></p>`;
-  }
-
   const site = p.siteUrl ? ` <a href="${esc(p.siteUrl)}" style="color:${c['ink-2']};">${esc(p.siteUrl.replace(/^https:\/\//, ''))}</a>` : '';
-  body += `<p style="margin:16px 0 0;font-size:12px;color:${c['ink-2']};">${esc(retentionSentence({ retentionDays: p.retentionDays, enrolled: p.disclosure, lead: p.lead }))}${site}</p>
+  body += `<p style="margin:16px 0 0;font-size:12px;color:${c['ink-2']};">${esc(retentionSentence({ retentionDays: p.retentionDays }))}${site}</p>
 <p style="margin:16px 0 0;font-size:15px;font-weight:600;">${esc(HELP_LINE)}</p>`;
 
   return htmlLayout(`Email Security Check — ${summary.domain}`, body, p.brand ?? defaultBrand());

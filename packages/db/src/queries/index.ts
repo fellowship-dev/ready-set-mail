@@ -44,7 +44,7 @@ export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimi
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';
 export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow } from './billing';
 export { lifecycleEmailQueries, lifecycleReadOrder, WEEK_SECONDS, type RecipientRow, type MilestoneRow, type PreferenceRow, type SendRow, type SendKey, type WeekTotalRow, type WeekSourceRow, type ReportRow as LifecycleReportRow } from './lifecycle-email';
-export { funnelQueries, hashEmail, type LeadRow } from './funnel';
+export { funnelQueries, hashEmail } from './funnel';
 
 /**
  * Every tenant-data query, bound to one workspace. There is deliberately no way

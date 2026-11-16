@@ -1,4 +1,4 @@
-// For the INSTANCE OWNER only (the same check as the leads page: `isInstanceOwner`; 403 for anyone else). Two read-only views:
+// For the INSTANCE OWNER only (`isInstanceOwner`; 403 for anyone else). Two read-only views:
 //
 //   GET /api/instance/reporter-candidates?limit=…
 //       Authenticated senders that are NOT in the registry, so the registry can grow by hand: DKIM organisation, From domain, the report's own

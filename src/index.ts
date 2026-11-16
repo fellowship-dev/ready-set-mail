@@ -121,14 +121,14 @@ export interface Env {
   MAX_DOMAINS_PER_WORKSPACE?: string;   // hosted plan cap: domains one workspace may hold (default 10; self-host: none)
   HOSTED_RECORDS_TOKEN?: string; // secret: least-privilege DNS:Edit token for that one zone
   // Email funnel and compliance (docs/email-funnel.md)
-  RESEND_API_KEY?: string;       // secret: Resend API key; the onboarding sequence is sent with Resend (Cloudflare Email Service is transactional-only)
+  RESEND_API_KEY?: string;       // secret: Resend API key; the monitor confirmation is sent with Resend when there is no SEND_EMAIL binding (Cloudflare Email Service is transactional-only)
   MAIL_FROM?: string;            // sender address of funnel mail, e.g. max@readysetmail.com (default noreply@<CANARY_DOMAIN>)
   MAIL_FROM_NAME?: string;       // display name of funnel mail (default "Ready Set Mail")
   MAIL_REPLY_TO?: string;        // where replies to funnel mail and to the free-check report go (a mailbox someone reads); no Reply-To when unset
   SITE_URL?: string;             // public marketing site (https), for links in the free-check report; no link when unset
   PUBLIC_BASE_URL?: string;      // public origin of this Worker, for unsubscribe and confirmation links (falls back to BETTER_AUTH_URL)
-  AUTHSERV_ID?: string;          // authserv-id of the receiving server's results (see docs/email-funnel.md); with AUTHSERV_HEADER, REQUIRED for the sequence to enrol anyone
-  AUTHSERV_HEADER?: string;      // "ar" (Authentication-Results) or "arc" (ARC-Authentication-Results): the one header kind the receiver adds; REQUIRED for enrolment
+  AUTHSERV_ID?: string;          // authserv-id of the receiving server's results (see docs/email-funnel.md); with AUTHSERV_HEADER, the receiver's own results the SEND_EMAIL fallback of the free-check report is judged on
+  AUTHSERV_HEADER?: string;      // "ar" (Authentication-Results) or "arc" (ARC-Authentication-Results): the one header kind the receiver adds
   POSTAL_ADDRESS?: string;       // postal address shown in the footer of non-transactional mail (and, when set, of account mail)
   // Sign-in and legal (docs/hosted.md, "Sign-in codes" and "Terms and privacy")
   SIGNIN_CODES?: string;         // self-host only: "off" turns the emailed sign-in code off (it is on whenever the instance can send mail); hosted ignores it
@@ -138,10 +138,8 @@ export interface Env {
   OPERATOR_NAME?: string;        // who operates the instance, named in the footer of account mail; hosted default "Fellowship.dev, Inc.", self-host none
   BOOKING_URL?: string;          // booking link in the day-14 note; that step is held until it is set
   HOSTED_SERVICE_URL?: string;   // https URL of the maker-run hosted free tier; unset = no surface mentions a hosted service (src/hosted-service.ts)
-  SERVICE_PRICES?: string;       // JSON {"fix":"$…","keepFixed":"$…/mo","bimi":"$…/mo"}: the prices in the day-10 email
   LIFECYCLE_EMAILS_OFF?: string; // hosted lifecycle emails (src/lifecycle/email/): comma list of kinds to stop (records_live,first_report,no_reports,summary,tips,change_alerts,connection_alerts) or "all"; empty: all on (except change_alerts on hosted, below)
   LIFECYCLE_EMAILS_ON?: string; // hosted only: kinds that are off until named here (change_alerts, tips); LIFECYCLE_EMAILS_OFF wins
-  ONBOARDING_SEQUENCE_ENABLED?: string; // "1" turns the onboarding sequence on (self-host and hosted); off otherwise
   PUBLIC_REPORTS_ENABLED?: string; // '1': POST /api/public/reports makes dated public reports (src/public-reports/routes.ts); reading and deleting work either way
   PUBLIC_REPORTS_DAILY_CAP?: string; // new public reports per UTC day for the whole instance (default 2000)
   PUBLIC_REPORTS_MAX_REPORT_BYTES?: string; // bytes one stored public report may hold (default 32768, 32 KiB)

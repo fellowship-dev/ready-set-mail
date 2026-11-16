@@ -18,11 +18,8 @@ import { checkDomain } from './dns-check';
 import { buildSummary, formatCheckReport } from './report-formatter';
 import { buildFreeCheckHtml } from './html-templates';
 import { globals } from '../db/scope';
-import { proveSender, readAuthHeaders, spfPassesFor, trustedResults, type AuthHeaders } from './sender-proof';
+import { readAuthHeaders, spfPassesFor, trustedResults } from './sender-proof';
 import { envelopeIsPlain } from '../dmarc/reporter-auth';
-import { enrollLead, type EnrollResult } from '../funnel/enroll';
-import { DISCLOSURE } from '../funnel/copy';
-import { unsubscribeUrl } from '../mail/compliance';
 import { ownerMailer } from '../mail/mailer';
 import { bookingUrl, replyTo as replyToAddress, siteUrl } from '../funnel/config';
 import { retentionPolicy } from '../lifecycle/config';
@@ -56,55 +53,6 @@ export function buildReplyRaw(
   msg.addMessage({ contentType: 'text/plain', data: text });
   msg.addMessage({ contentType: 'text/html', data: html });
   return msg.asRaw();
-}
-
-/**
- * Enrol the sender in the onboarding sequence. `disclosure` is the line for the reply, or null when they are not enrolled
- * (sequence off, address suppressed, no unsubscribe link possible, or the sender is not who it claims); `lead` is the
- * enrolment outcome when one was reached, so the report can state retention truthfully.
- *
- * The envelope sender of an email is easy to forge, and the sequence is mail to that address, so only a sender whose
- * own domain authenticated is enrolled, judged on the receiver's own results only, and only when AUTHSERV_ID is
- * configured (it fails closed: see sender-proof.ts). The enrolled address is the header From, the address DKIM signs and
- * DMARC aligns to, and it must be the envelope sender too: a pass proves the domain, never the mailbox, so a message
- * signed for attacker@gmail.com and resent with MAIL FROM:<victim@gmail.com> passes for gmail.com but enrols nobody.
- * The proof is a DKIM pass aligned with the From domain (provesDomainByDkim): a DMARC pass that rests on SPF alone does
- * not enrol, since a shared sending service in the domain's SPF lets anyone choose the envelope sender. Such a sender still
- * gets the report. Trade-off: a domain that sends without DKIM (a Microsoft 365 domain before DKIM is set up) is not enrolled.
- * Everyone still gets the report.
- */
-async function enrollAndDisclose(
-  authHeaders: AuthHeaders,
-  tenant: TenantContext,
-  fromEmail: string,
-  domain: string,
-  summary: ReturnType<typeof buildSummary>,
-): Promise<{ disclosure: { text: string; unsubscribeUrl: string } | null; lead: EnrollResult | null }> {
-  try {
-    // The receiver may copy the envelope sender unquoted into its own results (smtp.mailfrom=): one that is not a plain address
-    // could plant a pass the receiver never wrote (reporter-auth.ts envelopeIsPlain), so nothing in the results is believed.
-    if (!envelopeIsPlain(fromEmail)) {
-      console.warn('[free-check] sender not enrolled in the sequence: the envelope sender is not a plain address');
-      return { disclosure: null, lead: null };
-    }
-    const address = fromEmail.trim().toLowerCase();
-    if (!authHeaders.from || authHeaders.from !== address) {
-      console.warn('[free-check] sender not enrolled in the sequence: the header From is not the envelope sender');
-      return { disclosure: null, lead: null };
-    }
-    const proof = proveSender(authHeaders, domain, tenant.env.AUTHSERV_ID, tenant.env.AUTHSERV_HEADER);
-    if (!proof.ok) {
-      console.warn(`[free-check] sender not enrolled in the sequence: ${proof.reason}`);
-      return { disclosure: null, lead: null };
-    }
-    const link = await unsubscribeUrl(tenant.env, address);
-    if (!link) return { disclosure: null, lead: null };
-    const lead = await enrollLead(tenant.env, { email: address, domain, summary });
-    return { disclosure: lead === 'enrolled' || lead === 'existing' ? { text: DISCLOSURE, unsubscribeUrl: link } : null, lead };
-  } catch (err) {
-    console.error('free-check: lead enrolment failed', err instanceof Error ? err.message : 'error');
-    return { disclosure: null, lead: null };
-  }
 }
 
 interface Report {
@@ -170,20 +118,17 @@ export async function handleFreeCheck(
   // 3. Live DNS lookup — SPF, DKIM (if selector known), DMARC
   const dns = await checkDomain(domain, dkimSelector);
 
-  // 4. Build structured summary, then enrol the sender in the onboarding sequence (hosted by default; self-host only
-  //    when switched on), so the report can say so and state retention truthfully.
+  // 4. Build structured summary. Nothing about the sender is kept beyond the stored check result (no follow-up emails, no lead).
   const summary = buildSummary(domain, auth, dns);
-  const { disclosure, lead } = await enrollAndDisclose(authHeaders, tenant, fromEmail, domain, summary);
-  const knownLead = lead === 'inactive' || lead === 'suppressed' ? lead : undefined;
 
   // 4b. Plain-English report: links use the marketing site (SITE_URL, never the Worker's origin); the closing states what
   //     is kept and for how long, and ends with the help line.
   const opts = {
     siteUrl: siteUrl(tenant.env), bookingUrl: bookingUrl(tenant.env),
-    retentionDays: retentionPolicy(tenant.env).checkResultsDays, enrolled: disclosure ?? undefined, lead: knownLead,
+    retentionDays: retentionPolicy(tenant.env).checkResultsDays,
   };
   const reportText = formatCheckReport(fromEmail, summary, auth, dns, opts);
-  const reportHtml = buildFreeCheckHtml({ fromEmail, summary, auth, dns, brand: tenant.brand, disclosure: opts.enrolled, siteUrl: opts.siteUrl, bookingUrl: opts.bookingUrl, retentionDays: opts.retentionDays, lead: knownLead });
+  const reportHtml = buildFreeCheckHtml({ fromEmail, summary, auth, dns, brand: tenant.brand, siteUrl: opts.siteUrl, bookingUrl: opts.bookingUrl, retentionDays: opts.retentionDays });
 
   // 5. Send the report: reply() first, a new email through SEND_EMAIL when reply() is refused.
   const resolvedFrom = tenant.settings.fromEmail;
@@ -191,12 +136,9 @@ export async function handleFreeCheck(
   const subject = `Email security check — ${domain}`;
   const messageId = message.headers.get('message-id')?.trim() ?? null;
   const inReplyTo = messageId && messageId.length <= 998 && /^<[^<>\s]+>$/.test(messageId) ? messageId : null;
-  const listHeaders: Record<string, string> = disclosure
-    ? { 'List-Unsubscribe': `<${disclosure.unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
-    : {};
   const sent = await deliverReport(message, tenant, {
-    from: resolvedFrom, to: fromEmail, subject, text: reportText, html: reportHtml, inReplyTo, headers: listHeaders,
-    // The fallback sends this one report, never enrols (enrolment above needs the header From and a DKIM/DMARC pass), and only
+    from: resolvedFrom, to: fromEmail, subject, text: reportText, html: reportHtml, inReplyTo, headers: {},
+    // The fallback sends this one report, and only
     // to a plain envelope sender the receiver's own results show an SPF pass for.
     replyTo: replyToAddress(tenant.env), fallbackAllowed: envelopeIsPlain(fromEmail) && spfPassesFor(trusted, domain),
   });

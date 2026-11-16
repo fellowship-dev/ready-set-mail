@@ -1,21 +1,16 @@
-// Did the sender of an inbound email really control the domain of its address?
-//
-// Enrolment in the onboarding sequence is mail to that address, so it needs a proof the sender cannot forge. It fails closed:
-//   - AUTHSERV_ID (the authserv-id of the receiving server's own results) must be configured, or nobody is enrolled. Nothing
+// Which Authentication-Results header of an inbound email is the receiver's own? Mail to an address taken from an email needs
+// results the sender cannot forge (the SEND_EMAIL fallback of the free-check report, report intake). It fails closed:
+//   - AUTHSERV_ID (the authserv-id of the receiving server's own results) must be configured, or no header is trusted. Nothing
 //     guarantees that the receiver prepends a plain Authentication-Results header; it may add only ARC-Authentication-Results.
-//     Until an operator has looked at one routed message and set AUTHSERV_ID (docs/email-funnel.md), the report is still
-//     sent but the sender is not enrolled.
+//     Until an operator has looked at one routed message and set AUTHSERV_ID (docs/email-funnel.md), the fallback does not send.
 //   - Only the TOPMOST header of the kind is read (a header the sender adds sits below the receiver's), from the raw
 //     message: `Headers.get` joins duplicates. Its authserv-id must equal AUTHSERV_ID.
 //   - AUTHSERV_HEADER (`ar` | `arc`) must be configured too, and names the ONE kind of header trusted: the plain
 //     Authentication-Results, or the topmost ARC-Authentication-Results with i=1. If both kinds were trusted, the sender
 //     could forge whichever kind the receiver does not add, using our (guessable) authserv-id.
-//   - The results must show a DKIM pass aligned with the address's domain, or a DMARC pass for it. SPF alone proves little
-//     (a shared sending service passes it for anyone), and a DMARC pass for the From header says nothing about the
-//     envelope sender.
 
 import { domainOfValue, tokenizeAuthResults, type AuthResultsFailure } from './auth-results';
-import { authProof, parseAuthResults } from './parse-headers';
+import type { parseAuthResults } from './parse-headers';
 
 const MAX_HEADER_BYTES = 128 * 1024;
 
@@ -81,38 +76,15 @@ export async function readAuthHeaders(raw: ReadableStream<Uint8Array> | null | u
 
 const norm = (s: string) => s.trim().toLowerCase();
 
-/** True when a DKIM pass aligned with `addressDomain`, or a DMARC pass for it, is in `results` (a header value, authserv-id first). Any dkim=pass counts, not only the last. */
-export function provesDomain(results: string | null, addressDomain: string): boolean {
-  if (!results) return false;
-  const proof = authProof(parseAuthResults(results));
-  return proof.dkimAligned(addressDomain) || proof.dmarcAligned(addressDomain);
-}
-
-/**
- * True when `results` hold a DKIM pass aligned with `addressDomain`. No DMARC shortcut: a dmarc=pass can rest on SPF alone, and
- * SPF passes for anyone using a sending service the domain's SPF includes, with any envelope sender. Enrolment uses this.
- *
- * Alignment is RELAXED (same organisational domain, DMARC's default): a provider signing with d=em.corp.example proves
- * ceo@corp.example. Strict alignment would refuse those legitimate senders; the cost of relaxed is that a sender on a delegated
- * subdomain can enrol an apex address of the same organisation, which only that organisation's own DNS delegation allows.
- */
-export function provesDomainByDkim(results: string | null, addressDomain: string): boolean {
-  if (!results) return false;
-  return authProof(parseAuthResults(results)).dkimAligned(addressDomain);
-}
-
-export type SenderProof = { ok: true; via: 'ar' | 'arc' } | { ok: false; reason: string };
-
 /**
  * A receiver writes one dkim result per DKIM-Signature it verified, and one dmarc result per message. More dkim results (other than
  * "none") than the message has signatures, or more than one dmarc result, means part of the header was not written by the receiver: a
  * sender-chosen value copied back unquoted (smtp.helo=x;dkim=pass(c)header.d=google.com). Then nothing in it is believed: returns the
- * detail for the log, or null when the counts are possible. Used by report intake (reporter-auth.ts) and the free-check enrolment.
+ * detail for the log, or null when the counts are possible. Used by report intake (reporter-auth.ts).
  *
  * Residual assumption: the sender controls how many DKIM-Signature fields the message carries, so one garbage signature makes room for
  * one injected dkim=pass. This holds only if the receiver quotes what it copies (HELO, MAIL FROM) or writes a result for every
- * signature, which cannot be verified here. Enrolment does not rely on it (free-check.ts also requires the header From to be the
- * envelope sender); report intake still does, until only well-formed signatures are counted.
+ * signature, which cannot be verified here. Report intake relies on it until only well-formed signatures are counted.
  */
 export function resultsOverclaim(headers: AuthHeaders, parsed: ReturnType<typeof parseAuthResults>): string | null {
   const dkimResults = parsed?.dkimAll.filter((d) => d.result !== 'none').length ?? 0;
@@ -149,26 +121,10 @@ export function trustedResults(headers: AuthHeaders, authservId: string | undefi
   const sel = selectTrusted(headers, authservId, only);
   return sel.kind === 'ok' ? sel.value : null;
 }
-/** Decide whether the sender proved `addressDomain` (enrolment): a DKIM pass aligned with it. Fails closed, with the reason (for the log; it never names the sender). */
-export function proveSender(headers: AuthHeaders, addressDomain: string, authservId: string | undefined, only: string | undefined): SenderProof {
-  if (!authservId?.trim()) return { ok: false, reason: 'AUTHSERV_ID is not set' };
-  const mode = only?.trim().toLowerCase();
-  if (mode !== 'ar' && mode !== 'arc') return { ok: false, reason: 'AUTHSERV_HEADER is not set' };
-  const trusted = trustedResults(headers, authservId, mode);
-  if (trusted) {
-    const overclaim = resultsOverclaim(headers, parseAuthResults(trusted));
-    if (overclaim) return { ok: false, reason: `the receiver's results hold text it did not write (${overclaim})` };
-    return provesDomainByDkim(trusted, addressDomain)
-      ? { ok: true, via: mode }
-      : { ok: false, reason: mode === 'ar' ? 'the receiver\'s results do not show a DKIM pass aligned with the address\'s domain' : 'the receiver\'s ARC results do not show a DKIM pass aligned with the address\'s domain' };
-  }
-  return { ok: false, reason: headers.ar || headers.arc ? 'no Authentication-Results (or ARC i=1) header names the configured AUTHSERV_ID' : 'the message has no Authentication-Results header' };
-}
-
 /**
  * True when the receiver's own results (`trusted`, from trustedResults) show spf=pass for an smtp.mailfrom on exactly the
- * envelope sender's domain: the sending server was allowed to use that address as its return path. Weaker than
- * proveSender (a shared sending service passes SPF for all its customers), but enough to send that address one reply.
+ * envelope sender's domain: the sending server was allowed to use that address as its return path. Weak (a shared sending
+ * service passes SPF for all its customers), but enough to send that address one reply.
  */
 export function spfPassesFor(trusted: string | null, envelopeDomain: string): boolean {
   if (!trusted) return false;
