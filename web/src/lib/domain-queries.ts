@@ -78,6 +78,9 @@ export const domainKeys = {
 	zones: ['zones'] as const,
 };
 
+/** The setup wizard's live DNS status for a domain (GET onboarding-status). The wizard patches it in place after its own writes, so it is refreshed only where a screen asks. */
+export const setupStatusKey = (id: number) => ['onboarding-status', id] as const;
+
 export const fetchSummary = (id: number) => api<DomainCheckSummary>(`/api/domains/${id}/check-summary`);
 
 /** GET /api/domains/summaries: every domain's summary, a page at a time. */

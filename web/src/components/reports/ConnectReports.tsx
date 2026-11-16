@@ -7,6 +7,7 @@ import { countingBasisNote, emptyReportsState, storageDropNotices, uncountedNoti
 import { formatDateTime, timeAgo } from '../../lib/format';
 import {
 	useReportAddress,
+	useCheckReportsAgain,
 	useReportAddressMutations,
 	useReportIntakeEnabled,
 	type OwnPlan,
@@ -64,6 +65,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	const q = useReportAddress(domainId);
 	const m = useReportAddressMutations(domainId);
 	const apply = useApplyDmarc(domainId);
+	const checkAgain = useCheckReportsAgain(domainId);
 	const [disconnectOpen, setDisconnectOpen] = useState(false);
 	const [reviewing, setReviewing] = useState(false);
 
@@ -148,7 +150,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 			) : null}
 			{applyFailed}
 			<div className="flex flex-wrap gap-2">
-				<Button variant="secondary" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
+				<Button variant="secondary" size="sm" onClick={checkAgain} disabled={q.isFetching}>
 					<RefreshCw aria-hidden />
 					{q.isFetching ? 'Checking…' : 'Check again'}
 				</Button>
