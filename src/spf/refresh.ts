@@ -303,7 +303,7 @@ export function decideSpfWrite(state: { pending_removed: string | null; pending_
 }
 
 /** A hosted record keeps the same state in one JSON column (hosted_domains.spf_state), read and written with the same rule. */
-export function parseSpfState(json: string | null | undefined): { provider_state: string | null; pending_removed: string | null; pending_since: number | null } {
+export function loadSpfState(json: string | null | undefined): { provider_state: string | null; pending_removed: string | null; pending_since: number | null } {
   try {
     const v = json ? (JSON.parse(json) as { provider_state?: SpfProviderEntries; pending_removed?: SpfProviderEntries | null; pending_since?: number | null }) : {};
     return { provider_state: v.provider_state ? entriesJson(v.provider_state) : null, pending_removed: v.pending_removed ? entriesJson(v.pending_removed) : null, pending_since: typeof v.pending_since === 'number' ? v.pending_since : null };

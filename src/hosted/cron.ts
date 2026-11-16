@@ -17,7 +17,7 @@ import { hostedNames, openHostedZone, HOSTED_SPF_OPTS } from './records';
 import { assessQuota, configuredZones, type ZoneQuota } from './zones';
 import { mergePointerReport, verifyPointers } from './pointers';
 import { createResolver, flattenFromSource, sameSpfRecord, type Resolver } from '@ready-set-mail/dns-checks';
-import { decideSpfWrite, parseEntries, parseSpfState, spfStateJson } from '../spf/refresh';
+import { decideSpfWrite, parseEntries, loadSpfState, spfStateJson } from '../spf/refresh';
 import { discoverMxHosts } from '../email/mta-sts';
 import { nextPolicyId } from './service';
 import { recheckZoneProofs } from '../domains/proof-recheck';
@@ -126,7 +126,7 @@ export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fet
       const domain = await forWorkspace(env.DB, h.workspace_id).domains.getById(h.domain_id);
       if (!domain) continue;
       // The one engine (packages/dns-checks/src/spf-flatten.ts): from the stored source, never from what is published (that is our own include).
-      const state = parseSpfState(h.spf_state);
+      const state = loadSpfState(h.spf_state);
       const flat = await flattenFromSource(domain.domain, h.spf_source!, resolver, { ...HOSTED_SPF_OPTS, previous: parseEntries(state.provider_state) });
       if (!flat.ok) throw new Error(flat.problems.map(p => p.message).join(' '));
       const at = Math.floor((opts.now?.() ?? Date.now()) / 1000);
