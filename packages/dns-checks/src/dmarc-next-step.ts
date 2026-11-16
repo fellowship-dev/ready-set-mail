@@ -171,6 +171,12 @@ export interface DmarcEvidence {
    * and moves one rung at a time; `ownership` and `hosted_records` have a step of their own. Absent or null: they can be.
    */
   reportsRefusal?: ReportsRefusal | null;
+  /**
+   * Of the window's failing messages (total - passed), how many came from servers that are not a known sending service and
+   * passed SPF or DKIM for no name of this organization (`likelyNotYours`). When it covers every failure, the failures are
+   * likely mail pretending to be this domain, not senders to fix. Absent or null: not known, failures are treated as yours.
+   */
+  failedNotYours?: number | null;
 }
 
 export interface ReportsRefusal {
@@ -334,7 +340,17 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     };
   };
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
-  const sendersStep = (status: StepStatus, why: string): DmarcStep => ({ key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' });
+  // Every failing message came from servers that are not a known sending service and authenticated as no name of this domain.
+  const failed = reports ? reports.total - reports.passed : 0;
+  const onlyOthers = failed > 0 && (ev.failedNotYours ?? 0) >= failed;
+  const othersWhy = `Every message that failed came from servers that are not a known sending service and passed SPF or DKIM for no name of ${name}: likely mail pretending to be ${name}`;
+  const sendersStep = (status: StepStatus, why: string, threshold?: { next: string; pct: number }): DmarcStep => onlyOthers && threshold
+    ? { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}. If none of them is a service you use, there is nothing to fix; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
+    : { key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' };
+  const notYoursStep = (): DmarcStep => ({
+    key: 'not-yours', status: 'note', do: 'Nothing to fix', who: 'nobody', where: 'senders',
+    why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}. If one of them is a service you use, open the failing senders.`,
+  });
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
   const gate = (next: string, threshold: number, where: StepWhere = inh ? 'parent' : 'dmarc-wizard'): DmarcStep | 'ready' | 'loading' => {
@@ -352,11 +368,11 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
         : `No reports arrived in the last ${reports.days} days. Receivers send them about once a day; until they arrive, nobody can confirm that every sender passes.`;
       return { key: 'gathering', status: 'gathering', do: `Wait for DMARC reports before ${next}`, why, who: 'nobody', where: 'none' };
     }
-    if (rate !== null && rate < threshold) return sendersStep('improve', `${shown}. ${cap(next)} should wait until they pass.`);
+    if (rate !== null && rate < threshold) return sendersStep('improve', `${shown}. ${cap(next)} should wait until they pass.`, { next, pct: threshold });
     return 'ready';
   };
 
-  const harmful = f.policy !== 'none' && rate !== null && rate < HARMFUL;
+  const harmful = f.policy !== 'none' && rate !== null && rate < HARMFUL && !onlyOthers;
   if (harmful) steps.push(sendersStep('attention', `${shown}, so some of your own mail is likely ${f.policy === 'reject' ? 'rejected' : 'in spam'}.`));
 
   // The next rung: pct to 100 under an enforcing policy, else the next policy. p=reject at pct=100 is the top.
@@ -382,7 +398,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     }
     else if (f.reportsHere === false) steps.push(ruaStep(`Protection is in place either way; without it, nobody sees which services send as ${name} and whether they pass.`, 'note'));
     else if (reports === null) steps.push(reloadStep('They could not be loaded, so whether every sender passes is unknown.'));
-    else if (rate !== null && rate < READY) steps.push(sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
+    else if (rate !== null && rate < READY) steps.push(onlyOthers ? notYoursStep() : sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
   }
 
   // An own record whose subdomain policy is weaker than its own: the subdomains climb the same ladder, one rung at a

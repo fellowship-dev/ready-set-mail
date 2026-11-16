@@ -15,3 +15,4 @@ export * from './bimi';
 export * from './providers';
 export * from './dns-hosts';
 export * from './report';
+export * from './sender-providers';

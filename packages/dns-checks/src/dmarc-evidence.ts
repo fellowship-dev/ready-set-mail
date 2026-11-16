@@ -93,6 +93,8 @@ export function dmarcEvidenceFor(input: {
   offeredRua?: string | null;
   /** false: DNS says the name does not exist (NXDOMAIN), so no record is offered at it. */
   nameExists?: boolean | null;
+  /** Failing messages from servers that are not yours (see DmarcEvidence.failedNotYours). */
+  failedNotYours?: number | null;
   dropText?: DropText;
 }): DmarcEvidence {
   const { reports } = input;
@@ -106,5 +108,6 @@ export function dmarcEvidenceFor(input: {
     reportsRefusal: input.reportsRefusal !== undefined ? input.reportsRefusal : reportsRefusalOf(input.reportConnect),
     emptyReportsNote,
     nameExists: input.nameExists ?? null,
+    ...(input.failedNotYours != null ? { failedNotYours: input.failedNotYours } : {}),
   };
 }

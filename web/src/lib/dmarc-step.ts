@@ -33,7 +33,7 @@ export function evidenceFor(
 	domain: Pick<Domain, 'rua_address'>,
 	reports: { total: number; passed: number; days: number } | null | undefined,
 	suffixParent?: string | null,
-	extra: { visibility?: ReportVisibilityFields | null; alignment?: DmarcEvidence['alignment']; reportsRefusal?: ReportsRefusal | null; nameExists?: boolean | null } = {},
+	extra: { visibility?: ReportVisibilityFields | null; alignment?: DmarcEvidence['alignment']; reportsRefusal?: ReportsRefusal | null; nameExists?: boolean | null; failedNotYours?: number | null } = {},
 ): DmarcEvidence {
 	return dmarcEvidenceFor({
 		ruaAddress: domain.rua_address,
@@ -43,6 +43,7 @@ export function evidenceFor(
 		alignment: extra.alignment,
 		reportsRefusal: extra.reportsRefusal ?? null,
 		nameExists: extra.nameExists,
+		failedNotYours: extra.failedNotYours,
 		dropText: (d) => storageDropNotice(d),
 	});
 }

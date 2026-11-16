@@ -10,6 +10,7 @@
 // ship DKIM record values here, because providers issue them per account (their guide is linked instead).
 
 import { SPF_PROVIDERS, type EmailProvider } from './email-service-providers';
+import { sameOrganizationalDomain } from './org-domain';
 
 export interface SenderSignals {
 	reverse_dns?: string | null;
@@ -88,4 +89,17 @@ export function identifySender(s: SenderSignals): SenderProvider | null {
 function toProvider(sig: Signature, evidence: string): SenderProvider {
 	const registry = sig.include ? (SPF_PROVIDERS.find((p) => p.include === sig.include) ?? null) : null;
 	return { id: sig.id, name: sig.name, registry, evidence };
+}
+
+/**
+ * A source that is probably not the domain's own mail: we do not recognise it as a sending service (`identifySender` is
+ * null) and it passed neither SPF nor DKIM for a name in `domain`'s organizational domain. The same notion as
+ * src/analytics/fixes.ts, "which we do not recognise ... likely spoofing". A failure from such a source is nothing to fix.
+ */
+export function likelyNotYours(s: SenderSignals & { spf_pass: number | boolean; dkim_pass: number | boolean }, domain: string): boolean {
+	if (identifySender(s)) return false;
+	const own = (name: string | null | undefined) => !!name && sameOrganizationalDomain(norm(name), domain);
+	if (s.spf_pass && own(s.spf_domain)) return false;
+	if (s.dkim_pass && own(s.dkim_domain)) return false;
+	return true;
 }

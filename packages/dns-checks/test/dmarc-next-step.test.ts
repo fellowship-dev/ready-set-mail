@@ -73,3 +73,24 @@ describe('dmarcSteps: the same ladder for own and inherited names', () => {
 		expect(s.why).toMatch(/gov\.uk is a public suffix, so its DMARC record does not apply to www\.gov\.uk/);
 	});
 });
+
+describe('dmarcSteps: failures that are only others\' mail', () => {
+  const rep = { total: 25, passed: 17, days: 30 };
+  const steps = (policy: string, e: Partial<DmarcEvidence>) => dmarcSteps('example.test', policyInForce('example.test', stored({ dmarc_policy: policy, dmarc_p: policy }) as never), ev({ reports: rep, ...e }));
+  it('p=reject, every failure not yours: done first, no "Fix the senders"', () => {
+    const s = steps('reject', { failedNotYours: 8 });
+    expect(s[0]!.key).toBe('done');
+    expect(s.find((x) => x.key === 'not-yours')?.do).toBe('Nothing to fix');
+    expect(s.some((x) => x.do.includes('Fix the senders'))).toBe(false);
+  });
+  it('p=reject, only some failures not yours: unchanged', () => {
+    const s = steps('reject', { failedNotYours: 2 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('p=none gate keeps waiting but asks whether the senders are yours', () => {
+    const s = steps('none', { failedNotYours: 8 });
+    expect(s[0]).toMatchObject({ key: 'senders', status: 'improve', who: 'you', do: 'Check whether the failing senders are yours' });
+    expect(s[0]!.why).toContain('nothing to fix');
+    expect(s[0]!.why).toContain('95%');
+  });
+});
