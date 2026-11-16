@@ -342,6 +342,20 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		expect(card.querySelector('.text-danger, [role="alert"]')).toBeNull(); // nothing has failed on day one
 	});
 
+	it('the card is the first thing said: no "Not yet." headline above it while nothing blocks, and the headline is back once the card is gone', async () => {
+		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1, dns_check_status: 'ok' }) });
+		await dayCard();
+		const answer = screen.getByTestId('am-i-done');
+		expect(answer).toHaveTextContent('Getting example.com set up.');
+		expect(answer.textContent).not.toMatch(/Not yet/);
+	});
+
+	it('a real blocker keeps the headline and goes first (the card follows the list)', async () => {
+		renderOverview({ routes: routesFor({ dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
+		await row('example.com');
+		expect(screen.getByTestId('am-i-done').textContent).toMatch(/^Not yet/);
+	});
+
 	it('waiting for records: the DMARC record does not name our address yet, with the way to add it', async () => {
 		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 0 }) });
 		const card = await dayCard();

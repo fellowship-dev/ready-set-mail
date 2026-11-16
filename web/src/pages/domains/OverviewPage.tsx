@@ -196,6 +196,9 @@ export function OverviewPage() {
 	const focusName = focus?.domain ?? claims.find((c) => c.status === 'pending')?.domain;
 	const handoff = focusName ? (handoffs.data ?? []).filter((h) => h.domain === focusName).sort((a, b) => b.sent_at - a.sent_at)[0] : undefined;
 	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
+	// While the first-day card (or the hand-off card) speaks and nothing blocks, the card is the first thing said: no "Not yet." above it.
+	const cardSpeaks = !!(handoff && !recordsLive) || (!!dayState && dayState.kind !== 'arrived' && dayState.kind !== 'empty' && dayState.kind !== 'proof');
+	const headline = cardSpeaks && !needsAttention && waiting === 0 && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
 	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
@@ -230,7 +233,7 @@ export function OverviewPage() {
 				<>
 					<div className="space-y-1">
 						<p className="text-lg font-semibold tracking-tight text-ink-1 [overflow-wrap:anywhere] sm:text-xl" aria-live="polite" data-testid="am-i-done">
-							{answer}
+							{headline}
 						</p>
 						{!empty ? (
 							<p className="max-w-prose text-sm text-ink-2">
