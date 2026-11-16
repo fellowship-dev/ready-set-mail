@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, RecordBlock, StatusDot, type StatusDotStatus } from '@ready-set-mail/ui';
 import { RefreshCw } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
@@ -53,6 +54,7 @@ const STATE_DOT: Record<ReportAddressState, { status: StatusDotStatus; label: st
 };
 
 function Panel({ domainId, domainName, bare }: { domainId: number; domainName: string; bare: boolean }) {
+	const qc = useQueryClient();
 	const q = useReportAddress(domainId);
 	const m = useReportAddressMutations(domainId);
 	const [disconnectOpen, setDisconnectOpen] = useState(false);
@@ -110,7 +112,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 			<CopyField label="Report address" value={s.address} />
 			{s.dns?.plan ? <PlanView plan={s.dns.plan} domain={domainName} parent={s.parent ?? null} address={s.address} /> : null}
 			<div className="flex flex-wrap gap-2">
-				<Button variant="secondary" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
+				<Button variant="secondary" size="sm" onClick={() => { void q.refetch(); void qc.invalidateQueries({ queryKey: ['onboarding-status', domainId] }); }} disabled={q.isFetching}>
 					<RefreshCw aria-hidden />
 					{q.isFetching ? 'Checking…' : 'Check again'}
 				</Button>

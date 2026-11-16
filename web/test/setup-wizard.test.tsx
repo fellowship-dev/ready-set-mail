@@ -190,6 +190,31 @@ describe('DNS lookup failures are not missing records', () => {
 		expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
 	});
 
+	it('DMARC (hosted): connecting reports in the step refreshes it, so it stops saying "Reports not connected yet"', async () => {
+		let connected = false;
+		const view = (over: Record<string, unknown>) => ({ available: true, domain_id: 7, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null, via_parent: null, ...over });
+		const none = { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } };
+		renderApp(<Wizard />, {
+			route: '/domains/7/setup/4',
+			status: { mode: 'saas' },
+			routes: routes({
+				status: () => status({ rua_address: connected ? 'rua@rua.example.net' : '', cf_available: false, dmarc: { ...none, auth_record: { found: false, record_name: null } } }),
+				extra: {
+					'GET /api/hosted/config': { enabled: true, reports: true, records: false },
+					'GET /api/domains/7/report-address': () => view(connected ? { address: 'rua@rua.example.net', state: 'not_published' } : {}),
+					'POST /api/domains/7/report-address': () => { connected = true; return { __status: 201, body: view({ address: 'rua@rua.example.net', state: 'not_published' }) }; },
+				},
+			}),
+		});
+		expect(await screen.findByText('Reports not connected yet')).toBeInTheDocument();
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Connect reports' }));
+		await waitFor(() => expect(screen.queryByText('Reports not connected yet')).not.toBeInTheDocument());
+		expect(await screen.findByText('v=DMARC1; p=none; rua=mailto:rua@rua.example.net')).toBeInTheDocument();
+		// hosted: reports go to the shared address, so no per-domain authorization record is asked for
+		expect(screen.queryByText('Report authorization record')).not.toBeInTheDocument();
+		expect(screen.queryByText(/No reports domain is configured/)).not.toBeInTheDocument();
+	});
+
 	it.each([
 		['missing record', { found: false, has_our_rua: false, current_record: null }],
 		['record without our rua', { found: true, has_our_rua: false, current_record: 'v=DMARC1; p=none' }],

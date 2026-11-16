@@ -97,6 +97,8 @@ export function useReportAddressMutations(domainId: number) {
 	const settle = (s: ReportIntakeStatus) => {
 		qc.setQueryData(reportAddressKey(domainId), s);
 		void invalidateDomain(qc, domainId);
+		// The setup wizard reads the report address from its own status: refresh it too, or its steps keep saying "not connected".
+		void qc.invalidateQueries({ queryKey: ['onboarding-status', domainId] });
 	};
 	const connect = useMutation({ mutationFn: () => api<ReportIntakeStatus>(base, { method: 'POST', body: {} }), onSuccess: settle });
 	const disconnect = useMutation({ mutationFn: () => api<ReportIntakeStatus>(base, { method: 'DELETE' }), onSuccess: settle });

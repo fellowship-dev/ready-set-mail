@@ -46,7 +46,8 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const lookupSeverity = dmarcSeverity(dmarc, dmarcFailed.length > 0);
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
-	const hostedNoReports = useHosted() && !rua;
+	const hosted = useHosted();
+	const hostedNoReports = hosted && !rua;
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
@@ -229,8 +230,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 				</>
 			)}
 
-			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. */}
-			{auth && !hostedNoReports && (dmarc.found || !!recommended) ? (
+			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. Hosted: every domain
+			    reports to the shared address, whose own domain authorizes any policy domain (RFC 9990 section 4), so there is nothing per domain to check. */}
+			{auth && !hosted && !hostedNoReports && (dmarc.found || !!recommended) ? (
 				<section aria-label="Report authorization record" className="space-y-2">
 					<h3 className="text-sm font-semibold text-ink-1">Report authorization record</h3>
 					<CheckResultList>
