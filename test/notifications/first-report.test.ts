@@ -109,7 +109,7 @@ describe('sendFirstReportNotification', () => {
 
     expect(env.SEND_EMAIL!.send).toHaveBeenCalledOnce();
     const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.subject).toContain('First DMARC report received for acme.com');
+    expect(call.subject).toContain('First DMARC report for acme.com');
     expect(call.to).toEqual(['admin@acme.com']);
     expect(call.text).toContain('150 email(s) analyzed');
     expect(call.text).toContain('https://inbox.acme.com');
@@ -138,7 +138,7 @@ describe('sendFirstReportNotification', () => {
     await sendFirstReportNotification(tn(env), 'acme.com', STATS);
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('would send to admin@acme.com'),
+      expect.stringContaining('not sent'),
     );
     consoleSpy.mockRestore();
   });
@@ -170,7 +170,62 @@ describe('sendFirstReportNotification', () => {
     await sendFirstReportNotification(tn(env), 'acme.com', STATS);
 
     const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.text).toContain('Hi there');
+    expect(call.text).toContain('Hi there,');
+  });
+});
+
+// ── Hosted sender and links ───────────────────────────────────
+
+describe('sendFirstReportNotification on hosted', () => {
+  function hosted(opts: { sender?: string | null; base?: string; fromEmail?: string } = {}) {
+    const env = makeEnv({ customDomain: null });
+    const sender = opts.sender === undefined ? 'noreply@app.readysetmail.com' : opts.sender;
+    if (sender) (env.DB as any).sqlite.prepare("INSERT INTO settings (workspace_id, key, value) VALUES ('ws_default', 'from_email', ?)").run(sender);
+    const tenant = makeTenant({
+      db: env.DB,
+      mode: 'saas',
+      env: { SEND_EMAIL: env.SEND_EMAIL, MODE: 'saas', SAAS_ENABLED: '1', BETTER_AUTH_URL: opts.base ?? 'https://app.readysetmail.com' } as any,
+      settings: { fromEmail: opts.fromEmail as any },
+    });
+    return { env, tenant };
+  }
+
+  it('sends from the platform sender and links to the app', async () => {
+    const { env, tenant } = hosted();
+    await sendFirstReportNotification(tenant, 'acme.com', STATS, 7);
+    const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
+    expect(call.from.email).toBe('noreply@app.readysetmail.com');
+    expect(call.text).toContain('https://app.readysetmail.com/#/w/ws_default/domains/7');
+    expect(call.text).not.toContain('workers.dev');
+    expect(call.subject).toBe('First DMARC report for acme.com');
+    expect(call.subject).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it('self-host keeps its own sender', async () => {
+    const { env, tenant } = hosted({ fromEmail: 'noreply@reports.acme.com' });
+    await sendFirstReportNotification(tenant, 'acme.com', STATS, 7);
+    expect((env.SEND_EMAIL!.send as any).mock.calls[0][0].from.email).toBe('noreply@reports.acme.com');
+  });
+
+  it('sends nothing, and does not throw, when no sender exists anywhere', async () => {
+    const { env, tenant } = hosted({ sender: null });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(sendFirstReportNotification(tenant, 'acme.com', STATS, 7)).resolves.toBeUndefined();
+    expect(env.SEND_EMAIL!.send).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('never logs the recipient when the send fails', async () => {
+    const { env, tenant } = hosted();
+    (env.SEND_EMAIL!.send as any).mockRejectedValue(new Error('boom'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await sendFirstReportNotification(tenant, 'acme.com', STATS, 7);
+    expect(JSON.stringify(err.mock.calls[0].slice(0, 1))).not.toContain('admin@acme.com');
+    vi.restoreAllMocks();
+  });
+
+  it('greets without a name that is an email address', () => {
+    expect(buildFirstReportBody('a@b.com', 'acme.com', STATS, 'https://x')).toMatch(/^Hi,\n/);
   });
 });
 

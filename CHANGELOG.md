@@ -22,6 +22,7 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 - **Reports for a subdomain that is also a domain of its own** are filed where the intake files them, and the page says so: a name with no connection of its own whose reports arrive through its connected parent no longer reads "Reports not connected yet".
 - One list of DKIM selectors (44; the checker had 36 and the dashboard another list): Cloudflare's `cf-bounce` is probed everywhere. An invalid `np=` is treated like an invalid `sp=` by the checker and the agent report (the dashboard's stored facts keep reading it as absent).
 - A subdomain whose parent is not its immediate label up (`cf-bounce.app.example.com` under `example.com`) is listed under its nearest listed ancestor; senders and report organisations on `co.uk`-style names are grouped by their registrable domain, never `co.uk`.
+- **The "first report received" email now sends on the hosted service.** It was sent from a workspace sender that hosted workspaces never have, so it failed; it now uses the platform sender that sign-in emails use (a self-hosted workspace's own sender still wins). Its link now goes to the domain's page on the configured public origin instead of the Worker's workers.dev address, and the email is no longer cut off when the report handler returns. Subject and copy no longer promise things that are not true (an emoji, "24-48 hours"). No migration.
 
 ### Removed
 
