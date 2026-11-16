@@ -326,7 +326,7 @@ function EnforceRule({ checks, reasons }: { checks?: MtaStsEnforceCheck[]; reaso
 	}
 	return (
 		<div className="space-y-2">
-			<p className="text-sm text-ink-1">To switch, all of these must be met:</p>
+			<p className="text-sm text-ink-1">Enforce needs:</p>
 			<ul aria-label="What enforce needs" className="space-y-2 text-sm">
 				{checks.map((k) => (
 					<li key={k.key} className="flex gap-2">
