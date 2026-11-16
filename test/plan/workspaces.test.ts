@@ -118,9 +118,9 @@ describe('a second workspace when the person already pays', () => {
     const id = (await json(res)).id;
     expect(rows(w.db, 'SELECT plan, free_owner_user_id AS f FROM workspaces WHERE id = ?', id)[0]).toEqual({ plan: 'free', f: null });
     const p: Person = { ...w.owner, workspaceId: id };
-    const first = await w.api(p, 'POST', '/api/domains', { domain: 'client.example.com' });
+    const first = await w.tryVerify(p, 'client.example.com');
     expect(first.status).toBe(402); // no free domain here
-    expect((await w.addPaid(p, 'client.example.com')).status).toBe(409); // the card of THIS workspace comes first
+    expect((await w.addPaid(p, 'client.example.com')).status).toBe(409); // the card of THIS workspace comes first (and nothing is charged)
     await w.addCard(p);
     expect((await w.addPaid(p, 'client.example.com')).status).toBe(201);
     expect(w.sub(id)).toMatchObject({ status: 'active', quantity_sent: 1 });

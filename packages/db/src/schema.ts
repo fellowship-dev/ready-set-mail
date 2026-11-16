@@ -176,6 +176,8 @@ export const domains = sqliteTable(
 		org_domain: text('org_domain'),
 		/** Unix seconds the domain was paused (the plan lapsed, or its owner kept one domain): readable and exportable, new reports are not processed. Null: active. */
 		paused_at: integer('paused_at'),
+		/** Unix seconds a paid domain was added while its first payment waits for the owner's bank (3-D Secure) (0017). Cleared when Stripe says paid; the row is removed if the payment never completes. */
+		payment_pending_at: integer('payment_pending_at'),
 	},
 	(t) => [
 		index('idx_domains_workspace_org').on(t.workspace_id, t.org_domain),

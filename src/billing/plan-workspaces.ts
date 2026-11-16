@@ -13,7 +13,7 @@ import { workspaceAdded } from '../product-analytics/steps';
 import type { BoundEnv } from '../index';
 import { BillingError, billingDeps, type BillingDeps } from './deps';
 import { appUrl } from './paths';
-import { ensureSubscription, planPrice, syncQuantity } from './plan-service';
+import { planPrice, startSubscription, syncQuantity } from './plan-service';
 import { completeSetupSession, rateLimit, stripeFailure, type Actor, type Ws } from './service';
 import type { StripeObject } from './stripe-client';
 
@@ -101,7 +101,7 @@ export async function completeWorkspaceIntent(d: BillingDeps, row: CheckoutSessi
   logAudit({ db: d.db, workspaceId: intent.id }, { actor_id: intent.user_id, actor_type: 'user', action: 'workspace.created', resource_type: 'workspace', resource_id: intent.id, resource_name: intent.name, meta: { with_card: true } }, ctx);
   workspaceAdded({ ...d.env, DB: d.db }, ctx, intent.id);
   try {
-    await withPlanLock(d.env, d.db, intent.id, d.now, async (lock) => { await ensureSubscription(d, lock, { id: intent.id, name: intent.name }, 'month', 'new_workspace'); });
+    await withPlanLock(d.env, d.db, intent.id, d.now, async (lock) => { await startSubscription(d, lock, { id: intent.id, name: intent.name }, 'month', 'new_workspace'); });
   } catch (e) {
     // The workspace exists with its card; its plan starts with its first paid domain.
     console.error(`[billing] the plan of a new workspace did not start (${e instanceof BillingError ? e.code : e instanceof PlanBusyError ? 'busy' : (e as Error)?.name ?? 'error'})`);

@@ -94,6 +94,7 @@ export const utcMinute = (unix: number) => new Date(unix * 1000).toISOString().s
  * Plain, no alarm; the web adds the help link from `help_url`.
  */
 export const freePlanDayNotice = (n: number, rows: number) => `Today your domain sent more of its own mail than the free plan's ${rows.toLocaleString('en-US')} report rows a day, so ${n} ${n === 1 ? 'report was' : 'reports were'} not saved. Mail that fails authentication never counts toward this. Everything already here stays.`;
+export const freePlanReportsNotice = (n: number, reports: number) => `Today your domain sent more of its own reports than the free plan's ${reports.toLocaleString('en-US')} a day, so ${n} ${n === 1 ? 'report was' : 'reports were'} not saved. Mail that fails authentication never counts toward this. Everything already here stays.`;
 export const pausedNotice = (n: number) => `This domain is paused on the free plan, so ${n} new ${n === 1 ? 'report was' : 'reports were'} not processed. Everything already here stays.`;
 /** "This domain's reports have 1,240 failing sources; they are shown as 38 summary rows by network." The totals are exact. */
 export const summarisedNotice = (sources: number) => `${sources.toLocaleString('en-US')} failing ${sources === 1 ? 'source was' : 'sources were'} summarised by network; the message totals are exact.`;
@@ -146,13 +147,14 @@ export function intakeView(failures: FailureRow[], usage: { addressMessagesToday
   }
   const countOf = (reason: string) => rows.filter((f) => f.reason === reason).reduce((n, f) => n + Number(f.messages), 0);
   const freeDay = countOf('cap_free_plan_day');
+  const freeReports = countOf('cap_free_plan_reports');
   const paused = countOf('domain_paused');
   if (!limit && paused) limit = 'domain_paused';
-  if (freeDay) limit = 'free_plan_day'; // the plan's own limit says what it counts: the customer's own passing mail
+  if (freeDay || freeReports) limit = 'free_plan_day'; // the plan's own limit says what it counts: the customer's own passing mail
   if (dropped.length) limit = 'counted_storage_dropped'; // the most specific statement: it names who was not stored
   const status: IntakeStatus = limit ? 'limited' : messages > 0 ? 'not_processed' : 'ok';
   const notice = limit === 'counted_storage_dropped' ? dropped.map((d) => d.text).join('. ')
-    : limit === 'free_plan_day' ? freePlanDayNotice(freeDay, limits?.freePassingRowsPerDay ?? 20_000)
+    : limit === 'free_plan_day' ? (freeDay ? freePlanDayNotice(freeDay, limits?.freePassingRowsPerDay ?? 20_000) : freePlanReportsNotice(freeReports, limits?.freeReportsPerDay ?? 200))
     : limit === 'domain_paused' ? pausedNotice(paused)
     : limit === 'workspace_storage' || limit === 'instance_storage' ? STORAGE_LIMIT_NOTICE
     : limit ? DAILY_LIMIT_NOTICE

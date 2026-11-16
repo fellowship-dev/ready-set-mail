@@ -174,6 +174,29 @@ describe('the free plan counts the customer\'s own passing mail only', () => {
   });
 });
 
+describe('the free plan\'s 200 report emails a day', () => {
+  it('counts a report only if it holds a passing row: 25 failing-only reports use none of it, the passing ones then fill it, the next is refused for the plan', async () => {
+    const w = await world({ INTAKE_FREE_REPORTS_PER_DAY: '3' });
+    for (let i = 0; i < 25; i++) expect((await deliver(w, report(`spoof-${i}`, 0, 20, { ipBase: i * 100 }))).setReject).not.toHaveBeenCalled();
+    expect(w.rows("SELECT messages FROM intake_quota WHERE scope = 'fe:ws_a'")).toEqual([]);
+    for (let i = 0; i < 3; i++) await deliver(w, report(`own-${i}`, 2 + i, 5 + i, { ipBase: 50_000 + i * 100 }));
+    expect(w.rows("SELECT messages FROM intake_quota WHERE scope = 'fe:ws_a'")[0].messages).toBe(3);
+    const over = await deliver(w, report('own-3', 1, 0));
+    expect(failures(w)).toEqual([{ reason: 'cap_free_plan_reports', messages: 1 }]);
+    expect(over.setReject).not.toHaveBeenCalled(); // a registry reporter is accepted and dropped, never answered with a 5xx
+    expect(w.rows("SELECT COUNT(*) AS n FROM aggregate_reports WHERE report_id = 'google|own-3'")[0].n).toBe(0);
+    // failing mail still goes on being stored (summarised) and still never refused for the plan
+    expect((await deliver(w, report('spoof-after', 0, 50, { ipBase: 90_000 }))).setReject).not.toHaveBeenCalled();
+    expect(failures(w)).toEqual([{ reason: 'cap_free_plan_reports', messages: 1 }]);
+  });
+  it('a pay-as-you-go workspace is not held to it', async () => {
+    const w = await world({ INTAKE_FREE_REPORTS_PER_DAY: '1' });
+    w.db.sqlite.prepare("UPDATE workspaces SET plan = 'payg' WHERE id = 'ws_a'").run();
+    await deliver(w, report('a', 3, 0)); await deliver(w, report('b', 3, 0));
+    expect(failures(w)).toEqual([]);
+  });
+});
+
 describe('a paused domain', () => {
   it('keeps its history, its new reports are not processed and the owner is told how many', async () => {
     const w = await world();

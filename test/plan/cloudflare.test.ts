@@ -79,3 +79,15 @@ describe('Connect Cloudflare with several zones', () => {
     expect(res.other_zones).toBeUndefined();
   });
 });
+
+describe('"Also in your Cloudflare account" is shown once', () => {
+  it('the suggestions say whether they were dismissed, and a dismissal sticks for the workspace', async () => {
+    const s = await setup(['a.com', 'b.org']);
+    await s.imp({ preferred_domain: 'a.com' });
+    const before = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(before.dismissed).toBe(false);
+    expect(before.suggestions.map((z: any) => z.name)).toEqual(['b.org']);
+    expect((await s.w.api(s.token, 'POST', '/api/cloudflare/suggestions/dismiss', {})).status).toBe(200);
+    expect((await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'))).dismissed).toBe(true);
+  });
+});

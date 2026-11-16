@@ -237,6 +237,9 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
       if (quota.workspaceRecords + passing > limits.workspaceRecords) return { refuse: 'cap_workspace_storage', keepFailing: 0 };
       if (quota.instanceRecords + passing > limits.instanceRecords) return { refuse: 'cap_instance_storage', keepFailing: 0 };
       if (freePlan && (await q.volumeToday(day)).passing + passing > limits.freePassingRowsPerDay) return { refuse: 'cap_free_plan_day', keepFailing: 0 };
+      // The free plan's report emails a day: counted here, after the parse, and only for a report with at least one passing row, so mail that fails
+      // authentication (a spoofing run) never uses it up. Counted last, once every other check has agreed.
+      if (freePlan && passing > 0 && !(await intakeLookups(env.DB).consumeCounter(`fe:${tgt.workspace_id}`, day, limits.freeReportsPerDay))) return { refuse: 'cap_free_plan_reports', keepFailing: 0 };
       const share = limits.failingStoragePercent / 100;
       const room = Math.min(limits.addressRecordsPerDay * share - quota.addressRecordsToday, limits.workspaceRecords * share - quota.workspaceRecords, limits.instanceRecords * share - quota.instanceRecords) - passing;
       return { keepFailing: Math.max(0, Math.min(failing, limits.recordsPerReport - passing, Math.floor(room))) };

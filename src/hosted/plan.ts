@@ -39,11 +39,12 @@ export const unitOf = (domain: string): string => organizationalDomain(domain) ?
 /** Subscription statuses in which new paid domains may be added. */
 const isActive = (status: string): boolean => status === 'active' || status === 'trialing';
 /** Statuses that leave the plan standing but pause adding: Stripe is still retrying the payment. `unpaid` (retries over) and `canceled` lapse it. */
-const isSoft = (status: string): boolean => status === 'past_due' || status === 'incomplete';
+const isSoft = (status: string): boolean => status === 'past_due';
 
-export type SubscriptionState = 'none' | 'active' | 'payment_problem' | 'lapsed';
+/** `pending`: the first payment of a new subscription waits for the owner's bank (3-D Secure); the domains added with it are visibly pending. */
+export type SubscriptionState = 'none' | 'active' | 'pending' | 'payment_problem' | 'lapsed';
 export const subscriptionState = (sub: Pick<SubscriptionRow, 'status' | 'lapsed_at'> | null): SubscriptionState =>
-  !sub ? 'none' : sub.lapsed_at ? 'lapsed' : isActive(sub.status) ? 'active' : isSoft(sub.status) ? 'payment_problem' : 'lapsed';
+  !sub ? 'none' : sub.lapsed_at ? 'lapsed' : isActive(sub.status) ? 'active' : sub.status === 'incomplete' ? 'pending' : isSoft(sub.status) ? 'payment_problem' : 'lapsed';
 
 export interface PlanState {
   workspaceId: string;
@@ -64,7 +65,7 @@ export interface PlanState {
   /** A free workspace that holds more than its allowance (it grew before the plan): everything keeps working, the next add asks. */
   grandfathered: boolean;
   /** Rows by unit, for listings (billable domains and the like). */
-  rows: { id: number; domain: string; org: string; paused: boolean; created_at: number }[];
+  rows: { id: number; domain: string; org: string; paused: boolean; pending: boolean; created_at: number }[];
   revision: number;
   customerId: string | null;
 }
@@ -100,7 +101,7 @@ export async function loadPlanState(env: BoundEnv, db: Db, workspaceId: string):
     subscription: sub, subscriptionState: subState,
     canAddPaid: paidPathAvailable(env) && !exempt && (subState === 'active' || subState === 'none' || subState === 'lapsed'),
     grandfathered: enforced && !exempt && plan === 'free' && units > (holdsAllowance ? 1 : 0) && paused.size === 0,
-    rows: rows.map((r) => ({ id: r.id, domain: r.domain, org: r.org_domain ?? r.domain, paused: !!r.paused_at, created_at: r.created_at })),
+    rows: rows.map((r) => ({ id: r.id, domain: r.domain, org: r.org_domain ?? r.domain, paused: !!r.paused_at, pending: !!r.payment_pending_at, created_at: r.created_at })),
     revision: ws?.plan_revision ?? 0,
     customerId: ws?.stripe_customer_id ?? null,
   };

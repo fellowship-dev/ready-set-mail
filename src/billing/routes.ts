@@ -19,7 +19,7 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
-import { addPaidDomains, keepOneDomain, planView, previewPaidAdd, startPlan } from './plan-service';
+import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, startPlan } from './plan-service';
 import { completeWorkspaceIntent, startWorkspaceIntent } from './plan-workspaces';
 import { planEnforced } from '../hosted/plan';
 import { cleanName } from '../auth/names';
@@ -130,10 +130,15 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const [view, { offer, offer_problem }] = await Promise.all([readCard(d, me.ws, isOwner ? me.email : null), offerView(d)]);
     const orders = await scope.billing.orders.list(50);
     // The plan (HOSTED_PLAN on, or a subscription that exists: shown read-only after a rollback). Nothing new appears otherwise.
-    const hasSub = !!(await scope.plan.subscription.get());
-    const plan = planEnforced(env) || hasSub ? await planView(d, me.ws, { isOwner }) : null;
+    let sub = await scope.plan.subscription.get();
+    // A first payment waiting for the bank: the owner's confirm polls here, so ask Stripe again (the webhook may be late or lost).
+    if (isOwner && sub?.status === 'incomplete' && planEnforced(env)) { await applySubscription(d, sub.stripe_subscription_id).catch(() => undefined); sub = await scope.plan.subscription.get(); }
+    const plan = planEnforced(env) || sub ? await planView(d, me.ws, { isOwner }) : null;
+    // The one-time notice (a first payment that never completed): shown to the owner once.
+    let notice: string | null = null;
+    if (plan && isOwner) { notice = (await scope.settings.get(PLAN_NOTICE_KEY))?.value || null; if (notice) await scope.settings.set(PLAN_NOTICE_KEY, ''); }
     return json({
-      enabled: true, role: me.role, can_manage: isOwner, ...(plan ? { plan } : {}),
+      enabled: true, role: me.role, can_manage: isOwner, ...(plan ? { plan: { ...plan, notice } } : {}),
       ...cardFields(isOwner, view), has_customer: view.customer, ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, orders: orders.map(orderView), ...links(env),
     });
@@ -160,7 +165,8 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (!planEnforced(env)) return json({ error: 'not found' }, 404);
     if (!isOwner) return OWNER_ONLY();
     const names = url.searchParams.getAll('domain').slice(0, 10);
-    if (names.length === 0) return fail(400, 'invalid_domains', 'domain is required.');
+    // No domain: the explicit "Start pay as you go" (what it would charge now, which is nothing for most workspaces).
+    if (names.length === 0 && url.searchParams.get('start') !== '1') return fail(400, 'invalid_domains', 'domain is required.');
     return json(await previewPaidAdd(d, me.ws, names, url.searchParams.get('interval') === 'year' ? 'year' : 'month'));
   }
 
@@ -199,7 +205,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (typeof b.expected_currency !== 'string' || !/^[A-Za-z]{3}$/.test(b.expected_currency)) return fail(400, 'invalid_currency', 'expected_currency is required: the three-letter currency of the price that you were shown.');
     const tenant = await loadTenant(env, { workspaceId: me.ws.id });
     try {
-      return json(await addPaidDomains(d, tenant, me.ws, me.actor, { domains: domains as string[], expectedAmount: b.expected_amount, expectedCurrency: b.expected_currency, interval: b.interval === 'year' ? 'year' : 'month', via: bulk ? 'cloudflare' : 'single' }), 201);
+      return json(await addPaidDomains(d, tenant, me.ws, me.actor, { domains: domains as string[], expectedAmount: b.expected_amount, expectedCurrency: b.expected_currency, expectedCharge: typeof b.expected_charge === 'number' && Number.isSafeInteger(b.expected_charge) ? b.expected_charge : null, interval: b.interval === 'year' ? 'year' : 'month', via: bulk ? 'cloudflare' : 'single' }), 201);
     } catch (e) {
       if (e instanceof DomainServiceError) return json(e.body ?? { error: e.message }, e.status);
       throw e;
@@ -210,7 +216,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (!isOwner) return OWNER_ONLY();
     const b = await body(request);
     if (b instanceof Response) return b;
-    return json(await startPlan(d, me.ws, me.actor, { interval: b.interval === 'year' ? 'year' : 'month', ...(typeof b.expected_amount === 'number' ? { expectedAmount: b.expected_amount } : {}), ...(typeof b.expected_currency === 'string' ? { expectedCurrency: b.expected_currency } : {}) }), 201);
+    return json(await startPlan(d, me.ws, me.actor, { interval: b.interval === 'year' ? 'year' : 'month', ...(typeof b.expected_amount === 'number' ? { expectedAmount: b.expected_amount } : {}), ...(typeof b.expected_currency === 'string' ? { expectedCurrency: b.expected_currency } : {}), ...(typeof b.expected_charge === 'number' ? { expectedCharge: b.expected_charge } : {}) }), 201);
   }
   if (path === '/api/billing/plan/keep-one') {
     if (!planEnforced(env)) return json({ error: 'not found' }, 404);

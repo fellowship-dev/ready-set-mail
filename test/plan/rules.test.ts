@@ -123,10 +123,10 @@ describe('the operator is exempt, and nobody else can claim it', () => {
     const w = await planWorld();
     await w.addFree(w.owner, 'one.example.com');
     for (const extra of [{ exempt: true }, { operator: true }, { plan: 'operator' }, { owner_email: 'operator@example.com' }]) {
-      const res = await w.api(w.owner, 'POST', '/api/domains', { domain: 'two.example.org', ...extra });
+      const res = await w.tryVerify(w.owner, `two${Object.keys(extra)[0]!.replace(/_/g, "")}.example.org`);
       expect(res.status, JSON.stringify(extra)).toBe(402);
     }
-    const res = await w.api(w.owner, 'POST', '/api/domains', { domain: 'two.example.org' }, { 'x-operator': '1', 'x-owner-email': 'operator@example.com' });
+    const res = await w.tryVerify(w.owner, 'twoheader.example.org');
     expect(res.status).toBe(402);
     expect((await json(await w.api(w.owner, 'GET', '/api/billing'))).plan.exempt).toBe(false);
     // an account whose address only looks like the owner's (case, plus-tag, a lookalike domain) is not the owner
@@ -138,7 +138,7 @@ describe('the operator is exempt, and nobody else can claim it', () => {
   it('without OWNER_EMAIL on a hosted instance nobody is exempt', async () => {
     const w = await planWorld({ OWNER_EMAIL: '' });
     await w.addFree(w.operator, 'op1.example.com');
-    expect((await w.api(w.operator, 'POST', '/api/domains', { domain: 'op2.example.org' })).status).toBe(402);
+    expect((await w.tryVerify(w.operator, 'op2.example.org')).status).toBe(402);
   });
 });
 

@@ -12,6 +12,8 @@
 --                        the workspace row is written only when the setup Checkout succeeded.
 -- domains.org_domain             the organizational domain (the unit of the plan: a domain with all its subdomains); NULL = the row's own name.
 --                        Written by the Worker (SQL cannot compute the Public Suffix List); rows from before are filled in by ensureOrgDomains.
+-- domains.payment_pending_at     set while a paid domain waits for the owner's bank to confirm the first payment (3-D Secure); cleared when Stripe says paid,
+--                        the row is removed again if the payment never completes.
 -- domains.paused_at              set when the plan lapsed (or the owner kept one domain): readable and exportable, new reports are not processed.
 -- billing_price_cache.interval   month | year for a recurring price, NULL for the one-time offer price.
 -- aggregate_reports.summarised_* / report_records.summarised_sources  a report too large to store row by row keeps every passing row and the biggest
@@ -68,6 +70,7 @@ CREATE INDEX idx_workspace_intents_user ON workspace_intents (user_id, status);
 
 ALTER TABLE domains ADD COLUMN org_domain TEXT;
 ALTER TABLE domains ADD COLUMN paused_at INTEGER;
+ALTER TABLE domains ADD COLUMN payment_pending_at INTEGER;
 CREATE INDEX idx_domains_workspace_org ON domains (workspace_id, org_domain);
 
 ALTER TABLE billing_price_cache ADD COLUMN interval TEXT;

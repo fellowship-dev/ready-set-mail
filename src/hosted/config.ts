@@ -39,6 +39,7 @@ export interface HostedEnv {
   INTAKE_MAX_RAW_BYTES?: string;
   INTAKE_MAX_STORAGE_RETRIES_PER_DAY?: string;
   INTAKE_FREE_PASSING_ROWS_PER_DAY?: string;
+  INTAKE_FREE_REPORTS_PER_DAY?: string;
   INTAKE_ALERT_PASSING_ROWS_PER_DAY?: string;
   INTAKE_ALERT_FAILING_ROWS_PER_DAY?: string;
   INTAKE_FAILING_STORAGE_PERCENT?: string;
@@ -167,6 +168,8 @@ export const DEFAULT_MAX_HOSTED_DOMAINS_PER_WORKSPACE = 10;
  * an honest small domain's reports hold in a day.
  */
 export const DEFAULT_FREE_PASSING_ROWS_PER_DAY = 20_000;
+/** ...and 200 report emails a day, counted only for a report that holds at least one PASSING row (so failing mail, which a spoofing run can send, never burns it). */
+export const DEFAULT_FREE_REPORTS_PER_DAY = 200;
 /** Operator alerts, each once per workspace per day: passing rows on a free workspace ("heavy legitimate user"), failing rows seen ("may be under a spoofing run"). */
 export const DEFAULT_ALERT_PASSING_ROWS_PER_DAY = 5_000;
 export const DEFAULT_ALERT_FAILING_ROWS_PER_DAY = 100_000;
@@ -215,6 +218,7 @@ export interface IntakeLimits {
   maxRawBytes: number;
   storageRetriesPerDay: number;
   freePassingRowsPerDay: number;
+  freeReportsPerDay: number;
   alertPassingRowsPerDay: number;
   alertFailingRowsPerDay: number;
   failingStoragePercent: number;
@@ -252,6 +256,7 @@ export function intakeLimits(env: HostedEnv): IntakeLimits {
     maxRawBytes: Math.min(positive(env.INTAKE_MAX_RAW_BYTES, saas ? DEFAULT_MAX_RAW_BYTES : SELFHOST_MAX_RAW_BYTES), MAX_REPORT_BYTES),
     storageRetriesPerDay: positive(env.INTAKE_MAX_STORAGE_RETRIES_PER_DAY, DEFAULT_MAX_STORAGE_RETRIES_PER_DAY),
     freePassingRowsPerDay: positive(env.INTAKE_FREE_PASSING_ROWS_PER_DAY, DEFAULT_FREE_PASSING_ROWS_PER_DAY),
+    freeReportsPerDay: positive(env.INTAKE_FREE_REPORTS_PER_DAY, DEFAULT_FREE_REPORTS_PER_DAY),
     alertPassingRowsPerDay: positive(env.INTAKE_ALERT_PASSING_ROWS_PER_DAY, DEFAULT_ALERT_PASSING_ROWS_PER_DAY),
     alertFailingRowsPerDay: positive(env.INTAKE_ALERT_FAILING_ROWS_PER_DAY, DEFAULT_ALERT_FAILING_ROWS_PER_DAY),
     failingStoragePercent: Math.min(100, positive(env.INTAKE_FAILING_STORAGE_PERCENT, DEFAULT_FAILING_STORAGE_PERCENT)),

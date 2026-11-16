@@ -168,14 +168,17 @@ export class StripeClient {
   // ── Subscriptions (pay as you go: one subscription per workspace, one item, quantity = billable domains) ──
   /**
    * The workspace's subscription. Quantity may be 0 (Stripe keeps it active with a $0 first invoice); additions and removals later prorate onto the next
-   * invoice, so nothing is charged at the click. `error_if_incomplete`: a card that cannot pay fails here instead of leaving a half-made subscription.
+   * invoice, so nothing is charged at the click. With a quantity above 0 the first invoice is charged now. `allow_incomplete`: a card that cannot pay
+   * leaves the subscription `incomplete` with its invoice and PaymentIntent, so the caller can tell a decline (cancel it) from a payment that waits on the
+   * bank (3-D Secure: show the hosted invoice, wait for `invoice.paid`), the same pattern as buying Fix one domain.
    */
   createSubscription(p: { workspaceId: string; revision: number; customerId: string; priceId: string; quantity: number }) {
     return this.#call('POST', '/v1/subscriptions', {
       customer: p.customerId,
       items: [{ price: p.priceId, quantity: p.quantity }],
       collection_method: 'charge_automatically',
-      payment_behavior: 'error_if_incomplete',
+      payment_behavior: 'allow_incomplete',
+      expand: ['latest_invoice'],
       proration_behavior: 'create_prorations',
       metadata: { workspace_id: p.workspaceId },
     }, `rsm-sub-${p.workspaceId}-${p.revision}`);
@@ -190,6 +193,10 @@ export class StripeClient {
   /** Cancel now (a deleted workspace): Stripe's default, no refund of the unused period. */
   cancelSubscription(id: string) {
     return this.#call('DELETE', `/v1/subscriptions/${enc(id)}`);
+  }
+  /** The first invoice of a subscription that does not exist yet, as Stripe would make it (read only): what is charged now and the period it covers. */
+  previewNewSubscription(p: { customerId: string; priceId: string; quantity: number }) {
+    return this.#call('POST', '/v1/invoices/create_preview', { customer: p.customerId, subscription_details: { items: [{ price: p.priceId, quantity: p.quantity }] } });
   }
   /** What the next invoice will be if the subscription item changes (read only). */
   previewInvoice(p: { customerId: string; subscriptionId: string; itemId: string; quantity: number }) {

@@ -13,7 +13,7 @@ describe('the free domain and the second one', () => {
     const first = await w.addFree(w.owner, 'one.example.com');
     expect(first.status).toBe(201);
     expect(JSON.stringify(await first.clone().json())).not.toMatch(/\$|price|plan/i);
-    const second = await w.api(w.owner, 'POST', '/api/domains', { domain: 'two.example.org' });
+    const second = await w.tryVerify(w.owner, 'two.example.org');
     expect(second.status).toBe(402);
     expect(await json(second)).toMatchObject({ code: 'plan_required', paid_available: true, domain: 'two.example.org' });
     expect(w.rows ?? true).toBeTruthy();

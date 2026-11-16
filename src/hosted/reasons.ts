@@ -27,6 +27,7 @@ export const REASONS = {
   cap_uncounted_workspace_storage: 'Storage limit for reports from senders this service does not know reached for this account',
   cap_uncounted_instance_storage: 'The service has reached its storage limit for reports from unknown senders',
   cap_free_plan_day: 'Daily report limit of the free plan reached for this domain; try again tomorrow',
+  cap_free_plan_reports: 'Daily report limit of the free plan reached for this domain; try again tomorrow',
   domain_paused: 'Report is for a domain that is paused on the free plan',
   cap_instance_storage: 'The service has reached its report storage limit',
   no_attachment: 'No DMARC report attachment found',
@@ -80,5 +81,5 @@ export class IntakeRefusal extends Error {
 /** The reasons that mean "mail we could have stored but did not", shown to the owner as reports that were not processed. */
 export const OWNER_VISIBLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
   'cap_address_day', 'cap_workspace_day', 'cap_instance_day', 'cap_address_records', 'cap_workspace_storage', 'cap_instance_storage',
-  'cap_free_plan_day', 'domain_paused', 'storage_failed', 'storage_failed_repeatedly', 'over_cap_accepted_dropped', 'too_many_records', 'decompressed_too_large', 'raw_too_large',
+  'cap_free_plan_day', 'cap_free_plan_reports', 'domain_paused', 'storage_failed', 'storage_failed_repeatedly', 'over_cap_accepted_dropped', 'too_many_records', 'decompressed_too_large', 'raw_too_large',
 ]);

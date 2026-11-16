@@ -24,20 +24,44 @@ describe('the confirm\'s numbers come from Stripe', () => {
     const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?domain=one.example.com'));
     expect(res).toMatchObject({ needs_confirm: false, reason: 'free', new_units: 1 });
   });
-  it('a plan that starts with this domain: the next invoice is this period\'s part plus the next, an estimate by construction, dated one interval on', async () => {
+  it('a plan that starts with this domain: the first invoice is charged now, its amount and the day of the next one are Stripe\'s own preview', async () => {
     const w = await planWorld();
     await w.addFree(w.owner, 'one.example.com');
     await w.addCard(w.owner);
     const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?domain=two.example.org'));
-    expect(res).toMatchObject({ needs_confirm: true, plan_starts: true, charge_now: 0, unit_price: { amount: 500, currency: 'usd', interval: 'month' }, next_invoice: { amount_due: 1000, currency: 'usd', source: 'estimate' } });
-    expect(res.next_invoice.date).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(res).toMatchObject({ needs_confirm: true, plan_starts: true, charge_now: 500, can_confirm: true, preview_failed: false, unit_price: { amount: 500, currency: 'usd', interval: 'month' }, then: { amount: 500, currency: 'usd' } });
+    expect(res.then.date).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(res.next_invoice).toBeNull();
     expect(w.sub(w.owner.workspaceId)).toBeNull(); // asking changes nothing
+    const previews = w.fake.calls.filter((c: any) => c.path === '/v1/invoices/create_preview');
+    expect(previews).toHaveLength(1);
+    expect(previews[0].form.subscription_details.items[0]).toMatchObject({ quantity: '1' });
+  });
+  it('when Stripe cannot say what the first invoice is, the confirm cannot be pressed and nothing is guessed', async () => {
+    const w = await planWorld();
+    await w.addFree(w.owner, 'one.example.com');
+    await w.addCard(w.owner);
+    w.fake.failNext(/POST \/v1\/invoices\/create_preview/, { status: 500 });
+    const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?domain=two.example.org'));
+    expect(res).toMatchObject({ preview_failed: true, charge_now: null, can_confirm: false, then: null, next_invoice: null });
+    // and the server will not charge without the amount it was shown
+    const blind = await w.api(w.owner, 'POST', '/api/billing/domains', { domain: 'two.example.org', expected_amount: 500, expected_currency: 'usd' });
+    expect(blind.status).toBe(409);
+    expect((await json(blind)).charge_now).toBe(500);
+    expect(w.sub(w.owner.workspaceId)).toBeNull();
+    expect(w.domainsOf(w.owner.workspaceId)).toEqual(['one.example.com']);
+  });
+  it('the explicit start of an ordinary workspace is free of charge and says so', async () => {
+    const w = await planWorld();
+    await w.addCard(w.owner);
+    const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?start=1'));
+    expect(res).toMatchObject({ needs_confirm: true, plan_starts: true, no_charge: true, charge_now: 0, reason: 'start' });
   });
   it('with a subscription: Stripe\'s invoice preview states the amount and the date, and changes nothing', async () => {
     const { w } = await ready();
     const calls = w.fake.calls.length;
     const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?domain=three.example.net'));
-    expect(res).toMatchObject({ needs_confirm: true, plan_starts: false, charge_now: 0, next_invoice: { source: 'stripe', currency: 'usd' } });
+    expect(res).toMatchObject({ needs_confirm: true, plan_starts: false, charge_now: 0, then: null, next_invoice: { currency: 'usd' } });
     expect(res.next_invoice.amount_due).toBeGreaterThanOrEqual(500 * 2); // the next domain's part of this period plus its next period, plus the first domain's next period
     expect(res.next_invoice.date).toBeGreaterThan(0);
     expect(itemQty(w)).toEqual([1]);
@@ -120,7 +144,9 @@ describe('payment failure and recovery', () => {
     expect((await w.api(w.owner, 'GET', `/api/workspaces/${ws}/export`)).status).toBe(200);
     // adding is a plan question again; the card is replaced, then the plan starts again and resumes what was paused
     await w.addCard(w.owner);
-    const start = await w.api(w.owner, 'POST', '/api/billing/plan/start', {});
+    const prev = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?start=1'));
+    expect(prev).toMatchObject({ plan_starts: true, charge_now: 1000, then: { amount: 1000 } }); // two paused domains come back: the first invoice is charged now, Stripe's number
+    const start = await w.api(w.owner, 'POST', '/api/billing/plan/start', { expected_charge: prev.charge_now });
     expect(start.status).toBe(201);
     expect(rows(w.db, 'SELECT COUNT(*) AS n FROM domains WHERE paused_at IS NOT NULL')[0].n).toBe(0);
     expect(w.ws(ws).plan).toBe('payg');
@@ -239,7 +265,7 @@ describe('the daily job', () => {
     const off = { ...(w.env as any), HOSTED_PLAN: 'off' };
     const item = [...w.fake.state.subscriptionItems.values()][0] as any;
     item.quantity = 9;
-    const writes = w.fake.calls.filter((c: any) => c.method !== 'GET').length;
+    const writes = w.fake.calls.filter((c: any) => c.method !== 'GET' && !/create_preview/.test(c.path)).length;
     await runBillingJob(off, undefined, {});
     expect(w.fake.calls.filter((c: any) => c.method !== 'GET' && !/create_preview/.test(c.path)).length).toBe(writes);
     expect(itemQty(w)).toEqual([9]);
@@ -286,7 +312,7 @@ describe('the grandfather choice', () => {
     const p = await view(w);
     expect(p).toMatchObject({ grandfathered: true, units: 3, billable: 2, name: 'free' });
     expect(rows(w.db, 'SELECT COUNT(*) AS n FROM domains WHERE paused_at IS NOT NULL')[0].n).toBe(0);
-    const add = await w.api(w.owner, 'POST', '/api/domains', { domain: 'd.example.io' });
+    const add = await w.tryVerify(w.owner, 'd.example.io');
     expect(add.status).toBe(402);
     expect((await json(add)).grandfather).toEqual({ units: 3, billable_now: 2, billable_after: 3 });
   });
@@ -356,13 +382,13 @@ describe('rapid changes cannot over- or under-bill', () => {
     const keys = w.fake.calls.filter((c: any) => /subscription_items/.test(c.path) && c.method === 'POST').map((c: any) => c.headers.idempotencyKey);
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys.every((k: string) => new RegExp(`^rsm-qty-${ws}-si_[a-z0-9_]+-\\d+-\\d+$`).test(k))).toBe(true);
-    expect(rows(w.db, 'SELECT plan_revision AS r FROM workspaces WHERE id = ?', ws)[0].r).toBeGreaterThanOrEqual(3);
+    expect(rows(w.db, 'SELECT plan_revision AS r FROM workspaces WHERE id = ?', ws)[0].r).toBeGreaterThanOrEqual(2);
   });
-  it('a retry with the same lease revision repeats the same Stripe call (idempotent), never a second change', async () => {
+  it('every quantity write names its target: the key is the same for the same change and different for another', async () => {
     const { w } = await ready();
-    const first = w.fake.calls.filter((c: any) => c.method === 'POST' && /subscription_items/.test(c.path)).length;
-    const key = w.fake.calls.filter((c: any) => c.method === 'POST' && /subscription_items/.test(c.path)).pop()?.headers.idempotencyKey;
-    expect(first).toBeGreaterThanOrEqual(1);
-    expect(key).toBeTruthy();
+    await w.addPaid(w.owner, 'three.example.net');
+    const keys = w.fake.calls.filter((c: any) => c.method === 'POST' && /subscription_items/.test(c.path)).map((c: any) => c.headers.idempotencyKey as string);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/-2-\d+$/); // target quantity 2
   });
 });

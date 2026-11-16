@@ -168,7 +168,12 @@ export async function handleConnectionRoutes(
     }
 
     // GET /api/cloudflare/suggestions — zones of the connected accounts that are not domains of the workspace yet
-    if (path === '/api/cloudflare/suggestions' && method === 'GET') return json({ suggestions: await suggestedZones(tenant) });
+    // `dismissed`: under the hosted plan the zones that did not fit the free domain are shown once ("Also in your Cloudflare account"); an owner or admin can dismiss the list.
+    if (path === '/api/cloudflare/suggestions' && method === 'GET') return json({ suggestions: await suggestedZones(tenant), dismissed: !!(await tenant.scope.settings.get('cf_other_zones_dismissed'))?.value });
+    if (path === '/api/cloudflare/suggestions/dismiss' && method === 'POST') {
+      await tenant.scope.settings.set('cf_other_zones_dismissed', '1');
+      return json({ ok: true });
+    }
 
     // ── Connections ─────────────────────────────────────────
     if (path === '/api/cloudflare/connections' && method === 'GET') {

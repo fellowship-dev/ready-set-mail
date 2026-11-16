@@ -351,6 +351,7 @@ CREATE TABLE `domains` (
 	`dmarc_rua` integer,
 	`org_domain` text,
 	`paused_at` integer,
+	`payment_pending_at` integer,
 	FOREIGN KEY (`parent_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`cf_connection_id`) REFERENCES `cloudflare_connections`(`id`) ON UPDATE no action ON DELETE set null
 );

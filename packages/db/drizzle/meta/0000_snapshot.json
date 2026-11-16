@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ed382403-388c-4fa5-9f94-c8e03423a3b2",
+  "id": "194051bb-888d-4e80-ac49-b0a569aac523",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "access_credentials": {
@@ -2446,6 +2446,13 @@
         },
         "paused_at": {
           "name": "paused_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "payment_pending_at": {
+          "name": "payment_pending_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

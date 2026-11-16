@@ -6,7 +6,7 @@
  * `planLookups(db)` is the deliberately cross-workspace part (a person's allowance and owned workspaces, a subscription named by Stripe, the daily
  * sweep, workspace intents); each such read is marked `workspace-scope-exempt`.
  */
-import { and, asc, eq, isNull, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, isNotNull, lt, sql } from 'drizzle-orm';
 import { unwrapDriverError, type Db, type DbLike, getDb } from '../client';
 import { domains, memberships, users, workspaceIntents, workspaceSubscriptions, workspaces } from '../schema';
 import { changesOf } from './plan-limit';
@@ -34,7 +34,7 @@ export function planQueries(db: Db, workspaceId: string) {
 		}).from(workspaces).where(mine).get().then((r) => r ?? null),
 
 		/** Live domain rows with what the plan needs to know about them. */
-		rows: () => db.select({ id: domains.id, domain: domains.domain, org_domain: domains.org_domain, paused_at: domains.paused_at, created_at: domains.created_at })
+		rows: () => db.select({ id: domains.id, domain: domains.domain, org_domain: domains.org_domain, paused_at: domains.paused_at, created_at: domains.created_at, payment_pending_at: domains.payment_pending_at })
 			.from(domains).where(myDomains).orderBy(asc(domains.id)).all(),
 
 		/** Fill `org_domain` of rows that have none (SQL cannot compute the Public Suffix List). Returns how many rows were filled. */
@@ -81,6 +81,11 @@ export function planQueries(db: Db, workspaceId: string) {
 		/** Pause every live domain except the unit `keepOrg` (null: all). Returns the rows paused. */
 		pauseExcept: (keepOrg: string | null, nowSeconds: number) =>
 			db.update(domains).set({ paused_at: nowSeconds }).where(and(myDomains, isNull(domains.paused_at), keepOrg === null ? undefined : sql`COALESCE(${domains.org_domain}, ${domains.domain}) <> ${keepOrg}`)).run().then(changesOf),
+		/** Domains added while their first payment waits for the owner's bank (3-D Secure): marked, then cleared when Stripe says paid. */
+		markPending: (ids: number[], nowSeconds: number) => ids.length === 0 ? Promise.resolve(0) : db.update(domains).set({ payment_pending_at: nowSeconds }).where(and(myDomains, inArray(domains.id, ids))).run().then(changesOf),
+		clearPending: () => db.update(domains).set({ payment_pending_at: null }).where(and(myDomains, isNotNull(domains.payment_pending_at))).run().then(changesOf),
+		pendingRows: () => db.select({ id: domains.id, domain: domains.domain }).from(domains).where(and(myDomains, isNotNull(domains.payment_pending_at))).orderBy(asc(domains.id)).all(),
+
 		/** Resume the rows of one unit (the one an owner keeps free). */
 		unpauseUnit: (org: string) => db.update(domains).set({ paused_at: null }).where(and(myDomains, isNotNull(domains.paused_at), sql`COALESCE(${domains.org_domain}, ${domains.domain}) = ${org}`)).run().then(changesOf),
 		unpauseAll: () => db.update(domains).set({ paused_at: null }).where(and(myDomains, isNotNull(domains.paused_at))).run().then(changesOf),

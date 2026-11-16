@@ -7,7 +7,7 @@ import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
 import { isClaimProof, recordFirstDnsCheck } from './first-check';
 import { planLimitBody, planLimits } from '../hosted/plan-limits';
-import { SUBDOMAIN_CAP_MESSAGE, insertRoom, loadPlanState, planEnforced, planRequiredBody, unitOf, type PlanGrant } from '../hosted/plan';
+import { SUBDOMAIN_CAP_MESSAGE, insertRoom, loadPlanState, paidPathAvailable, planEnforced, planRequiredBody, unitOf, type PlanGrant } from '../hosted/plan';
 import type { DomainRoom } from '@ready-set-mail/db';
 import { INVALID_DOMAIN_MESSAGE, normalizeDomainName, specialUseMessage, type DomainNameResult } from '@ready-set-mail/dns-checks';
 
@@ -72,12 +72,15 @@ export async function roomForInsert(tenant: TenantContext, domain: string, grant
 }
 
 /** Early, non-atomic: is there room for this domain? Throws the refusal when not. Never run for a domain the workspace already has. */
-export async function assertDomainRoom(tenant: TenantContext, domain: string, grant?: PlanGrant): Promise<void> {
+export async function assertDomainRoom(tenant: TenantContext, domain: string, grant?: PlanGrant, opts: { forClaim?: boolean } = {}): Promise<void> {
   if (!planEnforced(tenant.env)) {
     const max = domainCap(tenant);
     if (max !== undefined && (await tenant.scope.domains.list()).length >= max) throw planLimitError(tenant, max);
     return;
   }
+  // A claim costs nothing and is not a domain: where the owner CAN add a paid domain (a person in a browser, billing on) it is made first, and the paid confirm
+  // comes when the proof holds and the row would be written (the moment the money would move). Anyone else is told now, before they publish a record.
+  if (opts.forClaim && paidPathAvailable(tenant.env) && isSession(tenant)) return;
   const state = await loadPlanState(tenant.env, tenant.db, tenant.workspaceId);
   const room = insertRoom(tenant.env, state, domain, grant);
   const org = unitOf(domain);
@@ -142,7 +145,7 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
   await assertAgentEnrollmentSafe(tenant, domain);
   const existing = await tenant.scope.domains.getByName(domain);
   if (existing) await assertExistingProductMapping(tenant, existing, options);
-  if (!existing) await assertDomainRoom(tenant, domain, options.grant); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
+  if (!existing) await assertDomainRoom(tenant, domain, options.grant, { forClaim: true }); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
   const admission = await admitDomain(tenant, domain);
   if (admission.kind === 'taken') throw new DomainServiceError('domain already registered in another workspace', 409);
   if (admission.kind === 'limit') throw new DomainServiceError('too many unverified domains — verify or remove some first', 429);

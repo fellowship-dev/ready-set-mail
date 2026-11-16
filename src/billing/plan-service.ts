@@ -17,7 +17,7 @@ import { verifyClaim } from '../domains/ownership';
 import { planHelpUrl } from '../hosted/plan-limits';
 import {
   PlanBusyError, billableAfter, loadPlanState, paidPathAvailable, planEnforced, subscriptionState, unitOf, withPlanLock,
-  type PlanLock,
+  type PlanLock, type PlanState,
 } from '../hosted/plan';
 import { planEvent } from '../product-analytics/steps';
 import type { TenantContext } from '../tenancy/context';
@@ -30,6 +30,7 @@ import { StripeError, StripeNetworkError, type StripeObject } from './stripe-cli
 export const PAYMENT_FAILED_TEXT = 'Your card was declined. Use another card.';
 export const ACTION_REQUIRED_TEXT = 'Your bank needs you to confirm the payment.';
 export const PAYMENT_PROBLEM_TEXT = 'Your last payment did not go through. Update your card to add more domains.';
+export const PENDING_TEXT = "Waiting for your bank's confirmation.";
 export const NOT_ADDED_TEXT = 'We could not update your plan; the domain was not added. Try again.';
 
 type Ctx = ExecutionContext | undefined;
@@ -110,47 +111,57 @@ function rowFrom(f: SubFacts, interval: PlanInterval, price: string, sent: numbe
   };
 }
 
+export interface StartOutcome { row: SubscriptionRow; state: 'active' | 'pending'; action_url: string | null }
+
 /**
- * The workspace's subscription, created if there is none (or it lapsed): at quantity 0 (Stripe keeps it active with a $0 first invoice), then the quantity
- * is brought to what the workspace owes NOW, and only then are paused domains resumed. A failure leaves the workspace as it was.
+ * The workspace's subscription, created if there is none (or it lapsed), at the quantity the workspace owes NOW (0 for most workspaces: Stripe keeps it
+ * active with a $0 first invoice). With a quantity above 0 the first invoice is charged at once (`allow_incomplete`, the pattern of buying Fix one domain):
+ *   paid                  active: the plan starts, paused domains resume
+ *   declined              the incomplete subscription is cancelled and the caller rolls its domains back (402 payment_failed)
+ *   waiting on the bank   the row is stored `incomplete` with the hosted invoice link; the plan starts when `invoice.paid` arrives (or is abandoned if the
+ *                         payment never completes): the caller marks the domains it added as pending
  */
-export async function ensureSubscription(d: BillingDeps, lock: PlanLock, ws: Ws, interval: PlanInterval, via: 'add_domain' | 'settings' | 'new_workspace'): Promise<SubscriptionRow> {
+export async function startSubscription(d: BillingDeps, lock: PlanLock, ws: Ws, interval: PlanInterval, via: 'add_domain' | 'settings' | 'new_workspace'): Promise<StartOutcome> {
   const q = forWorkspace(d.db, ws.id).plan;
   const existing = await q.subscription.get();
-  if (existing && subscriptionState(existing) !== 'lapsed') return existing;
+  const existingState = subscriptionState(existing);
+  if (existing && existingState !== 'lapsed') return { row: existing, state: existingState === 'pending' ? 'pending' : 'active', action_url: existing.action_url };
   const customerId = lock.state.customerId;
   if (!customerId) throw new BillingError(409, 'card_required', 'Add a card first.');
+  const quantity = (await lock.refresh()).billable;
   const price = await planPrice(d, interval, true);
   const revision = await lock.revision();
   let sub: StripeObject;
   try {
-    sub = await d.stripe.createSubscription({ workspaceId: ws.id, revision, customerId, priceId: price.price_id, quantity: 0 });
+    sub = await d.stripe.createSubscription({ workspaceId: ws.id, revision, customerId, priceId: price.price_id, quantity });
   } catch (e) {
     throw paymentFailure(e) ?? (e instanceof BillingError ? e : notUpdated(e));
   }
   const f = subFacts(sub);
-  if (f.customerId !== customerId || f.workspaceId !== ws.id || f.priceId !== price.price_id || !f.itemId || f.quantity !== 0) {
+  if (f.customerId !== customerId || f.workspaceId !== ws.id || f.priceId !== price.price_id || !f.itemId || f.quantity !== quantity) {
     console.error('[billing] a subscription came back that is not what was asked for; it is cancelled');
     await d.stripe.cancelSubscription(f.id).catch(() => undefined);
     throw new BillingError(502, 'plan_update_failed', NOT_ADDED_TEXT);
   }
-  if (existing) await q.subscription.remove();
-  await q.subscription.insert(rowFrom(f, interval, price.price_id, 0, d.now()));
-  await q.setPlan('payg');
-  const owed = (await lock.refresh()).billable;
-  if (owed > 0) {
-    try { await pushQuantity(d, lock, owed); } catch (e) {
-      // Not paid for, so not resumed: the plan goes back to what it was.
-      await d.stripe.cancelSubscription(f.id).catch(() => undefined);
-      await q.subscription.remove();
-      await q.setPlan('free');
-      throw notUpdated(e);
-    }
+  if (f.status === 'active' || f.status === 'trialing') {
+    await q.subscription.insert(rowFrom(f, interval, price.price_id, quantity, d.now()));
+    await q.setPlan('payg');
+    await q.unpauseAll();
+    await q.clearPending();
+    planEvent(d.env, d.ctx, ws.id, 'Plan Started', { interval, via });
+    logAudit({ db: d.db, workspaceId: ws.id }, { actor_id: null, actor_type: 'system', action: 'billing.plan_started', resource_type: 'billing', resource_id: f.id, after_value: { interval, quantity } }, d.ctx);
+    return { row: (await q.subscription.get())!, state: 'active', action_url: null };
   }
-  await q.unpauseAll();
-  planEvent(d.env, d.ctx, ws.id, 'Plan Started', { interval, via });
-  logAudit({ db: d.db, workspaceId: ws.id }, { actor_id: null, actor_type: 'system', action: 'billing.plan_started', resource_type: 'billing', resource_id: f.id, after_value: { interval } }, d.ctx);
-  return (await q.subscription.get())!;
+  // The first payment did not go through at once: a decline, or a payment that waits for the bank.
+  const invoiceId = idOf(sub.latest_invoice);
+  const inv = invoiceId ? await d.stripe.retrieveInvoice(invoiceId).catch(() => null) : null;
+  if (f.status === 'incomplete' && inv && waitingOnBank(inv)) {
+    const url = typeof inv.hosted_invoice_url === 'string' && /^https:\/\//.test(inv.hosted_invoice_url) ? inv.hosted_invoice_url : null;
+    await q.subscription.insert({ ...rowFrom(f, interval, price.price_id, quantity, d.now()), action_url: url });
+    return { row: (await q.subscription.get())!, state: 'pending', action_url: url };
+  }
+  await d.stripe.cancelSubscription(f.id).catch(() => undefined);
+  throw new BillingError(402, 'payment_failed', PAYMENT_FAILED_TEXT, { action: 'update_card' });
 }
 
 /** Set the item's quantity to `target` (only under the lease). No-op when Stripe already has it. */
@@ -166,8 +177,10 @@ async function pushQuantity(d: BillingDeps, lock: PlanLock, target: number): Pro
 
 // ── Adding paid domains ─────────────────────────────────────
 
-export interface PaidAddInput { domains: string[]; expectedAmount: number; expectedCurrency: string; interval?: PlanInterval; via: 'single' | 'cloudflare' }
-export interface PaidAddResult { added: { domain: string; domain_id: number }[]; pending: { domain: string; claim_id: number | null; reason?: string }[]; resumed: string[]; failed: { domain: string; error: string; code: string | null }[]; billable: number }
+export interface PaidAddInput { domains: string[]; expectedAmount: number; expectedCurrency: string; /** What the confirm said is charged NOW (cents): required when the add starts the plan, so no charge is a surprise. */ expectedCharge?: number | null; interval?: PlanInterval; via: 'single' | 'cloudflare' }
+export interface PaidAddResult { added: { domain: string; domain_id: number }[]; pending: { domain: string; claim_id: number | null; reason?: string }[]; resumed: string[]; failed: { domain: string; error: string; code: string | null }[]; billable: number;
+  /** The first payment of a new subscription waits for the owner's bank: the domains added are pending until Stripe says paid. */
+  payment: { state: 'requires_action'; action_url: string | null } | null }
 
 /**
  * The owner's confirmed paid add (a browser session of the workspace owner, checked by the route). Re-checks everything the confirm showed, then under
@@ -191,13 +204,23 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
       const st = lock.state;
       if (st.exempt) throw new BillingError(409, 'not_needed', 'This workspace is not on a plan.');
       if (st.subscriptionState === 'payment_problem') throw new BillingError(409, 'payment_problem', PAYMENT_PROBLEM_TEXT, { action: 'update_card' });
+      if (st.subscriptionState === 'pending') throw new BillingError(409, 'payment_pending', PENDING_TEXT, { action: 'confirm_payment', action_url: st.subscription?.action_url ?? null });
       const have = new Set(st.rows.map((r) => r.org));
       const fresh = new Set(names.map(unitOf).filter((u) => !have.has(u)));
       // Covered by the free allowance (the first domain of a workspace that holds it, a subdomain): not a paid add, nothing is sent to Stripe.
       const paid = billableAfter(st, fresh.size) > st.billable;
       const grant = paid ? lock.grant(fresh.size) : undefined;
       if (paid && !grant) throw new BillingError(403, 'plan_limit', 'This workspace has reached its limit of domains.', { help_url: planHelpUrl(d.env) });
-      const result: PaidAddResult = { added: [], pending: [], resumed: [], failed: [], billable: 0 };
+      // No subscription yet: this add creates it and the first invoice is charged now. The amount is Stripe's own (a preview of that very subscription), and it
+      // must be the one the confirm showed: never a charge the person did not see.
+      if (paid && (st.subscriptionState === 'none' || st.subscriptionState === 'lapsed')) {
+        const first = await newSubscriptionPreview(d, st, billableAfter(st, fresh.size), interval);
+        if (!first) throw new BillingError(503, 'preview_unavailable', 'We could not read what this costs just now. Try again in a minute.');
+        if (input.expectedCharge === undefined || input.expectedCharge === null || input.expectedCharge !== first.charge_now) {
+          throw new BillingError(409, 'price_changed', 'The price changed. Review it and confirm again.', { amount: price.amount, currency: price.currency, interval, charge_now: first.charge_now });
+        }
+      }
+      const result: PaidAddResult = { added: [], pending: [], resumed: [], failed: [], billable: 0, payment: null };
       const addedRows: { id: number; domain: string }[] = [];
       for (const domain of names) {
         try {
@@ -225,9 +248,12 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
       if (!paid || (addedRows.length === 0 && after.subscription && after.subscription.quantity_sent === after.billable)) return result;
       try {
         if (addedRows.length > 0 || after.subscription) {
-          // The first paid domain starts the plan (a subscription at 0, then the quantity), a later one only raises the quantity.
-          await ensureSubscription(d, lock, ws, interval, 'add_domain');
-          await pushQuantity(d, lock, (await lock.refresh()).billable);
+          // The first paid domain creates the subscription at the quantity owed (charged now); with one, the quantity is raised and Stripe prorates onto the next invoice.
+          const started = await startSubscription(d, lock, ws, interval, 'add_domain');
+          if (started.state === 'pending') {
+            await forWorkspace(d.db, ws.id).plan.markPending(addedRows.map((r) => r.id), d.now());
+            result.payment = { state: 'requires_action', action_url: started.action_url };
+          } else await pushQuantity(d, lock, (await lock.refresh()).billable);
         }
       } catch (e) {
         for (const row of addedRows) {
@@ -237,7 +263,7 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
         await forWorkspace(d.db, ws.id).plan.subscription.markDirty();
         throw notUpdated(e);
       }
-      if (addedRows.length) {
+      if (addedRows.length && !result.payment) {
         logAudit({ db: d.db, workspaceId: ws.id }, { actor_id: actor.userId, actor_email: actor.email, actor_type: 'user', action: 'billing.domain_added_paid', resource_type: 'billing', resource_id: ws.id, after_value: { domains: addedRows.map((r) => r.domain), billable: after.billable } }, d.ctx);
         planEvent(d.env, d.ctx, ws.id, 'Paid Domain Added', { via: input.via, added: String(addedRows.length) === '1' ? '1' : addedRows.length <= 5 ? '2-5' : '6-20' });
       }
@@ -284,8 +310,12 @@ export const syncQuantity = async (d: BillingDeps, workspaceId: string): Promise
 
 // ── Starting, keeping one ───────────────────────────────────
 
-/** "Start pay as you go" from Settings: the card is on file, the subscription is created at what the workspace owes now (0 for most). */
-export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { interval?: PlanInterval; expectedAmount?: number; expectedCurrency?: string }): Promise<{ plan: 'payg' }> {
+/**
+ * "Start pay as you go" from Settings. A workspace that owes nothing now (most) gets its subscription at quantity 0: no charge until a domain beyond the
+ * free one is added. A workspace that already holds more than its free domain (grandfathered, or lapsed with paused domains) owes its units now: the
+ * first invoice is charged at once, the confirm states Stripe's exact amount and the request must echo it (`expectedCharge`).
+ */
+export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { interval?: PlanInterval; expectedAmount?: number; expectedCurrency?: string; expectedCharge?: number | null }): Promise<{ plan: 'payg'; payment: { state: 'requires_action'; action_url: string | null } | null }> {
   need(d);
   await rateLimit(d, 'plan', ws.id, actor.userId);
   const interval = input.interval ?? 'month';
@@ -296,16 +326,27 @@ export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { i
   const view = await readCard(d, ws, actor.email);
   if (!view.customer || !view.card) throw new BillingError(409, 'card_required', 'Add a card first.');
   try {
-    await withPlanLock(d.env, d.db, ws.id, d.now, async (lock) => {
-      if (lock.state.exempt) throw new BillingError(409, 'not_needed', 'This workspace is not on a plan.');
-      if (lock.state.subscriptionState === 'payment_problem') throw new BillingError(409, 'payment_problem', PAYMENT_PROBLEM_TEXT, { action: 'update_card' });
-      await ensureSubscription(d, lock, ws, interval, 'settings');
+    return await withPlanLock(d.env, d.db, ws.id, d.now, async (lock) => {
+      const st = lock.state;
+      if (st.exempt) throw new BillingError(409, 'not_needed', 'This workspace is not on a plan.');
+      if (st.subscriptionState === 'payment_problem') throw new BillingError(409, 'payment_problem', PAYMENT_PROBLEM_TEXT, { action: 'update_card' });
+      if (st.subscriptionState === 'pending') throw new BillingError(409, 'payment_pending', PENDING_TEXT, { action: 'confirm_payment', action_url: st.subscription?.action_url ?? null });
+      if (st.subscriptionState === 'active') return { plan: 'payg' as const, payment: null };
+      if (st.billable > 0) {
+        const first = await newSubscriptionPreview(d, st, st.billable, interval);
+        if (!first) throw new BillingError(503, 'preview_unavailable', 'We could not read what this costs just now. Try again in a minute.');
+        if (input.expectedCharge === undefined || input.expectedCharge === null || input.expectedCharge !== first.charge_now) {
+          throw new BillingError(409, 'price_changed', 'The price changed. Review it and confirm again.', { amount: price.amount, currency: price.currency, interval, charge_now: first.charge_now });
+        }
+      }
+      const started = await startSubscription(d, lock, ws, interval, 'settings');
+      if (started.state === 'pending') return { plan: 'payg' as const, payment: { state: 'requires_action' as const, action_url: started.action_url } };
+      return { plan: 'payg' as const, payment: null };
     });
   } catch (e) {
     if (e instanceof PlanBusyError) throw busy();
     throw e;
   }
-  return { plan: 'payg' };
 }
 
 /** Grandfather choice (and the owner's pick after a lapse): keep ONE unit free; every other unit is paused (readable, exportable, new reports not processed). */
@@ -363,9 +404,45 @@ export async function lapseWorkspace(d: BillingDeps, workspaceId: string, why: '
   }
 }
 
+/** The bank confirmed the first payment: the plan starts (under the lease), paused domains resume, the pending ones are ordinary domains. */
+async function activatePending(d: BillingDeps, workspaceId: string, interval: PlanInterval): Promise<boolean> {
+  const q = forWorkspace(d.db, workspaceId).plan;
+  return withPlanLock(d.env, d.db, workspaceId, d.now, async () => {
+    const pending = await q.pendingRows();
+    await q.subscription.patch({ action_url: null, last_failed_at: null });
+    await q.setPlan('payg');
+    await q.unpauseAll();
+    await q.clearPending();
+    planEvent(d.env, d.ctx, workspaceId, 'Plan Started', { interval, via: 'add_domain' });
+    if (pending.length) {
+      planEvent(d.env, d.ctx, workspaceId, 'Paid Domain Added', { via: 'single', added: pending.length === 1 ? '1' : pending.length <= 5 ? '2-5' : '6-20' });
+      logAudit({ db: d.db, workspaceId }, { actor_id: null, actor_type: 'system', action: 'billing.domain_added_paid', resource_type: 'billing', resource_id: workspaceId, after_value: { domains: pending.map((r) => r.domain) } }, d.ctx);
+    }
+    return true;
+  }).catch((e) => { if (e instanceof PlanBusyError) throw new Error('plan busy: the event is retried'); throw e; });
+}
+
+/** The first payment never completed (the bank did not confirm in time): the pending domains are removed again, the plan was never started, the owner is told once. */
+async function abandonPending(d: BillingDeps, workspaceId: string): Promise<void> {
+  const q = forWorkspace(d.db, workspaceId).plan;
+  await withPlanLock(d.env, d.db, workspaceId, d.now, async () => {
+    for (const r of await q.pendingRows()) {
+      await q.rollbackDomain(r.id, r.domain);
+      logAudit({ db: d.db, workspaceId }, { actor_id: null, actor_type: 'system', action: 'domain.add_rolled_back', resource_type: 'domain', resource_id: String(r.id), resource_name: r.domain }, d.ctx);
+    }
+    await q.subscription.remove();
+    await q.setPlan('free');
+    await forWorkspace(d.db, workspaceId).settings.set(PLAN_NOTICE_KEY, 'payment_not_completed');
+    planEvent(d.env, d.ctx, workspaceId, 'Subscription Failed', { reason: 'payment_failed' });
+  }).catch((e) => { if (e instanceof PlanBusyError) throw new Error('plan busy: the event is retried'); throw e; });
+}
+
+/** The one-time notice kept for the owner (read once by GET /api/billing). */
+export const PLAN_NOTICE_KEY = 'plan_notice';
+
 // ── Stripe says something happened to a subscription (webhook, return, daily job) ──
 
-export type SubResult = 'applied' | 'lapsed' | 'resumed' | 'recorded' | 'foreign' | 'stale' | 'unknown_workspace' | 'gone';
+export type SubResult = 'applied' | 'lapsed' | 'resumed' | 'abandoned' | 'recorded' | 'foreign' | 'stale' | 'unknown_workspace' | 'gone';
 
 /**
  * Re-read the subscription from Stripe and store what it says, if it is ours: its customer is the workspace's, its metadata names the workspace and its
@@ -392,11 +469,18 @@ export async function applySubscription(d: BillingDeps, subscriptionId: string, 
   }
   const state = await loadPlanState(d.env, d.db, workspaceId);
   const owed = state.billable;
+  const wasPending = row.status === 'incomplete';
   await q.subscription.patch({
     status: f.status, quantity_seen: f.quantity, current_period_end: f.periodEnd, cancel_at_period_end: f.cancelAtPeriodEnd ? 1 : 0, canceled_at: f.canceledAt, synced_at: d.now(),
     ...(f.quantity !== null && f.quantity !== owed ? { dirty: 1 } : {}),
     ...(f.status === 'active' || f.status === 'trialing' ? { action_url: null, last_failed_at: null } : {}),
   });
+  if (wasPending) {
+    // A new subscription whose first payment waited for the bank: paid → the plan starts and its domains stop being pending; never paid → they go again.
+    if ((f.status === 'active' || f.status === 'trialing') && planEnforced(d.env)) return (await activatePending(d, workspaceId, row.interval)) ? 'applied' : 'recorded';
+    if ((f.status === 'incomplete_expired' || f.status === 'canceled' || f.status === 'unpaid') && planEnforced(d.env)) { await abandonPending(d, workspaceId); return 'abandoned'; }
+    return planEnforced(d.env) ? 'applied' : 'recorded';
+  }
   if (f.status === 'canceled' || f.status === 'unpaid' || f.status === 'incomplete_expired') return (await lapseWorkspace(d, workspaceId, f.status === 'canceled' ? 'canceled' : 'lapsed')) === 'lapsed' ? 'lapsed' : 'recorded';
   if ((f.status === 'active' || f.status === 'trialing') && row.lapsed_at && planEnforced(d.env)) {
     // The same subscription is paid again after Stripe had given up (unpaid): the plan resumes.
@@ -498,6 +582,11 @@ export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean }
     paid_available: paidPathAvailable(d.env), help_url: planHelpUrl(d.env),
     units: st.units, billable: st.billable, paused_units: st.pausedUnits, grandfathered: st.grandfathered, domains,
     status: sub?.status ?? null, payment_problem: state === 'payment_problem', lapsed: state === 'lapsed',
+    // A first payment that waits for the owner's bank: the domains added with it are pending until Stripe says paid (the dashboard polls).
+    pending: state === 'pending' ? { domains: st.rows.filter((r) => r.pending).map((r) => r.domain), action_url: who.isOwner ? sub?.action_url ?? null : null } : null,
+    // After a lapse a workspace without the free domain has every domain paused: one sentence, one action (the dashboard's words).
+    paused_domains: st.rows.filter((r) => r.paused).length,
+    resume_by_starting: state === 'lapsed' || (st.plan === 'free' && st.rows.some((r) => r.paused) && !st.holdsAllowance),
     cancel_at_period_end: !!sub?.cancel_at_period_end, period_end: sub?.current_period_end ?? null, interval: sub ? interval : null,
     ...(who.isOwner ? {
       price, quantity: sub?.quantity_sent ?? null, monthly_amount: price && st.plan === 'payg' && interval === 'month' ? price.amount * st.billable : null,
@@ -511,52 +600,69 @@ export interface PaidAddPreview {
   domains: string[];
   new_units: number;
   unit_price: MoneyView | null;
-  /** Stripe takes nothing at the click (prorations land on the next invoice); only a plan that starts with a quantity above 0 differs, and none does. */
-  charge_now: number;
-  next_invoice: { amount_due: number; currency: string; date: number | null; source: 'stripe' | 'estimate' } | null;
+  /**
+   * What is charged NOW, in cents, from Stripe's preview of the invoice (0: nothing at the click: with a subscription Stripe prorates onto the next
+   * invoice). Null when Stripe could not be asked: then `can_confirm` is false if the add would charge now, and the plain monthly price is all that is said.
+   */
+  charge_now: number | null;
+  /** With a subscription: the next invoice, amount and date from Stripe's preview (null when it could not be read). */
+  next_invoice: { amount_due: number; currency: string; date: number | null } | null;
+  /** Without one: the monthly amount after this add (the unit price times the quantity: exact) and the day the next period's invoice falls, from the preview's line period. */
+  then: { amount: number; currency: string; date: number | null } | null;
+  /** This add creates the subscription (and its first invoice is charged now); the explicit start at quantity 0 charges nothing. */
   plan_starts: boolean;
+  no_charge: boolean;
+  preview_failed: boolean;
+  can_confirm: boolean;
   grandfather: { units: number; billable_now: number; billable_after: number } | null;
-  reason: 'free' | 'paid' | 'plan_busy' | 'payment_problem' | 'no_paid_path' | 'limit';
+  reason: 'free' | 'paid' | 'start' | 'active' | 'payment_pending' | 'payment_problem' | 'no_paid_path';
 }
 
-/** What a paid add of these domains would be, for the confirm step: the amount and the date of the next invoice, from Stripe's invoice preview when a subscription exists. */
+/** Stripe's own numbers for a subscription that does not exist yet: the first invoice (charged now) and the date its period ends. Null when Stripe cannot say. */
+async function newSubscriptionPreview(d: BillingDeps, st: PlanState, quantity: number, interval: PlanInterval): Promise<{ charge_now: number; currency: string; period_end: number | null; monthly: number } | null> {
+  if (!st.customerId) return null;
+  try {
+    const price = await planPrice(d, interval);
+    const inv = await d.stripe.previewNewSubscription({ customerId: st.customerId, priceId: price.price_id, quantity });
+    const line = (inv.lines as { data?: Array<{ period?: { end?: unknown } }> } | undefined)?.data?.[0];
+    const end = line?.period?.end;
+    return { charge_now: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? price.currency), period_end: typeof end === 'number' ? end : null, monthly: price.amount * quantity };
+  } catch { return null; }
+}
+
+/**
+ * What a paid add of these domains would be, for the confirm step. Every amount is Stripe's: with a subscription its preview of the next invoice; without
+ * one its preview of the first invoice (charged now). Nothing is computed here but the unit price times a quantity. No domains: the explicit "Start pay as you go".
+ */
 export async function previewPaidAdd(d: BillingDeps, ws: Ws, domains: string[], interval: PlanInterval = 'month'): Promise<PaidAddPreview> {
   const names = [...new Set(domains.map((x) => requireDomainName(x)))];
   const st = await loadPlanState(d.env, d.db, ws.id);
   const have = new Set(st.rows.map((r) => r.org));
   const fresh = new Set(names.map(unitOf).filter((u) => !have.has(u)));
-  const base = { domains: names, new_units: fresh.size, charge_now: 0, grandfather: st.grandfathered ? { units: st.units, billable_now: st.billable, billable_after: billableAfter(st, fresh.size) } : null };
-  if (!paidPathAvailable(d.env) || st.exempt) return { ...base, needs_confirm: false, unit_price: null, next_invoice: null, plan_starts: false, reason: 'no_paid_path' };
+  const target = billableAfter(st, fresh.size);
+  const base = { domains: names, new_units: fresh.size, grandfather: st.grandfathered ? { units: st.units, billable_now: st.billable, billable_after: target } : null, no_charge: false, preview_failed: false, then: null, next_invoice: null, plan_starts: false, charge_now: 0 as number | null, can_confirm: true };
+  const none = (reason: PaidAddPreview['reason'], unit_price: MoneyView | null = null): PaidAddPreview => ({ ...base, needs_confirm: false, unit_price, can_confirm: false, reason });
+  if (!paidPathAvailable(d.env) || st.exempt) return none('no_paid_path');
   const price = await planPrice(d, interval);
   const unit_price = { amount: price.amount, currency: price.currency, interval };
-  const needsPaid = billableAfter(st, fresh.size) > st.billable;
-  if (!needsPaid) return { ...base, needs_confirm: false, unit_price, next_invoice: null, plan_starts: false, reason: 'free' };
-  if (st.subscriptionState === 'payment_problem') return { ...base, needs_confirm: false, unit_price, next_invoice: null, plan_starts: false, reason: 'payment_problem' };
-  const target = billableAfter(st, fresh.size);
+  if (st.subscriptionState === 'payment_problem') return none('payment_problem', unit_price);
+  if (st.subscriptionState === 'pending') return none('payment_pending', unit_price);
+  const starting = names.length === 0;
+  if (starting && st.subscriptionState === 'active') return none('active', unit_price);
+  if (!starting && target <= st.billable) return { ...base, needs_confirm: false, unit_price, can_confirm: false, reason: 'free' };
   const sub = st.subscription;
   if (sub && st.subscriptionState === 'active' && st.customerId) {
     try {
       const inv = await d.stripe.previewInvoice({ customerId: st.customerId, subscriptionId: sub.stripe_subscription_id, itemId: sub.stripe_item_id, quantity: target });
-      const date = (inv.next_payment_attempt ?? inv.period_end) as unknown;
-      return { ...base, needs_confirm: true, unit_price, plan_starts: false, reason: 'paid', next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? price.currency), date: typeof date === 'number' ? date : sub.current_period_end, source: 'stripe' } };
-    } catch { /* below: no preview is better than a wrong one */ }
-    return { ...base, needs_confirm: true, unit_price, plan_starts: false, reason: 'paid', next_invoice: null };
+      const date = (inv.next_payment_attempt ?? inv.period_end) as unknown; // GUESS: the preview's date of the next charge
+      return { ...base, needs_confirm: true, unit_price, reason: 'paid', next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? price.currency), date: typeof date === 'number' ? date : sub.current_period_end } };
+    } catch { return { ...base, needs_confirm: true, unit_price, reason: 'paid', preview_failed: true }; }
   }
-  // The plan starts with this domain: the subscription is made at quantity 0 and raised at once, so the first invoice (one interval from now) carries this
-  // period's part (all of it, to the cent) and the next period: twice the quantity. An estimate by construction; the interval is the date.
-  const start = d.now();
-  const end = interval === 'year' ? addMonths(start, 12) : addMonths(start, 1);
-  return { ...base, needs_confirm: true, unit_price, plan_starts: true, reason: 'paid', next_invoice: { amount_due: price.amount * target * 2, currency: price.currency, date: end, source: 'estimate' } };
-}
-
-/** The same calendar day `n` months on (UTC), clamped to the month's last day (Stripe's rule for month intervals). */
-export function addMonths(unixSeconds: number, n: number): number {
-  const t = new Date(unixSeconds * 1000);
-  const day = t.getUTCDate();
-  const target = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + n, 1, t.getUTCHours(), t.getUTCMinutes(), t.getUTCSeconds()));
-  const last = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
-  target.setUTCDate(Math.min(day, last));
-  return Math.floor(target.getTime() / 1000);
+  // No subscription (or a lapsed one): this creates it, and a quantity above 0 is charged now.
+  if (target === 0) return { ...base, needs_confirm: true, unit_price, plan_starts: true, no_charge: true, reason: starting ? 'start' : 'paid' };
+  const first = await newSubscriptionPreview(d, st, target, interval);
+  if (!first) return { ...base, needs_confirm: true, unit_price, plan_starts: true, charge_now: null, preview_failed: true, can_confirm: false, reason: starting ? 'start' : 'paid' };
+  return { ...base, needs_confirm: true, unit_price, plan_starts: true, charge_now: first.charge_now, then: { amount: first.monthly, currency: first.currency, date: first.period_end }, reason: starting ? 'start' : 'paid' };
 }
 
 // ── The daily job ───────────────────────────────────────────

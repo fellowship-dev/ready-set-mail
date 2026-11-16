@@ -234,7 +234,7 @@ export async function handleDmarcReport(
       // A registry reporter over a cap: accepted, not stored, counted for the owner, never a 5xx (see ReportOptions.dropOverCap).
       if ((opts.dropOverCap || carrier.class === 'registry') && dec.v?.tier === 'counted' && err.code.startsWith('cap_') && found.domain) {
         const at = opts.now ?? Math.floor(Date.now() / 1000);
-        await tenant.scope.intake.markFailure(found.domain.id, today(), err.code === 'cap_free_plan_day' ? err.code : 'over_cap_accepted_dropped', at).catch(() => 0);
+        await tenant.scope.intake.markFailure(found.domain.id, today(), err.code === 'cap_free_plan_day' || err.code === 'cap_free_plan_reports' ? err.code : 'over_cap_accepted_dropped', at).catch(() => 0);
         // The COUNTED storage budget is full: say so loudly, once per reporter, with the time of the first drop (src/reports/visibility.ts, the setup check).
         if (STORAGE_CAPS.has(err.code)) await tenant.scope.intake.markDrop(found.domain.id, dec.v.identity, dec.v.knownAs ?? dec.v.identity, at).catch(() => undefined);
         return result('accepted', 'over_cap_accepted_dropped', trace());
