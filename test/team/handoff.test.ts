@@ -5,7 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, enterCode, flushBackground, lastCodeFor, makeEnv, pendingCookieOf, signupVerified, inviteAndAccept } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { handoffEmail } from '../../src/auth/mail';
-import { MAX_OPEN_HANDOFFS } from '../../src/team/handoff';
+import { MAX_OPEN_HANDOFFS, mayEmailHandoff } from '../../src/team/handoff';
 import { dohFetch } from '../../packages/dns-checks/test/helpers';
 
 vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
@@ -242,15 +242,18 @@ describe('the hand-off as a carrier (review item 16)', () => {
   }
   const to = (w: W, key: string, email: string, domain: string) => call(w.env, 'POST', '/api/team/invite', { key, body: { email, role: 'admin', handoff_domain: domain } });
 
-  it('the reviewer\'s probe: an unproven claim on someone else\'s domain cannot reach an address outside the sender\'s own email domain', async () => {
+  it('the reviewer\'s probe: an unproven claim on someone else\'s domain cannot make us email an address outside the sender\'s own email domain', async () => {
     const w = world();
     const key = await stranger(w, 'paypal.com');
     const r = await to(w, key, 'anyone@victim.example', 'paypal.com');
-    expect(r.status).toBe(403);
-    expect((await json(r)).code).toBe('handoff_needs_proven_domain');
+    // no refusal and no email: the invite and the hand-off row exist, and the sender gets the link to send themselves
+    expect(r.status).toBe(201);
+    const body = await json(r);
+    expect(body.emailed).toBe(false);
+    expect(body.url).toContain(`/#/invite/${body.token}`);
     expect(sentTo(w, 'anyone@victim.example')).toHaveLength(0);
-    expect(w.rows('SELECT 1 FROM invites')).toHaveLength(0);
-    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'invite-handoff:%'")).toHaveLength(0);
+    expect(w.rows('SELECT email, role FROM invites')).toEqual([{ email: 'anyone@victim.example', role: 'admin' }]);
+    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'invite-handoff:%'")).toHaveLength(1);
   });
 
   it('to the sender\'s own email domain it is allowed, and the email says nothing the sender typed except a capped "they call themselves"', async () => {
@@ -283,7 +286,10 @@ describe('the hand-off as a carrier (review item 16)', () => {
     const w = world();
     const key = await owner(w);
     w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, proof_lost_at) SELECT workspace_id, 'harbor-lane.org', '', 'legacy', 1 FROM domain_claims LIMIT 1").run();
-    expect((await to(w, key, 'sam@other.example', 'harbor-lane.org')).status).toBe(403);
+    const r = await to(w, key, 'sam@other.example', 'harbor-lane.org');
+    expect(r.status).toBe(201);
+    expect((await json(r)).emailed).toBe(false);
+    expect(sentTo(w, 'sam@other.example')).toHaveLength(0);
   });
 
   it('the daily cap is per ACCOUNT as well as per workspace: a second workspace is not a second allowance', async () => {
@@ -302,5 +308,63 @@ describe('the hand-off as a carrier (review item 16)', () => {
       for (const inv of (await json(await call(w.env, 'GET', '/api/team/invites', { key, headers: ws }))).invites ?? []) await call(w.env, 'DELETE', `/api/team/invites/${inv.id}`, { key, headers: ws });
     }
     expect(sent).toBe(10);
+  });
+});
+
+describe('who we email a hand-off to (mayEmailHandoff, the one rule)', () => {
+  const may = (senderEmail: string, recipientEmail: string, workspaceProven = false) => mayEmailHandoff({ senderEmail, recipientEmail, workspaceProven });
+  it('emails a teammate at the sender\'s own, non-free-mail domain', () => {
+    expect(may('dana@brightwave-mail.com', 'sam@Brightwave-Mail.com')).toBe(true);
+  });
+  it('does not email another company until the workspace has a proven domain', () => {
+    expect(may('dana@brightwave-mail.com', 'dev@pixelforge.dev')).toBe(false);
+    expect(may('dana@brightwave-mail.com', 'dev@pixelforge.dev', true)).toBe(true);
+  });
+  it('never counts a free-mail domain as one organisation: gmail to gmail is a link only', () => {
+    for (const d of ['gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'proton.me']) expect(may(`a@${d}`, `b@${d}`)).toBe(false);
+    expect(may('a@gmail.com', 'b@gmail.com', true)).toBe(true);
+  });
+  it('is false for an address without a domain', () => {
+    expect(may('', '')).toBe(false);
+  });
+});
+
+describe('the hand-off answer: link only, or emailed', () => {
+  it('another company\'s developer, brand-new account: 201, a link, no email, and the hand-off row and caps still apply', async () => {
+    const w = world();
+    const key = await owner(w);
+    const r = await handoff(w, key, { email: 'dev@pixelforge.dev' });
+    expect(r.status).toBe(201);
+    const b = await json(r);
+    expect(b.emailed).toBe(false);
+    expect(b.url).toContain(`/#/invite/${b.token}`);
+    expect(sentTo(w, 'dev@pixelforge.dev')).toHaveLength(0);
+    const list = await json(await call(w.env, 'GET', '/api/team/handoffs', { key }));
+    expect(list.handoffs.map((h: any) => h.email)).toEqual(['dev@pixelforge.dev']);
+  });
+  it('gmail to gmail: a link only, no email', async () => {
+    const w = world();
+    const key = await signupVerified(w.env, 'promo.offer@gmail.com');
+    expect((await call(w.env, 'POST', '/api/domains', { key, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
+    const r = await call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'victim.person@gmail.com', role: 'admin', handoff_domain: 'brightwave-mail.com' } });
+    expect(r.status).toBe(201);
+    expect((await json(r)).emailed).toBe(false);
+    expect(sentTo(w, 'victim.person@gmail.com')).toHaveLength(0);
+  });
+  it('same company domain: emailed; a proven domain in the workspace: emailed to another company', async () => {
+    const w = world();
+    const key = await owner(w);
+    expect((await json(await handoff(w, key))).emailed).toBe(true);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) SELECT workspace_id, 'harbor-lane.org', '', 'txt' FROM domain_claims LIMIT 1").run();
+    const r = await handoff(w, key, { email: 'dev@pixelforge.dev', handoff_domain: 'harbor-lane.org' });
+    expect((await json(r)).emailed).toBe(true);
+    expect(sentTo(w, 'dev@pixelforge.dev')).toHaveLength(1);
+  });
+  it('the link-only invite is accepted like any other (it is the same invite)', async () => {
+    const w = world();
+    const key = await owner(w);
+    const b = await json(await handoff(w, key, { email: 'dev@pixelforge.dev' }));
+    const info = await json(await call(w.env, 'GET', `/api/invites/${b.token}`, {}));
+    expect(info.handoff).toBeTruthy();
   });
 });

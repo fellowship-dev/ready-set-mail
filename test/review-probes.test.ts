@@ -92,7 +92,8 @@ describe('probe: the hand-off email as a carrier', () => {
     const r = await call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'anyone@victim.example', role: 'admin', handoff_domain: 'paypal.com' } });
     const sent = w.send.mock.calls.map((c) => c[0] as any).filter((m) => m.to.includes('anyone@victim.example'));
     console.info('PROBE claim:', claimStatus, 'handoff:', r.status, 'subject:', sent[0]?.subject);
-    expect(r.status).toBe(403); // refused: an address outside the sender's own email domain, no proven domain in the workspace (item 16)
+    expect(r.status).toBe(201); // not refused, but not emailed either: another company's address, no proven domain: the sender gets a link
+    expect((await json(r)).emailed).toBe(false);
     expect(sent).toHaveLength(0);
   });
   it('how many hand-off emails one account can send in a day across workspaces', async () => {
@@ -110,14 +111,14 @@ describe('probe: the hand-off email as a carrier', () => {
       }
       for (let i = 0; i < 12; i++) {
         const r = await call(w.env, 'POST', '/api/team/invite', { key: k, body: { email: `p${ws}-${i}@victim.example`, role: 'admin', handoff_domain: ws ? `d${ws}.example` : 'brightwave-mail.com' }, headers: wsId ? { 'x-workspace-id': wsId } : {} });
-        if (r.status === 201) sent++;
+        if (r.status === 201 && (await json(r)).emailed) sent++;
         // revoke so the open cap of 5 does not bind; only the daily cap should
         const list = await json(await call(w.env, 'GET', '/api/team/invites', { key: k, headers: wsId ? { 'x-workspace-id': wsId } : {} }));
         for (const inv of list.invites ?? []) await call(w.env, 'DELETE', `/api/team/invites/${inv.id}`, { key: k, headers: wsId ? { 'x-workspace-id': wsId } : {} });
       }
     }
     console.info('PROBE hand-off emails sent by one account:', sent);
-    expect(sent).toBe(0); // victim.example is outside the sender's email domain and nothing is proven: refused every time (the per-account cap itself is tested in team/handoff.test.ts)
+    expect(sent).toBe(0); // victim.example is outside the sender's email domain and nothing is proven: a link only, never an email (the per-account cap itself is tested in team/handoff.test.ts)
   });
 });
 

@@ -2,7 +2,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HAND_OFF_ENABLED, rememberFocusDomain } from '../src/lib/first-run';
 import { workspaceStore } from '../src/lib/workspace';
 import { InvitePage } from '../src/pages/auth/InvitePage';
@@ -112,7 +112,7 @@ describe('H1: the hand-off page', () => {
 		expect(await screen.findByText(/They join/)).toHaveTextContent('They join Brightwave Studio as an admin and pick up where you are: brightwave-mail.com. You keep full access as the owner.');
 		expect(screen.getByLabelText('Their work email')).toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: 'Send invitation' })).toHaveLength(1);
-		expect(screen.getByText('They get a fixed-wording email from Ready Set Mail naming you, with a link that works for 7 days. An admin can add domains, connect Cloudflare and apply changes; only you, the owner, can add other admins, manage API keys and agents, or hand over ownership.')).toBeInTheDocument();
+		expect(screen.getByText("We email them a fixed invitation when they're at your company's domain; otherwise you get a link to send. The link works for 7 days. An admin can add domains, connect Cloudflare and apply changes; only you, the owner, can add other admins, manage API keys and agents, or hand over ownership.")).toBeInTheDocument();
 		expect(document.querySelectorAll('textarea')).toHaveLength(0); // no free text: nobody can put their own words in a message from us
 	});
 
@@ -125,6 +125,26 @@ describe('H1: the hand-off page', () => {
 		expect(screen.getByText(/sam@brightwave-mail\.com/)).toBeInTheDocument();
 		expect(calls.find((c) => c.path === '/api/team/invite')?.body).toEqual({ email: 'sam@brightwave-mail.com', role: 'admin', handoff_domain: 'brightwave-mail.com' });
 		await user.click(screen.getByRole('button', { name: 'Go to the dashboard' }));
+		expect(where()).toBe('/');
+	});
+
+	it('link only: the same screen shows the link, "Copy link" is the one primary, and one plain line says they send it themselves', async () => {
+		const url = 'https://app.example/#/invite/abc';
+		open({ routes: { 'POST /api/team/invite': { __status: 201, body: { token: 'abc', url, emailed: false } } } });
+		const user = userEvent.setup();
+		const writeText = vi.spyOn(navigator.clipboard, 'writeText');
+		await user.type(await screen.findByLabelText('Their work email'), 'dev@pixelforge.dev');
+		await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+		expect(await screen.findByRole('heading', { name: 'Send dev@pixelforge.dev this link' })).toBeInTheDocument();
+		expect(screen.getByText(/Send it to them yourself\./)).toHaveTextContent('Send it to them yourself. It works once, for 7 days, and lets them join Brightwave Studio as an admin to finish brightwave-mail.com.');
+		expect(screen.getByLabelText('Invitation link')).toHaveValue(url);
+		expect(screen.getByLabelText('Invitation link')).toHaveAttribute('readonly');
+		expect(screen.queryByRole('alert')).toBeNull(); // not an error
+		expect(screen.getAllByRole('button')).toHaveLength(1); // Copy link is the only button; the way out is a link
+		await user.click(screen.getByRole('button', { name: 'Copy link' }));
+		expect(writeText).toHaveBeenCalledWith(url);
+		expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+		await user.click(screen.getByRole('link', { name: 'Go to the dashboard' }));
 		expect(where()).toBe('/');
 	});
 
@@ -332,6 +352,15 @@ describe('H2: the inviter\'s dashboard', () => {
 		await userEvent.setup().click(within(await card()).getByRole('button', { name: 'Resend invitation' }));
 		expect(await screen.findByText('Sent again to sam@brightwave-mail.com. The previous link no longer works.')).toBeInTheDocument();
 		expect(calls.some((c) => c.method === 'POST' && c.path === '/api/team/handoffs/abc123/resend')).toBe(true);
+	});
+
+	it('a link-only hand-off says so, and "Get a new link" shows the new link', async () => {
+		dash({ handoffs: [handoff({ emailed: false })], routes: { 'POST /api/team/handoffs/abc123/resend': { __status: 201, body: { token: 't2', url: 'https://app.example/#/invite/t2', emailed: false } } } });
+		const c = await card();
+		expect(within(c).getAllByRole('listitem')[0]).toHaveTextContent('Done: Link made for sam@brightwave-mail.com');
+		await userEvent.setup().click(within(c).getByRole('button', { name: 'Get a new link' }));
+		expect(await screen.findByText('Here is a new link. The previous link no longer works.')).toBeInTheDocument();
+		expect(screen.getByLabelText('Invitation link')).toHaveValue('https://app.example/#/invite/t2');
 	});
 
 	it('joined, the record not proven yet: who joined and what they are waiting for; no Resend', async () => {

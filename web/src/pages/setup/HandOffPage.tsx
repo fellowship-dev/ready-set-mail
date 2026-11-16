@@ -26,6 +26,9 @@ export function HandOffPage() {
 	const [email, setEmail] = useState('');
 	const [invalid, setInvalid] = useState('');
 	const [sentTo, setSentTo] = useState<string | null>(null);
+	/** The invitation link, when we did not email it (the answer is `emailed: false`): the owner sends it themselves. */
+	const [link, setLink] = useState<string | null>(null);
+	const [copied, setCopied] = useState(false);
 
 	const asked = params.get('domain');
 	const names = [...(domains.data ?? []).map((d) => d.domain), ...(claims.data ?? []).filter((c) => c.status === 'pending').map((c) => c.domain)];
@@ -33,9 +36,10 @@ export function HandOffPage() {
 	const workspace = cleanName(workspaces.data?.find((w) => w.id === me?.workspace_id)?.name) || 'this workspace';
 
 	const send = useMutation({
-		mutationFn: () => api('/api/team/invite', { method: 'POST', body: { email: email.trim(), role: 'admin', handoff_domain: domain } }),
-		onSuccess: () => {
+		mutationFn: () => api<{ url?: string; emailed?: boolean }>('/api/team/invite', { method: 'POST', body: { email: email.trim(), role: 'admin', handoff_domain: domain } }),
+		onSuccess: (r) => {
 			setSentTo(email.trim());
+			setLink(r.emailed === false && r.url ? r.url : null);
 			void qc.invalidateQueries({ queryKey: handoffKeys.list });
 		},
 	});
@@ -53,6 +57,35 @@ export function HandOffPage() {
 	}
 	const error = invalid || (send.isError ? errorMessage(send.error) : '');
 	const already = send.error instanceof ApiError && send.error.status === 409 ? `${email.trim()} is already a member of this workspace.` : '';
+
+	if (sentTo && link) {
+		const copy = async () => {
+			try {
+				await navigator.clipboard.writeText(link);
+				setCopied(true);
+			} catch {
+				setCopied(false); // the field is selectable: copy by hand
+			}
+		};
+		return (
+			<div className="mx-auto max-w-xl space-y-5" data-testid="handoff-link">
+				<h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">Send {sentTo} this link</h1>
+				<p className="max-w-prose text-sm text-ink-1">
+					Send it to them yourself. It works once, for 7 days, and lets them join <span className="font-medium">{workspace}</span> as an admin to finish{' '}
+					<span className="font-mono [overflow-wrap:anywhere]">{domain}</span>.
+				</p>
+				<Input readOnly aria-label="Invitation link" value={link} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
+				<Button className="w-full sm:w-auto" onClick={copy}>
+					{copied ? 'Copied' : 'Copy link'}
+				</Button>
+				<p className="text-sm">
+					<Link to="/" replace className="text-ink-2 underline underline-offset-4 hover:text-ink-1">
+						Go to the dashboard
+					</Link>
+				</p>
+			</div>
+		);
+	}
 
 	if (sentTo) {
 		return (
@@ -98,7 +131,7 @@ export function HandOffPage() {
 				</Button>
 			</form>
 			<FieldHint className="max-w-prose">
-				They get a fixed-wording email from Ready Set Mail naming you, with a link that works for 7 days. An admin can add domains, connect Cloudflare and apply changes; only you, the owner, can add other admins, manage API keys and agents, or hand over ownership.
+				We email them a fixed invitation when they're at your company's domain; otherwise you get a link to send. The link works for 7 days. An admin can add domains, connect Cloudflare and apply changes; only you, the owner, can add other admins, manage API keys and agents, or hand over ownership.
 			</FieldHint>
 			<p className="text-sm">
 				<Link to="/" className="text-ink-2 underline underline-offset-4 hover:text-ink-1">

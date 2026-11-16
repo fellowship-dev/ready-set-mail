@@ -111,7 +111,7 @@ import { IMPLICIT_WORKSPACE_ID, authLookups, globalQueries, workspaceLifecycle, 
 import { currentUser, passesCsrfCheck } from '../auth/session';
 import { keyedHash } from '../mail/tokens';
 import { getMode } from '../tenancy/mode';
-import { MAX_HANDOFFS_PER_ACCOUNT_PER_DAY, MAX_HANDOFFS_PER_DAY, MAX_OPEN_HANDOFFS, deleteHandoff, handoffsOf, saveHandoff } from '../team/handoff';
+import { MAX_HANDOFFS_PER_ACCOUNT_PER_DAY, MAX_HANDOFFS_PER_DAY, MAX_OPEN_HANDOFFS, deleteHandoff, handoffsOf, mayEmailHandoff, saveHandoff } from '../team/handoff';
 import { sendHandoffEmail } from '../auth/mail';
 import { baseUrl } from '../auth/config';
 import { d1RateLimitStorage } from '../auth/rate-limit';
@@ -265,7 +265,7 @@ async function inviteId(token: string): Promise<string> {
 }
 
 /**
- * Hand setup to a teammate (spec H1): the ordinary admin invite plus the hand-off row, then the fixed invitation email. The caller has
+ * Hand setup to a teammate (spec H1): the ordinary admin invite plus the hand-off row, then the fixed invitation email when mayEmailHandoff allows it (else the link is returned, `emailed: false`). The caller has
  * already checked who may invite an admin. Hosted only (the invitee has no account to be told by anything else), the domain must be this
  * workspace's own (a domain or a claim waiting for proof), and the number open and sent per day is bounded. A refused send leaves nothing behind
  * and is never answered as sent.
@@ -283,19 +283,12 @@ async function sendHandoff(
     const inv = await tenant.scope.team.getInvite(h.token);
     if (inv && !inv.used_at && inv.expires_at > Math.floor(Date.now() / 1000)) open++;
   }
-  // Who may be written to. The email carries the sender's verified address and, only for a domain this workspace has PROVEN, its name. Until
-  // some domain here is proven, an address outside the sender's own email domain is refused: nothing in the workspace shows yet that its owner
-  // controls anything, and the email is a message from us to a stranger. (A sender on a free-mail domain can still reach that domain's other
-  // addresses; what arrives names no domain and no free text, only their verified address.)
+  // Whether WE email the invitation is the hand-off module's one rule (mayEmailHandoff); otherwise the sender gets the link to send themselves.
   // "Proven" is the ownership module's rule (isDomainProven), not a second copy of it.
   const held = await tenant.scope.domains.list();
   const provenNames = new Set<string>();
   for (const d of held) if (await isDomainProven(tenant, d)) provenNames.add(d.domain);
-  const workspaceProven = provenNames.size > 0;
-  const sameOrg = email.split('@')[1] === actor.email.toLowerCase().split('@')[1];
-  if (!workspaceProven && !sameOrg) {
-    return Response.json({ error: "You can hand setup to someone at your own email domain now. To hand it to anyone else, verify a domain in this workspace first.", code: 'handoff_needs_proven_domain' }, { status: 403 });
-  }
+  const emailIt = mayEmailHandoff({ senderEmail: actor.email, recipientEmail: email, workspaceProven: provenNames.size > 0 });
   const namedDomain = provenNames.has(domain) ? domain : null;
   if (open >= MAX_OPEN_HANDOFFS) return Response.json({ error: `${MAX_OPEN_HANDOFFS} hand-offs are already waiting. Revoke one or wait for it to be accepted.`, code: 'handoff_limit' }, { status: 429 });
   if (!(await d1RateLimitStorage(env.DB).consume(`handoff:${tenant.workspaceId}`, { window: 86400, max: MAX_HANDOFFS_PER_DAY })).allowed) return Response.json({ error: 'Too many invitations today. Try again tomorrow.', code: 'handoff_limit' }, { status: 429 });
@@ -305,10 +298,10 @@ async function sendHandoff(
   const token = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   await tenant.scope.team.insertInvite({ token, email, role: 'admin', invited_by: actor.email, expires_at: now + 7 * 24 * 3600 });
-  await saveHandoff(env, { token, workspaceId: tenant.workspaceId, domain, inviterName: actor.name, inviterEmail: actor.email, email, sentAt: now });
+  await saveHandoff(env, { token, workspaceId: tenant.workspaceId, domain, inviterName: actor.name, inviterEmail: actor.email, email, sentAt: now, emailed: emailIt });
   const workspaceName = namedDomain ? ((await workspaceLifecycle(env.DB).get(tenant.workspaceId))?.name ?? '') : '';
   const url = `${baseUrl(env, new URL(request.url).origin)}/#/invite/${token}`;
-  if (!(await sendHandoffEmail(env, email, { inviterName: actor.name, inviterEmail: actor.email, workspaceName, domain: namedDomain, url }))) {
+  if (emailIt && !(await sendHandoffEmail(env, email, { inviterName: actor.name, inviterEmail: actor.email, workspaceName, domain: namedDomain, url }))) {
     await tenant.scope.team.revokeInvite(token);
     await deleteHandoff(env, token);
     return Response.json({ error: "We couldn't send the invitation just now. Try again in a minute.", code: 'handoff_not_sent' }, { status: 503 });
@@ -319,7 +312,7 @@ async function sendHandoff(
     action: 'auth.invite_sent', resource_type: 'user', resource_name: email,
     after_value: { email, role: 'admin', invited_by: actor.email, handoff_domain: domain },
   }, ctx);
-  return json({ token, emailed: true }, 201);
+  return json({ token, url, emailed: emailIt }, 201);
 }
 
 /** The same request, minus X-Workspace-Id (for routes about the user's workspaces rather than one of them). */
@@ -1849,7 +1842,7 @@ async function _handleApi(
       const list = await handoffsOf(env, tenant.workspaceId);
       const out = await Promise.all(list.map(async (h) => {
         const inv = await tenant.scope.team.getInvite(h.token);
-        return { id: await inviteId(h.token), email: h.email, domain: h.domain, sent_at: h.sentAt, expires_at: inv?.expires_at ?? h.sentAt + 7 * 86400, joined_at: inv?.used_at ?? null, revoked: !inv };
+        return { id: await inviteId(h.token), email: h.email, domain: h.domain, sent_at: h.sentAt, expires_at: inv?.expires_at ?? h.sentAt + 7 * 86400, joined_at: inv?.used_at ?? null, emailed: h.emailed, revoked: !inv };
       }));
       return json({ handoffs: out.filter((h) => !h.revoked) });
     }

@@ -12,6 +12,8 @@ export interface HandoffStatus {
 	expires_at: number;
 	/** When the teammate joined; null until then. */
 	joined_at: number | null;
+	/** False when we did not email it: the inviter was given the link to send. */
+	emailed: boolean;
 }
 
 export const handoffKeys = { list: ['team-handoffs'] as const };

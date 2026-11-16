@@ -1,4 +1,4 @@
-import { Button, cn } from '@ready-set-mail/ui';
+import { Button, Input, cn } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Circle, Clock } from 'lucide-react';
 import { useId, useState } from 'react';
@@ -42,10 +42,12 @@ export function HandoffCard({ handoff: h, state, canResend }: { handoff: Handoff
 	const id = useId();
 	const qc = useQueryClient();
 	const [note, setNote] = useState('');
+	const [newLink, setNewLink] = useState('');
 	const resend = useMutation({
-		mutationFn: () => api(`/api/team/handoffs/${h.id}/resend`, { method: 'POST', body: {} }),
-		onSuccess: () => {
-			setNote(`Sent again to ${h.email}. The previous link no longer works.`);
+		mutationFn: () => api<{ url?: string; emailed?: boolean }>(`/api/team/handoffs/${h.id}/resend`, { method: 'POST', body: {} }),
+		onSuccess: (r) => {
+			setNewLink(r.emailed === false && r.url ? r.url : '');
+			setNote(r.emailed === false ? 'Here is a new link. The previous link no longer works.' : `Sent again to ${h.email}. The previous link no longer works.`);
 			void qc.invalidateQueries({ queryKey: handoffKeys.list });
 		},
 		onError: (e) => setNote(errorMessage(e)),
@@ -62,16 +64,17 @@ export function HandoffCard({ handoff: h, state, canResend }: { handoff: Handoff
 				They were invited as an admin to finish <span className="font-mono">{h.domain}</span>. You keep full access as the owner.
 			</p>
 			<ul className="space-y-2" aria-label="Where things stand">
-				<Row mark="done" title={`Invitation sent to ${h.email}`} detail={timeAgo(h.sent_at)} />
+				<Row mark="done" title={h.emailed !== false ? `Invitation sent to ${h.email}` : `Link made for ${h.email}`} detail={timeAgo(h.sent_at)} />
 				{h.joined_at ? <Row mark="done" title={`${h.email} joined`} detail={timeAgo(h.joined_at)} /> : <Row mark="next" title={expired ? `Not yet; the link expired on ${date}` : `Not yet; the link works until ${date}`} />}
 				<Row {...connect} />
 				<Row mark="later" title="First reports" />
 			</ul>
 			{note ? <p role="status" className="text-sm text-ink-2">{note}</p> : null}
+			{newLink ? <Input readOnly aria-label="Invitation link" value={newLink} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" /> : null}
 			<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
 				{!h.joined_at && canResend ? (
 					<Button variant="secondary" size="sm" loading={resend.isPending} onClick={() => resend.mutate()}>
-						Resend invitation
+						{h.emailed !== false ? 'Resend invitation' : 'Get a new link'}
 					</Button>
 				) : null}
 				<Link to={setupPathFor(h.domain)} className="text-sm text-ink-2 underline underline-offset-4 hover:text-ink-1">
