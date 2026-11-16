@@ -6,6 +6,7 @@
 // edits those records rather than asking the customer to change anything.)
 
 import { createResolver, flattenFromSource, type Resolver } from '@ready-set-mail/dns-checks';
+import { spfStateJson } from '../spf/refresh';
 import { globalQueries, type PointerStatus } from '@ready-set-mail/db';
 import type { TenantContext } from '../tenancy/context';
 import { CfError, CfNotConfiguredError, cfErrorText } from '../tenancy/cf-client';
@@ -160,7 +161,7 @@ export async function enableHosted(
   const policy = POLICIES.includes(domain.dmarc_policy ?? '') ? domain.dmarc_policy as 'none' | 'quarantine' | 'reject' : 'none';
   const now = Math.floor((deps.now?.() ?? Date.now()) / 1000);
 
-  await tenant.scope.hosted.insert({ domain_id: domain.id, hosted_id: hostedId, zone_key: slot.key, spf_source: source });
+  await tenant.scope.hosted.insert({ domain_id: domain.id, hosted_id: hostedId, zone_key: slot.key, spf_source: source, spf_state: spfStateJson(flat.flat.providers, null) });
   await tenant.scope.intake.set(domain.id, await hashToken(token), now);
 
   const created: Array<{ id: string; name: string }> = [];

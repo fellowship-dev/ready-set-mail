@@ -302,11 +302,11 @@ export function hostedQueries(db: Db, workspaceId: string) {
 			return db.select({ n: count() }).from(hostedDomains).where(mine).get().then((r) => r?.n ?? 0);
 		},
 
-		insert(h: { domain_id: number; hosted_id: string; zone_key: string; spf_source?: string | null }) {
+		insert(h: { domain_id: number; hosted_id: string; zone_key: string; spf_source?: string | null; spf_state?: string | null }) {
 			return db.insert(hostedDomains).values({ ...h, workspace_id: workspaceId }).run();
 		},
 
-		setRecords(domainId: number, ids: { dmarc_record_id?: string | null; spf_record_id?: string | null; mta_sts_txt_record_id?: string | null; mta_sts_host_record_id?: string | null; tls_rpt_record_id?: string | null; spf_source?: string | null }) {
+		setRecords(domainId: number, ids: { dmarc_record_id?: string | null; spf_record_id?: string | null; mta_sts_txt_record_id?: string | null; mta_sts_host_record_id?: string | null; tls_rpt_record_id?: string | null; spf_source?: string | null; spf_state?: string | null }) {
 			return db.update(hostedDomains).set(ids).where(forDomain(domainId)).run();
 		},
 
@@ -417,6 +417,9 @@ export function intakeLookups(dbLike: DbLike) {
 				.then((r) => r ?? null),
 
 		/** Every hosted domain, for the daily zone diff (operator-wide, not tenant-facing). */
+		/** The daily hosted refresh stores what it decided about a hosted SPF record (spf_state). */
+		setHostedSpfState: (domainId: number, spfState: string | null) =>
+			db.update(hostedDomains).set({ spf_state: spfState }).where(/* workspace-scope-exempt: operator-wide hosted refresh */ eq(hostedDomains.domain_id, domainId)).run(),
 		allHosted: (): Promise<HostedDomainRow[]> =>
 			db.select().from(hostedDomains).where(/* workspace-scope-exempt: operator-wide zone reconciliation */ sql`1 = 1`).all(),
 	};

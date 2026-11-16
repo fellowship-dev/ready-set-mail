@@ -1,4 +1,4 @@
--- SPF flattening that follows providers (docs/spf-flattening.md). Additive only: fourteen nullable or defaulted columns on spf_flatten_config.
+-- SPF flattening that follows providers (docs/spf-flattening.md). Additive only: fourteen nullable or defaulted columns on spf_flatten_config and one on hosted_domains.
 -- Nothing changes for a row that exists: it keeps its values, and the daily refresh fills the new ones.
 --
 -- revision           version for compare-and-set: +1 on every state change (turn on, refresh that wrote, turn off)
@@ -30,3 +30,5 @@ ALTER TABLE spf_flatten_config ADD COLUMN provider_state TEXT;
 ALTER TABLE spf_flatten_config ADD COLUMN pending_removed TEXT;
 ALTER TABLE spf_flatten_config ADD COLUMN pending_since INTEGER;
 ALTER TABLE spf_flatten_config ADD COLUMN pending_additions INTEGER;
+-- hosted_domains.spf_state: the same state for a hosted record (docs/hosted.md): JSON { provider_state, pending_removed, pending_since, pending_additions }, read and written by the one rule (decideSpfWrite in src/spf/refresh.ts)
+ALTER TABLE hosted_domains ADD COLUMN spf_state TEXT;

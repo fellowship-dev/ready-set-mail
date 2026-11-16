@@ -269,6 +269,50 @@ async function putBack(target: SpfTarget, id: string, content: string): Promise<
   } catch { return false; }
 }
 
+// ── The rule: what may be published (ADR 0024) ──────────────
+
+export interface SpfPlan { record: string; ipCount: number; lookups: number; providers: SpfProviderEntries }
+export type SpfWriteHow = 'none' | 'first' | 'replaced' | 'waiting' | 'confirmed' | 'cleared';
+export interface SpfWriteDecision {
+  /** What to have published, or null: nothing may be written (a removal waits and the held record does not fit). */
+  plan: SpfPlan | null;
+  /** The removal that is waiting after this run, or null. */
+  pending: { removed: SpfProviderEntries; since: number; additions: boolean } | null;
+  how: SpfWriteHow;
+}
+
+/**
+ * A refresh never removes an authorised address on its first sighting (docs/adr/0024). Additions are always safe. A removal waits: the record gets the new
+ * addresses AND the ones that left, and the removal is written only when a later check, at least SPF_PENDING_CONFIRM_SECONDS after the first, sees the same removal.
+ * `state` is what the last run stored (the customer's refresh in spf_flatten_config, a hosted record's in hosted_domains.spf_state); `flat` was made with `previous`.
+ */
+export function decideSpfWrite(state: { pending_removed: string | null; pending_since: number | null }, flat: SpfFlat, at: number): SpfWriteDecision {
+  const removed = flat.removed;
+  const waiting = parseEntries(state.pending_removed);
+  const hadPending = state.pending_since !== null && Object.keys(waiting).length > 0;
+  const full: SpfPlan = { record: flat.record, ipCount: flat.ipCount, lookups: flat.lookupsAfter, providers: flat.providers };
+  if (Object.keys(removed).length === 0) return { plan: full, pending: null, how: hadPending ? 'cleared' : 'none' }; // nothing leaves (or the provider came back)
+  if (hadPending && sameRemoval(waiting, removed) && at >= state.pending_since! + SPF_PENDING_CONFIRM_SECONDS) return { plan: full, pending: null, how: 'confirmed' };
+  const held = flat.held!;
+  const same = hadPending && sameRemoval(waiting, removed);
+  return {
+    plan: held.fits ? { record: held.record, ipCount: held.ipCount, lookups: held.lookups, providers: held.providers } : null,
+    pending: { removed, since: same ? state.pending_since! : at, additions: held.fits },
+    how: same ? 'waiting' : hadPending ? 'replaced' : 'first',
+  };
+}
+
+/** A hosted record keeps the same state in one JSON column (hosted_domains.spf_state), read and written with the same rule. */
+export function parseSpfState(json: string | null | undefined): { provider_state: string | null; pending_removed: string | null; pending_since: number | null } {
+  try {
+    const v = json ? (JSON.parse(json) as { provider_state?: SpfProviderEntries; pending_removed?: SpfProviderEntries | null; pending_since?: number | null }) : {};
+    return { provider_state: v.provider_state ? entriesJson(v.provider_state) : null, pending_removed: v.pending_removed ? entriesJson(v.pending_removed) : null, pending_since: typeof v.pending_since === 'number' ? v.pending_since : null };
+  } catch { return { provider_state: null, pending_removed: null, pending_since: null }; }
+}
+export function spfStateJson(providers: SpfProviderEntries, pending: SpfWriteDecision['pending']): string {
+  return JSON.stringify({ provider_state: providers, pending_removed: pending?.removed ?? null, pending_since: pending?.since ?? null, pending_additions: pending ? (pending.additions ? 1 : 0) : null });
+}
+
 // ── The refresh ─────────────────────────────────────────────
 
 /** `pending`: nothing was written and a removal is waiting for its second look (ADR 0024). A write that kept a removal waiting is `changed`. */
@@ -324,29 +368,9 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
   if (!res.ok) return { ...(await fail(res.problems[0]!.kind, problemSentence({ kind: res.problems[0]!.kind, domain: res.problems[0]!.domain, message: res.problems[0]!.message }))), fetches };
   const flat = res.flat;
 
-  // 3. What may be published (ADR 0024: a refresh never removes an authorised address on its first sighting).
-  //    Additions are always safe. A removal waits: the record gets the new addresses AND the ones that left, and the removal is written only when a later
-  //    check, at least SPF_PENDING_CONFIRM_SECONDS after the first, sees the same removal again.
-  const removed = flat.removed;
+  // 3. What may be published (ADR 0024): the one rule, decideSpfWrite.
+  const { plan, pending, how } = decideSpfWrite(row, flat, at);
   const waiting = parseEntries(row.pending_removed);
-  const hadPending = row.pending_since !== null && Object.keys(waiting).length > 0;
-  const full = { record: flat.record, ipCount: flat.ipCount, lookups: flat.lookupsAfter, providers: flat.providers };
-  let plan: typeof full | null;
-  let pending: { removed: SpfProviderEntries; since: number; additions: boolean } | null = null;
-  let how: 'none' | 'first' | 'replaced' | 'waiting' | 'confirmed' | 'cleared' = 'none';
-  if (Object.keys(removed).length === 0) {
-    plan = full;
-    if (hadPending) how = 'cleared'; // the provider came back
-  } else if (hadPending && sameRemoval(waiting, removed) && at >= row.pending_since! + SPF_PENDING_CONFIRM_SECONDS) {
-    plan = full; // the same removal, seen again long enough after the first time
-    how = 'confirmed';
-  } else {
-    const held = flat.held!;
-    plan = held.fits ? { record: held.record, ipCount: held.ipCount, lookups: held.lookups, providers: held.providers } : null;
-    const same = hadPending && sameRemoval(waiting, removed);
-    how = same ? 'waiting' : hadPending ? 'replaced' : 'first';
-    pending = { removed, since: same ? row.pending_since! : at, additions: held.fits };
-  }
   if (edited && !plan) return { ...(await fail('edited_outside', problemSentence({ kind: 'edited_outside' }))), fetches }; // Replace needs a record that fits
 
   const recovered = row.problem_kind !== null;
@@ -511,9 +535,68 @@ export async function stopSpf(tenant: TenantContext, domain: { id: number; domai
   const row = (await q.get(domain.id))!;
   const at = nowS(deps);
   const message = `${STOP_SENTENCE[why](domain.domain)} The SPF record in Cloudflare is the flattened one. To go back to your original, set the SPF TXT record of ${domain.domain} to: ${row.canonical_record}`;
-  await q.setProblem(domain.id, { kind: 'restore_failed', since: row.problem_kind === 'restore_failed' ? row.problem_since : at, error: message, at });
+  const kind = why === 'proof_lost' ? 'proof_lost' : 'connection_gone';
+  await q.setProblem(domain.id, { kind, since: row.problem_kind === kind ? row.problem_since : at, error: message, at });
   audit(tenant, deps, 'spf_flatten.stopped', domain, { spf_record: row.flattened_record }, { spf_record: row.flattened_record, original_record: row.canonical_record }, { reason: why });
   return true;
+}
+
+// ── Use the edit as the new original ───────────────────────
+
+export type AdoptResult =
+  | { ok: true; config: SpfConfigRow; outcome: 'written' | 'unchanged' }
+  | { ok: false; refused: SpfProblemOut }
+  | { ok: false; conflict: 'not_on' | 'running' };
+
+/**
+ * The record in Cloudflare was edited outside the app and the owner chose "Use my edit as the new original": that record becomes the original (`canonical_record`,
+ * the only time it is rewritten while flattening is on), and the flattened record is made from it, so what the edit added (an include, say) is kept. Nothing is
+ * written unless the new original flattens; the old original and the flattened record it replaces are in the audit entry. Addresses the edit already lists stay as
+ * written: they no longer follow a provider.
+ */
+export async function adoptSpf(tenant: TenantContext, domain: { id: number; domain: string }, deps: SpfDeps = {}): Promise<AdoptResult> {
+  const q = tenant.scope.spf;
+  const row = await q.get(domain.id);
+  if (!row || row.enabled !== 1 || row.flattened_record === null) return { ok: false, conflict: 'not_on' };
+  const at = nowS(deps);
+  const claimed = await q.claim(domain.id, row.revision, at, SPF_LEASE_SECONDS);
+  if (claimed === null) return { ok: false, conflict: 'running' };
+  const target = deps.target ?? cloudflareTarget(tenant, domain.domain);
+  const release = async () => { await q.finish(domain.id, claimed, {}); };
+  let live: SpfLive;
+  try { live = await target.read(); } catch (e) {
+    await release();
+    return connectionRefused(e);
+  }
+  if ('multiple' in live) { await release(); return { ok: false, refused: { kind: 'edited_outside', message: `${domain.domain} has more than one SPF record in Cloudflare. Remove the extra one first.` } }; }
+  if (!live.found) { await release(); return { ok: false, refused: { kind: 'record_missing', message: problemSentence({ kind: 'record_missing', domain: domain.domain }) } }; }
+  const original = live.content;
+  const res = await flattenFromSource(domain.domain, original, deps.resolver ?? resolverFor(tenant.env), { inline: row.inline_mode === 'most' ? 'most' : 'fewest' });
+  if (!res.ok) { await release(); return { ok: false, refused: refusal(res.problems[0]!) }; }
+  const flat = res.flat;
+  const same = sameSpfRecord(live.content, flat.record);
+  try {
+    if (!same) {
+      if (!(await q.holds(domain.id, claimed))) return { ok: false, conflict: 'running' };
+      await target.write(live.id, flat.record);
+      const back = await target.read();
+      if (!('found' in back && back.found) || !sameSpfRecord(back.content, flat.record)) throw new NotKept();
+    }
+  } catch (e) {
+    await putBack(target, live.id, live.content);
+    await release();
+    if (e instanceof NotKept) return { ok: false, refused: { kind: 'connection_lost', message: `Cloudflare did not keep the record we wrote.${UNCHANGED}` } };
+    return connectionRefused(e);
+  }
+  const done = await q.finish(domain.id, claimed, {
+    canonical_record: original, lookup_count: flat.lookupsBefore, flattened_record: flat.record, previous_record: live.content, ip_count: flat.ipCount, lookups_after: flat.lookupsAfter,
+    provider_state: entriesJson(flat.providers), pending_removed: null, pending_since: null, pending_additions: null,
+    problem_kind: null, problem_since: null, last_error: null, last_error_at: null, last_refreshed_at: at, last_flattened_at: at,
+  });
+  if (!done) { await undoLostClaim(tenant, row, target, live); return { ok: false, conflict: 'running' }; }
+  audit(tenant, deps, 'spf_flatten.adopt', domain, { original_record: row.canonical_record, flattened_record: row.flattened_record }, { original_record: original, flattened_record: flat.record, ip_count: flat.ipCount, lookups: flat.lookupsAfter }, { by: 'user' });
+  if (!same) audit(tenant, deps, 'dns.update', domain, { content: live.content }, { content: flat.record }, undefined, { type: 'dns_record', id: live.id, name: `TXT ${domain.domain}` });
+  return { ok: true, config: (await q.get(domain.id))!, outcome: same ? 'unchanged' : 'written' };
 }
 
 // ── One step back ───────────────────────────────────────────

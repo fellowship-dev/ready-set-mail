@@ -258,13 +258,36 @@ describe('hosted records for a domain', () => {
     expect(await refreshHostedSpf(w.env, { resolver })).toEqual({ updated: 0, failed: 0 }); // unchanged: no write
     expect(cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
 
+    // A range moves: the new address is written at once, the old one stays until a second look at least four hours later sees the same (ADR 0024).
     const moved = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 -all'] } });
-    expect(await refreshHostedSpf(w.env, { resolver: moved })).toEqual({ updated: 1, failed: 0 });
+    const t0 = Date.now();
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 })).toEqual({ updated: 1, failed: 0 });
+    const held = 'v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:198.51.100.7 ip4:203.0.113.5 ~all';
+    expect(content()).toBe(held);
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 + 3 * 3600_000 })).toEqual({ updated: 0, failed: 0 }); // 3 hours: still waiting
+    expect(content()).toBe(held);
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 + 4 * 3600_000 })).toEqual({ updated: 1, failed: 0 }); // 4 hours: the removal is written
     expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5 ~all');
 
     const broken = dnsFrom({ '_spf.example.net': { error: true } });
     expect(await refreshHostedSpf(w.env, { resolver: broken })).toEqual({ updated: 0, failed: 1 });
     expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5 ~all');
+  });
+
+  it('a provider that answers with nothing for a moment does not empty the hosted record', async () => {
+    const { w, cf, tenant, domain } = await setup();
+    const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE }, { resolver });
+    const spfName = hostedNames(hosted.hosted_id, 'h.readysetmail.com').spf;
+    const content = () => zoneRecords(cf).find(r => r.name === spfName)!.content;
+    const before = content();
+    const glitch = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 -all'] } });
+    const t0 = Date.now();
+    await refreshHostedSpf(w.env, { resolver: glitch, now: () => t0 });
+    expect(content()).toBe(before);
+    expect(cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
+    await refreshHostedSpf(w.env, { resolver, now: () => t0 + 3600_000 }); // the provider is back
+    expect(content()).toBe(before);
+    expect(w.rows('SELECT spf_state FROM hosted_domains')[0].spf_state).toContain('"pending_removed":null');
   });
 
   it('daily reconcile counts the whole zone, reports drift, flags changes outside the label, and writes nothing', async () => {

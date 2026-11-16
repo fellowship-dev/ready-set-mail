@@ -8,11 +8,12 @@ export type SpfConfigRow = typeof spfFlattenConfig.$inferSelect;
 
 /** What a state change writes. `undefined` leaves a column alone; `null` clears it. */
 export interface SpfPatch {
+	canonical_record?: string;
+	lookup_count?: number | null;
 	flattened_record?: string | null;
 	previous_record?: string | null;
 	cf_record_id?: string | null;
 	ip_count?: number | null;
-	lookup_count?: number | null;
 	lookups_after?: number | null;
 	last_flattened_at?: number | null;
 	last_refreshed_at?: number | null;

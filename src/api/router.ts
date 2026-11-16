@@ -139,7 +139,7 @@ import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
-import { disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, restoreSpfBeforeRemoval, spfIsOn, spfView } from '../spf/refresh';
+import { adoptSpf, disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, restoreSpfBeforeRemoval, spfIsOn, spfView } from '../spf/refresh';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
@@ -770,7 +770,7 @@ async function _handleApi(
 
   // SPF flattening is an add-on: one gate for every one of its routes (src/hosted/plan-limits.ts). Where it is not available, nothing is read or written and the route
   // answers 404, except reading the state and turning it off for a domain that already has it: nobody is left with a flattened record they cannot get rid of.
-  const spfGate = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh))?$/);
+  const spfGate = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh|adopt))?$/);
   let spfAccess: CapabilityAnswer | null = null;
   if (spfGate) {
     const spfId = parseInt(spfGate[1], 10);
@@ -1943,7 +1943,7 @@ async function _handleApi(
 
     // SPF flattening: GET /api/domains/:id/spf-flatten, /preview; POST /spf-flatten (turn on), /spf-flatten/refresh ("Try again", or Replace after an outside edit); DELETE (turn off).
     // The gate (capability above) already answered 404 where it is not available. Everything below is src/spf/refresh.ts: the one engine.
-    const spfMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh))?$/);
+    const spfMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh|adopt))?$/);
     if (spfMatch) {
       const id = parseInt(spfMatch[1], 10);
       if (isNaN(id)) return err('invalid domain id', 400);
@@ -1973,6 +1973,17 @@ async function _handleApi(
         const config = spfView((await tenant.scope.spf.get(id))!);
         // A removal is waiting for its second look: say when it can be confirmed, truthfully, whether or not this check wrote something.
         return json({ ok: true, outcome: r.outcome, config, ...(config.pending ? { message: pendingSentence(config.pending, Math.floor(Date.now() / 1000)) } : {}) });
+      }
+
+      // POST .../adopt — the record was edited in Cloudflare: keep the edit as the new original and flatten from it
+      if (sub === 'adopt') {
+        if (method !== 'POST') return err('method not allowed', 405);
+        const r = await adoptSpf(tenant, domain, { actor, ctx });
+        if (!r.ok) {
+          if ('conflict' in r) return err(r.conflict === 'not_on' ? 'SPF flattening is not on for this domain' : 'A check is already running for this domain. Try again in a minute.', r.conflict === 'not_on' ? 404 : 409);
+          return json({ error: r.refused.message, code: r.refused.kind }, 422);
+        }
+        return json({ ok: true, outcome: r.outcome, config: spfView(r.config) });
       }
 
       // GET — the state, and whether the tool is available

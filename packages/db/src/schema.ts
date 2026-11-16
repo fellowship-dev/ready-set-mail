@@ -639,6 +639,8 @@ export const hostedDomains = sqliteTable(
 		tls_rpt_record_id: text('tls_rpt_record_id'),
 		/** The customer's own SPF record at enable time: what the hosted (flattened) record is built from. */
 		spf_source: text('spf_source'),
+		/** JSON: what the published hosted SPF record authorises per inlined include and a removal that waits for a second look (the rule of ADR 0024, decideSpfWrite in src/spf/refresh.ts). */
+		spf_state: text('spf_state'),
 		dmarc_pointer: text('dmarc_pointer'),
 		spf_pointer: text('spf_pointer'),
 		mta_sts_pointer: text('mta_sts_pointer'),

@@ -381,6 +381,7 @@ CREATE TABLE `hosted_domains` (
 	`mta_sts_host_record_id` text,
 	`tls_rpt_record_id` text,
 	`spf_source` text,
+	`spf_state` text,
 	`dmarc_pointer` text,
 	`spf_pointer` text,
 	`mta_sts_pointer` text,

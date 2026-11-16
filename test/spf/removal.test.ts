@@ -177,7 +177,7 @@ describe('removing the Cloudflare connection', () => {
     const body = await json(res);
     expect(body.spf_flattened).toEqual([expect.objectContaining({ domain: 'a-corp.com', restored: false, original: ORIGINAL, flattened_record: FLAT })]);
     expect(body.spf_flattened[0].message).toContain(`set the SPF TXT record of a-corp.com to: ${ORIGINAL}`);
-    expect(f.row()).toMatchObject({ enabled: 0, problem_kind: 'restore_failed', flattened_record: FLAT });
+    expect(f.row()).toMatchObject({ enabled: 0, problem_kind: 'connection_gone', flattened_record: FLAT });
     expect(f.w.rows('SELECT id FROM cloudflare_connections')).toEqual([]);
     // the daily job does not pick it up again
     f.w.cf.calls.length = 0;
@@ -198,7 +198,7 @@ describe('a connection that was revoked', () => {
     const after = (await tenant.scope.spf.get(1))!;
     expect(after.enabled).toBe(0);
     const view = spfView(after);
-    expect(view).toMatchObject({ enabled: false, original_record: ORIGINAL, flattened_record: FLAT, problem: { kind: 'restore_failed' } });
+    expect(view).toMatchObject({ enabled: false, original_record: ORIGINAL, flattened_record: FLAT, problem: { kind: 'connection_gone' } });
     expect(view.problem!.message).toContain('Cloudflare connection for a-corp.com was disconnected');
     expect(view.problem!.message).toContain(`set the SPF TXT record of a-corp.com to: ${ORIGINAL}`);
     expect(f.audits('spf_flatten.stopped')).toHaveLength(1);
@@ -212,7 +212,7 @@ describe('an ownership proof that is lost', () => {
     const holder = (await claimLookups(f.w.env.DB).zoneVerifiedNear('a-corp.com', 'nobody'))[0];
     expect(holder).toBeTruthy();
     expect(await withdrawProof(f.w.env, holder!, 'delegation')).toBe(true);
-    expect(f.row()).toMatchObject({ enabled: 0, problem_kind: 'restore_failed', flattened_record: FLAT });
+    expect(f.row()).toMatchObject({ enabled: 0, problem_kind: 'proof_lost', flattened_record: FLAT });
     expect(f.row()!.last_error).toContain('We can no longer show that you control a-corp.com');
     expect(f.row()!.last_error).toContain(`set the SPF TXT record of a-corp.com to: ${ORIGINAL}`);
     expect(f.live()).toBe(FLAT); // nothing was written

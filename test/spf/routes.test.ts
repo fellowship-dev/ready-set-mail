@@ -124,4 +124,16 @@ describe('SPF flattening routes', () => {
     expect(done.message).toBeUndefined();
     expect(w.live()).toBe('v=spf1 ip4:203.0.113.9 -all');
   });
+
+  it('an edit made in Cloudflare: POST /spf-flatten/adopt keeps it as the new original; where flattening is not on it is 404', async () => {
+    const w = setup();
+    expect((await w.send('POST', '/api/domains/1/spf-flatten/adopt', {})).status).toBe(404);
+    await w.send('POST', '/api/domains/1/spf-flatten', { anyway: true });
+    w.cf.records.get('zone-acme')![0]!.content = '"v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 ip4:192.0.2.9 -all"';
+    expect((await (await w.send('POST', '/api/domains/1/spf-flatten/refresh', {})).json() as any).config.problem.kind).toBe('edited_outside');
+    const r = await w.send('POST', '/api/domains/1/spf-flatten/adopt', {});
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ ok: true, config: { original_record: 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 ip4:192.0.2.9 -all', problem: null } });
+    expect((await w.send('GET', '/api/domains/1/spf-flatten/adopt')).status).toBe(405);
+  });
 });
