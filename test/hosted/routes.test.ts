@@ -127,7 +127,7 @@ describe('GET /api/hosted/config', () => {
   });
 });
 
-describe('MTA-STS and hosted records (ADR 0021)', () => {
+describe('MTA-STS and hosted records (ADR 0026)', () => {
   async function hostedDomain() {
     const t = await setup();
     const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: {} })).json() as any;

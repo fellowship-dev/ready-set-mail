@@ -249,7 +249,7 @@ export async function disableHosted(
       throw new HostedError(`Could not remove ${name}: ${cfErrorText(e)}`, 502);
     }
   }
-  // Rows from before ADR 0021 kept their MTA-STS records here: that config goes with them. Today's MTA-STS config is the customer's own and stays.
+  // Rows from before ADR 0026 kept their MTA-STS records here: that config goes with them. Today's MTA-STS config is the customer's own and stays.
   if (h.mta_sts_txt_record_id || h.mta_sts_host_record_id) await tenant.scope.mtaSts.delete(domain.id);
   await tenant.scope.intake.delete(domain.id);
   await tenant.scope.hosted.delete(domain.id);

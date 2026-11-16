@@ -35,7 +35,7 @@ steps:
   - action: click
     selector: "text=Check now"
     effect: write
-    expect: The page says Testing and "Served at" the policy address (the result of a fetch of it), no Check now any more, "Switch to enforce" as the filled action with the reasons it is not allowed yet, and the empty state "No TLS report yet"
+    expect: The page says Testing and "Served at" the policy address (the result of a fetch of it), no Check now any more, "Switch to enforce" (not filled while it cannot be pressed) with the whole enforce rule beneath it, each line Met or Missing, and the empty state "No signed TLS report yet"
   - action: navigate
     url: /#/domains/1/mta-sts
     expect: After a signed sender's first report has arrived, the TLS reports of the last 30 days list who sent it, the period, successful sessions, failed sessions and failure types

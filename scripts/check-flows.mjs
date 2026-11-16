@@ -18,7 +18,7 @@
 //       file and the flow map) changed up to HEAD. So a base that moves in files the flow does not cover leaves a walk valid, and a
 //       change to a covered file after the walked commit (in this pull request or in main) asks for a new walk. On a pull request
 //       HEAD is GitHub's merge of it into main. A new flow's first record may be its baseline (Kind: baseline).
-//   .flowchad/walks/<date>-<id>.not-affected.md  a reviewed "not affected" record, for a change to a mapped file that does not
+//   .flowchad/walks/<date>-<id>.not-affected.md  (or <date>-<id>.<tag>.not-affected.md, tag [a-z0-9-]+) a reviewed "not affected" record, for a change to a mapped file that does not
 //       change what the person sees or does on the flow. Fields: Flow, Changed (every mapped file this change touches, in
 //       back-quotes), Reason (why the flow is unchanged), By, Date. Not accepted when the flow file or its map changed.
 //
@@ -54,11 +54,12 @@ export const coversOf = (yml) => {
 export const globMatches = (glob, file) => new RegExp(`^${glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(file);
 /** The names a record may have: `<date>-<id>.md`, or `<date>-<id>.<tag>.md` with a tag of [a-z0-9-]+ other than `not-affected`. */
 export const walkRecordName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}(?:\\.(?!not-affected\\.md$)[a-z0-9-]+)?\\.md$`);
-export const notAffectedName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
+/** `<date>-<id>.not-affected.md`, or `<date>-<id>.<tag>.not-affected.md` with a tag of [a-z0-9-]+ (two pull requests that file the same flow on the same day add different files). */
+export const notAffectedName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}(?:\\.[a-z0-9-]+)?\\.not-affected\\.md$`);
 const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 /** Problems with a walk record, or [] when it is valid for this change. */
-export function walkRecordProblems(text, { id, newFlow, commitState, coveredChangedSince }) {
+export function walkRecordProblems(text, { id, newFlow, commitState, coveredChangedSince, nameDate }) {
   const p = [];
   const f = fields(text);
   if (!new RegExp(`^# Walk record: ${id}\\s*$`, 'm').test(text)) p.push(`first line is not "# Walk record: ${id}"`);
@@ -79,6 +80,8 @@ export function walkRecordProblems(text, { id, newFlow, commitState, coveredChan
   const t = Date.parse(f.Walked ?? '');
   if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(f.Walked ?? '') || !Number.isFinite(t)) p.push(`Walked is not the gate's timestamp: ${f.Walked ?? 'missing'}`);
   else if (t > Date.now() + CLOCK_SLACK_MS) p.push(`Walked ${f.Walked} is in the future`);
+  // A record is filed under the day it happened on: the date in its name is the date the walk's own timestamp says (as written, or in UTC).
+  if (nameDate && Number.isFinite(t) && nameDate !== f.Walked.slice(0, 10) && nameDate !== new Date(t).toISOString().slice(0, 10)) p.push(`the file name says ${nameDate}, but the walk ran on ${f.Walked.slice(0, 10)}: file it under the day it happened`);
   if (f['Value moment'] === 'not declared') p.push('Value moment is "not declared"');
   if (f.Target === 'unknown') p.push('Target is "unknown"');
   if (/^(map|baseline)$/.test(f.Kind ?? '')) p.push(`Kind is ${f.Kind}: a protected flow needs a walk of its screens or calls, not a ${f.Kind}`);
@@ -88,7 +91,7 @@ export function walkRecordProblems(text, { id, newFlow, commitState, coveredChan
 }
 
 /** Problems with a "not affected" record, or []. */
-export function notAffectedProblems(text, { id, baseDate, today, hits, flowChanged }) {
+export function notAffectedProblems(text, { id, baseDate, today, hits, flowChanged, nameDate }) {
   const p = [];
   const f = fields(text);
   if (flowChanged) p.push('the flow file or its map changed in this change, so the flow did change: walk it');
@@ -97,6 +100,7 @@ export function notAffectedProblems(text, { id, baseDate, today, hits, flowChang
   if (reason.length < 20 || reason.split(/\s+/).length < 4) p.push('Reason must say why the flow is unchanged (at least 20 characters, four words)');
   if (!/[\p{L}\p{N}]/u.test(f.By ?? '')) p.push('By must name who judged it');
   if (!realDate(f.Date ?? '') || f.Date < baseDate || f.Date > today) p.push(`Date ${f.Date ?? 'missing'} is not a real date between the base commit (${baseDate}) and today`);
+  if (nameDate && f.Date !== nameDate) p.push(`the file name says ${nameDate} but Date is ${f.Date ?? 'missing'}: file it under the day it was written`);
   const listed = new Set([...(f.Changed ?? '').matchAll(/`([^`]+)`/g)].map((m) => m[1]));
   const unlisted = hits.filter((h) => !listed.has(h));
   if (unlisted.length) p.push(`Changed does not name ${unlisted.map((h) => `\`${h}\``).join(', ')}`);
@@ -146,12 +150,12 @@ function main(argv) {
     const tried = [];
     let ok = null;
     for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && walkRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
-      const problems = walkRecordProblems(readFileSync(file, 'utf8'), { id, newFlow, commitState, coveredChangedSince });
+      const problems = walkRecordProblems(readFileSync(file, 'utf8'), { id, newFlow, commitState, coveredChangedSince, nameDate: file.slice(WALKS.length + 1, WALKS.length + 11) });
       if (!problems.length) { ok = `walked (${file})`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
     if (!ok) for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && naRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
-      const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged });
+      const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged, nameDate: file.slice(WALKS.length + 1, WALKS.length + 11) });
       if (!problems.length) { ok = `not affected (${file}, reviewed)`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
@@ -172,7 +176,7 @@ A protected value flow changed (ADR 0012). For each flow above, add ONE record t
   - it changed what a person sees or does: walk it on a local copy of the current commit (a covered file that changes after the walked commit, here or in main, asks for a new walk) and commit the gate's record:
       /flow-walk <id>   then   /flow-gate <id> --target <url> --record ${WALKS}
     (if the flow itself changed, update ${FLOWS}/<id>.map.md first: map before building)
-  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md
+  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md (or <YYYY-MM-DD>-<id>.<tag>.not-affected.md when that name is taken)
       - **Flow:** <id>
       - **Changed:** \`<every file listed above>\`
       - **Reason:** <why the flow is unchanged>

@@ -1,4 +1,4 @@
--- MTA-STS on the hosted service (ADR 0021). Additive only: every column is nullable or has a default that keeps today's rows working.
+-- MTA-STS on the hosted service (ADR 0026). Additive only: every column is nullable or has a default that keeps today's rows working.
 --
 -- mta_sts_config
 --   via                   how the three records got (or will get) into the customer's DNS: 'cloudflare' (written through the workspace's

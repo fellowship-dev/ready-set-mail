@@ -59,7 +59,7 @@ describe('applyHostedInputs', () => {
 		const { summary } = applyHostedInputs(base, hosted({ level_inputs: { dmarc_published: true, spf_published: false } }));
 		expect(summary.spf_record).toBeNull();
 	});
-	it('never asks for an MTA-STS pointer: MTA-STS is not a hosted record (ADR 0021)', () => {
+	it('never asks for an MTA-STS pointer: MTA-STS is not a hosted record (ADR 0026)', () => {
 		expect(applyHostedInputs(base, hosted()).unverified).toEqual([]);
 		expect(applyHostedInputs({ ...base, mta_sts_enabled: 1, mta_sts_mode: 'enforce' }, hosted()).summary.mta_sts_enabled).toBe(0);
 	});

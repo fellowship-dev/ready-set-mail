@@ -35,7 +35,7 @@ Three handlers are exported:
 Routing priority (evaluated top to bottom):
 
 1. If `env.DB` is missing → return setup page (503 HTML with wrangler setup instructions)
-2. `mta-sts.*` hostname → the MTA-STS policy file at `/.well-known/mta-sts.txt` and a 404 for everything else (RFC 8461; `src/mta-sts/serve.ts`)
+2. `mta-sts.*` hostname → the MTA-STS policy file at `/.well-known/mta-sts.txt` and a 404 for everything else that reaches the Worker (RFC 8461; `src/mta-sts/serve.ts`; which paths reach it: [docs/mta-sts.md](mta-sts.md#other-paths-on-a-policy-host))
 3. MCP/OAuth/discovery and agent-connection routes → installation-owned OAuth adapter with current D1 principal/grant checks
 4. `/health` or `/api/*` → `handleApi()` (dashboard API, DNS provisioning)
 5. Anything else → `env.ASSETS.fetch(request)` (dashboard SPA)
@@ -118,7 +118,7 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
 | `src/email/spf-flattener.ts` | `collectIps` (throws on incomplete resolution) + Cloudflare DNS PATCH/restore |
 | `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + the customer's three records (`createPolicyHostCname`, `createTlsRptRecord`, `createPolicyIdRecord`, `deprovisionMtaSts`) |
-| `src/mta-sts/` | MTA-STS (ADR 0021): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
+| `src/mta-sts/` | MTA-STS (ADR 0026): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |
 
 Public Suffix List data comes from the `tldts` dependency; update it with `npm update tldts`.
