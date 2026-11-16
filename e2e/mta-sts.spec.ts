@@ -111,7 +111,7 @@ for (const width of [375, 1440]) {
 
 		// Check now: every check in place, and Testing, with no report yet.
 		await page.getByRole('button', { name: 'Check now' }).click();
-		await expect(page.getByRole('list', { name: 'Setup checks' })).toContainText('In place');
+		await expect(page.getByText('All the setup checks are in place.')).toBeVisible();
 		await expect(page.getByText('Testing: senders deliver as before and report problems with encryption. Nothing is rejected.')).toBeVisible();
 		await expect(page.getByText('No TLS report yet')).toBeVisible();
 		await expect(page.getByText('Senders usually send one a day after they deliver mail to you.')).toBeVisible();
