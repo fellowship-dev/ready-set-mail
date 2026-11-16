@@ -1,0 +1,44 @@
+name: New hosted user signs up and gets DMARC with the report address live through Cloudflare
+goal: A new workspace has its domains imported from Cloudflare and one domain's DMARC record, with the report address, applied and visible in public DNS
+value_moment: Records live - ownership proven and DMARC with the report address seen in public DNS
+# Pages on the path (the dashboard screens a person sees). A change to any of them needs a fresh walk record.
+covers:
+  - web/src/app.tsx
+  - web/src/pages/auth/*
+  - web/src/pages/wizards/SetupWizardPage.tsx
+  - web/src/pages/wizards/cloudflare/*
+  - web/src/pages/cloudflare/*
+  - web/src/pages/domains/OverviewPage.tsx
+  - web/src/pages/domains/DomainDetailPage.tsx
+  - web/src/components/GetStarted.tsx
+  - web/src/components/domain/*
+url: /#/signup
+tags: [onboarding, value, protected]
+priority: P0
+context:
+  user: new_account
+  auth: logged_out
+  mode: hosted
+# Baseline measured on main 6a7d775 (2026-11-15), local hosted instance with the repo's fakes; see the walk record.
+# PR #177 rebuilds sign-up: re-walk and re-baseline this flow when it merges.
+steps:
+  - action: navigate
+    url: /#/signup
+    expect: Create an account - email, password and the bot check
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: Enter the 6-digit code sent by email
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: First screen at /setup offers Connect Cloudflare or adding records by hand
+  - action: click
+    selector: "text=Connect Cloudflare"
+    effect: write
+    expect: Cloudflare consent, then every active zone imported as a verified domain; nothing written to DNS
+  - action: click
+    selector: "text=Apply"
+    effect: write
+    expect: DMARC record with the report address written to the zone and read back from public DNS
+    first_value: true

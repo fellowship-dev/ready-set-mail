@@ -1,0 +1,40 @@
+name: New hosted user signs up and gets DMARC with the report address live by adding records by hand
+goal: A new workspace proves one domain with the TXT record and publishes DMARC with the report address at another DNS host
+value_moment: Records live - ownership proven by the TXT record and DMARC with the report address seen in public DNS
+covers:
+  - web/src/app.tsx
+  - web/src/pages/auth/*
+  - web/src/pages/wizards/SetupWizardPage.tsx
+  - web/src/pages/wizards/cloudflare/FirstScreen.tsx
+  - web/src/pages/wizards/setup/*
+  - web/src/components/wizard/*
+  - web/src/components/domain/ClaimCard.tsx
+  - web/src/components/domain/ClaimPreview.tsx
+  - web/src/components/domain/ProofRecord.tsx
+url: /#/signup
+tags: [onboarding, value, protected]
+priority: P0
+context:
+  user: new_account
+  auth: logged_out
+  mode: hosted
+steps:
+  - action: navigate
+    url: /#/signup
+    expect: Create an account - email, password and the bot check
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: Enter the 6-digit code sent by email
+  - action: click
+    selector: "text=I'll add DNS records myself"
+    expect: Domain field (prefilled when the link carries a domain)
+  - action: click
+    selector: "text=Continue"
+    effect: write
+    expect: Verify you own this domain - the TXT record and Verify
+  - action: click
+    selector: "text=Verify"
+    effect: write
+    expect: Wizard SPF, DKIM, DMARC, Reports; DMARC with the report address published at the DNS host
+    first_value: true

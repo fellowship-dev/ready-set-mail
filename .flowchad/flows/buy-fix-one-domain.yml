@@ -1,0 +1,34 @@
+name: Hosted owner buys Fix one domain in the app
+goal: The workspace owner pays for Fix one domain with the workspace's card and the order is paid by Stripe's webhook
+value_moment: Fix ordered - the invoice is paid (invoice.paid webhook)
+covers:
+  - web/src/components/billing/*
+  - web/src/pages/domains/DomainDetailPage.tsx
+  - web/src/pages/settings/BillingSection.tsx
+  - web/src/pages/operator/OrdersPage.tsx
+  - web/src/lib/billing.ts
+  - web/src/lib/card-return.ts
+url: /#/domains/1
+tags: [billing, value, protected]
+priority: P0
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+  billing: on (test keys)
+steps:
+  - action: navigate
+    url: /#/domains/1
+    expect: Domain page with the Fix one domain offer card
+  - action: click
+    selector: "text=Fix one domain"
+    expect: Confirm step - scope, refund rule, terms links
+  - action: click
+    selector: "text=Add a card"
+    effect: write
+    expect: Stripe-hosted Checkout in setup mode, then back to the same confirm step
+  - action: click
+    selector: "text=Pay"
+    effect: write
+    expect: Order paid when Stripe's invoice.paid webhook arrives (3-D Secure opens Stripe's hosted invoice page)
+    first_value: true

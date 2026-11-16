@@ -1,0 +1,30 @@
+name: Invited teammate joins the workspace and sees the one step left
+goal: A person invited by an owner joins with the one-time link and lands on the workspace overview
+value_moment: The teammate sees the workspace's domains and the one action left
+covers:
+  - web/src/pages/members/MembersPage.tsx
+  - web/src/pages/auth/InvitePage.tsx
+  - web/src/pages/auth/CodeStep.tsx
+  - web/src/pages/domains/OverviewPage.tsx
+url: /#/members
+tags: [collaboration, value, protected]
+priority: P1
+context:
+  user: owner_then_invitee
+  auth: logged_in
+steps:
+  - action: navigate
+    url: /#/members
+    expect: Members with an invite form (email, role)
+  - action: click
+    selector: "text=Create invite link"
+    effect: write
+    expect: A one-time link (7 days) shown to the owner; no email is sent
+  - action: navigate
+    url: /#/invite/TOKEN
+    expect: Join form for the invited email
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: Overview of the workspace with its domains and the next action
+    first_value: true

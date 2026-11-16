@@ -171,10 +171,14 @@ wrangler.local.jsonc
 # AI coding agents & assistants
 # https://github.com/Fellowship-dev/agents-gitignore
 CLAUDE.md
-.claude/
+.claude/*
 !.claude/commands/
+!.claude/skills/
 AGENTS.md
 AGENTS.override.md
+# This repository's own agent instructions are tracked: AGENTS.md is canonical, CLAUDE.md links to it.
+!/AGENTS.md
+!/CLAUDE.md
 codex.md
 .codex/
 GEMINI.md
