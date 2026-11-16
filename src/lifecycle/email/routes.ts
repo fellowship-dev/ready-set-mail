@@ -15,6 +15,7 @@ import { hostedEnabled } from '../../hosted/config';
 import type { BoundEnv } from '../../index';
 import { verifyToken } from '../../mail/tokens';
 import type { TenantContext } from '../../tenancy/context';
+import { tipsEnabled } from './kinds';
 import { KIND_WORDS, offered, preferenceOn } from './preferences';
 
 export const PREFERENCES_PATH = '/api/email-preferences';
@@ -48,8 +49,9 @@ async function offRoute(request: Request, env: BoundEnv, url: URL): Promise<Resp
 async function viewFor(env: BoundEnv, workspaceId: string, userId: string, role: MembershipRole) {
   const rows = await forWorkspace(env.DB, workspaceId).lifecycleEmail.preferences.all();
   const mine = (kind: EmailPreferenceKind) => rows.find((r) => r.user_id === userId && r.kind === kind);
-  const one = (kind: EmailPreferenceKind) => ({ offered: offered(role), enabled: preferenceOn(role, kind, mine(kind), env) });
-  return { role, summary: one('summary'), tips: one('tips') };
+  const one = (kind: EmailPreferenceKind) => ({ offered: offered(role), enabled: preferenceOn(role, kind, mine(kind)) });
+  // Tips are not offered at all on an instance that does not send them (LIFECYCLE_EMAILS_ON).
+  return { role, summary: one('summary'), tips: { ...one('tips'), offered: offered(role) && tipsEnabled(env) } };
 }
 
 /**

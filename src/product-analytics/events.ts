@@ -44,7 +44,7 @@ export const ROLES = ['owner', 'admin', 'member'] as const;
 /** DNS hosts the product recognises (src/domains/dns-host.ts DNS_PROVIDERS ids), plus what detection can say otherwise. */
 export const DNS_PROVIDERS = ['cloudflare', 'godaddy', 'porkbun', 'namecheap', 'route53', 'google-cloud-dns', 'squarespace', 'digitalocean', 'vercel', 'ns1', 'other', 'mixed', 'unknown'] as const;
 /** The lifecycle emails (src/lifecycle/email/kinds.ts) by kind. */
-export const LIFECYCLE_KINDS = ['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next', 'tip_done'] as const;
+export const LIFECYCLE_KINDS = ['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next'] as const;
 /** The agent tools (src/mcp/server.ts). */
 export const AGENT_TOOLS = ['whoami', 'list_products', 'list_domains', 'inspect_domain', 'add_domain', 'verify_domain', 'get_email_report', 'query_email_metrics', 'plan_remediation', 'get_source_status'] as const;
 

@@ -6,7 +6,7 @@ import { useHosted } from '../../lib/session';
 
 const CHOICES: Array<{ kind: EmailKind; label: string; description: string }> = [
 	{ kind: 'summary', label: 'Weekly summary', description: 'On Mondays: what last week\'s DMARC reports said about this workspace\'s domains, and the one thing to look at, if any.' },
-	{ kind: 'tips', label: 'Tips about your domains', description: 'Now and then, and only when it is true for one of your domains: a service that needs SPF or DKIM, or that every message passed for two weeks, so the next DMARC step is ready.' },
+	{ kind: 'tips', label: 'Tips about your domains', description: 'Off until you turn it on. Then, now and then, and only when it is true for one of your domains: a service that needs SPF or DKIM, or that every message passed for two weeks, so the next DMARC step is ready.' },
 ];
 
 /**
@@ -29,7 +29,7 @@ export function EmailSection() {
 				<Card>
 					<CardContent className="py-2">
 						<ul className="divide-y divide-line">
-							{CHOICES.map((c) => (
+							{CHOICES.filter((c) => prefs[c.kind].offered).map((c) => (
 								<li key={c.kind} className="flex items-start justify-between gap-4 py-3">
 									<div className="min-w-0">
 										<p id={`email-${c.kind}-label`} className="text-sm font-medium">{c.label}</p>

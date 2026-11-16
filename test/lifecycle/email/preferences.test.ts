@@ -22,15 +22,17 @@ const SENDGRID = { ip: '192.0.2.50', count: 20, spf: ['pass', 'sendgrid.net'] as
 const GOOD = { ip: '192.0.2.10', count: 30, spf: ['pass', DOMAIN] as [string, string], dkim: ['pass', DOMAIN] as [string, string], org: 'Google Workspace' };
 
 /** Hosted workspace whose last complete week (9-15 Nov) had reports with one failing third-party source: a summary and a tip are due on Mon 16 Nov. */
-async function weeklyWorld(extra: Record<string, unknown> = {}) {
-  const w = await lifecycleWorld(extra);
+async function weeklyWorld(extra: Record<string, unknown> = {}, { owner = true }: { owner?: boolean } = {}) {
+  // Tips are off until the instance names them (LIFECYCLE_EMAILS_ON) and each person opts in: this world has both, for Dana, unless `owner` is false.
+  const w = await lifecycleWorld({ LIFECYCLE_EMAILS_ON: 'tips', ...extra });
   vi.restoreAllMocks();
+  if (owner) w.pref(w.dana, 'tips', true);
   w.addDomain({ domain: DOMAIN });
   w.addReport({ domain: DOMAIN, day: WEEK_9_NOV, total: 50, passed: 30, records: [GOOD, SENDGRID] });
   return w;
 }
 const summaryTo = (w: World) => w.mailer.sent.filter((m) => /^Week of /.test(m.subject)).map((m) => m.to);
-const tipsTo = (w: World) => w.mailer.sent.filter((m) => /needs SPF or DKIM|every message passed DMARC|nothing to do/.test(m.subject)).map((m) => m.to);
+const tipsTo = (w: World) => w.mailer.sent.filter((m) => /needs SPF or DKIM|every message passed DMARC/.test(m.subject)).map((m) => m.to);
 const prefs = (w: World) => w.rows('SELECT user_id, workspace_id, kind, enabled FROM email_preferences ORDER BY user_id, workspace_id, kind');
 const tokenOf = (url: string) => new URL(url).searchParams.get('t')!;
 
@@ -429,40 +431,54 @@ describe('unverified and suppressed addresses', () => {
 });
 
 describe('defaults and kill switches', () => {
-  it('LIFECYCLE_TIPS_DEFAULT=off: an owner with no row gets no tips (and still the summary)', async () => {
-    const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: 'off' });
+  it('an owner with no stored choice gets the summary and no tip, even where the instance sends tips', async () => {
+    const w = await weeklyWorld({}, { owner: false });
     await w.run();
     expect(tipsTo(w)).toEqual([]);
     expect(summaryTo(w)).toEqual(['dana@brightwave-mail.com']);
   });
 
-  it('LIFECYCLE_TIPS_DEFAULT=off: an explicit "on" row wins', async () => {
-    const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: 'off' });
+  it('an explicit "on" row is the only way to get tips', async () => {
+    const w = await weeklyWorld({}, { owner: false });
     w.pref(w.dana, 'tips', true);
     await w.run();
     expect(tipsTo(w)).toEqual(['dana@brightwave-mail.com']);
   });
 
-  for (const v of ['on', undefined, '', 'ON', 'whatever']) {
-    it(`LIFECYCLE_TIPS_DEFAULT=${JSON.stringify(v)}: an owner with no row gets tips`, async () => {
-      const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: v });
-      await w.run();
-      expect(tipsTo(w)).toEqual(['dana@brightwave-mail.com']);
-    });
-  }
-
-  it('an explicit "off" row wins over the default on', async () => {
-    const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: 'on' });
+  it('an explicit "off" row wins', async () => {
+    const w = await weeklyWorld();
     w.pref(w.dana, 'tips', false);
     await w.run();
     expect(tipsTo(w)).toEqual([]);
   });
 
-  it('admins never get tips or the summary without choosing, whatever the default', async () => {
-    const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: 'on' });
+  it('admins never get tips or the summary without choosing', async () => {
+    const w = await weeklyWorld();
     w.addUser({ id: 'u_admin', email: 'sam@brightwave-mail.com', name: 'Sam Admin', role: 'admin' });
     await w.run();
     expect(w.mailer.sent.map((m) => m.to)).not.toContain('sam@brightwave-mail.com');
+  });
+
+  it('the preference has no environment default any more: LIFECYCLE_TIPS_DEFAULT does nothing', async () => {
+    for (const v of ['on', 'off', 'whatever']) {
+      const w = await weeklyWorld({ LIFECYCLE_TIPS_DEFAULT: v }, { owner: false });
+      await w.run();
+      expect(tipsTo(w), v).toEqual([]);
+    }
+  });
+
+  describe('the instance switch: hosted sends tips only when LIFECYCLE_EMAILS_ON names them', () => {
+    const tips = async (env: Record<string, unknown>, optedIn = true) => {
+      const w = await weeklyWorld({ LIFECYCLE_EMAILS_ON: undefined, ...env }, { owner: optedIn });
+      await w.run();
+      return tipsTo(w);
+    };
+    it('unset: none, even for a person who opted in', async () => expect(await tips({})).toEqual([]));
+    it('ON=tips and the person opted in: sent', async () => expect(await tips({ LIFECYCLE_EMAILS_ON: 'tips' })).toEqual(['dana@brightwave-mail.com']));
+    it('ON=tips (among others, any case) and the person opted in: sent', async () => expect(await tips({ LIFECYCLE_EMAILS_ON: 'change_alerts, Tips' })).toEqual(['dana@brightwave-mail.com']));
+    it('ON=tips but the person did not opt in: none', async () => expect(await tips({ LIFECYCLE_EMAILS_ON: 'tips' }, false)).toEqual([]));
+    it('ON=tips and OFF=tips: none (OFF wins)', async () => expect(await tips({ LIFECYCLE_EMAILS_ON: 'tips', LIFECYCLE_EMAILS_OFF: 'tips' })).toEqual([]));
+    it('ON=change_alerts only: none', async () => expect(await tips({ LIFECYCLE_EMAILS_ON: 'change_alerts' })).toEqual([]));
   });
 
   const sendKinds = async (off: string | undefined) => {
@@ -479,7 +495,7 @@ describe('defaults and kill switches', () => {
     };
   };
 
-  it('control: everything is sent with the switch unset', async () => {
+  it('control: everything is sent (tips on for this instance and for Dana) with the switch unset', async () => {
     expect(await sendKinds(undefined)).toMatchObject({ summary: true, tips: true, live: true });
   });
   it('all stops everything', async () => {
@@ -500,35 +516,37 @@ describe('defaults and kill switches', () => {
 });
 
 describe('session API: GET and PUT /api/email-preferences', () => {
-  it('shows an owner both emails offered and on by default, and changes only that owner\'s own row', async () => {
-    const w = await billingWorld({}, { stripe: false });
+  it('shows an owner both emails offered, the summary on and tips off by default, and changes only that owner\'s own row', async () => {
+    const w = await billingWorld({ LIFECYCLE_EMAILS_ON: 'tips' }, { stripe: false });
     const rows = (q: string, ...p: unknown[]) => w.db.sqlite.prepare(q).all(...p) as any[];
     const get = async (p = w.owner) => ({ res: await w.api(p, 'GET', '/api/email-preferences') });
     const first = await get();
     expect(first.res.status).toBe(200);
-    expect(await first.res.json()).toEqual({ role: 'owner', summary: { offered: true, enabled: true }, tips: { offered: true, enabled: true } });
+    expect(await first.res.json()).toEqual({ role: 'owner', summary: { offered: true, enabled: true }, tips: { offered: true, enabled: false } });
 
     const put = await w.api(w.owner, 'PUT', '/api/email-preferences', { kind: 'summary', enabled: false });
     expect(put.status).toBe(200);
-    expect(await put.json()).toEqual({ role: 'owner', summary: { offered: true, enabled: false }, tips: { offered: true, enabled: true } });
+    expect(await put.json()).toEqual({ role: 'owner', summary: { offered: true, enabled: false }, tips: { offered: true, enabled: false } });
     expect(rows('SELECT workspace_id, kind, enabled FROM email_preferences')).toEqual([{ workspace_id: w.owner.workspaceId, kind: 'summary', enabled: 0 }]);
     expect(rows('SELECT user_id FROM email_preferences')).toEqual([{ user_id: rows('SELECT id FROM users WHERE email = ?', 'owner@example.com')[0].id }]);
 
     // The operator (owner of their own workspace) is unchanged.
-    expect(await (await w.api(w.operator, 'GET', '/api/email-preferences')).json()).toMatchObject({ summary: { enabled: true }, tips: { enabled: true } });
+    expect(await (await w.api(w.operator, 'GET', '/api/email-preferences')).json()).toMatchObject({ summary: { enabled: true }, tips: { enabled: false } });
 
     // And back on.
     const back = await w.api(w.owner, 'PUT', '/api/email-preferences', { kind: 'summary', enabled: true });
     expect((await back.json() as any).summary.enabled).toBe(true);
   });
 
-  it('LIFECYCLE_TIPS_DEFAULT=off shows tips off for an owner with no row', async () => {
-    const w = await billingWorld({ LIFECYCLE_TIPS_DEFAULT: 'off' }, { stripe: false });
-    expect(await (await w.api(w.owner, 'GET', '/api/email-preferences')).json()).toMatchObject({ summary: { enabled: true }, tips: { offered: true, enabled: false } });
+  it('tips are not offered when the instance does not send them (LIFECYCLE_EMAILS_ON), and LIFECYCLE_EMAILS_OFF=tips withdraws them', async () => {
+    for (const [env, offered] of [[{}, false], [{ LIFECYCLE_EMAILS_ON: 'tips' }, true], [{ LIFECYCLE_EMAILS_ON: 'tips', LIFECYCLE_EMAILS_OFF: 'tips' }, false]] as const) {
+      const w = await billingWorld(env, { stripe: false });
+      expect(await (await w.api(w.owner, 'GET', '/api/email-preferences')).json(), JSON.stringify(env)).toMatchObject({ summary: { offered: true, enabled: true }, tips: { offered, enabled: false } });
+    }
   });
 
   it('an admin is offered both, off by default; a member is offered neither and PUT is 403', async () => {
-    const w = await billingWorld({}, { stripe: false });
+    const w = await billingWorld({ LIFECYCLE_EMAILS_ON: 'tips' }, { stripe: false });
     const admin = await w.addMember(w.owner.workspaceId, 'admin@example.com', 'admin');
     const member = await w.addMember(w.owner.workspaceId, 'member@example.com', 'member');
     expect(await (await w.api(admin, 'GET', '/api/email-preferences')).json()).toEqual({ role: 'admin', summary: { offered: true, enabled: false }, tips: { offered: true, enabled: false } });
@@ -586,7 +604,7 @@ describe('session API: GET and PUT /api/email-preferences', () => {
   });
 
   it('a choice in one workspace does not change the same person\'s other workspace', async () => {
-    const w = await billingWorld({}, { stripe: false });
+    const w = await billingWorld({ LIFECYCLE_EMAILS_ON: 'tips' }, { stripe: false });
     const rows = (q: string, ...p: unknown[]) => w.db.sqlite.prepare(q).all(...p) as any[];
     // The owner is also an owner of the operator's workspace.
     const uid = rows('SELECT id FROM users WHERE email = ?', 'owner@example.com')[0].id;
@@ -594,16 +612,16 @@ describe('session API: GET and PUT /api/email-preferences', () => {
     const inA = { ...w.owner };
     const inB = { ...w.owner, workspaceId: w.operator.workspaceId };
 
-    const put = await w.api(inA, 'PUT', '/api/email-preferences', { kind: 'tips', enabled: false });
-    expect((await put.json() as any).tips.enabled).toBe(false);
-    expect((await (await w.api(inB, 'GET', '/api/email-preferences')).json() as any).tips.enabled).toBe(true);
-    expect((await (await w.api(inA, 'GET', '/api/email-preferences')).json() as any).tips.enabled).toBe(false);
+    const put = await w.api(inA, 'PUT', '/api/email-preferences', { kind: 'tips', enabled: true });
+    expect((await put.json() as any).tips.enabled).toBe(true);
+    expect((await (await w.api(inB, 'GET', '/api/email-preferences')).json() as any).tips.enabled).toBe(false);
+    expect((await (await w.api(inA, 'GET', '/api/email-preferences')).json() as any).tips.enabled).toBe(true);
 
     await w.api(inB, 'PUT', '/api/email-preferences', { kind: 'summary', enabled: false });
     expect((await (await w.api(inA, 'GET', '/api/email-preferences')).json() as any).summary.enabled).toBe(true);
     expect(rows('SELECT workspace_id, kind, enabled FROM email_preferences ORDER BY workspace_id, kind').sort((a, b) => a.kind.localeCompare(b.kind))).toEqual([
       { workspace_id: w.operator.workspaceId, kind: 'summary', enabled: 0 },
-      { workspace_id: w.owner.workspaceId, kind: 'tips', enabled: 0 },
+      { workspace_id: w.owner.workspaceId, kind: 'tips', enabled: 1 },
     ]);
   });
 });

@@ -17,6 +17,18 @@ describe('Settings -> Email', () => {
 		expect(summary).toHaveAccessibleDescription(/last week's DMARC reports/);
 	});
 
+	it('the tips choice is not listed when this instance sends no tips', async () => {
+		renderApp(<EmailSection />, { status: { mode: 'saas' }, routes: { 'GET /api/email-preferences': view({ tips: { offered: false, enabled: false } }) } });
+		expect(await screen.findByRole('switch', { name: 'Weekly summary' })).toBeInTheDocument();
+		expect(screen.queryByRole('switch', { name: 'Tips about your domains' })).toBeNull();
+		expect(screen.queryByText('Tips about your domains')).toBeNull();
+	});
+
+	it('the tips choice is listed, and off, when the instance sends tips and the person has not chosen', async () => {
+		renderApp(<EmailSection />, { status: { mode: 'saas' }, routes: { 'GET /api/email-preferences': view({ tips: { offered: true, enabled: false } }) } });
+		expect(await screen.findByRole('switch', { name: 'Tips about your domains' })).not.toBeChecked();
+	});
+
 	it('turning a switch off saves that one choice and shows the answer', async () => {
 		const { calls } = renderApp(<EmailSection />, {
 			status: { mode: 'saas' },

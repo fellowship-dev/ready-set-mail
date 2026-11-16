@@ -2,7 +2,7 @@
 //
 //   records live, first report, no reports   the workspace's owners, plus the admin who added the domain (when the audit log recorded who). Transactional: no preference.
 //   weekly summary                           owners: on unless turned off. Admins: off unless turned on. Members are not offered it.
-//   tips                                     the same people; an owner who never chose gets LIFECYCLE_TIPS_DEFAULT (default on), an admin never without choosing.
+//   tips                                     owners and admins, only when they turned them on themselves: off by default for everyone. (The instance sends none either until LIFECYCLE_EMAILS_ON names `tips`, kinds.ts.)
 //
 // A preference is a row in email_preferences (user, workspace, kind); no row is the default above. The job reads the rows when it sends, so a
 // change is effective on the next send.
@@ -12,7 +12,7 @@ import { publicBaseUrl } from '../../funnel/config';
 import { signToken } from '../../mail/tokens';
 import type { BoundEnv } from '../../index';
 import { appUrl } from '../../billing/paths';
-import { tipsDefaultOn, type LifecycleEnv } from './kinds';
+import type { LifecycleEnv } from './kinds';
 
 export interface Recipient { userId: string; email: string; name: string; role: MembershipRole }
 
@@ -31,11 +31,10 @@ export const greeting = (name: string | null | undefined): string => {
 export const offered = (role: MembershipRole): boolean => role === 'owner' || role === 'admin';
 
 /** Does this person get the email of this preference? A stored choice wins; else the default of the role. */
-export function preferenceOn(role: MembershipRole, kind: EmailPreferenceKind, row: Pick<PreferenceRow, 'enabled'> | undefined, env: LifecycleEnv): boolean {
+export function preferenceOn(role: MembershipRole, kind: EmailPreferenceKind, row: Pick<PreferenceRow, 'enabled'> | undefined): boolean {
   if (!offered(role)) return false;
   if (row) return row.enabled === 1;
-  if (role === 'owner') return kind === 'summary' ? true : tipsDefaultOn(env);
-  return false;
+  return role === 'owner' && kind === 'summary';
 }
 
 const toRecipient = (r: RecipientRow): Recipient => ({ userId: r.user_id, email: r.email, name: r.name, role: r.role });
@@ -51,9 +50,9 @@ export function milestoneRecipients(people: readonly RecipientRow[], adders: Rea
 }
 
 /** Owners and admins who have this preference on, verified addresses only. */
-export function preferenceRecipients(people: readonly RecipientRow[], prefs: readonly PreferenceRow[], kind: EmailPreferenceKind, env: LifecycleEnv): Recipient[] {
+export function preferenceRecipients(people: readonly RecipientRow[], prefs: readonly PreferenceRow[], kind: EmailPreferenceKind): Recipient[] {
   return people
-    .filter((p) => p.email_verified === 1 && preferenceOn(p.role, kind, prefs.find((x) => x.user_id === p.user_id && x.kind === kind), env))
+    .filter((p) => p.email_verified === 1 && preferenceOn(p.role, kind, prefs.find((x) => x.user_id === p.user_id && x.kind === kind)))
     .map(toRecipient);
 }
 
