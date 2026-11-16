@@ -1,7 +1,0 @@
-# Not affected: invited-teammate-joins
-
-- **Flow:** invited-teammate-joins
-- **Changed:** `src/api/router.ts`
-- **Reason:** I read `git diff 61e6b8f -- src/api/router.ts`. The MTA-STS block of the router (about 200 lines, GET/POST/PATCH/DELETE of /api/domains/:id/mta-sts and its policy path) moved to src/mta-sts/routes.ts and is reached through one hand-off line placed where the block was, after the member read-only gate; `zoneReachable` became `TenantContext.reachesZone` (same body, same one caller, the dns-check `cf_managed` answer) and `cfFailure` now delegates to `cfFailureBody` in src/api/cf-failure.ts with the same statuses and bodies; `deleteDomain` calls `removeMtaSts` before the row is deleted (a no-op without MTA-STS config) and merges any kept records into the same `kept` list. No sign-up, sign-in, code, invite, hand-off, domain-add, claim, Cloudflare connection or onboarding route is touched, and no response of those changes. Proof: the full suite (`npm test -- --run`: test/auth, test/connections, test/onboarding, test/api, test/hosted, test/trust and the new test/mta-sts) passes, including test/api/dns-check-cf-managed.test.ts for `cf_managed`. (This record is named for 2026-11-15 because the checker allows one not-affected record per flow and name, and `2026-11-16-invited-teammate-joins.not-affected.md` is already in main; its Date field is the day it was written.)
-- **By:** Claude (Fable 5.2) for Max F. Findel, the MTA-STS hosted PR; reviewer to accept
-- **Date:** 2026-11-16
