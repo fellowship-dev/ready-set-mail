@@ -42,7 +42,7 @@ describe('probe: start over does not reset limits', () => {
   it('code-mail allowance per address carries across start over', async () => {
     const w = world();
     const statuses: number[] = [];
-    for (let i = 0; i < 4; i++) { const r = await signup(w, 'dana@brightwave-mail.com', `192.0.2.${i + 1}`); statuses.push(r.status); if (r.status === 200) await cancel(w, pendingCookieOf(r), `192.0.2.${i + 1}`); }
+    for (let i = 0; i < 7; i++) { const r = await signup(w, 'dana@brightwave-mail.com', `192.0.2.${i + 1}`); statuses.push(r.status); if (r.status === 200) await cancel(w, pendingCookieOf(r), `192.0.2.${i + 1}`); }
     console.log('PROBE sign-up statuses with start over between:', JSON.stringify(statuses));
     expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
   });

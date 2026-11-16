@@ -35,7 +35,7 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 			await fits(page);
 			await enterDomain(page, DOMAIN);
 			await expect(page.getByRole('heading', { name: `${DOMAIN} uses Cloudflare for DNS` })).toBeVisible();
-			await expect(page.getByTestId('dns-result')).toContainText(`${DOMAIN}:`);
+			await expect(page.getByTestId('dns-result')).toContainText(/to fix|In good shape|Couldn't read/);
 			await expect(page.getByRole('button', { name: "I'll add the records myself" })).toBeVisible();
 			await expect(page.getByText(/can't be connected/i)).toHaveCount(0);
 			// Wide screens: the result on the left, the choice on the right, side by side (one column on a phone)
@@ -56,7 +56,7 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 			await expect(page.getByRole('heading', { name: new RegExp(`^1 change to ${DOMAIN.replace('.', '\\.')}$`) })).toBeVisible({ timeout: 60_000 });
 			await expect(page.getByText(/Step \d of \d/)).toHaveCount(0); // one counter or none: none
 			await expect(page.locator('[data-testid^="change-dmarc:"]')).toContainText(`rua=mailto:rua@${INTAKE}`);
-			await expect(page.getByText('Not changed: SPF and DKIM.', { exact: false })).toBeVisible();
+			await expect(page.getByText('Not changed: SPF and DKIM,', { exact: false })).toBeVisible();
 			await fits(page);
 			const state = async () => ((await (await fetch(`${inst.fake.url}/__state`)).json()) as { records: Record<string, Array<{ name: string; content: string }>> }).records;
 			expect(Object.values(await state()).flat().filter((r) => r.name === `_dmarc.${DOMAIN}`).map((r) => r.content)).toEqual(['v=DMARC1; p=quarantine; pct=50']);

@@ -299,10 +299,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
   const admission = await admitDomainInner(tenant, domain);
-  if (admission.kind !== 'taken' && admission.kind !== 'limit') {
-    await nameClientWorkspace(tenant, domain);
-    await rememberFirstRunDomain(tenant, domain);
-  }
+  if (admission.kind !== 'taken' && admission.kind !== 'limit') await nameClientWorkspace(tenant, domain);
   return admission;
 }
 
@@ -313,8 +310,9 @@ export const FIRST_RUN_DOMAIN_KEY = 'first_run_domain';
  * The domain typed on S4 is the one the setup is about, held on the server (not in a browser's memory: a second browser after Cloudflare's
  * Allow must name the same domain, not the first one imported). Only a workspace's FIRST domain or claim counts: with nothing else in it
  * the name is (re)written, so a typo'd first domain that was removed is replaced; later domains never move it. Hosted only; never fails the request.
+ * Called by the typed path (POST /api/domains, which is S4), not by a bulk import, which would pay two list reads per row.
  */
-async function rememberFirstRunDomain(tenant: TenantContext, domain: string): Promise<void> {
+export async function rememberFirstRunDomain(tenant: TenantContext, domain: string): Promise<void> {
   if (getMode(tenant.env) !== 'saas') return;
   try {
     const others = [...(await tenant.scope.domains.list()).map(d => d.domain), ...(await tenant.scope.claims.list()).map(c => c.domain)].filter(n => n !== domain);

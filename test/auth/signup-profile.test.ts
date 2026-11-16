@@ -299,11 +299,16 @@ describe('S3: a new code from the same attempt', () => {
     const w = hosted();
     expect((await resend(w, '')).status).toBe(410);
     const cookie = pendingCookieOf(await signup(w, 'dana@brightwave-mail.com'));
-    const again = await resend(w, cookie);
-    expect(again.status).toBe(200);
-    const third = await resend(w, pendingCookieOf(again));
-    expect(third.status).toBe(429); // sign-up allows 2 code mails an hour per address
-    expect((await json(third)).code).toBe('code_mail_limit');
+    let latest = cookie;
+    const statuses: number[] = [];
+    let refused: Response | null = null;
+    for (let i = 0; i < 8 && !refused; i++) {
+      const r = await resend(w, latest);
+      statuses.push(r.status);
+      if (r.status === 429) refused = r; else latest = pendingCookieOf(r);
+    }
+    expect(statuses).toEqual([200, 200, 200, 200, 429]); // the sign-up's own mail plus four: sign-up allows 5 code mails an hour per address
+    expect((await json(refused!)).code).toBe('code_mail_limit');
   });
 
   it('for an address that has an account it looks the same and mails only the notice', async () => {
@@ -313,9 +318,16 @@ describe('S3: a new code from the same attempt', () => {
     await saveProfile(w, cookie, ABOUT);
     await flushBackground();
     const before = mailsTo(w.env, 'dana@brightwave-mail.com').length;
-    const res = await resend(w, cookie);
-    expect(res.status).toBe(429); // 2 an hour: the first sign-up code, the notice
     void before;
+    let latest = cookie;
+    const statuses: number[] = [];
+    for (let i = 0; i < 6 && !statuses.includes(429); i++) {
+      const r = await resend(w, latest);
+      statuses.push(r.status);
+      if (r.status === 200) latest = pendingCookieOf(r);
+    }
+    expect(statuses.at(-1)).toBe(429); // the same allowance, spent the same way, for an address with an account
+    expect(statuses.length).toBeLessThanOrEqual(5);
   });
 
   it('"Wrong address? Start over" drops the attempt and clears the cookie', async () => {

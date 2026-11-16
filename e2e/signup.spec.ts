@@ -155,12 +155,13 @@ test('an agency: the organization name is the agency, the first workspace is nam
 
 		// Returning mid-flow (a reload, or the dashboard in a new visit): back on S4 for that domain, not an empty field
 		await page.reload();
-		await expect(page.getByTestId('dns-result')).toContainText('harbor-lane.org', { timeout: 60_000 });
+		await expect(page.getByTestId('dns-result')).toContainText(/to fix|In good shape|Couldn't read/, { timeout: 60_000 });
 		await expect(page.getByLabel("Client's domain")).toHaveCount(0);
 		// A new visit (a new tab: the once-per-tab redirect has not been used) opens on the dashboard's address and lands on S4
 		const again = await ctx.newPage();
 		await again.goto(`${inst.url}/#/`);
-		await expect(again.getByTestId('dns-result')).toContainText('harbor-lane.org', { timeout: 60_000 });
+		await expect(again.getByTestId('dns-result')).toContainText(/to fix|In good shape|Couldn't read/, { timeout: 60_000 });
+		await expect(again.getByRole('heading', { name: /harbor-lane\.org/ })).toBeVisible();
 	} finally {
 		await ctx.close();
 		await inst.stop();

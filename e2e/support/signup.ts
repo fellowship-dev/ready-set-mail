@@ -47,7 +47,8 @@ export const s4Heading = (page: Page) => page.getByRole('heading', { name: /^(Wh
 export async function enterDomain(page: Page, domain: string) {
 	await page.getByLabel(/^(Domain|Client's domain)$/).fill(domain);
 	await page.getByRole('button', { name: `Check ${domain}` }).click();
-	await expect(page.getByTestId('dns-result')).toContainText(domain, { timeout: 60_000 });
+	await expect(page.getByText(`Domain: ${domain}`)).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('dns-result')).toContainText(/to fix|In good shape|Couldn't read/, { timeout: 60_000 });
 }
 
 /** Cloudflare's token path on the fake (it has no consent screen): paste a token and Connect. */

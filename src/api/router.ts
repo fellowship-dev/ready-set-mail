@@ -120,7 +120,7 @@ import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../d
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
-import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
@@ -255,6 +255,7 @@ async function addDomain(request: Request, tenant: TenantContext, userEmail?: st
   }
 
   const result = await enrollDomain(tenant, body.domain, userEmail, ctx, actorId);
+  await rememberFirstRunDomain(tenant, 'pending' in result ? result.claim.domain : result.domain.domain);
   enrollmentAdded(tenant, ctx, 'typed', 'pending' in result ? result.claim.domain : result.domain.domain, result);
   return json(result, 'pending' in result ? 202 : result.resumed ? 200 : 201);
 }
