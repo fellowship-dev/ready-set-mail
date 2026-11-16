@@ -13,6 +13,7 @@ import { DomainSettingsPage } from '../src/pages/domains/DomainSettingsPage';
 import { SpfLookupsPage } from '../src/pages/domains/SpfLookupsPage';
 import { DeleteButton } from '../src/pages/settings/WorkspaceSection';
 import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
+import type { SpfFlatStatus } from '../src/lib/types';
 import { me, renderApp, type Handler } from './render';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -23,6 +24,7 @@ const AT = Date.UTC(2026, 10, 16, 15, 20) / 1000;
 const pending = (over: Record<string, unknown> = {}) => ({ removed: { '_spf.foxtrot-help.net': ['ip4:198.51.100.0/28', 'ip4:198.51.100.64/28'] }, providers: ['_spf.foxtrot-help.net'], since: AT - 4 * 3600, confirm_after: AT, additions_written: true, ...over });
 const config = (over: Record<string, unknown> = {}) => ({ enabled: true, original_record: ORIGINAL, flattened_record: FLAT, previous_record: null, ip_count: 2, lookups_before: 14, lookups_after: 3, last_changed_at: now() - 7200, last_refreshed_at: now() - 7200, problem: null, pending: null, ...over });
 const status = (cfg: unknown, over: Record<string, unknown> = {}) => ({ available: true, access: { allowed: true }, config: cfg, lookup_count: 14, ...over });
+const asStatus = (cfg: unknown) => status(cfg) as unknown as SpfFlatStatus;
 const preview = (over: Record<string, unknown> = {}) => ({ original: ORIGINAL, within_limits: false, live: null, problem: null, flat: { record: FLAT, bytes: 38, ip_count: 2, inlined: ['a.example', 'b.example'], kept_includes: [], lookups_before: 14, lookups_after: 3 }, ...over });
 const wizardUi = (<Routes><Route path="/domains/:id/spf-flatten" element={<SpfFlattenPage />} /></Routes>);
 const card = (spf: unknown, extra: Record<string, unknown | Handler> = {}) => renderApp(<DnsTools domainId={3} />, { route: '/domains/3', routes: { 'GET /api/domains/3/spf-flatten': spf, 'GET /api/domains/3/mta-sts': { available: false, config: null, summary: null }, ...extra } });
@@ -250,10 +252,10 @@ describe('the domain page: "Do this next" and the status line', () => {
     expect(line.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
   it('the status line says what is waiting, stopped or needs attention, in a few words', () => {
-    expect(statusLine(status(config({ pending: pending({ confirm_after: AT }) })), AT)!.text).toBe('SPF flattening: waiting to confirm a change, after 15:20 UTC.');
-    expect(statusLine(status(config({ enabled: false, problem: { kind: 'proof_lost', message: 'm', since: 1 } })))!.text).toBe('SPF flattening has stopped: we can no longer show you control this domain.');
-    expect(statusLine(status(config({ problem: { kind: 'include_unresolved', message: 'm', since: 1 } })))!.text).toBe('SPF flattening needs attention.');
-    expect(statusLine(status(null))).toBeNull();
+    expect(statusLine(asStatus(config({ pending: pending({ confirm_after: AT }) })), AT)!.text).toBe('SPF flattening: waiting to confirm a change, after 15:20 UTC.');
+    expect(statusLine(asStatus(config({ enabled: false, problem: { kind: 'proof_lost', message: 'm', since: 1 } })))!.text).toBe('SPF flattening has stopped: we can no longer show you control this domain.');
+    expect(statusLine(asStatus(config({ problem: { kind: 'include_unresolved', message: 'm', since: 1 } })))!.text).toBe('SPF flattening needs attention.');
+    expect(statusLine(asStatus(null))).toBeNull();
     const { container } = renderApp(<SpfStatusLine domainId={1} status={undefined} />);
     expect(container.textContent).toBe('');
   });
