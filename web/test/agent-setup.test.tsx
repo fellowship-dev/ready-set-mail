@@ -52,6 +52,12 @@ describe('SetupCheck', () => {
 		expect(screen.getByText('(TURNSTILE_SECRET_KEY, TURNSTILE_SITE_KEY)')).toBeInTheDocument();
 	});
 
+	it('is one line on every page: the list is behind "What to fix", closed until opened', async () => {
+		renderApp(<SetupCheck compact />, { routes: { ...owner, ...preflight([{ id: 'bot_check', severity: 'action', setting: 'TURNSTILE_SITE_KEY', message: 'Sign-up is closed.' }]) } });
+		const more = await screen.findByText('What to fix');
+		expect(more.closest('details')).not.toHaveAttribute('open');
+	});
+
 	it('stays quiet for notes only', async () => {
 		const { calls } = renderApp(<SetupCheck compact />, { routes: { ...owner, ...preflight([{ id: 'booking_link', severity: 'note', setting: 'BOOKING_URL', message: 'No booking link.' }]) } });
 		await waitFor(() => expect(calls.some((c) => c.path === '/api/instance/preflight')).toBe(true));

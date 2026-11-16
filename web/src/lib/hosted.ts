@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { domainKeys, invalidateDomain } from './domain-queries';
+import { useHosted } from './session';
 
 /** Hosted records (docs/hosted.md, API section). All of it is dormant unless GET /api/hosted/config says enabled. */
 export type HostedPurpose = 'dmarc' | 'spf' | 'tls_rpt' | 'mta_sts';
@@ -81,6 +82,18 @@ export function useHostedStatus(domainId: number) {
 export function useHostedInfo(domainId: number): HostedStatus | null {
 	const q = useHostedStatus(domainId);
 	return q.data?.enabled ? q.data : null;
+}
+
+/**
+ * Which DNS tools are off for this domain on this deployment: the one predicate the domain page, its tools list and the
+ * two wizard routes share. Hosted: no SPF flattening (its routes are off, and a hosted-records domain's SPF is flattened by
+ * the hosted service); MTA-STS only for a domain on hosted records. `pending`: hosted, and the domain's hosted status has
+ * not answered yet, so MTA-STS is not known to be off (the wizard route waits; the card stays hidden).
+ */
+export function useDnsToolsOff(domainId: number): { spfOff: boolean; mtaOff: boolean; pending: boolean } {
+	const hostedMode = useHosted();
+	const { pending, info } = useHostedLevelInput(domainId);
+	return { spfOff: hostedMode, mtaOff: hostedMode && !info, pending: hostedMode && pending };
 }
 
 /**

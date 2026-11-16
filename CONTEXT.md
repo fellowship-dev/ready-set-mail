@@ -46,7 +46,7 @@ _Avoid_: integration, Cloudflare account (for the link itself)
 Home: `src/connections/`; the import is `importZones` in `src/connections/import.ts`; every call the Worker makes to the Cloudflare REST API (`api.cloudflare.com`) goes through `CfClient` in `src/tenancy/cf-client.ts` (the OAuth token exchange and Turnstile use other Cloudflare hosts).
 
 **Apply** and the other DNS writes:
-The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
+The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), Connect reports' Apply (`POST /api/domains/:id/report-address/apply`: the one write of our report address), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
 Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 
 ## Judging a domain
@@ -79,11 +79,16 @@ Home: parsing `src/dmarc/`, storing `packages/db`.
 
 **Report address** — **four forms**:
 Where a domain's DMARC record sends reports (`rua=mailto:…`).
-1. **Hosted, shared:** `rua@<INTAKE_DOMAIN>`, the same for every customer, routed by the domain inside the report (ADR 0006). Built by `fixedReportAddress` in `src/hosted/fixed-address.ts`; used by `connectReports` and `reportAddressForWrite` in `src/hosted/report-address.ts`. Only for a proven domain of a workspace that `HOSTED_CONNECT_REPORTS` admits: by default (`owner`) only the operator's own workspaces (the account of `OWNER_EMAIL`). For any other hosted customer the DMARC record is written without our address and reports cannot be connected.
+1. **Hosted, shared:** `rua@<INTAKE_DOMAIN>`, the same for every customer, routed by the domain inside the report (ADR 0006). Built by `fixedReportAddress` in `src/hosted/fixed-address.ts`; connected by `connectReports` and written into a DMARC record only by `applyReportRecord`, both in `src/hosted/report-address.ts` (ADR 0020). Ours is only ever the first or the second address of a record, never the third. Only for a proven domain of a workspace that `HOSTED_CONNECT_REPORTS` admits: by default (`owner`) only the operator's own workspaces (the account of `OWNER_EMAIL`). For any other hosted customer the DMARC record is written without our address and reports cannot be connected.
 2. **Hosted, per token:** `rua+<token>@<INTAKE_DOMAIN>` (and `tls-rpt+<token>@…`), built by `intakeAddress` in `src/hosted/tokens.ts`. Used by hosted records (`buildHostedDmarc` in `src/hosted/records.ts`, set up by `enableHosted` and rotated by `rotateHostedToken` in `src/hosted/service.ts`), and still accepted for a domain given one before the shared address existed.
 3. **Self-host:** `rua@<reports domain>`, the install's own reports domain. Built inline in `src/domains/service.ts`, `src/domains/bulk.ts`, `src/api/router.ts`, `src/onboarding/plan.ts` and `src/digest/weekly.ts`.
 4. **Agent and public report:** `dmarc@<domain>`, the domain's own mailbox, never ours. Proposed by `enforcedDmarc` and the fix values in `packages/report/src/fixes.ts`, and by the report catalog and renderer (`packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/render-md.ts`).
 _Avoid_: RUA email, inbox
+
+**Connect reports** and **review**:
+The action that files a hosted domain's reports here: it sets the domain's report address (`connectReports`) and, where a Cloudflare connection reaches the zone, adds our address to its DMARC record. A review is what that write would do to the record in the zone now (`reviewReportRecord`: the record now, the record after, a hash of the live value); the Apply carries the reviewed hash and the person's choice, never a record, and is refused (`record_changed`) when the live record is not the one reviewed.
+_Avoid_: publish (for a write we make)
+Home: `src/hosted/report-address.ts`; panel `web/src/components/reports/ConnectReports.tsx`; ADR 0020.
 
 **Intake**:
 Receiving report mail: authenticating the sender, attributing the report to a workspace, applying caps, storing.
