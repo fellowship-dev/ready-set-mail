@@ -7,7 +7,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { enterMailedCode, fillAbout, fillSignUp, mailedCodes, s4Heading, type HostedInstance } from './support/signup';
+import { enterDomain, enterMailedCode, fillAbout, fillSignUp, mailedCodes, s4Heading, type HostedInstance } from './support/signup';
 
 interface Instance extends HostedInstance { stop(): Promise<void>; d1(sql: string): Array<Record<string, unknown>> }
 const nativeImport = new Function('u', 'return import(u)') as (u: string) => Promise<{ startInstance(o: Record<string, unknown>): Promise<Instance> }>;
@@ -27,6 +27,7 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 		try {
 			// S1
 			const before = mailedCodes(inst).length;
+			const t0 = Date.now();
 			await page.goto(`${inst.url}/#/signup?domain=harbor-lane.org`);
 			await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
 			expect(hash(page)).toBe('#/signup');
@@ -65,6 +66,9 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 			await page.goto(`${inst.url}/#/signup`);
 			await expect(page.getByRole('heading', { name: 'Check your inbox' })).toBeVisible();
 			await expect(page.getByLabel('6-digit code')).toBeVisible();
+
+			// Timing, for the record (not an assertion): from S1's Continue to the code on screen, scripted, with no human typing time.
+			console.log(`S1_TO_S3_MS width=${width} ${Date.now() - t0}`);
 
 			// A wrong code, then the right one (pasted with a space, as people do)
 			const right = mailedCodes(inst).at(-1)!;
@@ -123,20 +127,34 @@ test('"Not seeing it?" sends a new code that replaces the old one; "Start over" 
 	}
 });
 
-test('an agency: the organization name is the agency (not a workspace), the first workspace waits for its first client domain', async ({ browser }) => {
+test('an agency: the organization name is the agency, the first workspace is named after the first client domain, and a returning agency lands back on that domain', async ({ browser }) => {
 	const inst = await startInstance({ mode: 'hosted', port: 8833, tokenKey: true });
 	const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 	const page = await ctx.newPage();
+	const workspaces = async () => ((await (await page.request.get(`${inst.url}/api/workspaces`)).json()) as { workspaces: Array<{ name: string }> }).workspaces.map((w) => w.name);
 	try {
 		const before = mailedCodes(inst).length;
 		await fillSignUp(page, inst, 'sam@northside-it.com');
 		await fillAbout(page, { name: 'Sam Ortiz', organization: 'Northside IT', whose: "My clients' (I'm an agency or IT provider)" });
 		await enterMailedCode(page, inst, before);
 		await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByRole('heading', { name: "Add your first client's domain" })).toBeVisible();
+		await expect(page.getByText('Each client gets its own workspace, named after its domain. You can rename it.')).toBeVisible();
 		const me = (await (await page.request.get(`${inst.url}/api/me`)).json()) as { agency_name?: string; whose_email?: string };
 		expect(me).toMatchObject({ whose_email: 'clients', agency_name: 'Northside IT' });
-		const { workspaces } = (await (await page.request.get(`${inst.url}/api/workspaces`)).json()) as { workspaces: Array<{ name: string }> };
-		expect(workspaces.map((w) => w.name)).toEqual(['New client']);
+		expect(await workspaces()).toEqual(['New client']); // until the first client domain is entered
+
+		await enterDomain(page, 'harbor-lane.org');
+		expect(await workspaces()).toEqual(['harbor-lane.org']); // named after the client's domain
+
+		// Returning mid-flow (a reload, or the dashboard in a new visit): back on S4 for that domain, not an empty field
+		await page.reload();
+		await expect(page.getByTestId('dns-result')).toContainText('harbor-lane.org', { timeout: 60_000 });
+		await expect(page.getByLabel("Client's domain")).toHaveCount(0);
+		// A new visit (a new tab: the once-per-tab redirect has not been used) opens on the dashboard's address and lands on S4
+		const again = await ctx.newPage();
+		await again.goto(`${inst.url}/#/`);
+		await expect(again.getByTestId('dns-result')).toContainText('harbor-lane.org', { timeout: 60_000 });
 	} finally {
 		await ctx.close();
 		await inst.stop();

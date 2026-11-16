@@ -69,7 +69,7 @@ function htmlLayout(title: string, bodyHtml: string, brand: Brand, footer = 'Rea
 <body style="margin:0;padding:0;background:${c['surface-2']};font-family:Arial,sans-serif;font-size:14px;color:${c['ink-1']};">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:${c['surface-2']};">
 <tr><td align="center" style="padding:24px 8px;">
-<table width="600" cellpadding="0" cellspacing="0" style="background:${c['surface-1']};border-radius:6px;overflow:hidden;max-width:600px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:${c['surface-1']};border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   ${header}
   <tr><td style="padding:24px;">
     ${bodyHtml}

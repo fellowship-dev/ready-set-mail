@@ -183,7 +183,7 @@ export function OverviewPage() {
 	}
 
 	const empty = domains.length === 0 && claims.length === 0;
-	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
+	// One rule for the order: whatever blocks progress or needs the person comes before the first-day card: a Cloudflare connection that
 	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
 	const needsAttention = shownVerdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
 	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.

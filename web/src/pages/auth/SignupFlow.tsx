@@ -97,7 +97,7 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 					/>
 					{errors.email ? <FieldError id="email-error">{errors.email}</FieldError> : null}
 				</Field>
-				<Field id="password" label="Password" hint="At least 8 characters.">
+				<Field id="password" label="Password" hint={errors.password ? undefined : 'At least 8 characters.'}>
 					<PasswordInput
 						id="password"
 						value={password}
@@ -105,7 +105,7 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 						required
 						autoComplete="new-password"
 						aria-invalid={errors.password ? true : undefined}
-						aria-describedby={errors.password ? 'password-hint password-error' : 'password-hint'}
+						aria-describedby={errors.password ? 'password-error' : 'password-hint'}
 					/>
 					{errors.password ? <FieldError id="password-error">{errors.password}</FieldError> : null}
 				</Field>
