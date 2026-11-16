@@ -2,9 +2,9 @@
 
 - **Flow:** A hosted owner connects a verified domain's reports through Cloudflare
 - **Value moment:** Reports connected, waiting for the first report - the live DMARC record lists the shared report address and the domain is connected
-- **Walked:** 2026-11-16T03:50:14.904Z
+- **Walked:** 2026-11-16T04:35:27.030Z
 - **Target:** http://127.0.0.1:8861 (local-copy)
-- **Commit:** 5c4b7b1
+- **Commit:** 28b610c
 - **Kind:** screens
 - **Gate:** PASS
 - **Rules:** 0.5.0
@@ -33,7 +33,7 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 | `longest_wait_ms` | — | 1547 |  |
 | `dead_ends` | — | 0 |  |
 | `loops` | — | 0 |  |
-| `time_to_value_ms` | — | 3781 |  |
+| `time_to_value_ms` | — | 3782 |  |
 
 ### Not covered by a rule
 

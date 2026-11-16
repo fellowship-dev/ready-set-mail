@@ -2,9 +2,9 @@
 
 - **Flow:** New hosted user signs up and gets DMARC with the report address live through Cloudflare
 - **Value moment:** Records live - ownership proven and DMARC seen in public DNS, carrying the shared report address when the server admits the workspace to reports (HOSTED_CONNECT_REPORTS; by default only the operator's own workspaces)
-- **Walked:** 2026-11-16T03:52:32.077Z
+- **Walked:** 2026-11-16T04:34:31.249Z
 - **Target:** http://127.0.0.1:8862 (local-copy)
-- **Commit:** 5c4b7b1b81177323e48b1cd10bdbe570bf06bfb2
+- **Commit:** 28b610cbd375930f2ba7fe9c7f674051c7f75bf0
 - **Kind:** screens
 - **Gate:** PASS
 - **Rules:** 0.5.0
@@ -35,7 +35,7 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 | `longest_wait_ms` | — | 607 |  |
 | `dead_ends` | — | 0 |  |
 | `loops` | — | 0 |  |
-| `time_to_value_ms` | — | 3145 |  |
+| `time_to_value_ms` | — | 3139 |  |
 
 ### Not covered by a rule
 
@@ -50,9 +50,7 @@ Candidates for a new rule (see flow-walk/rules/README.md § Admission test):
 - staleness not checked: no deploy time given and no deploy check configured for the target
 ### Walk notes (added by the walker; the gate wrote everything above)
 
-- Surface: `127.0.0.1:8862` is `local-copy @ 5c4b7b1`: hosted mode, `HOSTED_CONNECT_REPORTS=all`, a fake Cloudflare and fake DNS-over-HTTPS (the same records answer both), Turnstile test keys, sign-up code read from the captured mail log. The "Connect Cloudflare" step is the pasted-token path (any token of 20+ characters; no OAuth fake exists), as in the baseline, so there is no Cloudflare consent screen. Billing is not set up and report-sender authentication is not configured on this copy.
-- Walked in fresh headless Chromium at 375x812 and 1440x900 (every step captured at both widths on the same page). Path: sign-up (email, password, bot check) -> 6-digit code -> first screen -> Connect Cloudflare -> pasted token -> overview (4 zones imported) -> "Connect reports" on the harbor-lane.org row -> domain page -> "Connect reports" panel -> Apply review -> Apply. Value step: the page shows "Report address added." and the report address; the fake zone holds `v=DMARC1; p=none; rua=mailto:[report address]` and the DoH answer matches.
-- Also checked: a domain at `p=reject` without our rua (review says only `rua=` changes; the zone afterwards holds the same policy plus the rua), Cancel on the review (nothing written), refresh, Back.
-- Against the 2026-11-15 baseline of `main` 6a7d775 (that baseline had no results.json, so the gate table has no previous column): screens 6 (baseline 7: Apply is now in the domain page, not its own screen); typed fields 3 plus one pasted token (3 + token); clicks 6 (6 + consent; the sign-up code submits itself at the sixth digit); decisions 4 (4); words on the sign-up screen 55 by `measure.mjs` (baseline 28, counted another way, and sign-up is unchanged by this branch); max scroll before the step's action at 375: 0 on every step (baseline 2.52 for "Fix <domain>"; the "Connect reports" rows sit above 0.85 of the first screen, and the old "Fix" button still sits at 2.86 but is not on the path); the overview lands with 16 status badges for 4 domains (baseline 14); machine time on the clicks 3.1 s (the baseline's 15 s through Apply was counted differently and is not comparable).
-- Findings from this branch: the overview and domain page both offer "Connect reports", two clicks before the one real decision (WORD-02, PATH-03). Findings already on `main`: sign-up and first screen are unchanged by this branch; the overview's badge load (NOISE-01).
-- Console and network noise: 401 on /api/me before sign-in (expected), a 400 on the deliberate wrong-code probe, 404 on /api/billing on the domain page (billing not set up on this copy). No write was blocked by the guard.
+- Re-walk on the merged head 28b610c (fix/connect-reports-one-click merged with origin/main, product analytics included), after the earlier walk at 5c4b7b1. `127.0.0.1:8862` is `local-copy @ 28b610c`: hosted mode, `HOSTED_CONNECT_REPORTS=all`, fake Cloudflare and fake DNS-over-HTTPS, Turnstile test keys, sign-up code read from the captured mail log. "Connect Cloudflare" is the pasted-token path (no OAuth fake), so there is no consent screen. Billing and report-sender authentication are not configured on this copy.
+- Fresh headless Chromium at 375x812 and 1440x900, every step captured at both widths: sign-up, code, first screen, Connect Cloudflare, pasted token, overview (4 zones), "Connect reports" on the harbor-lane.org row, domain page, "Connect reports" panel, Apply review, Apply. The zone then holds `v=DMARC1; p=none; rua=mailto:[report address]` and the DNS-over-HTTPS answer matches. A `p=reject` domain without our rua, Cancel on the review, refresh and Back were also walked.
+- Every measure in the table above equals the 5c4b7b1 walk (its snapshot was not kept, so the gate table has no previous column): screens 6, decisions 4, fields 4, clicks 6, words 1530, non-task 51, longest wait 607 ms; the analytics merge changed nothing the person sees on this path. Against the 2026-11-15 baseline of main 6a7d775: screens 6 (7), typed fields 3 plus a pasted token (same), clicks 6 (6 plus consent), decisions 4 (4), max scroll before the action at 375: 0 on every step (2.52 for "Fix <domain>"), 16 status badges on the overview (14).
+- Console and network noise: 401 on /api/me before sign-in, a 400 on the deliberate wrong-code probe, 404 on /api/billing (billing not set up here). No write was blocked by the guard. No video recorded.
