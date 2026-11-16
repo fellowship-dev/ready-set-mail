@@ -11,6 +11,8 @@ interface DomainList {
 	domains: Domain[];
 	/** SaaS only; absent or empty on self-host. */
 	pending_claims?: DomainClaim[];
+	/** Hosted: the domain S4 was given, as the server holds it (null when none, or on self-host). */
+	first_run_domain?: string | null;
 }
 
 const fetchDomains = () => api<DomainList>('/api/domains');
@@ -18,6 +20,11 @@ const fetchDomains = () => api<DomainList>('/api/domains');
 /** Verified domains only (what reports, stats and DNS exist for). */
 export function useDomains() {
 	return useQuery({ queryKey: keys.domains, queryFn: fetchDomains, select: (r) => r.domains });
+}
+
+/** The domain the first run is about, from the server: the same in every browser. */
+export function useFirstRunDomain() {
+	return useQuery({ queryKey: keys.domains, queryFn: fetchDomains, select: (r) => r.first_run_domain ?? null });
 }
 
 /** Claims waiting for a DNS proof (or lost to another workspace). Empty on self-host. */

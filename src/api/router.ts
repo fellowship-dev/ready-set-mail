@@ -120,7 +120,7 @@ import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../d
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
-import { admitDomain, claimView, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
@@ -244,7 +244,8 @@ async function parseBody<T>(request: Request): Promise<T> {
 async function getDomainsHandler(tenant: TenantContext): Promise<Response> {
   const results = await tenant.scope.domains.list();
   // `domains` are verified; `pending_claims` are domains this workspace has asked for but not yet proven (SaaS).
-  return json({ domains: results, pending_claims: await listClaims(tenant) });
+  // `first_run_domain` is the one S4 was given (settings, hosted only): the first-run screens name it in every browser.
+  return json({ domains: results, pending_claims: await listClaims(tenant), first_run_domain: (await tenant.scope.settings.get(FIRST_RUN_DOMAIN_KEY))?.value ?? null });
 }
 
 async function addDomain(request: Request, tenant: TenantContext, userEmail?: string, ctx?: ExecutionContext, actorId?: string): Promise<Response> {

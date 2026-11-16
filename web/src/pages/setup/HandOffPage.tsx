@@ -6,7 +6,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { EMAIL_PATTERN } from '../../lib/signup';
 import { handoffKeys } from '../../lib/handoff';
 import { focusDomainOf } from '../../lib/first-run';
-import { useDomainClaims, useDomains } from '../../lib/queries';
+import { useDomainClaims, useDomains, useFirstRunDomain } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { cleanName } from '../../lib/names';
 import { useWorkspaces } from '../../lib/workspaces';
@@ -22,6 +22,7 @@ export function HandOffPage() {
 	const qc = useQueryClient();
 	const domains = useDomains();
 	const claims = useDomainClaims();
+	const setUp = useFirstRunDomain();
 	const workspaces = useWorkspaces();
 	const [email, setEmail] = useState('');
 	const [invalid, setInvalid] = useState('');
@@ -32,7 +33,7 @@ export function HandOffPage() {
 
 	const asked = params.get('domain');
 	const names = [...(domains.data ?? []).map((d) => d.domain), ...(claims.data ?? []).filter((c) => c.status === 'pending').map((c) => c.domain)];
-	const domain = (asked && names.includes(asked) ? asked : null) ?? focusDomainOf(domains.data ?? [], me?.workspace_id ?? null)?.domain ?? names[0] ?? null;
+	const domain = (asked && names.includes(asked) ? asked : null) ?? focusDomainOf(domains.data ?? [], me?.workspace_id ?? null, setUp.data)?.domain ?? names[0] ?? null;
 	const workspace = cleanName(workspaces.data?.find((w) => w.id === me?.workspace_id)?.name) || 'this workspace';
 
 	const send = useMutation({

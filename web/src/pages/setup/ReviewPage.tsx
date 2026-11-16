@@ -8,7 +8,7 @@ import { clearProgress, fetchZones, useCfConnections } from '../../lib/cloudflar
 import { applyStep, fetchPlan, firstCheck, markWizardState, pendingWrites, type DnsPlan, type PlanWrite } from '../../lib/dns-plan';
 import { HAND_OFF_ENABLED, focusDomainOf, isAgency, markReviewDone, zonesNotAdded } from '../../lib/first-run';
 import { invalidateDomain } from '../../lib/domain-queries';
-import { useDomainClaims, useDomains } from '../../lib/queries';
+import { useDomainClaims, useDomains, useFirstRunDomain } from '../../lib/queries';
 import { handoffPath } from '../../lib/handoff';
 import { useSession } from '../../lib/session';
 import type { Domain } from '../../lib/types';
@@ -77,9 +77,10 @@ export function ReviewPage() {
 	const workspace = me?.workspace_id ?? null;
 	const domains = useDomains();
 	const claims = useDomainClaims();
+	const setUp = useFirstRunDomain();
 	const conns = useCfConnections(canWrite);
 	const list = domains.data ?? [];
-	const domain: Domain | undefined = focusDomainOf(list, workspace);
+	const domain: Domain | undefined = focusDomainOf(list, workspace, setUp.data);
 
 	const plan = useQuery({ queryKey: ['review-plan', domain?.id], queryFn: () => fetchPlan([domain!.id]), enabled: !!domain && canWrite, retry: false, staleTime: 0, refetchOnWindowFocus: false });
 	const [replaced, setReplaced] = useState<DnsPlan | null>(null);

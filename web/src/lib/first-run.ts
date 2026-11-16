@@ -163,10 +163,12 @@ export function reviewOutcome(workspaceId: string | null): 'applied' | 'skipped'
 }
 export const reviewDone = (workspaceId: string | null): boolean => reviewOutcome(workspaceId) !== null;
 
-/** The domain the first run is about: the one S4 was given, else the oldest in the workspace. */
-export function focusDomainOf<T extends { domain: string }>(domains: T[], workspaceId: string | null): T | undefined {
-	const named = readFocusDomain(workspaceId);
-	return domains.find((d) => d.domain === named) ?? domains[0];
+/**
+ * The domain the first run is about: the one S4 was given (`setUp`: the server's record of it, so every browser agrees; this browser's
+ * own memory is only the fallback), else the oldest in the workspace.
+ */
+export function focusDomainOf<T extends { domain: string }>(domains: T[], workspaceId: string | null, setUp?: string | null): T | undefined {
+	return domains.find((d) => d.domain === setUp) ?? domains.find((d) => d.domain === readFocusDomain(workspaceId)) ?? domains[0];
 }
 
 // ── An agency's Cloudflare account holds many clients ───────────

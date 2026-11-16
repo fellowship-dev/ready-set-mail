@@ -21,7 +21,7 @@ import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useDnsPoll } from '../../lib/poll';
 import { firstCheck } from '../../lib/dns-plan';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
-import { useDomainClaims, useDomains } from '../../lib/queries';
+import { useDomainClaims, useDomains, useFirstRunDomain } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
@@ -95,6 +95,7 @@ export function OverviewPage() {
 	const removed = (useLocation().state as RemovedState | null)?.removed;
 	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
+	const setUpDomain = useFirstRunDomain().data;
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
 	// Waiting for proof: pending claims, and domains held but unproven (a name with both counts once).
@@ -189,7 +190,7 @@ export function OverviewPage() {
 	// One rule for the order: while a domain is in its first-day state the first-day card is the first thing on the page, whatever else the page
 	// has to say (a row that needs attention comes after it, and does not bring back "Not yet." as the headline on day one).
 	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.
-	const focus = focusDomainOf(domains, me?.workspace_id ?? null);
+	const focus = focusDomainOf(domains, me?.workspace_id ?? null, setUpDomain);
 	const dayState = canWrite
 		? firstDay({ domain: focus, claims, summary: focus ? summaryOf(focus) : undefined, arrivedSeen: firstReportSeen(me?.workspace_id ?? null), applied: reviewOutcome(me?.workspace_id ?? null) === 'applied' })
 		: null;

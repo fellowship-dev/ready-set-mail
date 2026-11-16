@@ -88,6 +88,28 @@ describe('the screen a returning person lands on', () => {
 		expect(sessionStorage.getItem('rsm_review_redirected:ws_default')).toBeNull();
 	});
 
+	it('another browser, three imported zones, the set-up domain is not the first: the first-day card names the domain S4 was given (the server\'s record), not the first imported', async () => {
+		const quiet = row({ id: 5, domain: 'quietfield.net' });
+		const other = row({ id: 6, domain: 'aaa-other.org' });
+		markReviewDone('ws_default');
+		boot('/', {
+			...signedIn,
+			'GET /api/domains': { domains: [quiet, other, row()], first_run_domain: 'brightwave-mail.com' },
+			'GET /api/cloudflare/connections': conns([active]),
+			'GET /api/domains/summaries': { summaries: [5, 6, 7].map((id) => summary({ domain_id: id, domain: { 5: 'quietfield.net', 6: 'aaa-other.org', 7: 'brightwave-mail.com' }[id], dmarc_rua: 1 })), next_after: null, window_days: 30 },
+			'GET /api/domains/7/check-summary': summary({ dmarc_rua: 1 }),
+			'GET /api/domains/6/check-summary': summary({ domain_id: 6, domain: 'aaa-other.org', dmarc_rua: 1 }),
+			'GET /api/domains/5/check-summary': summary({ domain_id: 5, domain: 'quietfield.net', dmarc_rua: 1 }),
+			'GET /api/domains/7/stats': { domain: 'x', days: 30, stats: [] },
+			'GET /api/domains/6/stats': { domain: 'x', days: 30, stats: [] },
+			'GET /api/domains/5/stats': { domain: 'x', days: 30, stats: [] },
+		});
+		const card = await screen.findByTestId('first-day');
+		expect(card).toHaveTextContent('brightwave-mail.com');
+		expect(card).not.toHaveTextContent('quietfield.net');
+		expect(card).not.toHaveTextContent('aaa-other.org');
+	});
+
 	it('the same state after the review was applied or skipped: the dashboard with the first-day card, not the review again', async () => {
 		markReviewDone('ws_default');
 		boot('/', {

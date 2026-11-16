@@ -299,8 +299,29 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
   const admission = await admitDomainInner(tenant, domain);
-  if (admission.kind !== 'taken' && admission.kind !== 'limit') await nameClientWorkspace(tenant, domain);
+  if (admission.kind !== 'taken' && admission.kind !== 'limit') {
+    await nameClientWorkspace(tenant, domain);
+    await rememberFirstRunDomain(tenant, domain);
+  }
   return admission;
+}
+
+/** settings key: the domain the first run (S4, C2, the first-day card) is about, whichever browser asks. */
+export const FIRST_RUN_DOMAIN_KEY = 'first_run_domain';
+
+/**
+ * The domain typed on S4 is the one the setup is about, held on the server (not in a browser's memory: a second browser after Cloudflare's
+ * Allow must name the same domain, not the first one imported). Only a workspace's FIRST domain or claim counts: with nothing else in it
+ * the name is (re)written, so a typo'd first domain that was removed is replaced; later domains never move it. Hosted only; never fails the request.
+ */
+async function rememberFirstRunDomain(tenant: TenantContext, domain: string): Promise<void> {
+  if (getMode(tenant.env) !== 'saas') return;
+  try {
+    const others = [...(await tenant.scope.domains.list()).map(d => d.domain), ...(await tenant.scope.claims.list()).map(c => c.domain)].filter(n => n !== domain);
+    if (others.length === 0) await tenant.scope.settings.set(FIRST_RUN_DOMAIN_KEY, domain);
+  } catch {
+    /* a hint for the screens, not a rule */
+  }
 }
 
 /**
