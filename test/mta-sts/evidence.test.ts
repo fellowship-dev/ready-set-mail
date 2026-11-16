@@ -39,6 +39,11 @@ describe('enforceReadiness: what is missing is said as it is', () => {
     expect(labels).toBe('A report signed by Google, Microsoft or Acme about this policy, with successful sessions');
   });
 
+  it('the failures line says it is about this policy: a report from before it is not weighed, so the line must not claim "no failures in the last 14 days"', () => {
+    const r = enforceReadiness(cfg({ policy_published_at: NOW - 3600 }), [report({ date_end: NOW - 2 * DAY, sts_failure: 3, sts_failure_types: '["certificate-expired"]' })], MX, NOW);
+    expect(r.checks.find((k) => k.key === 'failures')).toMatchObject({ met: true, label: 'No failures in signed reports about this policy in the last 14 days' });
+  });
+
   it('a policy whose last fetch failed is not served: enforce is refused', () => {
     const r = enforceReadiness({ ...cfg(), fetch_ok: 0 }, [report()], MX, NOW);
     expect(r.checks.find((k) => k.key === 'served')).toMatchObject({ met: false, reasons: ['The policy cannot be reached right now.'] });

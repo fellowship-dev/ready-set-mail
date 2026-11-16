@@ -37,7 +37,7 @@ const NOT_YET = ['In testing for 5 of 7 days: 2 more.', 'No verified TLS report 
 const RULE = [
 	{ key: 'days', label: '7 days in testing' },
 	{ key: 'report', label: 'A report signed by Google or Microsoft about this policy, with successful sessions' },
-	{ key: 'failures', label: 'No failures in signed reports in the last 14 days' },
+	{ key: 'failures', label: 'No failures in signed reports about this policy in the last 14 days' },
 	{ key: 'mx', label: 'The MX hosts match the policy' },
 	{ key: 'served', label: 'The policy is served' },
 ] as const;
@@ -231,7 +231,7 @@ describe('MTA-STS page: testing', () => {
 		expect(items).toEqual([
 			'Missing: 7 days in testingIn testing for 5 of 7 days: 2 more.',
 			'Missing: A report signed by Google or Microsoft about this policy, with successful sessionsNo verified TLS report has arrived yet for this policy.',
-			'Met: No failures in signed reports in the last 14 days',
+			'Met: No failures in signed reports about this policy in the last 14 days',
 			'Met: The MX hosts match the policy',
 			'Met: The policy is served',
 		]);

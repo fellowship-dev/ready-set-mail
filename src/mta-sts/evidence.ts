@@ -55,7 +55,7 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   const checks = (): EnforceCheck[] => [
     { key: 'days', label: `${days(ENFORCE_AFTER_SECONDS)} days in testing`, met: !days_.length, reasons: days_ },
     { key: 'report', label: `A report signed by ${senderNames(opts.reporters ?? ['Google', 'Microsoft'])} about this policy, with successful sessions`, met: !report.length, reasons: report },
-    { key: 'failures', label: `No failures in signed reports in the last ${days(EVIDENCE_WINDOW_SECONDS)} days`, met: !failures.length, reasons: failures },
+    { key: 'failures', label: `No failures in signed reports about this policy in the last ${days(EVIDENCE_WINDOW_SECONDS)} days`, met: !failures.length, reasons: failures },
     { key: 'mx', label: 'The MX hosts match the policy', met: !mx.length, reasons: mx },
     { key: 'served', label: 'The policy is served', met: !served.length, reasons: served },
   ];

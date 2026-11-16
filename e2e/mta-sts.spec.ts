@@ -40,7 +40,7 @@ function server() {
 			enforce: s.state === 'testing' ? { ready: false, allowed: false, reasons: ['In testing for 1 of 7 days: 6 more.', 'No verified TLS report has arrived yet for this policy.'], checks: [
 				{ key: 'days', label: '7 days in testing', met: false, reasons: ['In testing for 1 of 7 days: 6 more.'] },
 				{ key: 'report', label: 'A report signed by Google or Microsoft about this policy, with successful sessions', met: s.reports.length > 0, reasons: s.reports.length > 0 ? [] : ['No verified TLS report has arrived yet for this policy.'] },
-				{ key: 'failures', label: 'No failures in signed reports in the last 14 days', met: true, reasons: [] },
+				{ key: 'failures', label: 'No failures in signed reports about this policy in the last 14 days', met: true, reasons: [] },
 				{ key: 'mx', label: 'The MX hosts match the policy', met: true, reasons: [] },
 				{ key: 'served', label: 'The policy is served', met: true, reasons: [] },
 			] } : null,
