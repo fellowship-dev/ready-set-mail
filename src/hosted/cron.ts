@@ -139,7 +139,7 @@ export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fet
           out.updated++;
         }
       }
-      await intakeLookups(env.DB).setHostedSpfState(h.domain_id, spfStateJson(decision.plan?.providers ?? parseEntries(state.provider_state), decision.pending));
+      await forWorkspace(env.DB, h.workspace_id).hosted.setRecords(h.domain_id, { spf_state: spfStateJson(decision.plan?.providers ?? parseEntries(state.provider_state), decision.pending) });
       if (decision.how === 'first' || decision.how === 'replaced') console.warn(`[hosted] ${domain.domain}: a provider stopped listing addresses; they stay in the hosted SPF record until a second check, at least four hours later, sees the same`);
     } catch (e) {
       out.failed++;

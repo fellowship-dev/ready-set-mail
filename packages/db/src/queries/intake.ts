@@ -417,9 +417,6 @@ export function intakeLookups(dbLike: DbLike) {
 				.then((r) => r ?? null),
 
 		/** Every hosted domain, for the daily zone diff (operator-wide, not tenant-facing). */
-		/** The daily hosted refresh stores what it decided about a hosted SPF record (spf_state). */
-		setHostedSpfState: (domainId: number, spfState: string | null) =>
-			db.update(hostedDomains).set({ spf_state: spfState }).where(/* workspace-scope-exempt: operator-wide hosted refresh */ eq(hostedDomains.domain_id, domainId)).run(),
 		allHosted: (): Promise<HostedDomainRow[]> =>
 			db.select().from(hostedDomains).where(/* workspace-scope-exempt: operator-wide zone reconciliation */ sql`1 = 1`).all(),
 	};

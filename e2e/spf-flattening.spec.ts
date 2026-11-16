@@ -115,6 +115,11 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     await expect(next).toBeVisible({ timeout: 30_000 });
     const box = (await next.boundingBox())!;
     expect(box.y + box.height, 'the first action is in the first screen at 375 (FOLD-01)').toBeLessThanOrEqual(812);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const wide = (await next.boundingBox())!;
+    expect(wide.y + wide.height, 'and at 1440 (FOLD-01)').toBeLessThanOrEqual(900);
+    if (process.env.E2E_FOLD_LOG) require('node:fs').appendFileSync(process.env.E2E_FOLD_LOG, `step 1 action bottom: 375 wide ${Math.round(box.y + box.height)} of 812; 1440 wide ${Math.round(wide.y + wide.height)} of 900\n`);
+    await page.setViewportSize({ width: 375, height: 812 });
     await next.click();
     await expect(page.getByText(/Your SPF record needs 11 lookups\. Receivers stop at 10/)).toBeVisible({ timeout: 30_000 });
     await page.getByRole('button', { name: 'Continue' }).click();
