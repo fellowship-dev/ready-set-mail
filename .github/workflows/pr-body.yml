@@ -1,0 +1,29 @@
+# The pull request body declares what the independent reviewer verifies: every section of .github/pull_request_template.md,
+# filled in (scripts/check-pr-body.mjs). Separate from ci.yml so that editing the body re-runs this check alone, not the
+# full suite; the checker's own tests run in ci.yml's `npm test`. No install: plain node.
+name: PR body
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-body-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sections:
+    name: Review sections filled
+    # Dependabot writes its own body; its updates are reviewed by their changelog, not by these sections.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      # The body is read from the event file, never interpolated into the shell.
+      - run: node scripts/check-pr-body.mjs

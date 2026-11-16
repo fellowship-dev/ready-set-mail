@@ -31,6 +31,7 @@ Cloudflare Worker (`src/`), dashboard (`web/`), shared packages (`packages/ui`, 
 ## Commands
 
 - Tests: `npm test -- --run` (Worker and packages, including `test/agent-memory/`), `npm run test:web`, `npm run test:ui`, `npm run typecheck`; the flow check: `bash scripts/check-flows.sh`.
+- Pull request body: every section of `.github/pull_request_template.md` filled in for the reviewer ("None" with its reason); `node scripts/check-pr-body.mjs` checks it in CI (`.github/workflows/pr-body.yml`), again on every edit of the body.
 - End-to-end: `bash scripts/e2e-devbox.sh` on Linux or a devbox, not on a workstation.
 - Database: schema and migrations in `packages/db` (`packages/db/UPGRADING.md`).
 
