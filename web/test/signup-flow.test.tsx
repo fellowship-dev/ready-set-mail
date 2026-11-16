@@ -42,13 +42,14 @@ describe('AuthPage initialMode="signup"', () => {
 		expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
 	});
 
-	it('does not show the checker domain on S1 (it is kept for S4)', async () => {
+	it('names the checker domain on S1 in one line, without asking for it (it is kept for S4)', async () => {
 		rememberSignupDomain('acme.io');
 		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN, routes: NOTHING_PENDING });
 		await screen.findByRole('heading', { name: 'Create your account' });
-		expect(screen.queryByText(/acme\.io/)).toBeNull();
+		expect(screen.getAllByText(/acme\.io/)).toHaveLength(1);
+		expect(screen.getByText((_, el) => el?.tagName === 'P' && el.textContent === "You're setting up acme.io.")).toBeInTheDocument();
 		expect(screen.queryByText(LINE)).toBeNull();
-		expect(readSignupDomain()).toBe('acme.io'); // stored silently
+		expect(readSignupDomain()).toBe('acme.io');
 	});
 
 	it('binds the remembered domain to the address typed on S1', async () => {
@@ -77,10 +78,11 @@ function boot(route: string, routes: Record<string, unknown>) {
 }
 
 describe('the /signup route', () => {
-	it('anonymous: the create-account screen; the remembered domain waits for S4', async () => {
+	it('anonymous: the create-account screen, naming the remembered domain (S4 opens on it)', async () => {
 		rememberSignupDomain('acme.io');
 		boot('/signup', { 'GET /api/me': fail(401), ...NOTHING_PENDING });
 		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+		expect(screen.getByText(/You're setting up/)).toHaveTextContent("You're setting up acme.io.");
 		expect(screen.queryByText(LINE)).toBeNull();
 	});
 
