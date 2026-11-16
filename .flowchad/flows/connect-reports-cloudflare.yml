@@ -24,15 +24,15 @@ context:
   user: workspace_owner
   auth: logged_in
   mode: hosted
-# Baseline measured on main 531bc57 (2026-11-16), local hosted instance with the repo's fakes (HOSTED_CONNECT_REPORTS=all, a verified
-# domain linked to the Cloudflare fake, live record `v=DMARC1; p=reject;`); the walk record of this change replaces it.
+# Local hosted instance with the repo's fakes (HOSTED_CONNECT_REPORTS=all, a verified domain linked to the Cloudflare fake, live record
+# `v=DMARC1; p=reject;`); the walk record of the change that last touched it has the measures.
 steps:
   - action: navigate
     url: /#/domains/1
     expect: The first screen says the domain has no Ready Set Mail report address and has one action, Connect reports
   - action: click
     selector: "text=Connect reports"
-    expect: The review - the record now, the record after (policy and every other tag unchanged, existing addresses kept), Apply and Cancel; nothing is written yet
+    expect: The review - the change card the first-run review (C2) uses: the record now, the record after Apply (policy and every other tag unchanged, existing addresses kept), Apply and Cancel; nothing is written yet
   - action: click
     selector: "text=Apply"
     effect: write
