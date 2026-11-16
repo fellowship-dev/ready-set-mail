@@ -5,6 +5,7 @@ import {
   PolicyOverrideReason, ReportRecord, ReportRejected, ParseStop, SpfAuthResult,
 } from './types';
 import { enrichIps } from './ip-info';
+import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
 
 // Regexes ported from parsedmarc
 const XML_HEADER_REGEX = /<\?xml[^>]+\?>/i;
@@ -268,9 +269,8 @@ export async function parseAggregateReportXml(
 
     // Normalize: strip subdomain + lowercase if it looks like a domain (matches publicsuffixlist behaviour)
     if (!orgName.includes(' ')) {
-      const parts = orgName.replace(/\.$/, '').split('.');
-      if (parts.length > 2) orgName = parts.slice(-2).join('.');
-      orgName = orgName.toLowerCase();
+      orgName = orgName.replace(/\.$/, '').toLowerCase();
+      orgName = organizationalDomain(orgName) ?? orgName;
     }
 
     const reportId = str(meta['report_id'])

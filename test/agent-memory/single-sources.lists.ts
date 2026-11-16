@@ -40,6 +40,10 @@ export const SINGLE: Single[] = [
   },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  // Consolidated in the subdomain slice: the five sites that took the last two labels now call `organizationalDomain`.
+  { concept: 'Registrable domain (never "last two labels")', signature: /slice\(-2\)\.join\('\.'\)/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  // `hasCname` is how a dangling CNAME (NXDOMAIN with a CNAME in the answer) counts as an existing name: one rule, `nameExists`.
+  { concept: 'Name existence (NXDOMAIN with a CNAME exists)', signature: /\.hasCname\b/, owners: ['packages/dns-checks/src/name-exists.ts'] },
 ];
 
 /** Still duplicated today: exactly these files. Consolidation order: docs/single-sources.md. */
@@ -149,12 +153,6 @@ export const MUST_NOT_GROW: Duplicate[] = [
     signature: /cloudflare-dns\.com|dns\.google/,
     authoritative: 'packages/dns-checks/src/doh.ts',
     sites: ['packages/dns-checks/src/doh.ts', 'src/dmarc/ip-info.ts', 'src/public-reports/resolver.ts', 'tools/audit-fleet/lib/doh.ts'],
-  },
-  {
-    concept: 'Registrable domain by "last two labels"',
-    signature: /slice\(-2\)\.join\('\.'\)/,
-    authoritative: 'packages/dns-checks/src/org-domain.ts',
-    sites: ['scripts/setup-email-routing.mts', 'scripts/setup-email-routing.ts', 'src/dmarc/ip-info.ts', 'src/dmarc/parse-aggregate.ts', 'tools/audit-fleet/lib/checker.ts'],
   },
   {
     concept: 'Fix-offer scope promising reject (contradicts ADR 0013)',

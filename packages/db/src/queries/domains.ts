@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { cloudflareConnections, domains, productDomains } from '../schema';
+import { nearestListedAncestorId } from './parent';
 import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
 
 export type DomainRow = typeof domains.$inferSelect;
@@ -62,17 +63,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * throws PlanLimitError and writes nothing (the product mapping, if any, selects the new row and so inserts nothing either).
 		 */
 		async insert(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
-			// Auto-detect parent: strip the leftmost label and check if the apex exists
-			const parts = d.domain.split('.');
-			let parentId: number | null = null;
-			if (parts.length > 2) {
-				const parent = await db
-					.select({ id: domains.id })
-					.from(domains)
-					.where(and(mine, live, eq(domains.domain, parts.slice(1).join('.'))))
-					.get();
-				if (parent) parentId = parent.id;
-			}
+			// The nearest listed ancestor, up to the organizational domain (a middle label with no row of its own is skipped).
+			const parentId = await nearestListedAncestorId(db, workspaceId, d.domain);
 			const pv = proofValues(d.domain, d.verified_via, d.proof); // before anything is written: a zone proof without its servers is refused
 			try {
 				const max = opts.maxDomains;

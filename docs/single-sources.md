@@ -13,7 +13,12 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Cloudflare zone import | `src/connections/import.ts` | `importZones` | `src/connections/routes.ts` | — |
 | Stripe API calls | `src/billing/` | `src/billing/stripe-client.ts`; orders `src/billing/orders.ts`; paid only through `applyInvoice` in `src/billing/sync.ts` | billing routes, the webhook, the daily reconcile | single (host, SDKs, client and its constants) |
 | PostHog sends (none on main; PR #178 adds the module) | none on `main` | — | — | single (PostHog hosts, SDKs, capture path, a read of the host setting); already allows the module PR #178 adds |
-| Public Suffix List (registrable domain) | `packages/dns-checks/src/org-domain.ts` | `organizationalDomain` | everyone | single |
+| Public Suffix List (registrable domain) | `packages/dns-checks/src/org-domain.ts` | `organizationalDomain`, `sameOrganizationalDomain`, `domainAncestry` (the names from a domain up to its organizational domain: report filing and `domains.parent_id`) | everyone | single |
+| Registrable domain (never "last two labels") | `packages/dns-checks/src/org-domain.ts` | `organizationalDomain` | PTR base domain (`src/dmarc/ip-info.ts`), reporter organisation (`src/dmarc/parse-aggregate.ts`), the fleet audit and the operator scripts | single (the five old sites were consolidated in the subdomain slice) |
+| Effective DMARC policy of a name (own `p=`, else the organizational domain's `sp=`, `np=` or `p=`) and where it comes from | `packages/dns-checks/src/effective-policy.ts` | `effectivePolicy`, reached as `DmarcLookup.effective` from `lookupDmarc`; `effectivePolicySentence` | public checker, agent report, stored DMARC facts (`src/email/dns-snapshot.ts`) | not guarded (the dashboard's `policyInForce` reads the stored facts built from it) |
+| Identifier alignment (relaxed, strict; which identifier failed and why) | `packages/dns-checks/src/alignment.ts` | `aligned`, `alignmentVerdict`, `explainAlignment`, `alignmentFix` | sender inventory (`src/analytics/senders.ts`), failing-source explanations (`web/src/lib/reports.ts`) | not guarded |
+| Name existence (NXDOMAIN with a CNAME exists) | `packages/dns-checks/src/name-exists.ts` | `nameExists` | `lookupDmarc` (`np=`), the public report's "does not exist" | single (reads of `hasCname`) |
+| What an SPF record at a name proves (SPF is judged at the return-path domain) | `packages/dns-checks/src/spf-identity.ts` | `noSpfAtName`, `noSpfNeededAtName`, `dkimCarriesDmarc` | agent report, public checker, dashboard level, verdict and DNS records | not guarded |
 | DNS lookups for checks (DNS-over-HTTPS) | `packages/dns-checks/src/doh.ts` | `createResolver` | everyone | must-not-grow |
 | Hosted shared report address | `src/hosted/fixed-address.ts` | `fixedReportAddress`, `attributeReport` | intake, `src/hosted/report-address.ts` | must-not-grow (report address construction) |
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, Get Started | must-not-grow (standing rules) |
@@ -40,7 +45,6 @@ Each row is guarded in "must not grow" form: the test lists exactly today's file
 | 7 | Report address construction | 13 | hosted: `fixedReportAddress` in `src/hosted/fixed-address.ts` | four forms (`CONTEXT.md`, "Report address"): hosted shared, hosted token (`src/hosted/tokens.ts`), self-host built inline in five files, and the agent report's `dmarc@<domain>` in four `packages/report` files; a seed script and a dashboard hint spell one out |
 | 8 | Counting mode default | 3 | `reportCounting` in `src/dmarc/counting.ts` | `packages/db` defaults to the hosted `registry` in three places (no caller relies on it today) |
 | 9 | DNS-over-HTTPS endpoints | 4 | `packages/dns-checks/src/doh.ts` | `src/dmarc/ip-info.ts` raw PTR fetch; public reports' own endpoints; `tools/audit-fleet` has its own client |
-| 9 | Registrable domain by "last two labels" | 5 | `organizationalDomain` in `packages/dns-checks/src/org-domain.ts` | wrong for `co.uk`-style names |
 | — | Fix-offer scope promising reject (contradicts ADR 0013) | 2 | `src/billing/offer.ts` | `src/funnel/copy.ts` describes the older 90-day Fix it; both need the owner-approved C1 wording |
 
 **First: the DMARC record module (row 1).** It is the code that writes customers' DNS, it has the most copies (12 builders, 2 ladders, 2 validators), and the copies already disagree on what record to offer. It needs no owner decision. Rows 2 to 4 follow because they are authorization and forgery gaps; row 6 waits for the ladder decision.
@@ -60,7 +64,6 @@ Each row is guarded in "must not grow" form: the test lists exactly today's file
 - **Report address construction** (13): `packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/fixes.ts`, `packages/report/src/render-md.ts`, `scripts/seed-demo.ts`, `src/api/router.ts`, `src/digest/weekly.ts`, `src/domains/bulk.ts`, `src/domains/service.ts`, `src/hosted/fixed-address.ts`, `src/hosted/tokens.ts`, `src/onboarding/plan.ts`, `web/src/lib/reports.ts`
 - **Counting mode default** (3): `packages/db/src/queries/analytics.ts`, `packages/db/src/queries/index.ts`, `packages/db/src/queries/reports.ts`
 - **DNS-over-HTTPS endpoints** (4): `packages/dns-checks/src/doh.ts`, `src/dmarc/ip-info.ts`, `src/public-reports/resolver.ts`, `tools/audit-fleet/lib/doh.ts`
-- **Registrable domain by "last two labels"** (5): `scripts/setup-email-routing.mts`, `scripts/setup-email-routing.ts`, `src/dmarc/ip-info.ts`, `src/dmarc/parse-aggregate.ts`, `tools/audit-fleet/lib/checker.ts`
 - **Fix-offer scope promising reject (contradicts ADR 0013)** (2): `src/billing/offer.ts`, `src/funnel/copy.ts`
 
 ## How the guards work
