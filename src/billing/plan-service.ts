@@ -199,7 +199,7 @@ export interface PaidAddResult { added: { domain: string; domain_id: number }[];
  */
 export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: Ws, actor: Actor, input: PaidAddInput): Promise<PaidAddResult> {
   need(d);
-  await rateLimit(d, 'plan', ws.id, actor.userId);
+  const undoHit = await rateLimit(d, 'plan', ws.id, actor.userId);
   const interval = input.interval ?? 'month';
   const names = [...new Set(input.domains.map((x) => requireDomainName(x)))];
   if (names.length === 0 || names.length > 10) throw new BillingError(400, 'invalid_domains', 'Choose between one and ten domains.');
@@ -281,12 +281,16 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
       return result;
     });
   } catch (e) {
-    if (e instanceof PlanBusyError) throw busy();
+    if (e instanceof PlanBusyError) { await undoHit(); throw busy(); }
     throw e;
   }
 }
 
 // ── Removing ────────────────────────────────────────────────
+
+/** A removal that finds the workspace's lease taken tries again this many times, 150 ms then double each time (about a second in all), before it marks the quantity dirty. */
+const REMOVAL_LEASE_ATTEMPTS = 4;
+const REMOVAL_BACKOFF_MS = 150;
 
 /** A domain was removed (the row is gone): bring the quantity down. Never blocks the removal and never throws. */
 export async function afterDomainRemoved(d: BillingDeps, workspaceId: string): Promise<{ quantity_changed: boolean }> {
@@ -294,7 +298,7 @@ export async function afterDomainRemoved(d: BillingDeps, workspaceId: string): P
   const q = forWorkspace(d.db, workspaceId).plan;
   const sub = await q.subscription.get();
   if (!sub || subscriptionState(sub) !== 'active') return { quantity_changed: false };
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < REMOVAL_LEASE_ATTEMPTS; attempt++) {
     try {
       return await withPlanLock(d.env, d.db, workspaceId, d.now, async (lock) => {
         const before = (await q.subscription.get())?.quantity_sent ?? null;
@@ -302,12 +306,35 @@ export async function afterDomainRemoved(d: BillingDeps, workspaceId: string): P
         return { quantity_changed: before !== lock.state.billable };
       });
     } catch (e) {
-      if (e instanceof PlanBusyError && attempt === 0) { await new Promise((r) => setTimeout(r, 250)); continue; }
+      if (e instanceof PlanBusyError && attempt < REMOVAL_LEASE_ATTEMPTS - 1) { await new Promise((r) => setTimeout(r, REMOVAL_BACKOFF_MS * 2 ** attempt)); continue; }
       break;
     }
   }
-  await q.subscription.markDirty().catch(() => undefined); // the daily job (or the owner's next Billing page) repairs it
+  await q.subscription.markDirty().catch(() => undefined); // the owner's next Billing page (repairQuantity) or the daily job repairs it
   return { quantity_changed: false };
+}
+
+/**
+ * The owner opened Billing: if Stripe's quantity may differ from what the workspace owes (a removal that lost the lease, an eviction), put it right now.
+ * Bounded and never blocking the read: it takes the lease once and skips when another change holds it; any failure leaves the quantity dirty for the daily job.
+ */
+export async function repairQuantity(d: BillingDeps, workspaceId: string): Promise<boolean> {
+  if (!planEnforced(d.env) || !paidPathAvailable(d.env)) return false;
+  const q = forWorkspace(d.db, workspaceId).plan;
+  const sub = await q.subscription.get();
+  if (!sub || subscriptionState(sub) !== 'active') return false;
+  if (!sub.dirty && sub.quantity_sent === (await loadPlanState(d.env, d.db, workspaceId)).billable) return false; // the common case: no lease taken
+  try {
+    return await withPlanLock(d.env, d.db, workspaceId, d.now, async (lock) => {
+      const row = await q.subscription.get();
+      if (lock.state.exempt || !row || (!row.dirty && row.quantity_sent === lock.state.billable)) return false;
+      await pushQuantity(d, lock, lock.state.billable);
+      return true;
+    });
+  } catch (e) {
+    if (!(e instanceof PlanBusyError)) console.error(`[billing] quantity repair failed: ${(e as Error)?.name ?? 'error'}`);
+    return false;
+  }
 }
 
 /** The hook for code that removes a domain (the API, a workspace delete): the answer's `billing` field, or null when no plan applies. */
@@ -328,7 +355,7 @@ export const syncQuantity = async (d: BillingDeps, workspaceId: string): Promise
  */
 export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { interval?: PlanInterval; expectedAmount?: number; expectedCurrency?: string; expectedCharge?: number | null }): Promise<{ plan: 'payg'; payment: { state: 'requires_action'; action_url: string | null } | null }> {
   need(d);
-  await rateLimit(d, 'plan', ws.id, actor.userId);
+  const undoHit = await rateLimit(d, 'plan', ws.id, actor.userId);
   const interval = input.interval ?? 'month';
   const price = await planPrice(d, interval, true);
   if (input.expectedAmount !== undefined && (input.expectedAmount !== price.amount || (input.expectedCurrency ?? 'usd').toLowerCase() !== price.currency)) {
@@ -355,7 +382,7 @@ export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { i
       return { plan: 'payg' as const, payment: null };
     });
   } catch (e) {
-    if (e instanceof PlanBusyError) throw busy();
+    if (e instanceof PlanBusyError) { await undoHit(); throw busy(); }
     throw e;
   }
 }

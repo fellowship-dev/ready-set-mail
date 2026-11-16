@@ -28,15 +28,25 @@ export const BILLING_LIMITS = {
   plan: { max: 20, windowMs: 10 * 60_000 },
 } as const;
 
-export async function rateLimit(d: BillingDeps, kind: keyof typeof BILLING_LIMITS, ws: string, userId: string): Promise<void> {
+/**
+ * Count one attempt for each of the workspace and the user; refuse past the limit. Returns the way to take the attempt back (`undo`): a refusal that never
+ * reached Stripe (another change holds the workspace: `plan_busy`) must not use up the person's room.
+ */
+export async function rateLimit(d: BillingDeps, kind: keyof typeof BILLING_LIMITS, ws: string, userId: string): Promise<() => Promise<void>> {
   const { max, windowMs } = BILLING_LIMITS[kind];
   const q = globalQueries(d.db).rateLimit;
   const nowMs = d.now() * 1000;
+  const counted: Array<{ key: string; windowStart: number }> = [];
+  const undo = async () => { for (const c of counted.splice(0)) await q.giveBack(c.key, c.windowStart).catch(() => undefined); };
   for (const key of [`billing:${kind}:ws:${ws}`, `billing:${kind}:user:${userId}`]) {
-    if (!(await q.hitUnder(key, nowMs, windowMs, max))) {
+    const hit = await q.hitUnder(key, nowMs, windowMs, max);
+    if (!hit) {
+      await undo();
       throw new BillingError(429, 'rate_limited', 'Too many attempts. Try again in a few minutes.', { retry_after: Math.ceil(windowMs / 1000) });
     }
+    counted.push({ key, windowStart: hit.lastRequest });
   }
+  return undo;
 }
 
 /** A Stripe failure as the caller's answer: never the Stripe message for non-card problems, which can name internals. */

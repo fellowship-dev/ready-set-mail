@@ -19,7 +19,7 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
-import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, previewRemoval, startPlan } from './plan-service';
+import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, previewRemoval, repairQuantity, startPlan } from './plan-service';
 import { completeWorkspaceIntent, startWorkspaceIntent } from './plan-workspaces';
 import { planEnforced } from '../hosted/plan';
 import { cleanName } from '../auth/names';
@@ -133,6 +133,8 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     let sub = await scope.plan.subscription.get();
     // A first payment waiting for the bank: the owner's confirm polls here, so ask Stripe again (the webhook may be late or lost).
     if (isOwner && sub?.status === 'incomplete' && planEnforced(env)) { await applySubscription(d, sub.stripe_subscription_id).catch(() => undefined); sub = await scope.plan.subscription.get(); }
+    // The owner's Billing page repairs a quantity that drifted (a removal that lost the lease): bounded, skipped when busy, never failing the read.
+    if (isOwner && sub && (await repairQuantity(d, me.ws.id))) sub = await scope.plan.subscription.get();
     const plan = planEnforced(env) || sub ? await planView(d, me.ws, { isOwner }) : null;
     // The one-time notice (a first payment that never completed): shown to the owner once.
     let notice: string | null = null;
