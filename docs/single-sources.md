@@ -12,7 +12,7 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | DNS write rules | `src/dns/write-policy.ts` | `assertDnsWriteAllowed`, `assertHostedDnsWrite` | `CfClient`, hosted records | — |
 | Cloudflare zone import | `src/connections/import.ts` | `importZones` | `src/connections/routes.ts` | — |
 | Stripe API calls | `src/billing/` | `stripe-client.ts`; orders `orders.ts`; paid only by `webhook.ts` | billing routes | single-sources |
-| PostHog sends (none on main; PR #178 adds the module) | `src/product-analytics/` once PR #178 merges | — | — | single-sources (already allows that folder) |
+| PostHog sends (none on main; PR #178 adds the module) | the product-analytics folder PR #178 adds under `src/` | — | — | single-sources (already allows that folder) |
 | Public Suffix List (registrable domain) | `packages/dns-checks/src/org-domain.ts` | `organizationalDomain` | everyone | single-sources |
 | DNS lookups for checks (DNS-over-HTTPS) | `packages/dns-checks/src/doh.ts` | `createResolver` | everyone | must-not-grow |
 | Hosted shared report address | `src/hosted/fixed-address.ts` | `fixedReportAddress`, `attributeReport` | intake, report-address routes | must-not-grow (report address construction) |
@@ -32,7 +32,7 @@ Each row is guarded in "must not grow" form: the test lists exactly today's site
 | 1 | SPF/DKIM/DMARC record parsers and judges | 11 (6 in `packages/dns-checks`) | `packages/dns-checks` | dashboard `web/src/lib/dmarc-record.ts` and `dkim.ts`, Worker `rollout.ts`, `dns-record.ts`, `parse-email.ts` parse again |
 | 2 | Domain enrollment inserts | 3 | `src/domains/service.ts` | bulk import (`src/domains/bulk.ts`) skips restore, product authorization and the agent safety check; the setup wizard inserts through `baseDomain.apply` |
 | 3 | Untrusted Authentication-Results reads (sender trust) | 3 | `src/email/sender-proof.ts` and `src/dmarc/reporter-auth.ts` | the hosted email check (`canary.ts`) and the free-check reply read the untrusted header |
-| 4 | The "proven" rule restated (legacy verification) | 9 | `src/domains/ownership.ts` | SQL and UI copies disagree on a Cloudflare proof without name servers; PR #177 adds a 10th site (`web/src/lib/first-day.ts`) |
+| 4 | The "proven" rule restated (legacy verification) | 9 | `src/domains/ownership.ts` | SQL and UI copies disagree on a Cloudflare proof without name servers; PR #177 adds a 10th site (its new `first-day.ts` in the dashboard) |
 | 5 | Domain standing ("needs attention") rules | 3 | `web/src/lib/verdict.ts` | `web/src/lib/actions.ts` repeats verdict sentences; the PDF keeps its own SPF/DKIM pass-rate rule (0.9 against 0.95) |
 | 5 | Verdict labels | 4 | `packages/ui/src/components/status.tsx` | the email-check labels (protected / at risk / exposed) and the wizard badge repeat words |
 | 6 | Level ladder (computing or naming rungs) | 4 | none: owner to choose (`docs/adr/OPEN.md`) | dashboard 0–2, agent report 0–3, email check per message |
