@@ -93,8 +93,9 @@ export function effectivePolicy(l: DiscoveredDmarc, exists: boolean | null = nul
 /** One sentence: which record and tag set the name's policy (the public checker and the agent report say it the same way). */
 export function effectivePolicySentence(name: string, e: EffectivePolicy): string | null {
   if (e.status === 'broken' && e.invalidTag && e.at) {
-    const what = e.policy ? 'act as if it said p=none' : 'ignore it, because it has no valid rua=';
-    return `The DMARC record at _dmarc.${e.at} has an invalid ${e.invalidTag}= value, so receivers ${what} (RFC 9989 section 4.10.1).`;
+    // With a valid rua= the record is p=none (RFC 9989 section 4.10.1). Without one, what the repo has always applied: no DMARC (RFC 7489 section 6.6.3, step 6).
+    const what = e.policy ? 'act as if it said p=none (RFC 9989 section 4.10.1)' : 'ignore it, because it has no valid rua= (RFC 7489 section 6.6.3)';
+    return `The DMARC record at _dmarc.${e.at} has an invalid ${e.invalidTag}= value, so receivers ${what}.`;
   }
   if (!e.policy || !e.tag || !e.at) return null;
   if (e.source === 'own') return `${name} publishes its own DMARC record, which sets p=${e.policy}.`;

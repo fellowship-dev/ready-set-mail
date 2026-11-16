@@ -241,7 +241,7 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND r.dkim_aligned IS NULL THEN r.count ELSE 0 END) AS from_unjudged
 			FROM report_records r
 			JOIN aggregate_reports a ON a.id = r.report_id AND a.workspace_id = ${A}
-			JOIN domains dd ON dd.id = a.domain_id
+			JOIN domains dd ON dd.id = a.domain_id AND dd.workspace_id = ${A}
 			WHERE r.workspace_id = ${A} AND a.date_begin >= ${since} AND ${C('a')}
 			GROUP BY a.domain_id
 		) rr ON rr.domain_id = d.id
