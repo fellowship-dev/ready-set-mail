@@ -173,6 +173,42 @@ export function lifecycleQueries(dbLike: DbLike) {
 			return { deleted: 0, truncated: false }; // a recount deletes nothing (the sweeps report rows deleted)
 		},
 
+		/**
+		 * Backfill of rows stored before 0017 (spf_aligned/dkim_aligned NULL). A report with pass_count = 0 and mail in it had no record
+		 * with an SPF or DKIM pass in policy_evaluated, so every one of its records has both 0. Bounded: `limits.batch` reports per statement,
+		 * statements from the shared budget; idempotent (only NULL rows). Returns records set.
+		 */
+		backfillAllFailed: async (limits: SweepLimits): Promise<number> => {
+			let n = 0;
+			while (limits.budget.left > 0) {
+				spend(limits);
+				const c = changes(await db.run(sql`UPDATE report_records SET spf_aligned = 0, dkim_aligned = 0 WHERE spf_aligned IS NULL AND report_id IN (
+					SELECT id FROM aggregate_reports WHERE pass_count = 0 AND total_count > 0 AND EXISTS (SELECT 1 FROM report_records r WHERE r.report_id = aggregate_reports.id AND r.spf_aligned IS NULL) LIMIT ${limits.batch})`));
+				n += c;
+				if (c === 0) break;
+			}
+			return n;
+		},
+
+		/** The newest `n` reports whose raw XML is still kept and that have a record with no verdict: the XML and those records (id, source_ip, count, unset: no verdict yet) in id order. */
+		reportsToBackfill: async (n: number): Promise<Array<{ id: number; raw_xml: string; records: Array<{ id: number; source_ip: string; count: number; unset: boolean }> }>> => {
+			const reps = await db.all<{ id: number; raw_xml: string }>(sql`SELECT id, raw_xml FROM aggregate_reports
+				WHERE raw_xml IS NOT NULL AND EXISTS (SELECT 1 FROM report_records r WHERE r.report_id = aggregate_reports.id AND r.spf_aligned IS NULL) ORDER BY id DESC LIMIT ${n}`);
+			if (!reps.length) return [];
+			const recs = await db.all<{ id: number; report_id: number; source_ip: string; count: number; spf_aligned: number | null }>(sql`SELECT id, report_id, source_ip, count, spf_aligned FROM report_records
+				WHERE report_id IN (SELECT value FROM json_each(${JSON.stringify(reps.map((r) => r.id))})) ORDER BY id`);
+			// Every record of the report, in stored (= parse) order, so positions match the XML; the caller sets only the NULL ones.
+			return reps.map((r) => ({ ...r, records: recs.filter((x) => x.report_id === r.id).map(({ id, source_ip, count, spf_aligned }) => ({ id, source_ip, count, unset: spf_aligned === null })) }));
+		},
+
+		/** Set verdicts ([record id, spf, dkim]; -1 = not recoverable) in one statement, only on rows that still have none. Returns rows set. */
+		setVerdicts: async (rows: Array<[number, number, number]>): Promise<number> => {
+			if (!rows.length) return 0;
+			return changes(await db.run(sql`UPDATE report_records SET spf_aligned = v.spf, dkim_aligned = v.dkim
+				FROM (SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS spf, json_extract(value, '$[2]') AS dkim FROM json_each(${JSON.stringify(rows)})) v
+				WHERE report_records.id = v.id AND report_records.spf_aligned IS NULL`));
+		},
+
 		purgeTlsReports: (cutoff: number, limits: SweepLimits) =>
 			simple(limits, () => db.run(sql`DELETE FROM tls_reports WHERE id IN (SELECT id FROM tls_reports WHERE date_end < ${cutoff} OR created_at < ${cutoff} ORDER BY id LIMIT ${limits.batch})`)),
 

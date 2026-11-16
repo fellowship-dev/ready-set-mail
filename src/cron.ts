@@ -16,6 +16,7 @@ import { logAudit } from './audit/log';
 import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
 import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
+import { backfillVerdicts } from './lifecycle/verdict-backfill';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
@@ -64,6 +65,8 @@ export const LIFECYCLE_CRON = '0 4 * * *';
 export async function runDataLifecycle(env: BoundEnv): Promise<void> {
   // Revocations first: they are few, and leaving a grant live matters more than a late sweep.
   try { await retryRevocations(env); } catch (e) { console.error('[lifecycle] revocation retry failed:', e); }
+  // Before retention: it reads raw XML, which retention clears.
+  try { await backfillVerdicts(env); } catch (e) { console.error('[lifecycle] verdict backfill failed:', e); }
   try { await runRetention(env); } catch (e) { console.error('[retention] failed:', e); }
 }
 
