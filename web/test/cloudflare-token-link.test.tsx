@@ -44,9 +44,12 @@ describe('ConnectStep token screen', () => {
 		expect(a).toHaveAttribute('target', '_blank');
 		expect(a).toHaveAttribute('rel', 'noopener noreferrer');
 		expect(a).toHaveAttribute('href', tokenLink(false));
-		expect(screen.getByText(/Cloudflare's page opens with Zone Read and DNS Edit already chosen\. You can narrow it to specific zones there before you create the token\./)).toBeInTheDocument();
+		expect(screen.getByText(/Cloudflare's page opens with Zone Read and DNS Edit already chosen\./)).toBeInTheDocument();
+		// the permissions text sits behind one link; the page has one filled primary, "Connect"
+		expect(screen.getByText('What this token can do, and creating it by hand').closest('details')).not.toHaveAttribute('open');
+		expect(a.className).not.toMatch(/\bbg-brand\b/);
+		expect(screen.getByRole('button', { name: 'Connect' }).className).toMatch(/\bbg-brand\b/);
 		expect(screen.getByText(/Add these two by hand, Cloudflare's link cannot pre-fill them: Zone · Email Routing Rules · Edit \(for the reports mailbox\) and Account · Email Routing\s+Addresses · Edit \(for alert emails to you\)\./)).toBeInTheDocument();
-		expect(screen.getByText('Create it by hand instead')).toBeInTheDocument();
 		expect(screen.getByLabelText('Cloudflare API token')).toBeInTheDocument();
 	});
 });

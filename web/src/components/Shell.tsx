@@ -75,6 +75,7 @@ export function Shell() {
 						workspaces={list}
 						onSelect={(id) => switchToWorkspace(id)}
 						onCreate={canCreate ? () => setCreating(true) : undefined}
+						agencyName={me.agency_name ? cleanName(me.agency_name) || undefined : undefined}
 					/>
 				) : null
 			}

@@ -258,9 +258,11 @@ describe('Cloudflare wizard: resume', () => {
 		expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'zones', connectionId: 'c1' });
 	});
 
-	it('hosted: two steps, connect and one that adds the domains', async () => {
+	it('hosted: no step counter of its own', async () => {
 		renderApp(<Page />, { route: '/setup/cloudflare', status: { mode: 'saas' }, routes: { 'GET /api/cloudflare/connections': offer() } });
-		expect(await screen.findByText(/Step 1 of 2/)).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		// no counter of its own: S4, this and C2 are one run, and two counters would disagree
+		expect(screen.queryByText(/Step \d of \d/)).toBeNull();
 	});
 });
 

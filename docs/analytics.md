@@ -46,8 +46,8 @@ All properties are optional and dropped when not in the list. Buckets: `COUNT` =
 | `Code Verified` | `POST /api/auth/code` right, for a sign-up or an invite | `purpose` (`signup` `invite`), `entry`, `from_checker` (bool), `attempts` (`1` `2` `3+`), `resends` (`0` `1` `2+`), `wait` code sent → typed (`under_1m` `1_5m` `5_15m` `15_60m` `over_1h`), `account_created` (bool) |
 | `Workspace Created` | the sign-up's workspace (email code or Google/GitHub), or `POST /api/workspaces` | `source` (`signup` `added`), `method` (on `signup`: `email_code` `oauth_google` `oauth_github`) |
 | `Signed In` | a sign-in completed: password, emailed code, or a Google/GitHub sign-in to an existing account | `method` (`code` `password` `oauth_google` `oauth_github`) |
-| `Signup Profile Saved` | **waiting on PR 177**: the S2 "about you" answers saved | `whose_email` (`company` `clients` `looking`), `role` (`founder` `developer` `it` `marketing` `agency` `other` `none`), `heard_about_given` (bool) |
-| `Setup Path Chosen` | **waiting on PR 177**: the S4 setup choice | `path` (`cloudflare` `records` `dns_manager` `teammate`), `dns_provider` |
+| `Signup Profile Saved` | `POST /api/auth/signup/profile` saved the S2 "about you" answers on the pending attempt (`src/auth/routes.ts`; the free text itself is never sent) | `whose_email` (`company` `clients` `looking`), `role` (`founder` `developer` `it` `marketing` `agency` `other` `none`), `heard_about_given` (bool) |
+| `Setup Path Chosen` | the S4 setup choice: Connect Cloudflare or the records path (`POST /api/onboarding/setup-path`, `src/onboarding/routes.ts`; once per path per screen), or "Hand setup to a teammate" (`POST /api/team/invite` with a `handoff_domain`, `src/api/router.ts`) | `path` (`cloudflare` `records` `dns_manager` `teammate`), `dns_provider` |
 
 ### Dashboard, teammates, workspaces
 
@@ -132,11 +132,6 @@ Dashboards: "RSM: Onboarding, sign-up to first report", "RSM: Domain configurati
 
 To turn it off, delete either variable: the Worker stops sending at once.
 
-## Waiting on the new sign-up (draft PR 177)
+## The new sign-up screens (PR 177)
 
-The events and helpers exist and are tested; their call sites live on the `onboarding-signup-first-run` branch. When it merges, add (one line each, see the comment at the end of `src/product-analytics/auth.ts`):
-
-- `POST /api/auth/signup/profile`, after `saveAttemptProfile`: `signupProfileSaved(env, ctx, handle, checked.profile)` → `Signup Profile Saved`.
-- `POST /api/auth/signup/resend`: pass `{ notice: 'signup', analytics: signupHooks(env, ctx, await signupTag(env, handle, {})) }` to `answerWithCode`, so a resent code keeps the attempt's id and counts as `Signup Code Sent` `resend`.
-- The S4 setup choice: `setupPathChosen(env, ctx, workspaceId, path, dnsProvider)` at the server call the choice makes (or a small POST the screen adds) → `Setup Path Chosen`.
-- `web/src/pages/auth/SignupFlow.tsx` (S1): add `...signupAnalytics()` (`web/src/lib/signup-source.ts`: `src` and `from_checker`) to the sign-up request body, as `AuthPage.tsx` does on `main`.
+S1 sends `src` and `from_checker` with the sign-up request (`signupAnalytics()`, `web/src/pages/auth/SignupFlow.tsx`); the resend endpoint passes `signupHooks` to `answerWithCode`, so a resent code keeps the attempt's id and counts as `Signup Code Sent` `resend`; saving S2 counts `Signup Profile Saved`; the S4 choice counts `Setup Path Chosen` (`dns_provider` is the host's id when it is one the product recognises, `other` when not, `unknown` when none). Tests: `test/product-analytics/`.

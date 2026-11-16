@@ -18,6 +18,8 @@ export interface WorkspaceSwitcherProps {
 	onSelect: (id: string) => void;
 	/** Shows the "Create workspace" entry when given. */
 	onCreate?: () => void;
+	/** An agency's own name: the menu's heading in place of "Workspaces" (each client is one row below it), and the entry to make one says "Add another client". */
+	agencyName?: string;
 	/** Only the first letter, for a collapsed sidebar. */
 	compact?: boolean;
 	className?: string;
@@ -27,7 +29,7 @@ export interface WorkspaceSwitcherProps {
  * Pick the workspace you are working in: the current one on the button, every workspace you
  * belong to (with your role in it) in the menu, and a way to make a new one.
  */
-export function WorkspaceSwitcher({ current, workspaces, onSelect, onCreate, compact, className }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ current, workspaces, onSelect, onCreate, agencyName, compact, className }: WorkspaceSwitcherProps) {
 	const name = current?.name ?? "Workspace";
 	return (
 		<DropdownMenu>
@@ -53,7 +55,7 @@ export function WorkspaceSwitcher({ current, workspaces, onSelect, onCreate, com
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" className="w-64">
-				<DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-ink-2">Workspaces</DropdownMenuLabel>
+				<DropdownMenuLabel className={cn("text-xs font-semibold tracking-wide text-ink-2", !agencyName && "uppercase")}>{agencyName ?? "Workspaces"}</DropdownMenuLabel>
 				{workspaces.map((w) => {
 					const isCurrent = w.id === current?.id;
 					return (
@@ -69,7 +71,7 @@ export function WorkspaceSwitcher({ current, workspaces, onSelect, onCreate, com
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={onCreate}>
 							<Plus aria-hidden />
-							Create workspace
+							{agencyName ? "Add another client" : "Create workspace"}
 						</DropdownMenuItem>
 					</>
 				) : null}

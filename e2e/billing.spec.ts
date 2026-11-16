@@ -8,9 +8,9 @@
 // Hosted sign-up asks Cloudflare's Turnstile test endpoint (challenges.cloudflare.com) to check a dummy token: this spec needs that network access.
 // Port 8821. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/billing.spec.ts
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { signUp } from './support/signup';
 
 interface Instance { url: string; logFile: string; stop(): Promise<void>; d1(sql: string): Array<Record<string, unknown>> }
 interface FakeStripe { url: string; close(): Promise<void>; fake: { calls: Array<{ method: string; path: string }>; state: { invoices: Map<string, unknown>; charges: Map<string, unknown> } } }
@@ -26,22 +26,6 @@ const WHSEC = 'whsec_e2etestsecret0123456789';
 const OWNER = 'owner@harbor-lane.org';
 const MEMBER = 'member@harbor-lane.org';
 const DOMAIN = 'acme-fix.example';
-
-const mailedCodes = (inst: Instance) =>
-	existsSync(inst.logFile) ? [...readFileSync(inst.logFile, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map((m) => m[1]!) : [];
-
-/** Sign up on a hosted instance through the screen: email and password, the code emailed to confirm the address, and the app. */
-async function signUp(page: Page, inst: Instance, email: string) {
-	await page.goto(`${inst.url}/#/signup`);
-	await page.locator('#email').fill(email);
-	await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
-	await page.waitForTimeout(2500); // the Turnstile test widget
-	const before = mailedCodes(inst).length;
-	await page.getByRole('button', { name: /Create account|Sign up|Continue|Send/ }).first().click();
-	await expect.poll(() => mailedCodes(inst).length, { timeout: 30_000 }).toBeGreaterThan(before);
-	await page.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!); // the sixth digit submits
-	await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
-}
 
 /** Public DNS is not reachable for made-up names: answer as if the name resolved with no SPF and no DMARC record (something to fix). */
 async function somethingToFix(page: Page) {

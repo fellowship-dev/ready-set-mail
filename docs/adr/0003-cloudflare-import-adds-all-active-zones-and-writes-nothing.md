@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted; superseded in part by 0014 (an agency's first connection)
 date: 2026-11-15
 decided-by: owner
 ---
