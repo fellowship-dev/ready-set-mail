@@ -218,6 +218,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   let result: ReportResult;
   if (kind === 'rua') {
     result = await handleDmarcReport(body, tenant, {
+      ctx,
       authHeaders: headers,
       carrier,
       dropOverCap: carrier.class === 'registry',
