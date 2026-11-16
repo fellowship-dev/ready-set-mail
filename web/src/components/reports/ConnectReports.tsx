@@ -19,6 +19,7 @@ import { useApplyDmarc } from '../../lib/apply-dmarc';
 import { hostOf, isCloudflareHost, useDnsHost } from '../../lib/dns-host';
 import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { CopyField } from '../domain/CopyField';
+import { Change } from '../domain/RecordChange';
 import { DnsHostLine } from '../domain/DnsHostLine';
 import { ConfirmDialog } from '../domain/ConfirmDialog';
 import { RadioCard } from '../wizard/RadioCard';
@@ -210,26 +211,19 @@ function PublishElsewhere({ domain }: { domain: string }) {
  * changes. Two addresses already: the person chooses what ours replaces (the rule of ChooseView).
  */
 function ReviewRecord({ plan, pending, onApply, onCancel }: { plan: ApplyPlan; pending: boolean; onApply: (record: string) => void; onCancel?: () => void }) {
+	const reason = plan.current
+		? 'Only rua= changes: the policy and every other tag stay as they are, and the report addresses already there are kept.'
+		: 'p=none asks receivers for reports and changes nothing about how they handle your mail.';
 	const body = (record: string | null) => (
 		<div className="space-y-3">
-			<div className="space-y-1 text-sm">
-				<p className="text-ink-2">
-					Now: {plan.current ? <Mono>{plan.current}</Mono> : 'no DMARC record'}
-				</p>
-				{record ? (
-					<p className="text-ink-1">
-						After: <Mono>{record}</Mono>
-					</p>
-				) : (
-					<p className="text-ink-2">Choose an option to see the record Apply writes.</p>
-				)}
-			</div>
-			<p className="text-sm text-ink-2">
-				{plan.current
-					? 'Only rua= changes: the policy and every other tag stay as they are, and the report addresses already there are kept.'
-					: 'p=none asks receivers for reports and changes nothing about how they handle your mail.'}{' '}
-				Apply writes it in your Cloudflare zone.
-			</p>
+			{record ? (
+				<ul aria-label="Change">
+					<Change w={{ id: 'dmarc', type: 'TXT', name: plan.name, action: plan.current ? 'update' : 'create', before: plan.current ?? null, content: record, reason }} />
+				</ul>
+			) : (
+				<p className="text-sm text-ink-2">Choose an option to see the record Apply writes.</p>
+			)}
+			<p className="text-sm text-ink-2">Apply connects the reports and writes it in your Cloudflare zone.</p>
 			<div className="flex flex-wrap items-center gap-2">
 				<WriteButton onClick={() => record && onApply(record)} disabled={!record || pending} reasonVisible>
 					{pending ? 'Applying…' : 'Apply'}

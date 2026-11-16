@@ -32,8 +32,9 @@ describe('Cloudflare reaches the zone, not connected yet', () => {
 		expect(screen.getByText(/A report address is where a domain's DMARC record sends its reports/)).toBeInTheDocument();
 		await userEvent.click(await screen.findByRole('button', { name: 'Connect reports' }));
 		expect(await screen.findByText(`Review the change to ${NAME}`)).toBeInTheDocument();
-		expect(screen.getByText(LIVE)).toBeInTheDocument();
-		expect(screen.getByText(AFTER)).toBeInTheDocument();
+		const change = screen.getByTestId('change-dmarc');
+		expect(change).toHaveTextContent(`Now: ${LIVE}`);
+		expect(change).toHaveTextContent(`After Apply: ${AFTER}`);
 		expect(screen.getByText(/Only rua= changes: the policy and every other tag stay as they are, and the report addresses already there are kept\./)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
 		expect(writes(calls)).toEqual([]);
@@ -63,7 +64,7 @@ describe('Cloudflare reaches the zone, not connected yet', () => {
 	it('a new record (none published) is p=none, said plainly', async () => {
 		show({ 'GET /api/domains/1/report-address': view({ preview: { checked_at: NOW, error: null, plan: addPlan({ current: null, record: `v=DMARC1; p=none; rua=mailto:${ADDR}`, created: true }) } }) });
 		await userEvent.click(await screen.findByRole('button', { name: 'Connect reports' }));
-		expect(await screen.findByText(/Now: no DMARC record/)).toBeInTheDocument();
+		expect(await screen.findByTestId('change-dmarc')).toHaveTextContent('DMARC · TXT _dmarc · New');
 		expect(screen.getByText(/p=none asks receivers for reports and changes nothing/)).toBeInTheDocument();
 	});
 
@@ -102,7 +103,7 @@ describe('Cloudflare reaches the zone, not connected yet', () => {
 		expect(await screen.findByText('Could not write the record')).toBeInTheDocument();
 		expect(screen.getByText('Cloudflare refused the write')).toBeInTheDocument();
 		expect(await screen.findByText('Connected, record not published yet')).toBeInTheDocument();
-		expect(screen.getByText(AFTER)).toBeInTheDocument();
+		expect(screen.getByTestId('change-dmarc')).toHaveTextContent(AFTER);
 		expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled();
 		expect(screen.queryByText('Report address added.')).not.toBeInTheDocument();
 	});
