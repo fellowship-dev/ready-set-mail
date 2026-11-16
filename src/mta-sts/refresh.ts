@@ -1,8 +1,8 @@
 // The daily MTA-STS job: ONE function for both modes (ADR 0021).
 //   saas       runHostedCron (11:00 UTC, once for the whole database): `refreshMtaStsHosted`
 //   self-host  the per-workspace 08:00 branch of src/cron.ts: `refreshMtaStsForTenant`
-// For every enabled row, oldest check first and at most REFRESH_PER_RUN per run (about ten subrequests each, so the run stays well inside a
-// Worker's budget; the default ceiling of policy hosts is the same number, so every hosted row is reached daily), five at a time:
+// For every enabled row, oldest check first and at most `refreshRowsPerRun` per run (src/mta-sts/config.ts: a run uses at most half of the Workers subrequest limit;
+// 100 rows at the default 10,000, so every row is visited at least daily up to 100 hosts, and every ceil(R/100) days beyond), five at a time:
 //   - the reconcile first (src/mta-sts/reconcile.ts): the custom hostname exists and is not moved, the declared route is in the zone, and the FETCH of the policy
 //     URL proves the policy is served;
 //   - setup not finished: look again (certificate, records, the fetch) and move it forward; one still not finished after 7 days is stopped (its slot is free);
@@ -19,7 +19,7 @@ import { resolverFor } from '../dns/resolver';
 import { loadTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
-import { mtaStsHostedConfigured, RECONCILE_PER_RUN, REFRESH_PER_RUN, SETUP_EXPIRED_NOTICE, SETUP_EXPIRES_AFTER_SECONDS } from './config';
+import { maintenancePerRun, mtaStsHostedConfigured, refreshRowsPerRun, SETUP_EXPIRED_NOTICE, SETUP_EXPIRES_AFTER_SECONDS } from './config';
 import { finishRetirements } from './retire';
 import { OperatorZone } from './policy-host';
 import type { ReconcileShared } from './reconcile';
@@ -68,16 +68,16 @@ async function refreshOne(tenant: TenantContext, row: MtaStsRow, ec: ExecutionCo
 }
 
 /** Self-host: this workspace's due rows. */
-export async function refreshMtaStsForTenant(tenant: TenantContext, ec?: ExecutionContext, limit = REFRESH_PER_RUN): Promise<RefreshStats> {
+export async function refreshMtaStsForTenant(tenant: TenantContext, ec?: ExecutionContext, limit = refreshRowsPerRun(tenant.env)): Promise<RefreshStats> {
   const stats: RefreshStats = { visited: 0, changed: 0, errors: 0, removed: 0, served: 0, notServed: 0 };
   const rows = await tenant.scope.mtaSts.dueForRefresh(limit);
   await mapLimit(rows, CONCURRENCY, (row) => refreshOne(tenant, row, ec, stats));
-  try { stats.removed += await finishRetirements(tenant.env as BoundEnv, { tenant }); } catch (e) { console.error('[mta-sts] finishing retired policies failed:', e instanceof Error ? e.message : e); }
+  try { stats.removed += await finishRetirements(tenant.env as BoundEnv, { tenant, limit: maintenancePerRun(tenant.env) }); } catch (e) { console.error('[mta-sts] finishing retired policies failed:', e instanceof Error ? e.message : e); }
   return stats;
 }
 
 /** Hosted: due rows of every workspace, then the operator-side reconcile. */
-export async function refreshMtaStsHosted(env: BoundEnv, ec?: ExecutionContext, limit = REFRESH_PER_RUN): Promise<RefreshStats> {
+export async function refreshMtaStsHosted(env: BoundEnv, ec?: ExecutionContext, limit = refreshRowsPerRun(env)): Promise<RefreshStats> {
   const stats: RefreshStats = { visited: 0, changed: 0, errors: 0, removed: 0, served: 0, notServed: 0 };
   const due = await intakeLookups(env.DB).dueMtaSts(limit);
   const shared: ReconcileShared = {}; // the operator zone and the declared route, looked up once for the whole run
@@ -93,7 +93,7 @@ export async function refreshMtaStsHosted(env: BoundEnv, ec?: ExecutionContext, 
       console.error(`[mta-sts] workspace ${d.workspace_id} refresh failed:`, e instanceof Error ? e.message : e);
     }
   });
-  try { stats.removed += await finishRetirements(env); } catch (e) { console.error('[mta-sts] finishing retired policies failed:', e instanceof Error ? e.message : e); }
+  try { stats.removed += await finishRetirements(env, { limit: maintenancePerRun(env) }); } catch (e) { console.error('[mta-sts] finishing retired policies failed:', e instanceof Error ? e.message : e); }
   try { stats.removed += await reconcileOperatorZone(env); } catch (e) { console.error('[mta-sts] operator reconcile failed:', e instanceof Error ? e.message : e); }
   return stats;
 }
@@ -103,7 +103,7 @@ export async function refreshMtaStsHosted(env: BoundEnv, ec?: ExecutionContext, 
  * any state (an enable stores its row first, so one in the middle of its work is never taken back), and a per-domain Worker route an earlier build made for such a
  * domain. The declared route is shared and never touched here. Anything else in the zone is left alone. At most `limit` per run. Returns how many it removed.
  */
-export async function reconcileOperatorZone(env: BoundEnv, limit = RECONCILE_PER_RUN): Promise<number> {
+export async function reconcileOperatorZone(env: BoundEnv, limit = maintenancePerRun(env)): Promise<number> {
   if (getMode(env) !== 'saas' || !mtaStsHostedConfigured(env)) return 0;
   const zone = await OperatorZone.open(env);
   const keep = await intakeLookups(env.DB).mtaStsDomainNames();

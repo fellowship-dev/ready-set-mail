@@ -13,6 +13,8 @@ export interface PolicyHostEnv extends HostedEnv {
   POLICY_HOST_TOKEN?: string;
   MAX_POLICY_HOSTS?: string;
   WORKER_NAME?: string;
+  /** Subrequests one invocation may make (Workers Paid 10,000, the default; Workers Free 50): the daily job's budget follows it. */
+  SUBREQUEST_LIMIT?: string;
   /** Localhost only (cfApiBase ignores anything else): a local run's fake Cloudflare. */
   CLOUDFLARE_API_BASE_URL?: string;
 }
@@ -35,10 +37,42 @@ export const SETUP_EXPIRES_AFTER_SECONDS = 7 * 86400;
 export const SETUP_EXPIRED_NOTICE = 'Setup was not finished within 7 days, so it was stopped. Turn it on again to restart.';
 /** How far back TLS failures weigh on the enforce decision. */
 export const EVIDENCE_WINDOW_SECONDS = 14 * 86400;
-/** Configs the daily job visits per run, oldest check first (about ten subrequests each; the default ceiling is the same number). */
+/**
+ * The daily job's subrequest budget. developers.cloudflare.com/workers/platform/limits/ (read 2026-11-16), "Subrequests per invocation": Workers Free 50, Workers Paid
+ * 10,000 (up to 10M); a subrequest is "any request a Worker makes using the Fetch API or to Cloudflare services like R2, KV, or D1", so DNS lookups, Cloudflare API calls, the
+ * policy fetch AND each D1 statement count. The default is the Paid limit; a Workers Free install sets SUBREQUEST_LIMIT=50 and the job shrinks to match.
+ * One run uses at most half of the limit: rows * SUBREQUESTS_PER_ROW (measured with margin in test/mta-sts/budget.test.ts) plus SUBREQUEST_RESERVE for the shared work (zone and
+ * route lookups, finishing retired policies, leftover cleanup). Rows are visited oldest check first, so with R enabled rows and P per run every row is visited at least every
+ * ceil(R / P) days: one day up to P rows (P is 100 at the default limit, the same number as the default ceiling of policy hosts), two days up to 2P, and so on.
+ */
+export const DEFAULT_SUBREQUEST_LIMIT = 10_000;
+export const SUBREQUESTS_PER_ROW = 25;
+export const SUBREQUEST_RESERVE = 600;
+export const SUBREQUEST_MARGIN = 0.5;
+/** Configs the daily job visits per run at most (the default ceiling of policy hosts is the same number, so every hosted row is reached daily). */
 export const REFRESH_PER_RUN = 100;
-/** Operator-side leftovers the daily job removes per run. */
+/** Operator-side leftovers the daily job removes per run, and retired policies it finishes per run (each about 4 and 15 subrequests: inside SUBREQUEST_RESERVE). */
 export const RECONCILE_PER_RUN = 20;
+
+export function subrequestLimit(env: object): number {
+  const v = (env as { SUBREQUEST_LIMIT?: string }).SUBREQUEST_LIMIT?.trim() ?? '';
+  const n = /^\d+$/.test(v) ? Number.parseInt(v, 10) : 0;
+  return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_SUBREQUEST_LIMIT;
+}
+
+/** Rows one run visits: what half the subrequest limit allows after the reserve, at most REFRESH_PER_RUN, at least one (so a Workers Free install still moves). */
+export function refreshRowsPerRun(env: object): number {
+  const room = subrequestLimit(env) * SUBREQUEST_MARGIN - SUBREQUEST_RESERVE;
+  return Math.max(1, Math.min(REFRESH_PER_RUN, Math.floor(room / SUBREQUESTS_PER_ROW)));
+}
+
+/** Shared work per run (leftover cleanup, finishing retired policies): the usual count where the reserve fits, one on a tiny limit. */
+export function maintenancePerRun(env: object): number {
+  return subrequestLimit(env) >= 2 * SUBREQUEST_RESERVE ? RECONCILE_PER_RUN : 1;
+}
+
+/** Every enabled row is visited at least this often, in days (oldest check first). */
+export const refreshIntervalDays = (rows: number, env: object): number => Math.max(1, Math.ceil(rows / refreshRowsPerRun(env)));
 
 const clean = (v: string | undefined): string | undefined => v?.trim().toLowerCase().replace(/^\.+|\.+$/g, '') || undefined;
 
