@@ -19,6 +19,12 @@ export async function startOver(qc: QueryClient): Promise<void> {
 }
 
 /** The words for a refused code (the server's own wording names a different path for sign-in). */
+/** The refusal after which only a new code helps: the code is spent or expired, so "Send a new code" is shown right there. */
+const needsNewCode = (err: unknown) => {
+	const code = err instanceof ApiError ? (err.body as { code?: string } | undefined)?.code : undefined;
+	return code === 'code_used_up' || code === 'code_expired';
+};
+
 export function refusal(err: unknown): string {
 	const code = err instanceof ApiError ? (err.body as { code?: string } | undefined)?.code : undefined;
 	if (code === 'code_wrong') return "That code isn't right. Check the latest email.";
@@ -47,6 +53,7 @@ export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: 
 	const { status } = useSession();
 	const [code, setCode] = useState('');
 	const [error, setError] = useState('');
+	const [spent, setSpent] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [help, setHelp] = useState(false);
 	const [resend, setResend] = useState<'idle' | 'sending' | 'sent'>('idle');
@@ -68,6 +75,7 @@ export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: 
 			await onSubmit(value);
 		} catch (err) {
 			setError(refusal(err));
+			setSpent(needsNewCode(err));
 			submitted.current = '';
 			setCode('');
 			input.current?.focus();
@@ -92,6 +100,7 @@ export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: 
 			setCode('');
 			submitted.current = '';
 			setError('');
+			setSpent(false);
 			input.current?.focus();
 		} catch (err) {
 			setResendError(errorMessage(err));
@@ -100,6 +109,22 @@ export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: 
 			check.reset(); // a token is single use
 		}
 	}
+
+	/** "Send a new code" sits under the error when only a new code helps (and keeps its answer there); otherwise it is behind "Not seeing it?". */
+	const quick = spent || (!help && resend === 'sent');
+	const resendBlock = (
+		<>
+			{resend === 'sent' ? <p role="status">A new code is on its way. The previous one no longer works.</p> : null}
+			<p>
+				<button type="button" className="text-brand-ink underline underline-offset-4 disabled:opacity-50" disabled={resend === 'sending'} onClick={() => void sendNew()}>
+					{resend === 'sending' ? 'Sending…' : 'Send a new code'}
+				</button>
+			</p>
+			{/* Only now, and only drawn if Cloudflare needs a click. */}
+			{check.widget}
+			{resendError ? <Alert variant="danger" className="text-left">{resendError}</Alert> : null}
+		</>
+	);
 
 	return (
 		<AuthLayout title="Check your inbox" description={<>We sent a 6-digit code to <span className="[overflow-wrap:anywhere]">{email}</span>. It's valid for {minutes} minutes.</>}>
@@ -139,21 +164,14 @@ export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: 
 			</form>
 
 			<div className="space-y-3 text-center text-sm">
+				{quick ? <div className="space-y-2 text-ink-2" data-testid="send-new-code">{resendBlock}</div> : null}
 				<button type="button" className="text-brand-ink underline underline-offset-4" aria-expanded={help} aria-controls="not-seeing-it" onClick={() => setHelp((h) => !h)}>
 					Not seeing it?
 				</button>
 				{help ? (
 					<div id="not-seeing-it" className="space-y-2 text-ink-2">
 						<p>Emails can take a few minutes. Check your spam folder.</p>
-						{resend === 'sent' ? <p role="status">A new code is on its way. The previous one no longer works.</p> : null}
-						<p>
-							<button type="button" className="text-brand-ink underline underline-offset-4 disabled:opacity-50" disabled={resend === 'sending'} onClick={() => void sendNew()}>
-								{resend === 'sending' ? 'Sending…' : 'Send a new code'}
-							</button>
-						</p>
-						{/* Only now, and only drawn if Cloudflare needs a click. */}
-						{check.widget}
-						{resendError ? <Alert variant="danger" className="text-left">{resendError}</Alert> : null}
+						{quick ? null : resendBlock}
 					</div>
 				) : null}
 				{onStartOver ? (

@@ -341,6 +341,18 @@ describe('S3: check your inbox', () => {
 		await expectMessage("That code can't be used any more. Send a new code.");
 	});
 
+	it('after 5 wrong codes "Send a new code" is right there, not behind "Not seeing it?"', async () => {
+		const { calls } = open({ routes: { 'POST /api/auth/code': { __status: 410, body: { error: 'That code was entered wrong 5 times', code: 'code_used_up' } }, 'POST /api/auth/signup/resend': SENT } });
+		const user = userEvent.setup();
+		expect(screen.queryByRole('button', { name: 'Send a new code' })).toBeNull(); // a wrong code alone does not show it
+		await user.type(await screen.findByLabelText('6-digit code'), '111111');
+		expect(await screen.findByText("That code can't be used any more. Send a new code.")).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Not seeing it?' })).toHaveAttribute('aria-expanded', 'false');
+		await user.click(await screen.findByRole('button', { name: 'Send a new code' }));
+		expect(await screen.findByText('A new code is on its way. The previous one no longer works.')).toBeInTheDocument();
+		expect(calls.some((c) => c.path === '/api/auth/signup/resend')).toBe(true);
+	});
+
 	it('the button submits too (the fallback)', async () => {
 		const { calls } = open({ routes: { 'POST /api/auth/code': fail(400, 'wrong') } });
 		const user = userEvent.setup();

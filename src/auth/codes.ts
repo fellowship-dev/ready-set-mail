@@ -62,7 +62,7 @@ const DAY = 86400;
  */
 export type MailPool = 'signup' | 'signin' | 'reset' | 'reset-device';
 export const CODE_MAIL_CAPS: Readonly<Record<MailPool, { hour: number; day: number }>> = Object.freeze({
-  signup: { hour: 2, day: 4 },
+  signup: { hour: 5, day: 10 },
   signin: { hour: 10, day: 30 },
   reset: { hour: 3, day: 10 },
   'reset-device': { hour: 3, day: 10 },

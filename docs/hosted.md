@@ -236,7 +236,7 @@ their own account, within the sign-up allowance.
   wrong codes for this account today. Try again tomorrow, or reset your password to sign in now."; a reset clears it. At the
   10th wrong sign-in code in a day the owner gets, once a day at most, "Someone entered your Ready Set Mail password": whoever
   typed the codes knew the password. Wrong sign-in codes never feed the wrong-password throttle. Code mail per address, in
-  separate allowances: sign-up and invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour
+  separate allowances: sign-up and invites 5 an hour and 10 a day (raised from 2 and 4 in PR 177 round 3; also the "someone tried to sign up" notice), sign-in 10 an hour
   and 30 a day, reset 3 an hour and 10 a day, and a separate reset allowance of 3 an hour and 10 a day for a request carrying the
   account's device cookie. The allowance is spent the same way for every address, account or not, so over it the answer can say
   so without revealing anything: "Several codes were sent to this address recently. Use the newest one, or try again in N

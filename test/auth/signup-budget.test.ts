@@ -1,6 +1,6 @@
 // Review round 2: how much of each limit one honest sign-up spends, and the placeholder-name flag for an agency's first workspace.
-// The numbers: AUTH_LIMITER is 10 requests per 60 s per IP (wrangler.jsonc); sign-up is also 10 per hour per IP (D1); the sign-up code mail is 2 per
-// hour and 4 per day per ADDRESS (CODE_MAIL_CAPS). None of them is changed.
+// The numbers: AUTH_LIMITER is 10 requests per 60 s per IP (wrangler.jsonc); sign-up is also 10 per hour per IP (D1); the sign-up code mail is 5 per
+// hour and 10 per day per ADDRESS (CODE_MAIL_CAPS; round 3: it was 2 and 4).
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, enterCode, lastCodeFor, makeEnv, pendingCookieOf } from './helpers';
@@ -58,29 +58,43 @@ describe('one honest sign-up against the limits', () => {
     expect(w.lim.seen.length).toBeLessThanOrEqual(10);
   });
 
-  it('what is spent per ADDRESS stays as it was: the sign-up code mail is 2 an hour, so a resend and a start-over to the SAME address is the third mail and waits', async () => {
-    expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 2, day: 4 });
+  it('an honest flow never hits the address cap: sign up, the code expires, password again, "Send a new code", then start over to the same address', async () => {
+    expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 5, day: 10 });
     const w = hosted();
-    const a = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
-    const cookie = pendingCookieOf(a);
-    const resent = await post(w, '/api/auth/signup/resend', { cf_turnstile_token: 'ok' }, cookie);
-    expect(resent.status).toBe(200);
-    const latest = pendingCookieOf(resent);
-    await post(w, '/api/auth/signup/cancel', {}, latest);
-    const third = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
-    expect(third.status).toBe(429);
-    // Plain and true: the earlier attempt and its codes are gone, so it does not say "use the newest one"; it says how long to wait.
-    const body = await json(third);
+    const a = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' }); // mail 1
+    const b = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' }, pendingCookieOf(a)); // the code expired: password again, mail 2
+    const c = await post(w, '/api/auth/signup/resend', { cf_turnstile_token: 'ok' }, pendingCookieOf(b)); // "Send a new code", mail 3
+    await post(w, '/api/auth/signup/cancel', {}, pendingCookieOf(c));
+    const d = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' }); // start over, same address, mail 4
+    for (const r of [a, b, c, d]) expect(r.status).toBe(200);
+    expect((await enterCode(w.env, pendingCookieOf(d), await lastCodeFor(w.env, 'dana@brightwave-mail.com'), { ip: IP })).status).toBe(200);
+  });
+
+  it('two attacker sign-ups for an address do not block its owner', async () => {
+    const w = hosted();
+    for (let i = 0; i < 2; i++) expect((await post(w, '/api/auth/signup', { email: 'blocked@harbor-lane.org', password: `attacker-pass-${i}` })).status).toBe(200);
+    const own = await post(w, '/api/auth/signup', { email: 'blocked@harbor-lane.org', password: 'owners-own-pass-1' });
+    expect(own.status).toBe(200);
+    expect((await enterCode(w.env, pendingCookieOf(own), await lastCodeFor(w.env, 'blocked@harbor-lane.org'), { ip: IP })).status).toBe(200);
+  });
+
+  it('the 6th code mail in an hour is refused with the REAL time left, not a fixed hour', async () => {
+    const w = hosted();
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) expect((await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' })).status).toBe(200);
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 20 * 60_000 + 5_000);
+    const sixth = await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
+    expect(sixth.status).toBe(429);
+    const body = await json(sixth);
     expect(body.code).toBe('code_mail_limit');
-    expect(body.error).toMatch(/^We sent several codes to this address recently, so we can't send another yet\. Try again in \d+ minutes?\.$/);
-    expect(Number(third.headers.get('retry-after'))).toBeGreaterThan(0);
-    // Nothing was reused: the abandoned code opens nothing, and no attempt exists for the new request
-    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'signin-code:%'")).toHaveLength(0);
-    expect((await enterCode(w.env, latest, await lastCodeFor(w.env, 'dana@brightwave-mail.com'), { ip: IP })).status).not.toBe(200); // the abandoned code opens nothing
+    expect(body.error).toBe("We sent several codes to this address recently, so we can't send another yet. Try again in 40 minutes.");
+    expect(Number(sixth.headers.get('retry-after'))).toBeGreaterThan(39 * 60);
+    expect(Number(sixth.headers.get('retry-after'))).toBeLessThanOrEqual(40 * 60);
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 59 * 60_000 + 30_000);
+    expect((await json(await post(w, '/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' }))).error).toMatch(/Try again in 1 minute\.$/);
     // The same words for an address that already has an account (anti-enumeration)
     const known = hosted();
-    await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' });
-    for (let i = 0; i < 2; i++) { const r = await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' }); if (r.status === 429) expect((await json(r)).error).toBe(body.error); }
+    for (let i = 0; i < 6; i++) { const r = await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' }); if (r.status === 429) expect((await json(r)).error).toMatch(/^We sent several codes/); }
   });
 });
 
