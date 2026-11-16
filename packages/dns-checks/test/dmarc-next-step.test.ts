@@ -72,6 +72,16 @@ describe('dmarcSteps: the same ladder for own and inherited names', () => {
 		expect(s).toMatchObject({ key: 'dmarc-missing', do: 'Publish a DMARC record at p=none', record: 'v=DMARC1; p=none; rua=mailto:r@reports.test' });
 		expect(s.why).toMatch(/gov\.uk is a public suffix, so its DMARC record does not apply to www\.gov\.uk/);
 	});
+
+	it('the sentence follows the record offered: "it starts the reports" only with a reports address in it', () => {
+		const withAddr = dmarcSteps('a.com', { kind: 'none' }, ev())[0]!;
+		expect(withAddr.record).toContain('rua=mailto:');
+		expect(withAddr.why).toContain('p=none changes no delivery; it starts the reports.');
+		const without = dmarcSteps('a.com', { kind: 'none' }, ev({ reportsAddress: false, ruaAddress: '' }))[0]!;
+		expect(without.record).toBe('v=DMARC1; p=none');
+		expect(without.why).toContain('p=none changes no delivery. Reports start once the record names a reports address: connect reports first, or add your own rua=.');
+		expect(without.why).not.toContain('it starts the reports');
+	});
 });
 
 describe('dmarcSteps: failures that are only others\' mail', () => {

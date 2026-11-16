@@ -256,7 +256,7 @@ const dayCard = () => screen.findByTestId('first-day');
 const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 describe('OverviewPage: no red on day one', () => {
-	const newDomain = (extra = {}) => domain(1, 'example.com', { created_at: justNow(), dmarc_policy: null, rua_address: '', ...extra });
+	const newDomain = (extra = {}) => domain(1, 'example.com', { created_at: justNow(), dmarc_policy: null, rua_address: 'r@x.io', ...extra });
 	const bare = { dmarc_policy: null, spf_record: null, dmarc_rua: 0, ...checked };
 	const routes = (d: Record<string, unknown>, sum: Record<string, unknown>, st: object = noReports) => ({ 'GET /api/domains': { domains: [d] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com', sum), 'GET /api/domains/1/stats': st });
 
@@ -272,6 +272,14 @@ describe('OverviewPage: no red on day one', () => {
 		expect(answer).toHaveTextContent('Waiting for the first reports on example.com.');
 		expect(answer.textContent).not.toMatch(/^Not yet/);
 		expect(screen.queryByText('Needs attention')).toBeNull();
+	});
+
+	it('a new domain whose reports are not connected is not "waiting for reports": the row and the workspace sentence say none can arrive', async () => {
+		renderOverview({ routes: routes(newDomain({ rua_address: '' }), bare) });
+		const r = await row('example.com');
+		expect(within(r).getByText('Reports are not connected, so none will arrive. SPF is not published and DMARC is not published.')).toBeInTheDocument();
+		expect(screen.getByTestId('am-i-done')).toHaveTextContent('No reports can arrive for example.com yet: reports are not connected.');
+		expect(screen.queryByText(/Waiting for (the first )?reports/)).toBeNull();
 	});
 
 	it('the same domain after its first 72 hours, still with no report, says what it said before (the domain page and the row agree again)', async () => {

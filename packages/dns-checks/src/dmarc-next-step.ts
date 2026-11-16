@@ -262,7 +262,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     const suffix = ev.suffixParent ? ` ${ev.suffixParent} is a public suffix, so its DMARC record does not apply to ${name}: ${name} counts as its own organization.` : '';
     return [{
       key: 'dmarc-missing', status: 'attention', do: 'Publish a DMARC record at p=none', who: 'dns', where: 'dmarc-setup', at: name,
-      why: `No DMARC record covers ${name}, so receivers get no instruction for mail that fails, and nobody sends reports about who mails as ${name}.${suffix} p=none changes no delivery; it starts the reports.`,
+      why: `No DMARC record covers ${name}, so receivers get no instruction for mail that fails, and nobody sends reports about who mails as ${name}.${suffix} ${ev.reportsAddress ? 'p=none changes no delivery; it starts the reports.' : 'p=none changes no delivery. Reports start once the record names a reports address: connect reports first, or add your own rua=.'}`,
       record: dmarcRecordFor({ policy: 'none', pct: 100 }, ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}`,
     }];
   }

@@ -16,7 +16,7 @@ import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../comp
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, invalidateDomain, useDomainSummaries } from '../../lib/domain-queries';
-import { DAY_ONE_SECONDS, blockerOf, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
+import { DAY_ONE_SECONDS, blockerOf, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay, reportsConnected } from '../../lib/first-day';
 import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useDnsPoll } from '../../lib/poll';
 import { firstCheck } from '../../lib/dns-plan';
@@ -154,7 +154,7 @@ export function OverviewPage() {
 	// Every domain has a row at any depth (a sub-subdomain under its nearest listed ancestor).
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
-	const answer = (waiting === 0 ? dayOneAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null, dayOne: dayOneRows[i] ?? false }))) : null) ?? workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null })), waiting);
+	const answer = (waiting === 0 ? dayOneAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null, dayOne: dayOneRows[i] ?? false, connected: reportsConnected(d) }))) : null) ?? workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null })), waiting);
 	async function exportPdf() {
 		setExporting(true);
 		try {

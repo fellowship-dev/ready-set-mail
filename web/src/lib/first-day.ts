@@ -73,6 +73,9 @@ export const DAY_ONE_SECONDS = 72 * 3600;
 
 const joinList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
 
+/** Reports can arrive at this name: it has a report address of its own (or the one it follows, which the list carries as its own). */
+export const reportsConnected = (d: Partial<Pick<Domain, 'rua_address'>>): boolean => !!d.rua_address?.trim();
+
 /**
  * "No red on day one" (owner's rule): until a domain's first report arrives, and for its first 72 hours, the overview row says it is
  * waiting for reports. What is missing is "to fix after reports", in the neutral state, never "Needs attention" or red.
@@ -83,7 +86,7 @@ const joinList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${
  */
 export function dayOneVerdict(
 	v: DomainVerdict,
-	domain: Pick<Domain, 'created_at'> & ProofShape,
+	domain: Pick<Domain, 'created_at'> & Partial<Pick<Domain, 'rua_address'>> & ProofShape,
 	s: DomainCheckSummary | null | undefined,
 	totals: ReportTotals | null | undefined,
 	now = Math.floor(Date.now() / 1000),
@@ -96,7 +99,9 @@ export function dayOneVerdict(
 	return {
 		...v,
 		status: 'gathering',
-		sentence: missing.length > 0 ? `Waiting for reports. To fix after reports: ${joinList(missing.map((m) => `${m} is not published`))}.` : 'Waiting for reports. They usually arrive within a day or two.',
+		sentence: !reportsConnected(domain)
+			? `Reports are not connected, so none will arrive.${missing.length > 0 ? ` ${joinList(missing.map((m) => `${m} is not published`))}.` : ''}`
+			: missing.length > 0 ? `Waiting for reports. To fix after reports: ${joinList(missing.map((m) => `${m} is not published`))}.` : 'Waiting for reports. They usually arrive within a day or two.',
 		evidence: null,
 		next: { label: 'Nothing to do yet', who: 'Nobody' },
 	};
@@ -104,8 +109,12 @@ export function dayOneVerdict(
 
 
 /** The workspace sentence while every domain is on its first day: no "Not yet" and nothing to fix yet. Null when any domain is not. */
-export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict | null; dayOne: boolean }>): string | null {
+export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict | null; dayOne: boolean; connected?: boolean }>): string | null {
 	if (rows.length === 0 || rows.some((r) => !r.verdict || !r.dayOne)) return null;
+	const some = rows.some((r) => r.connected !== false);
+	// Reports that are not connected cannot arrive: say that, never "waiting".
+	if (!some) return rows.length === 1 ? `No reports can arrive for ${rows[0]!.name} yet: reports are not connected.` : `No reports can arrive for ${rows.length} new domains yet: reports are not connected.`;
+	if (rows.some((r) => r.connected === false)) return null;
 	return rows.length === 1 ? `Waiting for the first reports on ${rows[0]!.name}. They usually arrive within a day or two.` : `Waiting for the first reports on ${rows.length} new domains. They usually arrive within a day or two.`;
 }
 
