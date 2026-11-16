@@ -9,7 +9,8 @@
 // only in testing, and once senders that fetched an enforce policy no longer hold it.
 
 import { intakeLookups, type DomainRow, type MtaStsRow } from '@ready-set-mail/db';
-import { createResolver, lookupMx, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { lookupMx, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { resolverFor } from '../dns/resolver';
 import { cfFailureBody } from '../api/cf-failure';
 import { logAudit } from '../audit/log';
 import { isDomainProven } from '../domains/ownership';
@@ -99,7 +100,7 @@ export async function availability(tenant: TenantContext, domain: DomainRow): Pr
 export type MxPreview = { status: 'ok' | 'none' | 'error'; hosts: string[]; error: string | null };
 
 /** The domain's MX hosts now. An error is kept apart from "none": a DNS outage is not "the MX records were removed". */
-export async function readMx(domain: string, resolver: Resolver = createResolver()): Promise<MxPreview> {
+export async function readMx(domain: string, resolver: Resolver): Promise<MxPreview> {
   const mx = await lookupMx(resolver, domain);
   if (mx.status === 'error') return { status: 'error', hosts: [], error: mx.error ?? 'DNS lookup failed' };
   const hosts = mx.hosts.map((h) => h.host);
@@ -188,7 +189,7 @@ const reportView = (r: { id: number; org_name: string; date_begin: number; date_
 export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Promise<Result> {
   const row = await tenant.scope.mtaSts.get(domain.id);
   const av = await availability(tenant, domain);
-  const mx = await readMx(domain.domain);
+  const mx = await readMx(domain.domain, resolverFor(tenant.env));
   const now = nowSeconds();
   const strategy = row ? { kind: row.policy_host, cnameProxied: row.policy_host === 'worker_route' } : av.strategy ? { kind: av.strategy.kind, cnameProxied: av.strategy.cnameProxied } : null;
   const target = row || av.strategy ? await policyTarget(tenant, domain.domain, row ? { kind: row.policy_host, customHostname: row.policy_host === 'saas_hostname', route: true, cnameProxied: row.policy_host === 'worker_route' } : av.strategy!) : { target: null, problem: null };
@@ -339,13 +340,13 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
 
   const address = tlsRptAddress(tenant);
   if (!address) return fail(400, REPORTS_DOMAIN_MISSING);
-  const mx = await readMx(domain.domain);
+  const mx = await readMx(domain.domain, resolverFor(tenant.env));
   if (mx.status === 'error') return fail(502, `DNS lookup failed: ${mx.error}`);
   if (mx.status === 'none') return fail(422, `No MX records found for ${domain.domain}. Configure MX records before enabling MTA-STS.`);
   const { target, problem } = await policyTarget(tenant, domain.domain, strategy);
   if (!target) return fail(502, problem ?? 'The policy host is not configured');
   let way: Way;
-  try { way = await inTheWay(c, via, { target, proxied: strategy.cnameProxied, address }, createResolver()); } catch (e) {
+  try { way = await inTheWay(c, via, { target, proxied: strategy.cnameProxied, address }, resolverFor(tenant.env)); } catch (e) {
     const f = cfFailureBody(e, 502);
     return fail(f.status, e instanceof Error && !(f.status === 502 && f.body.error === e.message) ? f.body.error : `DNS lookup failed: ${f.body.error}`, f.body.code ? { code: f.body.code } : {});
   }
@@ -437,8 +438,9 @@ async function cnameCheck(resolver: Resolver, name: string, target: string | nul
  * Read DNS and the policy host, and move setup forward when the evidence allows: the certificate becoming active publishes the `_mta-sts` TXT
  * (Cloudflare connection) or asks the person to (by hand); the TXT showing our id makes it active. Returns the checks and the stored row.
  */
-export async function advanceMtaSts(c: Ctx, row: MtaStsRow, resolver: Resolver = createResolver()): Promise<{ row: MtaStsRow; checks: Check[] }> {
+export async function advanceMtaSts(c: Ctx, row: MtaStsRow, injected?: Resolver): Promise<{ row: MtaStsRow; checks: Check[] }> {
   const { tenant, domain } = c;
+  const resolver = injected ?? resolverFor(tenant.env);
   const d = norm(domain.domain);
   const now = nowSeconds();
   const patch: Parameters<typeof tenant.scope.mtaSts.update>[1] = { last_checked_at: now };
@@ -554,7 +556,7 @@ export async function changeMode(c: Ctx, mode: 'testing' | 'enforce'): Promise<R
   if (row.mode === mode) return { status: 200, body: { ok: true, mode, policy_id: row.policy_id, unchanged: true } };
   const now = nowSeconds();
   if (mode === 'enforce') {
-    const [reports, mx] = await Promise.all([tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS), readMx(domain.domain)]);
+    const [reports, mx] = await Promise.all([tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS), readMx(domain.domain, resolverFor(tenant.env))]);
     const ready = enforceReadiness(row, reports, mx.status === 'ok' ? mx.hosts : null, now);
     if (!ready.ready) return fail(422, `MTA-STS cannot enforce yet: ${ready.reasons.join(' ')}`, { code: 'mta_sts_not_ready', reasons: ready.reasons });
   }
@@ -622,7 +624,7 @@ export async function applyMxChange(c: Ctx, row: MtaStsRow, live: readonly strin
 export async function refreshMx(c: Ctx): Promise<Result> {
   const row = await c.tenant.scope.mtaSts.get(c.domain.id);
   if (!row?.enabled) return fail(404, 'MTA-STS not enabled for this domain');
-  const mx = await readMx(c.domain.domain);
+  const mx = await readMx(c.domain.domain, resolverFor(c.tenant.env));
   if (mx.status === 'error') return fail(502, `DNS lookup failed: ${mx.error}`);
   if (mx.status === 'none') return fail(400, 'No MX records found');
   try {

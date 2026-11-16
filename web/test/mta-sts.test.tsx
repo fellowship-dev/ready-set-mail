@@ -76,7 +76,8 @@ describe('MTA-STS page: before it is on', () => {
 		expect(await screen.findByText(/asks other mail servers to use an encrypted connection \(TLS: the lock that keeps mail private on its way\) when they deliver mail to example\.com, and to send you a report on how it went/i)).toBeInTheDocument();
 		expect(screen.getByRole('list', { name: 'MX hosts' })).toHaveTextContent('mx.example.com');
 		expect(screen.getByText(/MX hosts are the servers that receive your mail/)).toBeInTheDocument();
-		expect(screen.getByText(/Turning it on writes these records in your Cloudflare zone for example\.com/)).toBeInTheDocument();
+		expect(screen.getByText(/Turning it on writes three DNS records in your Cloudflare zone for example\.com \(they are listed below\)/)).toBeInTheDocument();
+		expect(screen.getByText(/These are the records it writes in your Cloudflare zone for example\.com/)).toBeInTheDocument();
 		expect(screen.getByText(/A CNAME record points one name at another; a TXT record holds a line of text/)).toBeInTheDocument();
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getByText(`mta-sts.${DOMAIN}`)).toBeInTheDocument();
@@ -86,18 +87,20 @@ describe('MTA-STS page: before it is on', () => {
 		expect(within(list).getByText(`_mta-sts.${DOMAIN}`)).toBeInTheDocument();
 		expect(within(list).queryByRole('button', { name: /^Copy/ })).not.toBeInTheDocument(); // nothing to paste: it is written for you
 		expect(screen.getByText(/It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected/)).toBeInTheDocument();
+		// the action comes before the records, so it is on the first screen on a phone
+		expect(screen.getByRole('button', { name: 'Turn on in testing mode' }).compareDocumentPosition(screen.getByRole('list', { name: 'Records' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		const buttons = screen.getAllByRole('button').filter((b) => /Turn on|Enable/.test(b.textContent ?? ''));
 		expect(buttons.map((b) => b.textContent)).toEqual(['Turn on in testing mode']);
 
 		await userEvent.click(buttons[0]!);
-		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes.')).toBeInTheDocument();
+		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeInTheDocument();
 		expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/domains/1/mta-sts']);
 		expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument();
 	});
 
 	it('by hand: the records are for you to add after turning it on, each copyable', async () => {
 		page(base({ via: 'manual' }));
-		expect(await screen.findByText(/After you turn it on, add these records at your DNS host for example\.com/)).toBeInTheDocument();
+		expect(await screen.findByText(/After you turn it on, you add three DNS records at your DNS host for example\.com/)).toBeInTheDocument();
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getAllByRole('button', { name: /^Copy/ }).length).toBeGreaterThanOrEqual(6);
 	});
@@ -106,6 +109,7 @@ describe('MTA-STS page: before it is on', () => {
 		const first = page(base({ mx_preview: { status: 'none', hosts: [], error: null } }));
 		expect(await screen.findByText(/has no MX records, so there is no mail server to protect/)).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Turn on/ })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Look again' })).toBeInTheDocument(); // add the MX records, then look again
 		first.unmount();
 
 		let n = 0;
@@ -140,7 +144,7 @@ describe('MTA-STS page: setting up', () => {
 			{ key: 'policy_id', label: 'The policy id is published', state: 'missing', detail: 'Published last, once the certificate is active.' },
 		] };
 		const { calls } = page(base({ config: config({ state: 'waiting_certificate', policy_published_at: null, last_checked_at: null }), policy_host_status: cert(false), records: records({ written: true }) }), { 'POST /api/domains/1/mta-sts/verify': verify });
-		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes.')).toBeInTheDocument();
+		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeInTheDocument();
 		expect(screen.getByText('Not checked yet.')).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
 		const list = await screen.findByRole('list', { name: 'Setup checks' });
@@ -150,6 +154,19 @@ describe('MTA-STS page: setting up', () => {
 		expect(within(list).getByText('Not found yet')).toBeInTheDocument();
 		expect(within(list).getByText(/does not send reports to tls-rpt@rua\.readysetmail\.com/)).toBeInTheDocument();
 		expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/mta-sts/verify')).toBe(true);
+	});
+
+	it('when every check is in place and it is active, one line says so and the list is kept under Details', async () => {
+		const ok = (key: string, label: string) => ({ key, label, state: 'ok', detail: null });
+		let checked = false;
+		page(() => (checked ? testing({ config: config({ last_checked_at: NOW }) }) : base({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), records: records({ written: true }) })), {
+			'POST /api/domains/1/mta-sts/verify': () => { checked = true; return { ok: true, state: 'active', notice: null, last_error: null, checks: [ok('policy_host', 'a'), ok('certificate', 'b'), ok('tls_rpt', 'c'), ok('policy_id', 'd')] }; },
+		});
+		await userEvent.click(await screen.findByRole('button', { name: 'Check now' }));
+		expect(await screen.findByText('All the setup checks are in place.')).toBeInTheDocument();
+		expect(screen.getByText('Testing: senders deliver as before and report problems with encryption. Nothing is rejected.')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /What was checked/ })).toBeInTheDocument();
+		expect(screen.getByRole('list', { name: 'Setup checks', hidden: true })).toHaveTextContent('In place');
 	});
 
 	it('by hand, waiting for your records: the records to add are shown with copy buttons', async () => {

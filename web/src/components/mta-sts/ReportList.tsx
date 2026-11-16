@@ -8,7 +8,12 @@ const types = (r: MtaStsReport) => (r.failure_types.length ? r.failure_types.map
 /** TLS reports of the last 30 days: reporter, period, successful and failed sessions, failure types. A table from `sm`, a list below it, so no screen scrolls sideways. */
 export function ReportList({ reports }: { reports: MtaStsReport[] }) {
 	if (reports.length === 0) {
-		return <EmptyState title="No TLS report yet" description="Senders usually send one a day after they deliver mail to you." />;
+		return (
+			<div className="space-y-2">
+				<EmptyState title="No TLS report yet" description="Senders usually send one a day after they deliver mail to you." />
+				<p className="text-xs text-ink-2">If none has arrived after a few days, check that the setup checks are in place. A sender that does not support MTA-STS never sends one.</p>
+			</div>
+		);
 	}
 	const mixed = reports.some((r) => r.sts_successful_sessions === null);
 	return (

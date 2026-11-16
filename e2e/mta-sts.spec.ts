@@ -105,7 +105,7 @@ for (const width of [375, 1440]) {
 
 		// Turn on: the same page says Setting up and asks for the certificate.
 		await page.getByRole('button', { name: 'Turn on in testing mode' }).click();
-		await expect(page.getByText('Waiting for the certificate for the policy server. This usually takes a few minutes.')).toBeVisible();
+		await expect(page.getByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeVisible();
 		await expect(page.getByText('Setting up', { exact: true }).first()).toBeVisible();
 		await noSideways(page, 'the page while setting up');
 

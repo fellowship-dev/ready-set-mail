@@ -14,22 +14,21 @@ covers:
   - src/hosted/tls-intake.ts
   - src/hosted/policy-host.ts
   - packages/dns-checks/src/mta-sts.ts
-url: /#/domains/1
+url: /#/domains/1/mta-sts
 tags: [mta-sts, value, protected]
 priority: P1
 viewports: [1440, 375]
+video: false
 context:
   user: workspace_owner
   auth: logged_in
   mode: hosted
   cloudflare: connected, zone reached
+# The door is the MTA-STS card under DNS tools at the bottom of the domain page (below its first screen at both widths, see the map): the flow starts on the page it opens.
 steps:
   - action: navigate
-    url: /#/domains/1
-    expect: The domain page; under DNS tools the MTA-STS card says Off and links to Set up
-  - action: click
-    selector: "text=Set up"
-    expect: The MTA-STS page - one plain sentence of what it is, the MX hosts found now, the exact records it will write in the Cloudflare zone, testing mode explained, and one action "Turn on in testing mode"
+    url: /#/domains/1/mta-sts
+    expect: The MTA-STS page - one plain sentence of what it is, the MX hosts found now, testing mode explained, the action "Turn on in testing mode", and below it the exact records it will write in the Cloudflare zone
   - action: click
     selector: "text=Turn on in testing mode"
     effect: write
@@ -37,7 +36,7 @@ steps:
   - action: click
     selector: "text=Check now"
     effect: write
-    expect: The setup checks each say In place, and the page says Testing, with the empty state "No TLS report yet. Senders usually send one a day after they deliver mail to you."
+    expect: The setup checks are in place, and the page says Testing, with the empty state "No TLS report yet. Senders usually send one a day after they deliver mail to you."
   - action: navigate
     url: /#/domains/1/mta-sts
     expect: After a sender's first report has arrived, the TLS reports of the last 30 days list who sent it, the period, successful sessions, failed sessions and failure types

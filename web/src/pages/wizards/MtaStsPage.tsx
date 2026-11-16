@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, CardContent } from '@ready-set-mail/ui';
+import { Alert, Badge, Button, Card, CardContent, StatusDot } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -61,6 +61,10 @@ export function MtaStsPage() {
 	const [removed, setRemoved] = useState<MtaStsDisableResult | null>(null);
 	const [dialog, setDialog] = useState<'enforce' | 'testing' | 'off' | null>(null);
 	const back = `/domains/${domainId}`;
+	// The router keeps the scroll position of the page it came from (the DNS tools sit at the bottom of the domain page): start at the top.
+	useEffect(() => {
+		window.scrollTo?.({ top: 0 });
+	}, []);
 
 	const refresh = async () => {
 		await Promise.all([qc.invalidateQueries({ queryKey }), invalidateDomain()]);
@@ -125,6 +129,7 @@ export function MtaStsPage() {
 			body = s.available ? <Preview s={s} name={name} busy={enable.isPending} error={enable.isError ? errorMessage(enable.error) : null} onEnable={() => enable.mutate()} onRetry={() => void q.refetch()} /> : <Unavailable s={s} name={name} back={back} />;
 		} else {
 			const setup = SETUP_STATES.includes(c.state);
+			const checksAllOk = !!checked && checked.checks.every((k) => k.state === 'ok' || k.state === 'not_applicable');
 			const manualRecords = s.records.filter((r) => r.add_now);
 			body = (
 				<>
@@ -155,14 +160,28 @@ export function MtaStsPage() {
 								<RecordList records={manualRecords} copyable label="Records to add" />
 							</div>
 						) : null}
-						{checked && checked.checks.length > 0 ? <CheckList checks={checked.checks} /> : null}
+						{checked && checked.checks.length > 0 ? (
+							setup || !checksAllOk ? <CheckList checks={checked.checks} /> : <StatusDot status="ok" label="All the setup checks are in place." />
+						) : null}
 						{check.isError ? <Alert variant="danger" title="Could not check">{errorMessage(check.error)}</Alert> : null}
 						<div className="flex flex-wrap items-center gap-3">
-							<WriteButton variant="secondary" loading={check.isPending} onClick={() => check.mutate()}>
+							<WriteButton variant={setup ? 'primary' : 'secondary'} loading={check.isPending} onClick={() => check.mutate()}>
 								Check now
 							</WriteButton>
 							<span className="text-sm text-ink-2">{c.last_checked_at ? `Last checked ${formatDateTime(c.last_checked_at)}.` : 'Not checked yet.'}</span>
 						</div>
+					</Section>
+
+					<Section title="TLS reports, last 30 days">
+						{s.summary && s.reports.length > 0 ? (
+							<p className="text-sm text-ink-2">
+								{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions under this policy, from {s.summary.report_count} {s.summary.report_count === 1 ? 'report' : 'reports'}.
+							</p>
+						) : null}
+						<ReportList reports={s.reports} />
+					</Section>
+
+					<Section title="Details">
 						<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)]">
 							<dt className="font-medium text-ink-2">Mode</dt>
 							<dd>{c.mode === 'enforce' ? 'Enforce: senders must use TLS or not deliver.' : 'Testing: senders deliver as before and report problems.'}</dd>
@@ -176,21 +195,17 @@ export function MtaStsPage() {
 							<dt className="font-medium text-ink-2">Cached by senders</dt>
 							<dd>Up to {maxAgeWords(c.max_age)}.</dd>
 						</dl>
+						{checked && !setup && checksAllOk ? (
+							<Disclosure title="What was checked" summary={`The setup checks of ${formatDateTime(c.last_checked_at ?? Math.floor(Date.now() / 1000))}, line by line.`}>
+								<CheckList checks={checked.checks} />
+							</Disclosure>
+						) : null}
 						<Disclosure title="The three records" summary="Their names and values, as Ready Set Mail writes them or asks you to.">
 							<div className="space-y-3">
 								<p className="text-sm text-ink-2">{RECORD_READING}</p>
 								<RecordList records={s.records} copyable={c.via === 'manual'} label="The three records" />
 							</div>
 						</Disclosure>
-					</Section>
-
-					<Section title="TLS reports, last 30 days">
-						{s.summary && s.reports.length > 0 ? (
-							<p className="text-sm text-ink-2">
-								{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions under this policy, from {s.summary.report_count} {s.summary.report_count === 1 ? 'report' : 'reports'}.
-							</p>
-						) : null}
-						<ReportList reports={s.reports} />
 					</Section>
 
 					{s.enforce ? (
@@ -292,6 +307,7 @@ function Unavailable({ s, name, back }: { s: MtaStsStatus; name: string | null; 
 function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus; name: string | null; busy: boolean; error: string | null; onEnable: () => void; onRetry: () => void }) {
 	const mx = s.mx_preview;
 	const manual = s.via === 'manual';
+	const where = name ? ` for ${name}` : '';
 	return (
 		<Section title="Turn it on">
 			<div className="space-y-2">
@@ -303,7 +319,12 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 					</>
 				) : mx.status === 'none' ? (
 					<Alert variant="warning" title="No mail servers found">
-						{name ?? 'This domain'} has no MX records, so there is no mail server to protect. Add MX records at your DNS host first.
+						<p>{name ?? 'This domain'} has no MX records, so there is no mail server to protect. Add MX records at your DNS host first.</p>
+						<div className="mt-2">
+							<Button variant="secondary" size="sm" onClick={onRetry}>
+								Look again
+							</Button>
+						</div>
 					</Alert>
 				) : (
 					<Alert variant="warning" title="Could not read your MX records">
@@ -317,27 +338,30 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 				)}
 			</div>
 
+			{mx.status === 'ok' ? (
+				<>
+					<p className="text-sm text-ink-2">
+						{manual ? `After you turn it on, you add three DNS records at your DNS host${where}` : `Turning it on writes three DNS records in your Cloudflare zone${where}`} (they are listed below). It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected.
+					</p>
+					{error ? <Alert variant="danger" title="Could not turn it on">{error}</Alert> : null}
+					<div>
+						<WriteButton loading={busy} onClick={onEnable}>
+							{busy ? 'Turning on…' : 'Turn on in testing mode'}
+						</WriteButton>
+					</div>
+				</>
+			) : null}
+
 			<div className="space-y-2">
 				<h3 className="text-sm font-semibold text-ink-1">The records</h3>
 				<p className="text-sm text-ink-2">
-					{manual ? `After you turn it on, add these records at your DNS host for ${name ?? 'your domain'}.` : `Turning it on writes these records in your Cloudflare zone${name ? ` for ${name}` : ''}.`} {RECORD_READING}
+					{manual ? `Add these records at your DNS host${where} after you turn it on.` : `These are the records it writes in your Cloudflare zone${where}.`} {RECORD_READING}
 				</p>
 				<RecordList records={s.records} copyable={manual} label="Records" />
 			</div>
-
-			<p className="text-sm text-ink-2">It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected.</p>
-			{error ? <Alert variant="danger" title="Could not turn it on">{error}</Alert> : null}
-			{mx.status === 'ok' ? (
-				<div>
-					<WriteButton loading={busy} onClick={onEnable}>
-						{busy ? 'Turning on…' : 'Turn on in testing mode'}
-					</WriteButton>
-				</div>
-			) : null}
 		</Section>
 	);
 }
-
 
 function RemovedResult({ result, domain, back, via }: { result: MtaStsDisableResult; domain: string | null; back: string; via: 'cloudflare' | 'manual' | null }) {
 	return (

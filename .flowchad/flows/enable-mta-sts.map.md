@@ -1,13 +1,13 @@
 # A hosted owner turns on MTA-STS and sees TLS reports arrive
 
 - **Value moment:** The policy is served in testing mode and the first TLS report from a sending mail server is on the page, with who sent it, for which days, how many sessions worked and how many failed.
-- **Visitor:** an owner or admin of a hosted workspace with a proven domain, on the domain page. Their zone is on Cloudflare (the connection writes the records) or not (they add three records by hand).
-- **As built by the MTA-STS pull request (2026-11-16), shortened from the value moment backwards.** Before it, `main` had a four-step wizard (MX discovery that previewed nothing, a mode choice, the three records, done) that on the hosted service answered "connect Cloudflare first" and never showed a single TLS report: six screens, one decision (the mode), value not reachable. The mode choice goes (testing is the only way in: RFC 8461 section 5, and the server refuses enforce without the reports), the MX preview and the exact records move onto the one screen that has the action, and the page that says "Setting up" is the page that later shows the reports, so nothing is re-explained. The states below share one address (`/#/domains/:id/mta-sts`); counted by address, the whole flow is two pages, the domain page and this one.
+- **Visitor:** an owner or admin of a hosted workspace with a proven domain. Their zone is on Cloudflare (the connection writes the records) or not (they add three records by hand).
+- **As built by the MTA-STS pull request (2026-11-16), shortened from the value moment backwards.** Before it, `main` had a four-step wizard (MX discovery that previewed nothing, a mode choice, the three records, done) that on the hosted service answered "connect Cloudflare first" and never showed a single TLS report: four wizard screens and a card, one decision (the mode), value not reachable. The mode choice goes (testing is the only way in: RFC 8461 section 5, and the server refuses enforce without the reports), the MX preview and the records move onto the one screen that has the action, the action comes before the records so it is on the first screen of a phone, and the page that says "Setting up" is the page that later shows the reports, so nothing is re-explained. The states below share one address (`/#/domains/:id/mta-sts`): counted by address the flow is one page.
+- **The door.** The flow starts on the MTA-STS page. The usual way in is the MTA-STS card under "DNS tools" on the domain page; that card sits at the bottom of the domain page and is below its first screen at both widths (measured with a hosted domain page on 2026-11-16: 0.58 viewport heights down at 1440, 1.42 at 375), so it is not on the walked path and its words are checked by `web/test/mta-sts.test.tsx` and `e2e/mta-sts.spec.ts`. Surfacing MTA-STS higher on the domain page is an owner decision, not made here.
 
 ```mermaid
 flowchart TD
-  entry([Domain page]) --> card[DNS tools card: MTA-STS, Off]
-  card --> page[MTA-STS page: what it is, the MX hosts found now, the exact records, one action]
+  entry([The MTA-STS page, from the DNS tools card on the domain page]) --> page[MTA-STS page: what it is, the MX hosts found now, one action, the exact records below it]
   page -->|no MX records, or not available here| stop([The page says why and offers no action])
   page -->|Turn on in testing mode| write((Wait: policy server and records are made, seconds))
   write --> setup[Same page: Setting up, the checks, the records still to add]
@@ -21,7 +21,7 @@ flowchart TD
 
 ## Measures of the map
 
-Shortest path from the domain page to the value moment: five screens counted by state (card, page, setup, live, reports; two by address), no decisions, three waits that only time can shorten (the records, the certificate, the sender's report). The old wizard path had six screens, one decision and no value moment. Nothing on the way is asked twice: the MX hosts and the records are shown once, before the action, and the same records are listed again only behind "The three records".
+Shortest path from the page to the value moment: four screens counted by state (page, setup, live, reports; one by address), no decisions, three waits that only time can shorten (the records, the certificate, the sender's report). The old wizard path had a card and four steps, one decision and no value moment. Nothing on the way is asked twice: the MX hosts and the records are shown once, before the action, and the same records are listed again only behind "The three records".
 
 ## Branches that are not the shortest path
 

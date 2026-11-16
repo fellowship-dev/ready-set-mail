@@ -12,6 +12,7 @@
 import { forWorkspace, intakeLookups, type MtaStsRow } from '@ready-set-mail/db';
 import { mapLimit } from '../cron';
 import type { BoundEnv } from '../index';
+import { resolverFor } from '../dns/resolver';
 import { loadTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
@@ -37,7 +38,7 @@ async function refreshOne(tenant: TenantContext, row: MtaStsRow, ec: ExecutionCo
   }
   try {
     const { row: current } = await advanceMtaSts(c, row);
-    const mx = await readMx(domain.domain);
+    const mx = await readMx(domain.domain, resolverFor(tenant.env));
     if (mx.status === 'error') { await tenant.scope.mtaSts.updateError(domain.id, `MX lookup failed: ${mx.error}`); return; }
     if (mx.status === 'none') {
       if (current.notice !== NO_MX_NOTICE) await tenant.scope.mtaSts.update(domain.id, { notice: NO_MX_NOTICE, notice_at: Math.floor(Date.now() / 1000) });
