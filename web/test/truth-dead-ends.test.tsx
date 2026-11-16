@@ -67,6 +67,12 @@ describe('Settings: password', () => {
 		expect(screen.queryByText(/Unexpected error/)).toBeNull();
 	});
 
+	it('an answer from the sign-in library ({ message }) is shown as it is, never as "Unexpected error"', async () => {
+		await change({ 'POST /api/auth/change-password': { __status: 400, body: { code: 'PASSWORD_TOO_SHORT', message: 'Password too short' } } });
+		expect(await screen.findByText('Password too short')).toBeInTheDocument();
+		expect(screen.queryByText(/Unexpected error/)).toBeNull();
+	});
+
 	it('the confirmation names what exists in the mode: agents hosted, API keys self-hosted', () => {
 		expect(passwordChangedNote(true)).toMatch(/Agents you connected still work/);
 		expect(passwordChangedNote(true)).not.toMatch(/API key/i);
@@ -210,9 +216,15 @@ describe('Orders when the server will not list them', () => {
 		expect(document.body.textContent).not.toMatch(/OWNER_EMAIL|STRIPE|instance owner|whatever their status/i);
 	});
 
+	it('self-host: the instance owner is told there are no orders to list, not to set a Stripe key that does nothing here', async () => {
+		renderApp(<OrdersPage />, { status: { mode: 'self-host' }, routes: { 'GET /api/operator/orders': fail(404, 'not found'), 'GET /api/me': { ...me('owner'), instance_owner: true } } });
+		expect(await screen.findByText('A self-hosted install has no orders')).toBeInTheDocument();
+		expect(document.body.textContent).not.toMatch(/STRIPE|OWNER_EMAIL/);
+	});
+
 	it('the words come from one function', () => {
-		expect(ordersUnavailable(404, false).body).not.toMatch(/OWNER_EMAIL|STRIPE/);
-		expect(ordersUnavailable(403, true).title).toBe('This page is not available to your account');
+		expect(ordersUnavailable(404, { instanceOwner: false, hosted: true }).body).not.toMatch(/OWNER_EMAIL|STRIPE/);
+		expect(ordersUnavailable(403, { instanceOwner: true, hosted: true }).title).toBe('This page is not available to your account');
 	});
 });
 

@@ -152,7 +152,7 @@ describe('domains per workspace', () => {
     const res = await add(w, a, 'wait10.example.org');
     expect(res.status).toBe(403);
     expect(await json(res)).toMatchObject({
-      error: 'This workspace can hold 10 domains, and 10 are still waiting for proof. Finish proving one, or remove it, to add another.',
+      error: 'This workspace can hold 10 domains, and 10 are waiting for proof.',
       code: 'plan_limit', limit: { kind: 'domains_per_workspace', max: 10 },
     });
     expect(w.rows('SELECT COUNT(*) AS n FROM domain_claims WHERE workspace_id = ?', a.ws)[0].n).toBe(10);
@@ -164,7 +164,9 @@ describe('domains per workspace', () => {
     const a = await w.user('a@example.com');
     w.fill(a.ws, 2);
     expect((await add(w, a, 'one.example.org')).status).toBe(202); // 2 domains + 1 waiting = 3 of 3
-    expect((await add(w, a, 'two.example.org')).status).toBe(403);
+    const res = await add(w, a, 'two.example.org');
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe('This workspace can hold 3 domains: it has 2, and 1 more is waiting for proof.');
   });
 
   it('a domain the workspace already has keeps working at the cap', async () => {

@@ -57,7 +57,7 @@ export type Admission =
   | { kind: 'pending'; claim: DomainClaimRow }
   /** Another workspace already owns this domain. */
   | { kind: 'taken' }
-  | { kind: 'limit'; cap: number; waiting: number };
+  | { kind: 'limit'; cap: number; held: number; waiting: number };
 
 export interface ClaimView {
   id: number;
@@ -370,7 +370,7 @@ async function nameClientWorkspace(tenant: TenantContext, domain: string): Promi
 }
 
 /** The 403 body (code `plan_limit`) for a name that cannot wait for proof because the workspace's domain slots are full. */
-export const claimLimitBody = (tenant: TenantContext, a: { cap: number; waiting: number }) => planLimitWaitingBody(tenant.env, a.cap, a.waiting);
+export const claimLimitBody = (tenant: TenantContext, a: { cap: number; held: number; waiting: number }) => planLimitWaitingBody(tenant.env, a.cap, a.held, a.waiting);
 
 async function admitDomainInner(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
@@ -394,7 +394,8 @@ async function admitDomainInner(tenant: TenantContext, domain: string): Promise<
   const cap = planLimits(tenant.env)?.domainsPerWorkspace;
   if (cap !== undefined) {
     const waiting = await tenant.scope.claims.count();
-    if ((await tenant.scope.domains.list()).length - (own ? 1 : 0) + waiting >= cap) return { kind: 'limit', cap, waiting };
+    const held = (await tenant.scope.domains.list()).length - (own ? 1 : 0); // a row already held takes no second slot for its own claim
+    if (held + waiting >= cap) return { kind: 'limit', cap, held, waiting };
   }
   return { kind: 'pending', claim: await tenant.scope.claims.upsert(domain, newToken()) };
 }

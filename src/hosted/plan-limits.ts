@@ -46,9 +46,10 @@ export function planLimitBody(env: Partial<LimitEnv>, kind: PlanLimitKind, max: 
 }
 
 /** The same cap, reached by domains plus domains still waiting for proof: nobody publishes a TXT record for a domain that could never be added. */
-export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, waiting: number) {
+export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, held: number, waiting: number) {
   const body = planLimitBody(env, 'domains_per_workspace', max);
-  return { ...body, error: `This workspace can hold ${max} ${max === 1 ? 'domain' : 'domains'}, and ${waiting} ${waiting === 1 ? 'is' : 'are'} still waiting for proof. Finish proving one, or remove it, to add another.` };
+  const slots = `${max} ${max === 1 ? 'domain' : 'domains'}`;
+  return { ...body, error: held === 0 ? `This workspace can hold ${slots}, and ${waiting} ${waiting === 1 ? 'is' : 'are'} waiting for proof.` : `This workspace can hold ${slots}: it has ${held}, and ${waiting} more ${waiting === 1 ? 'is' : 'are'} waiting for proof.` };
 }
 
 /** HTTP 403 for a cap that is reached. */

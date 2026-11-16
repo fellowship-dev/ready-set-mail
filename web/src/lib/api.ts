@@ -86,7 +86,9 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
 	} catch {
 		/* not JSON */
 	}
-	const serverMessage = (body as { error?: string } | undefined)?.error;
+	// Our routes answer `{ error }`; the sign-in library's own endpoints (see PASSTHROUGH in src/auth/routes.ts) answer `{ message }`.
+	const answered = body as { error?: string; message?: string } | undefined;
+	const serverMessage = answered?.error ?? (typeof answered?.message === 'string' ? answered.message : undefined);
 	// Credential-less endpoints (login, setup …) answer 401 for a wrong password: that is not "session ended".
 	if (res.status === 401 && !opts.quiet401 && !path.startsWith('/api/auth/') && !path.startsWith('/api/invites/')) unauthorizedHandler?.();
 	throw new ApiError(res.status, serverMessage ?? FALLBACK[res.status] ?? `Unexpected error (${res.status})`, body);
