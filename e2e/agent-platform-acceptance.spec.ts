@@ -308,7 +308,7 @@ test('a self-registered app named Claude is led by its address, and signing in o
   // The same, for an app that chose a name that is not famous: shown below the address as what it calls itself.
   await page.goto(origin + authorize(helper));
   await expect(page.getByRole('heading', { name: 'Allow the app at client.example to work with your domains?' })).toBeVisible();
-  await expect(page.getByText('It calls itself \u201cMail Helper\u201d. The app chose that name, so it may not be who it says.')).toBeVisible();
+  await expect(page.getByText('It calls itself \u201cMail Helper\u201d: it may not be who it says.')).toBeVisible();
   await context.close();
   await agent.dispose();
 });

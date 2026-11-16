@@ -22,7 +22,7 @@ describe('a self-registered app is shown by its address, whatever it calls itsel
   expect(html).toContain('<h1>Allow the app at client.example to work with your domains?</h1>');
   expect(html).not.toMatch(/<h1>[^<]*Claude/);
   expect(visible(html)).not.toContain('Claude');
-  expect(visible(html)).toContain('Not verified: nobody has checked who this app is. It used the name of a well-known app, so the name is not shown: only the address below is known.');
+  expect(visible(html)).toContain('Not verified: nobody has checked who this app is. It used the name of a well-known app, so its name is not shown.');
   expect(visible(html)).not.toContain('It gave no name.');
   expect(html).not.toMatch(/<input[^>]* checked/);
  });
@@ -34,7 +34,7 @@ describe('a self-registered app is shown by its address, whatever it calls itsel
  it('a name that is not famous is shown as what the app calls itself, below the address', async () => {
   const html = await consent(await app.registerOk({ ...GOOD, client_name: 'Mail Helper' }));
   expect(html).toContain('<h1>Allow the app at client.example to work with your domains?</h1>');
-  expect(visible(html)).toContain('It calls itself “Mail Helper”. The app chose that name, so it may not be who it says.');
+  expect(visible(html)).toContain('It calls itself “Mail Helper”: it may not be who it says.');
  });
  it('an app on this computer is called that', async () => {
   const id = await app.registerOk({ ...GOOD, client_name: 'Local tool', redirect_uris: ['http://127.0.0.1:5173/cb'] });

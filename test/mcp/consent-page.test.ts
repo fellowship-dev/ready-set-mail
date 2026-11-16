@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACTION_COPY, escape, EXPIRY_CHOICES, PAGE_CSP, pageHeaders, renderApprovalLimit, renderConsentPage, renderConsentProblem, renderSignedOutPage, type ConsentModel } from '../../src/mcp/consent';
+import { ACTION_COPY, escape, EXPIRY_CHOICES, PAGE_CSP, pageHeaders, renderApprovalLimit, renderConsentPage, BAR_HEIGHT, renderConsentProblem, renderSignedOutPage, type ConsentModel } from '../../src/mcp/consent';
 import { ACCESS_ACTIONS } from '../../src/access/grant';
 
 const attack = '"><img src=x onerror=alert(1)><script>alert(1)</script>';
@@ -17,7 +17,45 @@ const model = (over: Partial<ConsentModel> = {}): ConsentModel => ({
 /** What a person reads: markup and attribute values removed. */
 const visible = (html: string) => html.replace(/<style>[\s\S]*?<\/style>/, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
 
+/** The words a person reads before the first choice (the first domain checkbox, or the first control of any kind). */
+const wordsAboveFirstChoice = (html: string) => {
+ const body = html.slice(html.indexOf('<main'));
+ const first = body.search(/<input type="checkbox"|<select|<input type="text"/);
+ return visible(body.slice(0, first)).trim().split(' ').filter(Boolean).length;
+};
+const long = { lead: 'x', calledItself: 'A Rather Long App Name Here', redirectHost: 'x', loopback: false } as const;
+const kinds: Array<[string, ConsentModel['client']]> = [
+ ['a self-registered web app (https redirect)', { ...long, lead: 'agent.example.net', redirectHost: 'agent.example.net' }],
+ ['a self-registered app on this computer (loopback redirect)', { ...long, lead: 'An app on this computer', redirectHost: '127.0.0.1', loopback: true }],
+ ['a client-document app (publisher set)', { ...long, lead: 'agent.example.net', publisher: 'agent.example.net', redirectHost: 'agent.example.net' }],
+ ['an app whose name was withheld', { lead: 'An app on this computer', calledItself: null, nameWithheld: true, redirectHost: '127.0.0.1', loopback: true }],
+];
+
 describe('consent page', () => {
+ it.each(kinds)('for %s the first choice comes before the long notices, with at most 60 words above it', (_name, client) => {
+  const html = renderConsentPage(model({ client }));
+  expect(wordsAboveFirstChoice(html)).toBeLessThanOrEqual(60);
+  const text = visible(html);
+  const firstChoice = text.indexOf('Nothing is ticked yet');
+  for (const later of ['Signed in as owner@example.com', 'You can revoke access sooner in Settings, under Agents', 'It can never do these']) {
+   expect(text).toContain(later);
+   expect(text.indexOf(later)).toBeGreaterThan(firstChoice);
+  }
+  // what the person needs to know about the app is still above the choices
+  expect(text.indexOf('Access goes to')).toBeLessThan(firstChoice);
+  expect(text.indexOf(client.publisher ? 'Published by' : client.nameWithheld ? 'well-known app' : 'Not verified')).toBeLessThan(firstChoice);
+  if (client.loopback) {
+   expect(text.indexOf('This sends access to an app on your own computer.')).toBeGreaterThan(text.indexOf('Give itself more access'));
+   expect(text.indexOf('This sends access to an app on your own computer.')).toBeLessThan(text.indexOf('Allow access'));
+  }
+ });
+
+ it('the notice about an app that is not verified is on the page before the buttons, after the choices', () => {
+  const text = visible(renderConsentPage(model({ client: { ...long, lead: 'agent.example.net', redirectHost: 'agent.example.net' } })));
+  expect(text.indexOf('Allow only if this is the app you are using right now.')).toBeGreaterThan(text.indexOf('Give itself more access'));
+  expect(visible(renderConsentPage(model()))).not.toContain('Allow only if');
+ });
+
  it('escapes client, workspace, domain, product and account values everywhere they appear', () => {
   const html = renderConsentPage(model({
    client: { lead: attack, calledItself: attack, publisher: attack, redirectHost: attack, loopback: true },
@@ -43,9 +81,9 @@ describe('consent page', () => {
   expect(text).not.toContain('prod_1');
   expect(text).toContain('Allow claude.ai to work with your domains?');
   expect(text).toContain('Published by claude.ai');
-  expect(text).toContain('It calls itself \u201cClaude\u201d. That is its own description.');
+  expect(text).toContain('It calls itself \u201cClaude\u201d.');
   expect(text).toContain('Access goes to claude.ai');
-  expect(text).toContain('You are signed in as owner@example.com');
+  expect(text).toContain('Signed in as owner@example.com');
  });
 
  it('describes each permission in plain words with the raw scope as secondary text, and never offers access management', () => {
@@ -68,7 +106,7 @@ describe('consent page', () => {
    expect(html).not.toMatch(/<input[^>]* checked/);
    expect(html.match(/<input type="checkbox"/g)!.length).toBeGreaterThan(6);
    const text = visible(html);
-   expect(text).toContain('Nothing is ticked yet: you choose the domains it may use and what it may do.');
+   expect(text).toContain('Nothing is ticked yet: it gets only what you tick, until the date you pick.');
    // the sentence comes before the first choice
    expect(text.indexOf('Nothing is ticked yet')).toBeLessThan(text.indexOf('See the domains you select'));
   }
@@ -76,9 +114,13 @@ describe('consent page', () => {
 
  it('keeps a focused control out from under the bar that stays at the bottom: scroll padding at least the bar is tall', () => {
   const html = renderConsentPage(model());
-  expect(html).toMatch(/html\{scroll-padding-bottom:8rem\}/);
-  // the bar is one button row of 44px with 12px above and below, plus its border: well under 8rem (128px)
-  expect(8 * 16).toBeGreaterThanOrEqual(12 + 44 + 12 + 1 + 4);
+  expect(html).toContain('--bar:69px');
+  expect(html).toMatch(/html\{scroll-padding-bottom:calc\(var\(--bar\) \+ 1rem\)\}/);
+  // the bar is one button row of 44px with 12px above and below, plus its border
+  expect(BAR_HEIGHT).toBe(12 + 44 + 12 + 1);
+  // the content keeps the bar's height clear at the bottom, and a focused row's whole label (it can wrap to 160px at 375) is scrolled clear of the bar
+  expect(html).toMatch(/\.wrap\{[^}]*padding:40px 16px var\(--bar\)\}/);
+  expect(html).toMatch(/\.option input\{[^}]*scroll-margin-bottom:9rem\}/);
  });
 
  it('says plainly which limit was reached and what to do, with a way to the list of apps', () => {
@@ -109,6 +151,8 @@ describe('consent page', () => {
   const text = visible(renderConsentPage(model({ client: { lead: 'An app on this computer', calledItself: 'Totally Claude', redirectHost: '127.0.0.1', loopback: true } })));
   expect(text).toContain('Not verified:');
   expect(text).toContain('This sends access to an app on your own computer.');
+  // after the choices, before the buttons
+  expect(text.indexOf('This sends access')).toBeGreaterThan(text.indexOf('Give itself more access'));
  });
 
  it('never leads with a self-registered name: the address first, the name as what it calls itself, nothing pre-ticked', () => {
@@ -121,14 +165,15 @@ describe('consent page', () => {
   expect(html).not.toMatch(/<h1>[^<]*Claude/);
   const text = visible(html);
   expect(text).toContain('Not verified: nobody has checked who this app is.');
-  expect(text).toContain('It calls itself \u201cClaude\u201d. The app chose that name, so it may not be who it says.');
-  expect(text).toContain('Access goes to evil.example . Allow only if that is the app you are using right now.');
+  expect(text).toContain('It calls itself \u201cClaude\u201d: it may not be who it says.');
+  expect(text).toContain('Access goes to evil.example');
+  expect(text).toContain('Allow only if this is the app you are using right now.');
   expect(html).not.toMatch(/<input[^>]* checked/);
  });
 
  it('says what is true when the name was withheld, and "It gave no name." only when there was none', () => {
   const withheld = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, nameWithheld: true, redirectHost: 'client.example', loopback: false } })));
-  expect(withheld).toContain('It used the name of a well-known app, so the name is not shown: only the address below is known.');
+  expect(withheld).toContain('It used the name of a well-known app, so its name is not shown.');
   expect(withheld).not.toContain('It gave no name.');
   const none = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, redirectHost: 'client.example', loopback: false } })));
   expect(none).toContain('It gave no name.');
@@ -199,8 +244,8 @@ describe('consent page wording that names the product', () => {
   const text = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, redirectHost: 'client.example', loopback: false } })));
   expect(text).toContain('It gave no name.');
   expect(text).toContain('Not verified: nobody has checked who this app is.');
-  expect(text).not.toContain('the app chose that name');
-  expect(visible(renderConsentPage(model({ client: { lead: 'cursor.com', calledItself: 'Cursor', redirectHost: 'cursor.com', loopback: false } })))).toContain('The app chose that name');
+  expect(text).not.toContain('it may not be who it says');
+  expect(visible(renderConsentPage(model({ client: { lead: 'cursor.com', calledItself: 'Cursor', redirectHost: 'cursor.com', loopback: false } })))).toContain('it may not be who it says');
  });
 });
 

@@ -91,7 +91,7 @@ describe('a client ID metadata document client, with registration off', () => {
   expect(page.status, html.slice(0, 300)).toBe(200);
   expect(visible(html)).toContain('Allow cimd.example to work with your domains?');
   expect(visible(html)).toContain('Published by cimd.example');
-  expect(visible(html)).toContain('It calls itself \u201cDocument assistant\u201d. That is its own description.');
+  expect(visible(html)).toContain('It calls itself \u201cDocument assistant\u201d.');
   expect(visible(html)).not.toContain('Not verified');
   const tokens = await app.connect(CIMD, { redirect: 'https://cimd.example/callback' });
   const list = await app.mcp(tokens.access_token);

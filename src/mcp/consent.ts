@@ -17,7 +17,7 @@ export const ACTION_COPY: Readonly<Record<Exclude<AccessAction, 'access:manage'>
  'domains:manage': { label: 'Add domains and check ownership', detail: 'Starts monitoring a domain and checks its ownership record. It does not edit DNS or send email.' },
 });
 /** Said when an app used the name of a well-known app: the name is not kept, and nothing about who it is can be said beyond its address. */
-export const NAME_WITHHELD = 'It used the name of a well-known app, so the name is not shown: only the address below is known.';
+export const NAME_WITHHELD = 'It used the name of a well-known app, so its name is not shown.';
 /** An app that gave no name is shown, and listed, under this one. */
 export const UNNAMED_APP = 'Unnamed app';
 export const EXPIRY_CHOICES = [1, 7, 14, 30] as const;
@@ -38,16 +38,19 @@ export interface ConsentModel {
  now: number;
 }
 
+/** The bar of buttons that stays at the bottom: 12px, one 44px row of buttons, 12px, and its 1px border. The page keeps this much clear below its content and above a focused row. */
+export const BAR_HEIGHT = 12 + 44 + 12 + 1;
+
 const css = (() => {
  const vars = (colors: Record<string, string>) => Object.entries(colors).map(([k, v]) => `--${k}:${v}`).join(';');
  return `@font-face{font-family:"Geist Variable";src:url(/fonts/geist-latin-wght-normal.woff2) format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
 @font-face{font-family:"Geist Mono Variable";src:url(/fonts/geist-mono-latin-wght-normal.woff2) format("woff2");font-weight:100 900;font-style:normal;font-display:swap}
-:root{color-scheme:light;${vars(lightColors)};--shadow:${shadows.light.sm}}
+:root{color-scheme:light;${vars(lightColors)};--shadow:${shadows.light.sm};--bar:${BAR_HEIGHT}px}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;${vars(darkOverrides)};--shadow:${shadows.dark.sm}}}
 *{box-sizing:border-box}
-html{scroll-padding-bottom:8rem}
+html{scroll-padding-bottom:calc(var(--bar) + 1rem)}
 body{margin:0;background:var(--surface-0);color:var(--ink-1);font:400 1rem/1.6 ${fonts.sans};-webkit-font-smoothing:antialiased}
-.wrap{max-width:40rem;margin:0 auto;padding:40px 16px 64px}
+.wrap{max-width:40rem;margin:0 auto;padding:40px 16px var(--bar)}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-0.01em;margin-bottom:24px;color:var(--ink-1)}
 .brand svg{height:40px;width:auto;flex:none}
 .card{background:var(--surface-1);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;overflow-wrap:anywhere}
@@ -72,7 +75,7 @@ legend{font-size:1rem;font-weight:600;padding:0;margin-bottom:4px}
 .group-name{font-size:.75rem;font-weight:600;letter-spacing:.025em;text-transform:uppercase;color:var(--ink-2);margin:0 0 6px}
 .option{display:flex;gap:12px;align-items:flex-start;min-height:44px;padding:10px 12px;margin-top:8px;border:1px solid var(--line);border-radius:10px;background:var(--surface-1);cursor:pointer}
 .option:hover{background:var(--surface-2)}
-.option input{flex:none;width:18px;height:18px;margin:3px 0 0;accent-color:var(--brand)}
+.option input{flex:none;width:18px;height:18px;margin:3px 0 0;accent-color:var(--brand);scroll-margin-bottom:9rem}
 .option span{display:block;min-width:0}
 .option .detail{color:var(--ink-2);font-size:.875rem}
 .option .scope{color:var(--ink-3);font-family:${fonts.mono};font-size:.75rem}
@@ -133,14 +136,15 @@ export function renderConsentPage(m: ConsentModel): string {
    ? `<li><strong>Published by</strong> <span class="mono">${escape(m.client.publisher)}</span></li>`
    : `<li><strong>Not verified:</strong> nobody has checked who this app is.</li>`,
   calls
-   ? `<li><strong>It calls itself</strong> \u201c${calls}\u201d. ${verified ? 'That is its own description.' : 'The app chose that name, so it may not be who it says.'}</li>`
+   ? `<li><strong>It calls itself</strong> \u201c${calls}\u201d${verified ? '.' : ': it may not be who it says.'}</li>`
    : m.client.nameWithheld ? `<li><strong>${escape(NAME_WITHHELD)}</strong></li>`
    : verified ? '' : `<li><strong>It gave no name.</strong></li>`,
-  `<li><strong>Access goes to</strong> <span class="mono">${escape(m.client.redirectHost)}</span>${verified ? '' : '. Allow only if that is the app you are using right now.'}</li>`,
-  `<li><strong>You are signed in as</strong> ${escape(m.account)}</li>`,
+  `<li><strong>Access goes to</strong> <span class="mono">${escape(m.client.redirectHost)}</span></li>`,
  ].join('');
- const loopback = m.client.loopback ? '<p class="notice" role="note"><strong>This sends access to an app on your own computer.</strong> Continue only if you started this connection from that app just now.</p>' : '';
- const domains = total === 0
+ // What a person needs before pressing Allow, but not before choosing: it comes after the choices, just above the buttons.
+ const check = m.client.loopback ? '<p class="notice" role="note"><strong>This sends access to an app on your own computer.</strong> Continue only if you started this connection from that app just now.</p>'
+  : verified ? '' : '<p class="notice" role="note">Allow only if this is the app you are using right now.</p>';
+const domains = total === 0
   ? '<p class="muted small">You have no domains yet. Add one below, or add domains in the dashboard first.</p>'
   : m.workspaces.filter(w => w.choices.length).map(w => `<div class="group" role="group" aria-label="${escape(w.name)}"><p class="group-name">${escape(w.name)}</p>${w.choices.map(c => `<label class="option"><input type="checkbox" name="selection" value="${escape(c.value)}"><span><span class="mono">${escape(c.domain)}</span>${c.product ? `<span class="detail">Only for ${escape(c.product)}</span>` : ''}</span></label>`).join('')}</div>`).join('');
  const actions = (Object.keys(ACTION_COPY) as Array<keyof typeof ACTION_COPY>).map(a => `<label class="option"><input type="checkbox" name="actions" value="${a}"><span><span>${escape(ACTION_COPY[a].label)}</span><span class="detail">${escape(ACTION_COPY[a].detail)}</span><span class="scope">${a}</span></span></label>`).join('');
@@ -148,11 +152,10 @@ export function renderConsentPage(m: ConsentModel): string {
  const workspaceOptions = m.workspaces.map(w => `<option value="${escape(w.id)}">${escape(w.name)}</option>`).join('');
  const heading = verified ? `Allow ${lead} to work with your domains?` : m.client.loopback ? 'Allow an app on this computer to work with your domains?' : `Allow the app at ${lead} to work with your domains?`;
  return agentPage(verified ? `Allow ${lead}?` : 'An app is asking for access', `<h1>${heading}</h1>
-<p class="muted">Nothing is ticked yet: you choose the domains it may use and what it may do. It gets nothing else, and access ends on the date you pick.</p>
-<ul class="facts">${identity}</ul>${loopback}
+<ul class="facts">${identity}</ul>
 <form method="post">
 <input type="hidden" name="handle" value="${escape(m.handle)}">
-<fieldset><legend>Domains</legend><p class="muted small">It can only use the domains you tick.</p>${domains}
+<fieldset><legend>Domains</legend><p class="muted small">Nothing is ticked yet: it gets only what you tick, until the date you pick.</p>${domains}
 <h2 class="sub">Also allow one domain that is not added yet</h2><p class="hint">For an agent that sets up a new domain for you. Leave both empty if you don't need it.</p>
 <label class="field">Workspace<select name="workspaceId"><option value="">Choose a workspace</option>${workspaceOptions}</select></label>
 <label class="field">Domain<input type="text" name="domain" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com"></label>
@@ -160,6 +163,7 @@ export function renderConsentPage(m: ConsentModel): string {
 <fieldset><legend>What it may do</legend>${actions}</fieldset>
 <fieldset><legend>When access ends</legend><label class="field">Access ends<select name="days">${expiry}</select></label><p class="hint">Dates are in UTC. You can revoke access sooner in Settings, under Agents.</p></fieldset>
 <div class="never"><h2>It can never do these</h2><ul><li>Change your DNS records</li><li>Tighten your DMARC policy</li><li>Send email or invite people</li><li>Give itself more access</li></ul><p class="muted last">You make those changes yourself, in the dashboard or at your DNS provider.</p></div>
+${check}<p class="muted small">Signed in as ${escape(m.account)}</p>
 <div class="bar"><button class="button primary" type="submit" name="decision" value="allow">Allow access</button><button class="button secondary" type="submit" name="decision" value="deny" formnovalidate>Don't allow</button></div>
 </form>`);
 }
