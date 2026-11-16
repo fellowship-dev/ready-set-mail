@@ -2,7 +2,7 @@
 
 - **Value moment:** Flattening is on: the SPF record in Cloudflare lists the sender addresses directly, within 10 lookups and 450 bytes, and the daily check keeps it current, or says on the domain page why it could not and what to do. The owner can turn it off and get the original record back.
 - **Visitor:** the owner or an admin of a domain whose SPF record needs more than 10 DNS lookups (RFC 7208 section 4.6.4), with Cloudflare connected, on a self-hosted instance or on a hosted workspace the operator enabled it for (`HOSTED_SPF_FLATTENING`). Everyone else on hosted sees nothing.
-- **As built in this change (2026-11-16).** Basis: owner, Nov 16: "Spf is a continuous work. Its an add on and it needs its own price, per domain" (price open); ADR 0018 (one refresh engine), ADR 0019 (the add-on). Shortened from the value backwards (ADR 0012): the old Analyze and Compare screens are one, so the path is the card, one screen with both records, one screen with the write, and the state view.
+- **As built in this change (2026-11-16).** Basis: owner, Nov 16: "Spf is a continuous work. Its an add on and it needs its own price, per domain" (price open); ADR 0022 (one refresh engine), ADR 0023 (the add-on). Shortened from the value backwards (ADR 0012): the old Analyze and Compare screens are one, so the path is the card, one screen with both records, one screen with the write, and the state view.
 
 ```mermaid
 flowchart TD

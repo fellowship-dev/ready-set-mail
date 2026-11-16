@@ -1,6 +1,6 @@
 # SPF flattening
 
-What it does, what it will not do, the daily job, who may use it, and what must be true before it is sold. Decisions: [ADR 0018](adr/0018-one-spf-flattening-refresh-engine.md) (one engine) and [ADR 0019](adr/0019-spf-flattening-is-an-add-on-per-domain-price-open.md) (an add-on, per domain, price open). The words (original record, flattened record, refresh) are in [CONTEXT.md](../CONTEXT.md).
+What it does, what it will not do, the daily job, who may use it, and what must be true before it is sold. Decisions: [ADR 0022](adr/0022-one-spf-flattening-refresh-engine.md) (one engine) and [ADR 0023](adr/0023-spf-flattening-is-an-add-on-per-domain-price-open.md) (an add-on, per domain, price open) and [ADR 0024](adr/0024-a-refresh-never-removes-an-address-on-first-sighting.md) (a removal waits four hours). The words (original record, flattened record, refresh) are in [CONTEXT.md](../CONTEXT.md).
 
 ## What it does
 
@@ -25,11 +25,63 @@ Chained records (`include:` of a second record we create) are not used: they nee
 
 ## What it never does
 
+- **Changes what a receiver decides.** The table below lists, case by case, what moves into the customer's record and what the code does so the answer is the same; the property test (`packages/dns-checks/test/spf-flatten.property.test.ts`) checks it against an independent RFC 7208 evaluator for random records and senders.
 - **Widens who may send.** Only `+` ip terms of an included record are inlined. An included record that has any other qualified term (`-ip4:`, `~a`, `?mx`, `~include:`), a `+all`, or a macro in a term that would be copied is **kept as an include**, because copying it as a pass would let more senders through. The original's `all` is kept as written; **a record with no `all` stays without one** (it is neutral, and `~all` would change that). No mechanism is added.
-- **Writes a smaller record because something failed.** An include that does not resolve, answers twice, loops, answers with the TC bit (a cut-short answer), lists something that is not an address, or needs more than 40 DNS reads is a problem: the last good record stays, the problem is recorded, one sentence tells the owner. A macro in an `include:` or `redirect=` target is refused plainly ("the addresses depend on who is sending").
+- **Removes an address the first time it sees it go.** A provider's glitch (`v=spf1 -all` from an outage page) would otherwise be written at once and fail mail for up to a day. A removal waits for a second look at least four hours later (below, [ADR 0024](adr/0024-a-refresh-never-removes-an-address-on-first-sighting.md)).
+- **Writes a smaller record because something failed.** An include that does not resolve, answers twice, loops, answers with the TC bit (a cut-short answer), lists something that is not an address, or needs more than 40 DNS reads is a problem: the last good record stays, the problem is recorded, one sentence tells the owner. A macro in an `include:` or `redirect=` target is refused plainly ("the addresses depend on who is sending"), and so is a macro in any term the customer's record hands over to with `redirect=` ("The record of ..., which your record hands over to with redirect=, uses a macro that depends on that name, so it cannot be copied into your record."): after a redirect, `%{d}` is the target, and copied into the customer's record it would be the customer's domain.
 - **Overwrites an edit made outside the app.** Before a write it reads the record in Cloudflare; if it is not the value written last, someone changed it there: nothing is written, the problem is recorded, and the owner can Review (in Cloudflare now / flattened from your original; Replace or Stop flattening). Turning off does not write over an outside edit either.
 - **Writes when nothing changed.** The new record is compared with the published one regardless of the order of its terms, case, quotes and spacing. No write, no audit row, no log line when equal.
 - **Takes a flat record as the original.** The original is set when flattening is turned on and never rewritten while a row exists. If turning off could not put the original back, the row stays (`restore_failed`) with the original, and turning on again is refused until that is done. A failed turn-on leaves no row.
+
+## What flattening never changes
+
+Flattening moves terms out of the records they were read from and into the customer's record. A term can mean something different there. Every case that was audited, what the code does (`packages/dns-checks/src/spf-flatten.ts`), and the test that holds it (`packages/dns-checks/test/spf-flatten.test.ts`, "audit: what a term means once it moves", unless another is named). RFC 7208 sections in brackets.
+
+| Case | What the code does | RFC |
+|---|---|---|
+| A term with a macro in the record of a `redirect=` target (`exists:%{i}._spf.%{d}`, `a:%{d}`, `include:%{d}` ...) | **Refused** (kind `macro`, one sentence). After the redirect the target is the current domain and `%{d}` is the target; copied, it would be the customer's domain. Any macro is refused, not only `%{d}`, at any depth of the chain | 6.1, 7.3 |
+| A macro in the customer's own record | Kept as written: `%{d}` is the customer's domain there and still is | 7.3 |
+| A macro in an included record | The include stays an include (its `%{d}` is the include's domain); nothing of it is copied | 5.2, 7.3 |
+| Bare `a`, `mx`, `ptr` (no domain) in a redirect target or in an include that is inlined | Written with the domain of the record they were read from (`a:target`, `mx:target/24`, `ptr:target`; the CIDR is kept): bare means "the current domain" | 5.3 to 5.5, 6.1 |
+| `exists:` | Always has a domain-spec. Without a macro it moves unchanged; without a domain the record is refused | 5.7 |
+| `redirect=` of an included record that stands before its mechanisms | Followed after every mechanism of that record, wherever the modifier stands, so the lookups we keep keep their order (they used to come first and could add void lookups the original never made) | 6.1 |
+| `redirect=` when the record also has an `all` (anywhere in it, also after the redirect) | The redirect is ignored, as receivers do; the target is not read | 6.1 |
+| Terms after `all` | Never evaluated, dropped. A modifier after `all` (`exp=`) still counts | 4.7, 6 |
+| A syntax error anywhere in a record, also after `all` (unknown mechanism, a bad address, `include:` or `exists:` without a domain) | **Refused**: receivers give a permanent error for the whole record, so we do not turn it into a valid one | 4.6 |
+| A second `redirect=` or `exp=` in one record | **Refused**, same reason | 6 |
+| `exp=` | Changes only the explanation a receiver shows, never the result. The customer's own is kept; a redirect target's is carried when the customer has none and it has no macro; otherwise dropped | 6.2 |
+| `+all`, `-ip4:`, `~a`, `?mx` and other qualified terms in a redirect target | Moved to the customer's record with their qualifier and in their order (the first term that matches decides, so order is kept) | 4.6.2 |
+| The same terms in an included record | The include stays an include: only `+` address terms are copied as a pass | 5.2 |
+| Order of the terms | Kept. `sameSpfRecord` sorts only addresses that stand next to each other, because the first term that matches decides | 4.6.2 |
+| Void lookups (a lookup that returns nothing; more than 2 is a permanent error) | A pinned `a:` or `mx:` names the same name the original looked up, in the same order, and addresses (which cost no lookup) come first, so the flattened record never makes a void lookup the original would not. The property test checks it per sender: the flattened record's void lookups are at most 2 or at most the original's | 4.6.4 |
+| Lookups (10) and size (450 bytes) | Counted statically through includes; no choice that exceeds either is written; refused with the best choice named. The property test checks every `ok` result in the bounded modes | 4.6.4, 3.4 |
+| A lattice of includes (a diamond of depth 20 is 2^20 paths) | Read once per name, entries kept once each; bounded by 40 DNS reads (`packages/dns-checks/test/spf-flatten.dag.test.ts`) | n/a |
+| An include or redirect target with no SPF record, two SPF records, a truncated answer, a loop | A problem, never a smaller record | 4.5, 4.6.4 |
+
+**Hosted records.** The hosted flatten (`src/hosted/service.ts`, `src/hosted/cron.ts`) publishes at `<id>._spf.h.<zone>`, where receivers evaluate it as an include, so a term of the customer's own record that means "the current domain" (a bare `a` or `mx`, `%{d}`) would mean the hosted name there. That path is not changed by this round; it needs `HOSTED_RECORDS_*`, which the live instance does not set (open item in the pull request).
+
+## A removal waits
+
+[ADR 0024](adr/0024-a-refresh-never-removes-an-address-on-first-sighting.md). Each inlined provider is compared with what the published record authorises for it (`spf_flatten_config.provider_state`):
+
+- **Nothing removed**: the new record is written at once (additions are safe).
+- **Something removed** (an old address or range that no new entry covers; a provider that now lists nothing is the same rule): the record is written with the new addresses **and** the ones that left, when that fits 10 lookups and 450 bytes; if it does not fit, nothing is written, not even the additions. The row is marked pending (`pending_removed`, `pending_since`, `pending_additions`) and the domain page says what is waiting and since when.
+- **The same removal seen again at least four hours later** (`SPF_PENDING_CONFIRM_SECONDS`): the record is written in full. A different removal replaces the pending one and the clock restarts. No removal clears it (the provider came back), without a write.
+- "Check again now" is the same check: before the four hours it answers that it will confirm after HH:MM UTC; after, it confirms.
+- Audit: `spf_flatten.pending`, `spf_flatten.update` (with `confirmed_after_seconds`), `spf_flatten.pending_cleared`.
+
+## When a domain, a workspace or a connection goes
+
+A flattened record is never left in Cloudflare with the original lost (`restoreSpfBeforeRemoval`, `stopSpf` in `src/spf/refresh.ts`):
+
+- **Deleting a domain** turns flattening off first (the original goes back). If that fails, the delete stops: HTTP 409 `spf_restore_failed` with the sentence, the original, and what Cloudflare holds. `DELETE /api/domains/:id?leave_spf_record=1` deletes anyway (audited as `spf_flatten.left_in_dns`, with both records).
+- **Deleting a workspace or an account** restores every flattened record before anything is deleted; one that cannot be restored stops all of it (409, every original in the answer, nothing deleted). `leave_spf_record=1` on the same request deletes anyway.
+- **Removing a Cloudflare connection** restores the records while the connection still works; where that fails, flattening stops, the row keeps the original, and the answer lists it (`spf_flattened`).
+- **A connection that was revoked**, or **an ownership proof that is lost** (`withdrawProof`, an eviction): flattening stops (no refresh, no retry every day). The row stays in the state a failed turn-off leaves (`restore_failed`) with the original; the sentence says what Cloudflare holds and how to put the original back by hand.
+
+## Long records
+
+A TXT record over 255 bytes is several quoted strings in Cloudflare. What Cloudflare returns is read with `decodeTxtData` and what we write is `encodeTxtData` (both in `packages/dns-checks/src/txt.ts`: one place for TXT encoding and decoding): quoted strings of at most 255 bytes, split at a space, never inside a multi-byte character. Basis: Cloudflare's API documentation, DNS Records, Create DNS Record, TXT `content`: "The content must consist of quoted "character strings" (RFC 1035), each with a length of up to 255 bytes. Strings exceeding this allowed maximum length are automatically split." (<https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/>), and the DNS record types page: "As the content of TXT records consist of one or more text strings delimited by double quotes" and "if you save your TXT content without any quotes, Cloudflare will automatically add double quotes." (<https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/>). The Cloudflare stand-ins used by the tests and the e2e run (`test/helpers/cf-fake.ts`, `e2e/support/fake-cloudflare.mjs`, through `e2e/support/cloudflare-txt.mjs`) store TXT the same way when asked (`realisticTxt`), and `test/spf/long-records.test.ts` turns on, refreshes, checks for outside edits and turns off a 300-byte and a 449-byte record through them.
 
 ## The job
 
@@ -56,7 +108,7 @@ The problem sentences are written by the server (`src/spf/refresh.ts` `problemSe
 
 ## Who may use it
 
-`addOnAccess` in `src/hosted/plan-limits.ts` is the one answer, asked by every route, `/api/me` (`add_ons.spf_flattening`), the job and the next-step link:
+`capability(env, 'spf_flattening', scope)` in `src/hosted/plan-limits.ts` is the one answer, asked by every route, `/api/me` (`add_ons.spf_flattening`), the job and the next-step link:
 
 - **Self-host**: always available.
 - **Hosted**: only for a workspace the operator admitted with **`HOSTED_SPF_FLATTENING`**: unset, empty or not understood = off (the default); `owner` = the workspaces owned by the `OWNER_EMAIL` account; `all`; or workspace ids (`ws_...`, comma separated, with or without `owner`: `owner,ws_0123...`). Everyone else on hosted sees nothing: no card, no next-step link, the routes answer 404. The parser is `src/hosted/allow.ts`, the same one `HOSTED_CONNECT_REPORTS` uses.
@@ -70,6 +122,6 @@ The refresh keeps `previous_record` (the flattened record before the last change
 
 ## What must be true before it is sold
 
-- The price (O-13, [OPEN.md](adr/OPEN.md)) and its basis; then #180's plan engine attaches a subscription item per domain to `addOnAccess` (a reason `subscription`), and decides what a lapse does: keep the last good record and stop refreshing (what this change does when the setting goes away), restore the original, or keep refreshing for a grace period. Left open on purpose.
-- A walk on the live target as a new customer, with real Cloudflare: that a TXT record over 255 characters is stored as several strings (Cloudflare does this; the fake does not), and that the first `0 11` run on a workspace the operator admitted writes what the screen promised.
+- The price (O-13, [OPEN.md](adr/OPEN.md)) and its basis; then #180's plan engine attaches a subscription item per domain to `capability` (a reason `subscription`), and decides what a lapse does: keep the last good record and stop refreshing (what this change does when the setting goes away), restore the original, or keep refreshing for a grace period. Left open on purpose.
+- A walk on the live target as a new customer, with real Cloudflare: that a record over 255 bytes round-trips as the documentation says (the stand-ins model it; only Cloudflare proves it), and that the first `0 11` run on a workspace the operator admitted writes what the screen promised.
 - Self-host operators have read the subrequest numbers above.

@@ -11,9 +11,9 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
-## SPF flattening (0019)
+## SPF flattening (0021)
 
-Migration `0019_spf_flattening.sql` is additive: ten nullable or defaulted columns on `spf_flatten_config` (`revision`, `lease_until`, `previous_record`, `last_attempt_at`, `last_refreshed_at`, `problem_kind`, `problem_since`, `last_error_at`, `lookups_after`, `inline_mode`). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values: the first daily refresh after the upgrade fills the new ones. `last_flattened_at` now means "when the published record last changed". Migrations 0017 and 0018 are taken by other open changes; the numbers are not consecutive on purpose. What the job does and why: [docs/spf-flattening.md](../../docs/spf-flattening.md).
+Migration `0021_spf_flattening.sql` is additive: fourteen nullable or defaulted columns on `spf_flatten_config` (`revision`, `lease_until`, `previous_record`, `last_attempt_at`, `last_refreshed_at`, `problem_kind`, `problem_since`, `last_error_at`, `lookups_after`, `inline_mode`, and the state of a removal that waits for a second look: `provider_state`, `pending_removed`, `pending_since`, `pending_additions`). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values: the first daily refresh after the upgrade fills the new ones (a row without `provider_state` has nothing to compare with, so its first refresh can remove nothing). `last_flattened_at` now means "when the published record last changed". Migrations 0017, 0018 and 0020 are taken by other open changes; the numbers are not consecutive on purpose. What the job does and why: [docs/spf-flattening.md](../../docs/spf-flattening.md); the held removal: [ADR 0024](../../docs/adr/0024-a-refresh-never-removes-an-address-on-first-sighting.md).
 
 ## Billing (0016)
 
