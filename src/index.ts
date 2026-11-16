@@ -78,6 +78,7 @@ export interface Env {
   // Hosted service (MODE=saas + SAAS_ENABLED=1), see docs/hosted.md
   INTAKE_DOMAIN?: string;        // central report address domain, e.g. rua.readysetmail.com
   PROOF_CONFIRM_DELAY_MS?: string; // wait between the two reads that confirm a lapsed zone proof for a rival claim (default 2000; tests set 0)
+  HOSTED_SPF_FLATTENING?: string; // who may use SPF flattening on the hosted service: off (default) | owner | all | a comma list of workspace ids (ws_...); self-host always may
   HOSTED_CONNECT_REPORTS?: string; // who may connect reports to the fixed address: owner (default: OWNER_EMAIL's workspaces) | all
   CANARY_DOMAIN?: string;        // anonymous free-check address domain, e.g. canary.readysetmail.com
   HOSTED_RECORDS_ZONE?: string;  // zone holding the hosted records, e.g. readysetmail.com

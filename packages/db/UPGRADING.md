@@ -13,7 +13,7 @@ Local dev database: `npm run migrate:local`.
 
 ## SPF flattening (0019)
 
-Migration `0019_spf_flattening.sql` is additive: eight nullable or defaulted columns on `spf_flatten_config` (`revision`, `lease_until`, `previous_record`, `last_attempt_at`, `last_refreshed_at`, `problem_kind`, `problem_since`, `last_error_at`). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values: the first daily refresh after the upgrade fills the new ones. `last_flattened_at` now means "when the published record last changed". Migrations 0017 and 0018 are taken by other open changes; the numbers are not consecutive on purpose. What the job does and why: [docs/spf-flattening.md](../../docs/spf-flattening.md).
+Migration `0019_spf_flattening.sql` is additive: ten nullable or defaulted columns on `spf_flatten_config` (`revision`, `lease_until`, `previous_record`, `last_attempt_at`, `last_refreshed_at`, `problem_kind`, `problem_since`, `last_error_at`, `lookups_after`, `inline_mode`). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values: the first daily refresh after the upgrade fills the new ones. `last_flattened_at` now means "when the published record last changed". Migrations 0017 and 0018 are taken by other open changes; the numbers are not consecutive on purpose. What the job does and why: [docs/spf-flattening.md](../../docs/spf-flattening.md).
 
 ## Billing (0016)
 

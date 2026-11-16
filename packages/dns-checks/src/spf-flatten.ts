@@ -300,7 +300,7 @@ export async function flattenFromSource(domain: string, source: string, resolver
     const chosen = setOf(best.m);
     const incs = items.flatMap((it, i) => (it.t === 'inc' ? [{ i, target: it.target }] : []));
     const r = best.r;
-    if (r.mechanisms === 0) {
+    if (r.mechanisms === 0 && items.some(it => it.t === 'inc')) {
       refuse('no_addresses', name, 'The includes in your record returned no addresses, so there is nothing to flatten to.');
     }
     return {

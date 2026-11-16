@@ -305,6 +305,10 @@ export const spfFlattenConfig = sqliteTable(
 		/** When this kind of problem began (cleared when it recovers). */
 		problem_since: integer('problem_since'),
 		last_error_at: integer('last_error_at'),
+		/** Lookups the flattened record needs (RFC 7208 section 4.6.4); `lookup_count` stays what the original needed. */
+		lookups_after: integer('lookups_after'),
+		/** How many includes to inline: `fewest` (as few as the limits need) or `most` (an owner flattening a record that is within the limits). Kept so every refresh makes the same kind of choice. */
+		inline_mode: text('inline_mode').notNull().default('fewest'),
 	},
 	(t) => [index('idx_spf_flatten_workspace').on(t.workspace_id)],
 );

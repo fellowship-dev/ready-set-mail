@@ -13,21 +13,17 @@ import { sendChangeNotification } from './monitor/notify';
 import { sendWeeklyDigests } from './digest/weekly';
 import { logAudit } from './audit/log';
 import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
-import { flattenSpf } from './email/spf-flattener';
+import { newSpfBudget, runSpfRefresh, type SpfBudget } from './spf/refresh';
 import { snapshotDns } from './email/dns-snapshot';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
+import { mapLimit } from './util/map-limit';
 import { discoverMxHosts, generatePolicyId, updateMtaStsTxtRecord } from './email/mta-sts';
 
-const SPF_REFRESH_CONCURRENCY = 5;
+const DNS_REFRESH_CONCURRENCY = 5; // DNS reads of the daily DNS refresh below, a few at a time
 
-/** Run `fn` over `items` with at most `limit` in flight. `fn` must not throw. */
-export async function mapLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const worker = async () => { while (next < items.length) await fn(items[next++]); };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
+export { mapLimit };
 
 export interface CronOptions {
   /** Workspaces to cover. Default: listCronWorkspaces(env). */
@@ -47,10 +43,11 @@ export async function runCronForWorkspaces(
   const load = opts.load ?? loadTenant;
   const workspaces = opts.workspaces ?? await listCronWorkspaces(env);
   await runFunnelCron(event, env);
+  const spf = newSpfBudget(); // one budget for the whole invocation: the SPF refresh spends subrequests across every workspace
   for (const workspaceId of workspaces) {
     try {
       const tenant = await load(env, { workspaceId });
-      await runCron(event, tenant, ctx);
+      await runCron(event, tenant, ctx, spf);
     } catch (e) {
       console.error(`[cron ${event.cron}] workspace ${workspaceId} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
     }
@@ -67,10 +64,12 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 }
 
 /** One cron tick for one workspace. */
-async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext): Promise<void> {
+async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, spf: SpfBudget): Promise<void> {
   // Daily product analytics — every day 11am UTC: hosted with PostHog configured only (docs/analytics.md); a no-op everywhere else.
   if (event.cron === '0 11 * * *') {
     dailyAnalytics(tenant, ctx);
+    // SPF flattening: re-resolve every flattened record from its stored original (src/spf/refresh.ts). Nothing happens where nobody turned it on.
+    await runSpfRefresh(tenant, ctx, spf);
     return;
   }
 
@@ -80,33 +79,10 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     return;
   }
 
-  // Daily SPF flatten refresh — every day 10am UTC
+  // The SPF refresh also answers `0 10`: an installation whose wrangler.local.jsonc kept the older trigger. The same function runs; a row looked at in the
+  // last 20 hours is not due, so an install with both triggers refreshes once a day. An expression this file does not know would fall through to the monitor job.
   if (event.cron === '0 10 * * *') {
-    if (tenant.hasCloudflare()) {
-      const configs = await tenant.scope.spf.allEnabled();
-      console.log(`[spf-flatten] refreshing ${configs.length} flattened domains`);
-      for (const config of configs) {
-        const domain = await tenant.scope.domains.getById(config.domain_id);
-        if (!domain) continue;
-        try {
-          const result = await flattenSpf(tenant, domain.domain, config.cf_record_id);
-          await tenant.scope.spf.updateResult(config.domain_id, result.flattened_record, result.ip_count, result.cf_record_id);
-          console.log(`[spf-flatten] ${domain.domain}: updated (${result.ip_count} IPs)`);
-          logAudit(tenant, {
-            actor_type: 'system',
-            action: 'spf_flatten.update',
-            resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
-            before_value: { spf_record: config.flattened_record ?? config.canonical_record },
-            after_value: { spf_record: result.flattened_record, ip_count: result.ip_count },
-            meta: { cron: '0 10 * * *' },
-          }, ctx);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          await tenant.scope.spf.updateError(config.domain_id, msg);
-          console.error(`[spf-flatten] ${domain.domain}: error — ${msg}`);
-        }
-      }
-    }
+    await runSpfRefresh(tenant, ctx, spf);
     return;
   }
 
@@ -123,8 +99,8 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
   // A failed lookup leaves that stored field alone (see recordDnsCheck); "no record" is stored as null.
   const allDomains = await tenant.scope.domains.listForDnsRefresh();
   // Awaited (a floating promise can be cut off when the invocation ends), a few at a time.
-  await mapLimit(allDomains, SPF_REFRESH_CONCURRENCY, async d => {
-    const found = await snapshotDns(d.domain); // one lookup after the other, so the pool stays at SPF_REFRESH_CONCURRENCY requests
+  await mapLimit(allDomains, DNS_REFRESH_CONCURRENCY, async d => {
+    const found = await snapshotDns(d.domain); // one lookup after the other, so the pool stays at DNS_REFRESH_CONCURRENCY requests
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
       await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });

@@ -30,10 +30,12 @@ beforeEach(() => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stri
 afterEach(() => vi.unstubAllGlobals());
 
 describe('DNS failure → 502', () => {
-  it('POST /spf-flatten when the SPF lookup fails', async () => {
+  it('POST /spf-flatten when nothing can be read: a plain refusal (422), nothing written, no row left behind', async () => {
     const res = await send('POST', '/api/domains/1/spf-flatten', {});
-    expect(res.status).toBe(502);
-    expect(((await res.json()) as any).error).toMatch(/DNS lookup failed/);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe('connection_lost');
+    expect(body.error).toMatch(/reach Cloudflare/);
   });
   it('PATCH /mta-sts refresh_mx when the MX lookup fails', async () => {
     const res = await send('PATCH', '/api/domains/1/mta-sts', { refresh_mx: true });

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 vi.mock('../../src/audit/log', () => ({ logAudit: vi.fn() }));
 
 import { discoverMxHosts, detectExistingMtaStsMode, buildPolicyFile, generatePolicyId } from '../../src/email/mta-sts';
-import { collectIps, buildFlatRecord } from '../../src/email/spf-flattener';
 
 const doh = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
@@ -45,26 +44,6 @@ describe('mta-sts worker module (pure parts come from the package)', () => {
   it('re-exports the package policy helpers', () => {
     expect(buildPolicyFile('enforce', ['mx.x.com'], 86400)).toContain('mode: enforce');
     expect(generatePolicyId()).toMatch(/^\d{14}$/);
-  });
-});
-
-describe('spf-flattener worker module', () => {
-  it('collectIps refuses to return a partial result when a nested include fails', async () => {
-    stub({
-      'TXT x.com': { Status: 0, Answer: [{ type: 16, data: '"v=spf1 include:a.com include:b.com -all"' }] },
-      'TXT a.com': { Status: 0, Answer: [{ type: 16, data: '"v=spf1 ip4:1.1.1.1 -all"' }] },
-      'TXT b.com': { Status: 2 },
-    });
-    await expect(collectIps('x.com')).rejects.toThrow(/Could not fully resolve SPF for x\.com/);
-  });
-
-  it('collectIps resolves a complete chain', async () => {
-    stub({
-      'TXT x.com': { Status: 0, Answer: [{ type: 16, data: '"v=spf1 include:a.com -all"' }] },
-      'TXT a.com': { Status: 0, Answer: [{ type: 16, data: '"v=spf1 ip4:1.1.1.1 ip6:2001:db8::/32 ~all"' }] },
-    });
-    const r = await collectIps('x.com');
-    expect(buildFlatRecord(r.ips, r.extra, r.allQualifier)).toBe('v=spf1 ip4:1.1.1.1 ip6:2001:db8::/32 -all');
   });
 });
 

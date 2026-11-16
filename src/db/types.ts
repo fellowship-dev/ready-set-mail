@@ -109,6 +109,8 @@ export interface SpfFlattenConfig {
   problem_kind: string | null;
   problem_since: number | null;
   last_error_at: number | null;
+  lookups_after: number | null;
+  inline_mode: 'fewest' | 'most';
 }
 
 export type MtaStsMode = 'testing' | 'enforce';

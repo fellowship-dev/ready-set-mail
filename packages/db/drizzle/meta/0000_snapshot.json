@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "330868e1-fc85-47c7-a3cb-0c92142fb901",
+  "id": "64c91fc5-953b-44c8-8e2b-eb31c5952a2a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "access_credentials": {
@@ -5064,6 +5064,21 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "lookups_after": {
+          "name": "lookups_after",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "inline_mode": {
+          "name": "inline_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'fewest'"
         }
       },
       "indexes": {

@@ -43,6 +43,8 @@ export const SEEN_BY = ['setup', 'domain_page', 'daily'] as const;
 export const ROLES = ['owner', 'admin', 'member'] as const;
 /** DNS hosts the product recognises (src/domains/dns-host.ts DNS_PROVIDERS ids), plus what detection can say otherwise. */
 export const DNS_PROVIDERS = ['cloudflare', 'godaddy', 'porkbun', 'namecheap', 'route53', 'google-cloud-dns', 'squarespace', 'digitalocean', 'vercel', 'ns1', 'other', 'mixed', 'unknown'] as const;
+/** Why SPF flattening could not keep a record current (src/spf/problems.ts). */
+export const SPF_PROBLEMS = ['include_unresolved', 'too_large', 'macro', 'no_addresses', 'connection_lost', 'edited_outside', 'record_missing', 'restore_failed'] as const;
 /** The agent tools (src/mcp/server.ts). */
 export const AGENT_TOOLS = ['whoami', 'list_products', 'list_domains', 'inspect_domain', 'add_domain', 'verify_domain', 'get_email_report', 'query_email_metrics', 'plan_remediation', 'get_source_status'] as const;
 
@@ -84,6 +86,9 @@ export const EVENTS = {
   // ── Agents (src/mcp/) ──
   'Agent Authorized': { actions: COUNT, domains: COUNT, days: ['1', '2-7', '8-30'] },
   'Agent First Call': { tool: AGENT_TOOLS },
+  // ── SPF flattening (src/spf/): a refresh that changed a record, or could not keep it current; the kind only, never a domain or a record ──
+  'Flattened Record Changed': {},
+  'Flattened Record Problem': { problem: SPF_PROBLEMS },
   // ── Billing (src/billing/): price as a tier label, never an amount ──
   'Fix Offer Viewed': { offer: ['fix_one_domain'], has_card: BOOL },
   'Card Setup Started': {},

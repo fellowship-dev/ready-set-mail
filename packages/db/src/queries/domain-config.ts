@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { domains, mtaStsConfig, spfFlattenConfig } from '../schema';
 
@@ -13,6 +13,7 @@ export interface SpfPatch {
 	cf_record_id?: string | null;
 	ip_count?: number | null;
 	lookup_count?: number | null;
+	lookups_after?: number | null;
 	last_flattened_at?: number | null;
 	last_refreshed_at?: number | null;
 	problem_kind?: string | null;
@@ -54,27 +55,41 @@ export function spfFlattenQueries(db: Db, workspaceId: string) {
 			return db
 				.select()
 				.from(spfFlattenConfig)
-				.where(and(mine, eq(spfFlattenConfig.enabled, 1), before === null ? undefined : sql`(${spfFlattenConfig.last_attempt_at} IS NULL OR ${spfFlattenConfig.last_attempt_at} < ${before})`))
+								.where(and(mine, eq(spfFlattenConfig.enabled, 1), isNotNull(spfFlattenConfig.flattened_record), before === null ? undefined : sql`(${spfFlattenConfig.last_attempt_at} IS NULL OR ${spfFlattenConfig.last_attempt_at} < ${before})`))
 				.orderBy(sql`${spfFlattenConfig.last_attempt_at} IS NOT NULL`, spfFlattenConfig.last_attempt_at, spfFlattenConfig.domain_id)
 				.limit(limit)
 				.all();
 		},
 
+		/**
+		 * What changed or went wrong since `since` (unix seconds), for whoever tells the owner (the lifecycle emails read facts, not events:
+		 * src/spf/events.ts). `changed`: the published record changed at `at`; `problem`: a problem began at `at`.
+		 */
+		async noticesSince(since: number): Promise<Array<{ domain_id: number; kind: 'changed' | 'problem'; problem_kind: string | null; at: number }>> {
+			const rows = await db.select({ d: spfFlattenConfig.domain_id, c: spfFlattenConfig.last_flattened_at, k: spfFlattenConfig.problem_kind, s: spfFlattenConfig.problem_since }).from(spfFlattenConfig).where(mine).all();
+			const out: Array<{ domain_id: number; kind: 'changed' | 'problem'; problem_kind: string | null; at: number }> = [];
+			for (const r of rows) {
+				if (r.c !== null && r.c >= since) out.push({ domain_id: r.d, kind: 'changed', problem_kind: null, at: r.c });
+				if (r.k && r.s !== null && r.s >= since) out.push({ domain_id: r.d, kind: 'problem', problem_kind: r.k, at: r.s });
+			}
+			return out;
+		},
+
 		/** Turning on, step one: the row exists (enabled, nothing written yet). False when the domain already has a row: nobody else may write. */
-		async begin(c: { domain_id: number; canonical_record: string; lookup_count: number | null; cf_record_id: string | null }): Promise<boolean> {
+		async begin(c: { domain_id: number; canonical_record: string; lookup_count: number | null; cf_record_id: string | null; inline_mode?: 'fewest' | 'most' }): Promise<boolean> {
 			const res = await db
 				.insert(spfFlattenConfig)
-				.values({ workspace_id: workspaceId, domain_id: c.domain_id, enabled: 1, cf_record_id: c.cf_record_id, canonical_record: c.canonical_record, lookup_count: c.lookup_count })
+				.values({ workspace_id: workspaceId, domain_id: c.domain_id, enabled: 1, cf_record_id: c.cf_record_id, canonical_record: c.canonical_record, lookup_count: c.lookup_count, inline_mode: c.inline_mode ?? 'fewest' })
 				.onConflictDoNothing()
 				.run();
 			return changed(res);
 		},
 
 		/** Turning on, step two, after the record was written. */
-		async activate(domainId: number, flattened_record: string, ip_count: number, at: number): Promise<boolean> {
+		async activate(domainId: number, flattened_record: string, ip_count: number, lookups_after: number, at: number): Promise<boolean> {
 			const res = await db
 				.update(spfFlattenConfig)
-				.set({ flattened_record, ip_count, last_flattened_at: at, last_refreshed_at: at, last_attempt_at: at, revision: 1, updated_at: touch })
+				.set({ flattened_record, ip_count, lookups_after, last_flattened_at: at, last_refreshed_at: at, last_attempt_at: at, revision: 1, updated_at: touch })
 				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, 0), isNull(spfFlattenConfig.flattened_record)))
 				.run();
 			return changed(res);

@@ -12,7 +12,7 @@ import { detectDnsHostFor } from '../domains/dns-host';
 import { proofMethodOf, proofMethodOfVia, proofPathOf, type ProofSource, type VerifiedVia } from '../domains/ownership';
 import { resolverFor } from '../dns/resolver';
 import { capture, captureLater, captureMany, ev, type AnalyticsEnv, type Captured } from './capture';
-import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait } from './events';
+import { AGENT_TOOLS, DNS_PROVIDERS, SPF_PROBLEMS, countBucket, daysBucket, issuesBucket, longWait, shortWait } from './events';
 import { claimMarker, markerAt, markerCount, setMarker } from './identity';
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
@@ -292,4 +292,12 @@ export function orderEvent(env: AnalyticsEnv, ctx: Ctx, order: Pick<OrderRow, 'w
 /** The domain page loaded the offer (GET /api/billing/domains/:id) and it can be bought. */
 export function offerViewed(env: AnalyticsEnv, ctx: Ctx, workspaceId: string, hasCard: boolean): void {
   capture(env, ctx, { workspaceId }, 'Fix Offer Viewed', { offer: 'fix_one_domain', has_card: hasCard });
+}
+
+// ── SPF flattening ───────────────────────────────────────────
+
+/** A refresh changed a flattened record, or could not keep it current (src/spf/events.ts). Transitions only: a quiet run sends nothing. */
+export function spfRefreshed(tenant: TenantContext, ctx: Ctx, e: { type: 'spf.changed' } | { type: 'spf.problem'; problem: (typeof SPF_PROBLEMS)[number]; first: boolean } | { type: 'spf.recovered' }): void {
+  if (e.type === 'spf.changed') capture(tenant.env, ctx, ws(tenant), 'Flattened Record Changed', {});
+  else if (e.type === 'spf.problem' && e.first) capture(tenant.env, ctx, ws(tenant), 'Flattened Record Problem', { problem: e.problem });
 }

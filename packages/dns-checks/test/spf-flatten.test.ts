@@ -128,6 +128,9 @@ describe('a resolution that fails is never a smaller record', () => {
   it('an include with no addresses at all is refused, never an empty record', async () => {
     expect((await refused('v=spf1 include:a.test -all', { 'TXT a.test': txt('v=spf1 -all') })).kind).toBe('no_addresses');
   });
+  it('a record with no includes and no senders is left as it is', async () => {
+    expect((await okFlat('v=spf1 ~all', {})).record).toBe('v=spf1 ~all');
+  });
   it('a source that is not an SPF record is refused', async () => {
     expect((await refused('hello', {})).kind).toBe('include_unresolved');
   });

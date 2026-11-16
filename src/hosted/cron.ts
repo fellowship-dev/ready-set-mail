@@ -13,11 +13,10 @@ import type { BoundEnv } from '../index';
 import { globalQueries, intakeLookups, forWorkspace } from '@ready-set-mail/db';
 import { mapLimit } from '../cron';
 import { hostedApex, hostedConfig, hostedEnabled } from './config';
-import { hostedNames, openHostedZone } from './records';
+import { hostedNames, openHostedZone, HOSTED_SPF_OPTS } from './records';
 import { assessQuota, configuredZones, type ZoneQuota } from './zones';
 import { mergePointerReport, verifyPointers } from './pointers';
-import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
-import { flattenSource } from './spf';
+import { createResolver, flattenFromSource, sameSpfRecord, type Resolver } from '@ready-set-mail/dns-checks';
 import { discoverMxHosts } from '../email/mta-sts';
 import { nextPolicyId } from './service';
 import { recheckZoneProofs } from '../domains/proof-recheck';
@@ -124,12 +123,13 @@ export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fet
       if (!writer) writers.set(slot.key, writer = await openHostedZone(env, slot.name, { fetch: opts.fetch }));
       const domain = await forWorkspace(env.DB, h.workspace_id).domains.getById(h.domain_id);
       if (!domain) continue;
-      const flat = await flattenSource(domain.domain, h.spf_source!, resolver);
-      if (!flat.ok) throw new Error(flat.errors.map(e => e.message).join('; '));
+      // The one engine (packages/dns-checks/src/spf-flatten.ts): from the stored source, never from what is published (that is our own include).
+      const flat = await flattenFromSource(domain.domain, h.spf_source!, resolver, HOSTED_SPF_OPTS);
+      if (!flat.ok) throw new Error(flat.problems.map(p => p.message).join(' '));
       const name = hostedNames(h.hosted_id, apex).spf;
       const current = await writer.read(h.spf_record_id!, name);
-      if (current.content === flat.content) continue;
-      await writer.setContent(h.spf_record_id!, name, flat.content);
+      if (sameSpfRecord(current.content, flat.flat.record)) continue;
+      await writer.setContent(h.spf_record_id!, name, flat.flat.record);
       out.updated++;
     } catch (e) {
       out.failed++;

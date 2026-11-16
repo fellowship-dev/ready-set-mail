@@ -10,6 +10,7 @@
 import { Gunzip, Unzip, UnzipInflate, UnzipPassThrough, unzipSync } from 'fflate';
 import { normalizeDomain, organizationalDomain } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../index';
+import { allowed, parseAllow } from './allow';
 import { forWorkspace, intakeLookups, type IntakeTarget } from '@ready-set-mail/db';
 import { extractAttachmentBytes } from '../email/mime-extract';
 import type { Carrier } from '../dmarc/reporter-auth';
@@ -237,17 +238,11 @@ export type ConnectReportsMode = 'owner' | 'all';
  * reports, forged-report weighting and storage caps has landed, keep it at `owner`.
  */
 export function connectReportsSetting(env: Pick<BoundEnv, 'HOSTED_CONNECT_REPORTS'>): { mode: ConnectReportsMode; valid: boolean } {
-  const v = env.HOSTED_CONNECT_REPORTS?.trim().toLowerCase();
-  if (!v) return { mode: 'owner', valid: true };
-  if (v === 'all' || v === 'owner') return { mode: v, valid: true };
-  return { mode: 'owner', valid: false };
+  const a = parseAllow(env.HOSTED_CONNECT_REPORTS, { fallback: 'owner', ids: false });
+  return { mode: a.all ? 'all' : 'owner', valid: a.valid };
 }
 
 /** May this workspace connect (and receive) reports under HOSTED_CONNECT_REPORTS? */
 export async function workspaceMayConnectReports(env: Pick<BoundEnv, 'HOSTED_CONNECT_REPORTS' | 'OWNER_EMAIL' | 'DB'>, workspaceId: string): Promise<boolean> {
-  if (connectReportsSetting(env).mode === 'all') return true;
-  const owner = env.OWNER_EMAIL?.trim().toLowerCase();
-  if (!owner) return false;
-  const team = await forWorkspace(env.DB, workspaceId).team.list();
-  return team.some((m) => m.role === 'owner' && m.email.toLowerCase() === owner);
+  return allowed(parseAllow(env.HOSTED_CONNECT_REPORTS, { fallback: 'owner', ids: false }), env, workspaceId);
 }

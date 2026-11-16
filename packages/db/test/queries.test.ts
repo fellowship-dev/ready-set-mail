@@ -125,7 +125,7 @@ describe('a workspace-scoped query cannot see or touch another workspace', () =>
 		await b.domains.setAlertsEnabled(domA, false);
 		await b.domains.setDnsRecord(domA, 'cf-x', { provisioned: true });
 		await b.domains.setDefault(domA);
-		await b.spf.activate(domA, 'x', 1, 1);
+		await b.spf.activate(domA, 'x', 1, 1, 1);
 		await b.spf.claim(domA, 0, 1, 60);
 		await b.spf.finish(domA, 1, { flattened_record: 'x' });
 		await b.spf.deactivate(domA);

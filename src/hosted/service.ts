@@ -5,7 +5,7 @@
 // only its hash is stored. (It is also published in the hosted DMARC / TLS-RPT records, which is why rotation
 // edits those records rather than asking the customer to change anything.)
 
-import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
+import { createResolver, flattenFromSource, type Resolver } from '@ready-set-mail/dns-checks';
 import { globalQueries, type PointerStatus } from '@ready-set-mail/db';
 import type { TenantContext } from '../tenancy/context';
 import { CfError, CfNotConfiguredError, cfErrorText } from '../tenancy/cf-client';
@@ -14,10 +14,8 @@ import { discoverMxHosts, generatePolicyId } from '../email/mta-sts';
 import { hostedApex, hostedConfig, hostedEnabled, maxHostedDomainsPerWorkspace } from './config';
 import { generateHostedId, generateToken, hashToken, intakeAddress } from './tokens';
 import {
-  buildHostedDmarc, buildHostedTlsRpt, hostedNames, openHostedZone, retargetRua, HostedNameError, type HostedRecordWriter,
-} from './records';
+  buildHostedDmarc, buildHostedTlsRpt, hostedNames, openHostedZone, retargetRua, HostedNameError, type HostedRecordWriter, HOSTED_SPF_OPTS } from './records';
 import { chooseZone, HostedQuotaError, zoneSlot } from './zones';
-import { flattenSource } from './spf';
 import { customerPointers, levelInputs, mergePointerReport, verifyPointers } from './pointers';
 
 export class HostedError extends Error {
@@ -136,9 +134,9 @@ export async function enableHosted(
     source = spf[0]?.trim() ?? 'v=spf1 ~all';
   }
   if (!/^v=spf1(\s|$)/i.test(source)) throw new HostedError('spf_record must start with v=spf1', 400);
-  const flat = await flattenSource(domain.domain, source, resolver);
-  if (!flat.ok) throw new HostedError(`Could not fully resolve the SPF record: ${flat.errors.map(e => e.message).join('; ')}`, 422);
-  const spfContent = flat.content;
+  const flat = await flattenFromSource(domain.domain, source, resolver, HOSTED_SPF_OPTS);
+  if (!flat.ok) throw new HostedError(`Could not flatten the SPF record: ${flat.problems.map(p => p.message).join(' ')}`, 422);
+  const spfContent = flat.flat.record;
 
   let mxHosts: string[] = [];
   if (opts.mtaSts) {
