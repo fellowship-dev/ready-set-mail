@@ -1,6 +1,7 @@
 export * from './doh';
 export * from './org-domain';
 export * from './spf';
+export * from './spf-flatten';
 export * from './dmarc';
 export * from './dmarc-rua';
 export * from './dkim';

@@ -68,7 +68,7 @@ function isIp6(s: string): boolean {
 }
 
 /** `ip4:` / `ip6:` value that is not an address with an optional prefix length in range. */
-function ipProblem(name: 'ip4' | 'ip6', value: string): boolean {
+export function ipProblem(name: 'ip4' | 'ip6', value: string): boolean {
 	const [addr, prefix, ...more] = value.split('/');
 	if (more.length) return true;
 	const max = name === 'ip4' ? 32 : 128;
