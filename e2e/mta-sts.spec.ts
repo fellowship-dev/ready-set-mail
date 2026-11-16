@@ -37,7 +37,9 @@ function server() {
 			policy_host_status: { kind: 'saas_hostname', hostname: `mta-sts.${DOMAIN}`, route: true, certificate: { status: s.certActive ? 'active' : 'pending', ssl_status: s.certActive ? 'active' : 'pending_validation', active: s.certActive } },
 			summary: { total_success: s.reports.length * 50, total_failure: s.reports.length * 4, report_count: s.reports.length, sts_success: s.reports.length * 45, sts_failure: s.reports.length * 3 },
 			reports: s.reports,
-			enforce: s.state === 'testing' ? { ready: false, allowed: false, reasons: ['It has been in testing for 1 of the 7 days senders need to report: 6 more days.'] } : null,
+			enforce: s.state === 'testing' ? { ready: false, allowed: false, reasons: ['In testing for 1 of 7 days: 6 more.'] } : null,
+			served: s.state === 'testing' || s.state === 'enforce' ? { ok: true, checked_at: now() - 30, reason: null, message: null, action: null, url: `https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt` } : null,
+			evidence: { rule: 'x', no_reports_note: 'A domain that receives no TLS reports can never switch to enforce.', counted_reports: s.reports.length, uncounted_reports: 0, verifiable: true },
 			disable: s.state === 'enforce' ? { allowed: false, after: null, reason: 'Switch to testing first. Senders keep the enforce policy for up to 1 day; you can disable it after that.' } : { allowed: true, after: null, reason: null },
 			max_age: 86400,
 		};
@@ -50,7 +52,7 @@ async function mock(page: Page, id: number) {
 	await page.route('**/api/hosted/config', (r) => r.fulfill({ json: { enabled: true, reports: true, records: false, mta_sts: true } }));
 	await page.route(`**/api/domains/${id}/mta-sts/verify`, (r) => {
 		if (m.s.state === 'waiting_certificate') { m.s.certActive = true; m.s.state = 'testing'; }
-		return r.fulfill({ json: { ok: true, state: 'active', notice: null, last_error: null, checks: [
+		return r.fulfill({ json: { ok: true, state: 'active', notice: null, last_error: null, served: { ok: true, checked_at: now(), reason: null, message: null, action: null, url: `https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt` }, checks: [
 			{ key: 'policy_host', label: `mta-sts.${DOMAIN} reaches the policy host`, state: 'ok', detail: null },
 			{ key: 'certificate', label: 'Certificate for the policy host', state: 'ok', detail: null },
 			{ key: 'tls_rpt', label: 'TLS reports are sent to Ready Set Mail', state: 'ok', detail: null },
@@ -93,8 +95,10 @@ for (const width of [375, 1440]) {
 
 		// One page: what it is, the MX hosts now, the exact records, one action.
 		await expect(page.getByRole('heading', { name: `MTA-STS for ${DOMAIN}`, level: 1 })).toBeVisible();
-		await expect(page.getByText(/asks other mail servers to use an encrypted connection/i)).toBeVisible();
+		await expect(page.getByText(/asks other mail servers to encrypt delivery/i)).toBeVisible();
 		await expect(page.getByRole('list', { name: 'MX hosts' })).toContainText('mx.example.net');
+		// The records Cloudflare writes sit behind "Show records".
+		await page.getByRole('button', { name: 'Show records' }).click();
 		const records = page.getByRole('list', { name: 'Records' });
 		await expect(records).toContainText(`mta-sts.${DOMAIN}`);
 		await expect(records).toContainText(TARGET);
@@ -105,19 +109,25 @@ for (const width of [375, 1440]) {
 
 		// Turn on: the same page says Setting up and asks for the certificate.
 		await page.getByRole('button', { name: 'Turn on in testing mode' }).click();
-		await expect(page.getByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeVisible();
+		await expect(page.getByText('Waiting for the certificate. This takes a few minutes.')).toBeVisible();
 		await expect(page.getByText('Setting up', { exact: true }).first()).toBeVisible();
 		await noSideways(page, 'the page while setting up');
 
 		// Check now: every check in place, and Testing, with no report yet.
 		await page.getByRole('button', { name: 'Check now' }).click();
-		await expect(page.getByText('All the setup checks are in place.')).toBeVisible();
-		await expect(page.getByText('Testing: senders deliver as before and report problems with encryption. Nothing is rejected.')).toBeVisible();
+		await expect(page.getByText('Testing: mail is delivered as before and problems are reported.')).toBeVisible();
+		await expect(page.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Check now' })).toHaveCount(0); // served: nothing left to check by hand
 		await expect(page.getByText('No TLS report yet')).toBeVisible();
 		await expect(page.getByText('Senders usually send one a day after they deliver mail to you.')).toBeVisible();
 		const enforce = page.getByRole('button', { name: 'Switch to enforce' });
 		await expect(enforce).toBeDisabled();
-		await expect(page.getByText('It has been in testing for 1 of the 7 days senders need to report: 6 more days.')).toBeVisible();
+		await expect(page.getByText('In testing for 1 of 7 days: 6 more.')).toBeVisible();
+		await expect(page.getByText(/Only reports signed by a known sender, like Google or Microsoft, count\./)).toBeVisible();
+		await expect(page.getByText('A domain that receives no TLS reports can never switch to enforce.')).toBeVisible();
+		// FOLD-01: the primary action is on the first screen
+		const box = await enforce.boundingBox();
+		expect(box!.y + box!.height, 'Switch to enforce is below the first screen').toBeLessThanOrEqual(page.viewportSize()!.height);
 		await noSideways(page, 'the page in testing');
 
 		// A sender's first report arrives: it is on the page.
