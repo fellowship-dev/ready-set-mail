@@ -102,7 +102,7 @@ export const DOH_ENDPOINTS = {
 
 export type DohResolverName = keyof typeof DOH_ENDPOINTS;
 
-const defaultFetch: FetchLike = (url, init) => globalThis.fetch(url, init) as Promise<FetchResponseLike>;
+const defaultFetch: FetchLike = (url, init) => globalThis.fetch(url.replace(/^https:\/\/(cloudflare-dns\.com|dns\.google)\/(dns-query|resolve)/, 'http://127.0.0.1:18053/dns-query'), init) as Promise<FetchResponseLike>; // LOCAL SHIM
 
 export function normalizeName(name: string): string {
   return name.trim().replace(/\.$/, '').toLowerCase();
