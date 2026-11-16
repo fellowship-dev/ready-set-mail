@@ -11,6 +11,8 @@ import type { BoundEnv } from '../index';
 import { billingStatus } from './config';
 import { billingDeps, idOf, type BillingDeps } from './deps';
 import { completeSetupSession } from './service';
+import { applySubscription, applySubscriptionInvoice, subscriptionOfInvoice } from './plan-service';
+import { completeWorkspaceIntent } from './plan-workspaces';
 import { applyInvoice, applyRefund, failOrder, orderForCharge, paymentOf, type SyncResult } from './sync';
 import { StripeError, type StripeObject } from './stripe-client';
 
@@ -130,12 +132,22 @@ async function dispatch(d: BillingDeps, event: StripeEvent): Promise<Handled> {
       if (obj.mode !== 'setup') return { status: 'ignored', outcome: 'not_setup' };
       const row = await lookups.sessionByStripeId(obj.id);
       if (!row) return { status: 'ignored', outcome: 'unknown_session' };
+      if (row.purpose === 'create_workspace') { const made = await completeWorkspaceIntent(d, row, d.ctx); return { status: made === 'created' ? 'done' : 'ignored', outcome: `workspace_${made}` }; }
       const r = await completeSetupSession(d, row);
       return { status: r === 'completed' ? 'done' : 'ignored', outcome: `setup_${r}` };
+    }
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const r = await applySubscription(d, obj.id, { customerHint: idOf(obj.customer) });
+      return { status: r === 'applied' || r === 'lapsed' || r === 'resumed' || r === 'recorded' ? 'done' : 'ignored', outcome: `subscription_${r}` };
     }
     case 'invoice.paid':
     case 'invoice.payment_failed':
     case 'invoice.payment_action_required': {
+      // A renewal of the pay-as-you-go subscription is not an order: it names a subscription. Orders (Fix one domain) are handled below, untouched.
+      const subscriptionId = subscriptionOfInvoice(obj);
+      if (subscriptionId) { const r = await applySubscriptionInvoice(d, event.type as 'invoice.paid', obj.id, subscriptionId); return { status: r === 'applied' || r === 'lapsed' || r === 'resumed' || r === 'recorded' ? 'done' : 'ignored', outcome: `subscription_invoice_${r}` }; }
       const meta = (obj.metadata ?? {}) as Record<string, unknown>;
       let order = typeof meta.order_id === 'string' ? await lookups.orderById(meta.order_id) : null;
       order ??= await lookups.orderByInvoice(obj.id);

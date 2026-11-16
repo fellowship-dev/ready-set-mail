@@ -138,10 +138,11 @@ export type SetupResult = 'completed' | 'incomplete' | 'mismatch';
  * Make the card the customer just saved at Stripe the workspace's default, if everything agrees. Shared by the return URL and the webhook, whichever
  * comes first (the second finds the default already set, and the conditional completion means one audit entry). It never touches an order.
  */
-export async function completeSetupSession(d: BillingDeps, row: CheckoutSessionRow): Promise<SetupResult> {
+export async function completeSetupSession(d: BillingDeps, row: CheckoutSessionRow, opts: { customerId?: string } = {}): Promise<SetupResult> {
   if (!row.stripe_session_id) return 'mismatch';
   const q = billingQueries(d.db, row.workspace_id);
-  const workspaceCustomer = await q.customer.get();
+  // A workspace that does not exist yet (a card added to create one) has its customer on the intent, not on a workspace row.
+  const workspaceCustomer = opts.customerId ?? (await q.customer.get());
   if (!workspaceCustomer || workspaceCustomer !== row.stripe_customer_id) return 'mismatch';
   const s = await d.stripe.retrieveCheckoutSession(row.stripe_session_id);
   const meta = (s.metadata ?? {}) as Record<string, unknown>;

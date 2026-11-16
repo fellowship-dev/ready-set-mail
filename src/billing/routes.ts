@@ -6,6 +6,7 @@
 // refused: money is spent from a browser session only. State-changing routes inherit the resolver's CSRF check for cookie sessions.
 import { billingLookups, billingQueries, forWorkspace, globalQueries, workspaceLifecycle, type MembershipRole } from '@ready-set-mail/db';
 import { AuthError } from '../api/auth';
+import { DomainServiceError } from '../domains/service';
 import { siteOrigin } from '../auth/legal';
 import { isInstanceOwner } from '../funnel/routes';
 import type { BoundEnv } from '../index';
@@ -18,6 +19,11 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
+import { addPaidDomains, keepOneDomain, planView, previewPaidAdd, startPlan } from './plan-service';
+import { completeWorkspaceIntent, startWorkspaceIntent } from './plan-workspaces';
+import { planEnforced } from '../hosted/plan';
+import { cleanName } from '../auth/names';
+import { loadTenant } from '../tenancy/load';
 import { handleStripeWebhook } from './webhook';
 import { offerViewed } from '../product-analytics/steps';
 
@@ -123,8 +129,11 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
   if (path === '/api/billing' && method === 'GET') {
     const [view, { offer, offer_problem }] = await Promise.all([readCard(d, me.ws, isOwner ? me.email : null), offerView(d)]);
     const orders = await scope.billing.orders.list(50);
+    // The plan (HOSTED_PLAN on, or a subscription that exists: shown read-only after a rollback). Nothing new appears otherwise.
+    const hasSub = !!(await scope.plan.subscription.get());
+    const plan = planEnforced(env) || hasSub ? await planView(d, me.ws, { isOwner }) : null;
     return json({
-      enabled: true, role: me.role, can_manage: isOwner,
+      enabled: true, role: me.role, can_manage: isOwner, ...(plan ? { plan } : {}),
       ...cardFields(isOwner, view), has_customer: view.customer, ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, orders: orders.map(orderView), ...links(env),
     });
@@ -145,6 +154,14 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
       has_customer: view.customer, ...cardFields(isOwner, view), ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, open_order: stillOpen ? orderView(stillOpen) : null, orders: history.map(orderView), ...links(env),
     });
+  }
+
+  if (path === '/api/billing/domains/preview' && method === 'GET') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    const names = url.searchParams.getAll('domain').slice(0, 10);
+    if (names.length === 0) return fail(400, 'invalid_domains', 'domain is required.');
+    return json(await previewPaidAdd(d, me.ws, names, url.searchParams.get('interval') === 'year' ? 'year' : 'month'));
   }
 
   if (path === '/api/billing/orders' && method === 'GET') {
@@ -169,6 +186,48 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     if (!isOwner) return OWNER_ONLY();
     return json(await startPortalSession(d, me.ws, me.actor, publicOrigin(env, request)));
   }
+  if (path === '/api/billing/domains' || path === '/api/billing/domains/bulk') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    const b = await body(request);
+    if (b instanceof Response) return b;
+    // The browser says which domain(s) and which price it was shown. The quantity is the server's: it is never read from a request.
+    const bulk = path.endsWith('/bulk');
+    const domains = bulk ? b.domains : [b.domain];
+    if (!Array.isArray(domains) || domains.length === 0 || domains.length > 10 || domains.some((x) => typeof x !== 'string' || x.length > 253)) return fail(400, 'invalid_domains', bulk ? 'domains must be a list of one to ten names.' : 'domain is required.');
+    if (typeof b.expected_amount !== 'number' || !Number.isSafeInteger(b.expected_amount) || b.expected_amount < 0) return fail(400, 'invalid_amount', 'expected_amount is required: the price in minor units that you were shown.');
+    if (typeof b.expected_currency !== 'string' || !/^[A-Za-z]{3}$/.test(b.expected_currency)) return fail(400, 'invalid_currency', 'expected_currency is required: the three-letter currency of the price that you were shown.');
+    const tenant = await loadTenant(env, { workspaceId: me.ws.id });
+    try {
+      return json(await addPaidDomains(d, tenant, me.ws, me.actor, { domains: domains as string[], expectedAmount: b.expected_amount, expectedCurrency: b.expected_currency, interval: b.interval === 'year' ? 'year' : 'month', via: bulk ? 'cloudflare' : 'single' }), 201);
+    } catch (e) {
+      if (e instanceof DomainServiceError) return json(e.body ?? { error: e.message }, e.status);
+      throw e;
+    }
+  }
+  if (path === '/api/billing/plan/start') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    const b = await body(request);
+    if (b instanceof Response) return b;
+    return json(await startPlan(d, me.ws, me.actor, { interval: b.interval === 'year' ? 'year' : 'month', ...(typeof b.expected_amount === 'number' ? { expectedAmount: b.expected_amount } : {}), ...(typeof b.expected_currency === 'string' ? { expectedCurrency: b.expected_currency } : {}) }), 201);
+  }
+  if (path === '/api/billing/plan/keep-one') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    const b = await body(request);
+    if (b instanceof Response) return b;
+    if (typeof b.domain_id !== 'number' || !Number.isSafeInteger(b.domain_id) || b.domain_id < 1) return fail(400, 'invalid_domain', 'domain_id must be a positive integer.');
+    return json(await keepOneDomain(d, me.ws, me.actor, b.domain_id));
+  }
+  if (path === '/api/billing/workspace-intents') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    const b = await body(request);
+    if (b instanceof Response) return b;
+    const name = cleanName(b.name, Number.MAX_SAFE_INTEGER);
+    if (!name || [...name].length > 80) return fail(400, 'invalid_name', 'name is required (max 80 characters)');
+    return json(await startWorkspaceIntent(d, me.ws, me.actor, name, publicOrigin(env, request)));
+  }
   if (path === '/api/billing/orders') {
     if (!isOwner) return OWNER_ONLY();
     const b = await body(request);
@@ -192,8 +251,15 @@ async function checkoutReturn(request: Request, env: BoundEnv, ctx: ExecutionCon
   let who: Awaited<ReturnType<WorkspaceResolver>> = null;
   try { who = await resolver(request, env); } catch { /* not signed in: no effect */ }
   const row = /^cs_[A-Za-z0-9_]{1,250}$/.test(sessionId) ? await billingLookups(env.DB).sessionByStripeId(sessionId) : null;
-  // Unknown, not signed in, or not (any more) an owner of the workspace the session was started for: it behaves as if it did not exist.
   const kind = who ? (who as AuthedWorkspace).kind : undefined;
+  // A card added to create a workspace: the workspace does not exist yet, so the person who started it (not a role) is who may finish it.
+  if (row?.purpose === 'create_workspace') {
+    if (!who?.userId || kind !== 'session' || who.userId !== row.user_id) return redirect(who?.workspaceId ? appLocation(who.workspaceId, BILLING_PATH) : '/');
+    let made: Awaited<ReturnType<typeof completeWorkspaceIntent>> = 'mismatch';
+    try { made = await completeWorkspaceIntent(billingDeps(env, ctx, opts), row, ctx); } catch (e) { console.error(`[billing] workspace intent failed: ${(e as Error)?.name ?? 'error'}`); }
+    return redirect(made === 'created' ? appLocation(row.workspace_id, '/', { workspace: 'created' }) : appLocation(who.workspaceId, '/', { workspace: made === 'limit' ? 'limit' : 'canceled' }));
+  }
+  // Unknown, not signed in, or not (any more) an owner of the workspace the session was started for: it behaves as if it did not exist.
   const owner = row && who?.userId && kind === 'session' ? (await workspaceLifecycle(env.DB).roleOf(who.userId, row.workspace_id)) === 'owner' : false;
   if (!row || !who?.userId || !owner) return redirect(who?.workspaceId ? appLocation(who.workspaceId, BILLING_PATH) : '/');
   const d = billingDeps(env, ctx, opts);

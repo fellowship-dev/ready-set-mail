@@ -127,6 +127,7 @@ import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/em
 import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
 import { analyticsEnabled } from '../product-analytics/capture';
 import { loadTenant, refreshTenant } from '../tenancy/load';
+import { planAfterRemoval } from '../billing/plan-service';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
@@ -317,7 +318,10 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   // A record the customer changed is not deleted: the removal still succeeds and says which records were kept and why.
   const kept = await removeAuthRecord(tenant, domain, actor, ctx);
 
-  return json({ ok: true, kept });
+  // Pay as you go: the quantity comes down (a proration credit on the next invoice). Never blocks the removal (src/billing/plan-service.ts).
+  const billing = await planAfterRemoval(tenant.env, tenant.workspaceId, ctx);
+
+  return json({ ok: true, kept, ...(billing ? { billing } : {}) });
 }
 
 /** A stored report as the API shows it: whether it counts toward the numbers, and without the storing attempt's internal id. */

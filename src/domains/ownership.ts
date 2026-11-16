@@ -10,7 +10,7 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
+import { claimLookups, forWorkspace, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
@@ -261,6 +261,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
   const { holderWorkspaceId, holderDomainId, root, via } = plan;
   const lookups = claimLookups(tenant.db);
   const evicted = await loadTenant(tenant.env, { workspaceId: holderWorkspaceId });
+  await forWorkspace(tenant.db, holderWorkspaceId).plan.subscription.markDirty().catch(() => undefined); // the holder owes one unit less: its plan quantity is repaired by the daily job
 
   // The domain and everything below it that this workspace had under it (its subdomains hang off it by parent_id):
   // deepest first, so no live child is left pointing at a detached parent.

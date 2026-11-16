@@ -86,6 +86,10 @@ All properties are optional and dropped when not in the list. Buckets: `COUNT` =
 | `Fix Order Failed` | failed or canceled | `offer`, `reason` (`failed` `canceled`) |
 | `Fix Order Refunded` | fully refunded | `offer` |
 | `Fix Order Delivered` (**finish line**) | the operator marked it done | `offer`, `since_paid` (`LONG_WAIT`) |
+| `Plan Started` | a workspace's pay-as-you-go subscription was created | `interval` (`month` `year`), `via` (`add_domain` `settings` `new_workspace`) |
+| `Paid Domain Added` | a domain beyond the free one was added and the quantity updated | `via` (`single` `cloudflare`), `added` (`COUNT`) |
+| `Subscription Failed` | a renewal failed, or needs the bank's confirmation | `reason` (`payment_failed` `action_required`) |
+| `Subscription Ended` | the plan lapsed to free, or was canceled | `reason` (`lapsed` `canceled`) |
 
 ## Funnels
 

@@ -9,7 +9,7 @@ import { changesOf } from './plan-limit';
 import {
 	apiKeys, auditLog, aggregateReports, billingCheckoutSessions, cloudflareConnectionBlockedZones, cloudflareConnectionZones, cloudflareConnections,
 	domains, hostedDomains, intakeTokens, invites, memberships, monitorSubscriptions, mtaStsConfig, reportRecords, settings,
-	spfFlattenConfig, tlsReports, workspaces, type MembershipRole,
+	spfFlattenConfig, tlsReports, workspaceSubscriptions, workspaces, type MembershipRole,
 } from '../schema';
 
 export interface WorkspaceSummary {
@@ -66,10 +66,17 @@ export function workspaceLifecycle(dbLike: DbLike) {
 		 * writes: concurrent creates cannot exceed the cap (margin 0). The membership insert is conditional on the
 		 * workspace row existing, so a refused create writes nothing. Returns whether it was created.
 		 */
-		async createCapped(id: string, name: string, ownerId: string, max: number): Promise<boolean> {
+		async createCapped(id: string, name: string, ownerId: string, max: number, allowance: 'none' | 'if_free' | 'require' = 'if_free'): Promise<boolean> {
+			// The person's one free domain (0017): 'if_free' gives the new workspace the allowance when they hold none (recorded whether or not a plan is
+			// enforced); 'require' also refuses the create when they hold one (the plan's first workspace); 'none' never gives it (a workspace made with a card).
+			const holds = sql`EXISTS (SELECT 1 FROM workspaces WHERE free_owner_user_id = ${ownerId})`;
 			const [made] = await batchStatements(db, [
-				sql`INSERT INTO workspaces (id, name) SELECT ${id}, ${name}
-					WHERE (SELECT COUNT(*) FROM memberships WHERE user_id = ${ownerId} AND role = 'owner' AND workspace_id IN (SELECT id FROM workspaces)) < ${max}`,
+				allowance === 'none'
+					? sql`INSERT INTO workspaces (id, name) SELECT ${id}, ${name}
+						WHERE (SELECT COUNT(*) FROM memberships WHERE user_id = ${ownerId} AND role = 'owner' AND workspace_id IN (SELECT id FROM workspaces)) < ${max}`
+					: sql`INSERT INTO workspaces (id, name, free_owner_user_id) SELECT ${id}, ${name}, CASE WHEN ${holds} THEN NULL ELSE ${ownerId} END
+						WHERE (SELECT COUNT(*) FROM memberships WHERE user_id = ${ownerId} AND role = 'owner' AND workspace_id IN (SELECT id FROM workspaces)) < ${max}
+						${allowance === 'require' ? sql`AND NOT ${holds}` : sql``}`,
 				sql`INSERT INTO memberships (workspace_id, user_id, role) SELECT ${id}, ${ownerId}, 'owner'
 					WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ${id})`,
 			]);
@@ -93,6 +100,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 		 * and never leaves the workspace without an owner. Returns whether it applied.
 		 */
 		async transferOwnership(workspaceId: string, fromId: string, toId: string, maxOwned?: number): Promise<boolean> {
+			// The allowance (0017) follows the new owner: it moves with the workspace when they hold none, else the workspace loses it. One statement, in the same batch.
 			// With a cap, the promotion also needs `toId` to own fewer than `maxOwned` workspaces now; the demotion follows the
 			// promotion, so a refused promotion leaves both roles as they were.
 			const underCap = maxOwned === undefined ? sql`1 = 1`
@@ -100,6 +108,8 @@ export function workspaceLifecycle(dbLike: DbLike) {
 			await db.batch([
 				db.update(memberships).set({ role: 'owner' }).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, toId), underCap, sql`EXISTS (SELECT 1 FROM memberships o WHERE o.workspace_id = ${workspaceId} AND o.user_id = ${fromId} AND o.role = 'owner')`)),
 				db.update(memberships).set({ role: 'admin' }).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, fromId), eq(memberships.role, 'owner'), sql`EXISTS (SELECT 1 FROM memberships n WHERE n.workspace_id = ${workspaceId} AND n.user_id = ${toId} AND n.role = 'owner')`)),
+				db.update(workspaces).set({ free_owner_user_id: sql`CASE WHEN EXISTS (SELECT 1 FROM workspaces h WHERE h.free_owner_user_id = ${toId}) THEN NULL ELSE ${toId} END` })
+					.where(and(eq(workspaces.id, workspaceId), eq(workspaces.free_owner_user_id, fromId), sql`EXISTS (SELECT 1 FROM memberships n WHERE n.workspace_id = ${workspaceId} AND n.user_id = ${toId} AND n.role = 'owner')`)),
 			]);
 			return (await this.roleOf(toId, workspaceId)) === 'owner' && (await this.roleOf(fromId, workspaceId)) !== 'owner';
 		},
@@ -134,6 +144,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 				db.delete(apiKeys).where(eq(apiKeys.workspace_id, workspaceId)),
 				// Orders are accounting records and stay; the bindings of card sessions hold nothing worth keeping (docs/data-retention.md).
 				db.delete(billingCheckoutSessions).where(eq(billingCheckoutSessions.workspace_id, workspaceId)),
+				db.delete(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspace_id, workspaceId)),
 				db.delete(memberships).where(eq(memberships.workspace_id, workspaceId)),
 				db.delete(workspaces).where(eq(workspaces.id, workspaceId)),
 			]),

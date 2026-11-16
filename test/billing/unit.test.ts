@@ -152,10 +152,10 @@ describe('order state machine', () => {
 
 describe('return paths', () => {
   it('accepts only the app routes the flow uses', () => {
-    for (const p of ['/settings', '/domains/7', '/domains/123456789', '/domains/7?order=fix-one-domain']) expect(safeReturnPath(p), p).toBe(p);
+    for (const p of ['/settings', '/domains/7', '/domains/123456789', '/domains/7?order=fix-one-domain', '/', '/?zones=confirm', '/add', '/add?domain=example.com', '/settings?plan=start']) expect(safeReturnPath(p), p).toBe(p);
   });
   it('refuses every open-redirect and forgery shape', () => {
-    const bad = ['//evil.example', '/\\evil.example', '\\\\evil.example', 'https://evil.example', 'http://evil.example/settings', 'javascript:alert(1)', '/%2F%2Fevil.example', '/settings%0d%0aLocation:evil', '/settings\n', '/settings\r', '/settings\t', '/settings\u0000', '/domains/0', '/domains/007', '/domains/1/settings', '/domains/x', '/domains/1234567890', '/settings?order=other', '/settings?next=https://evil.example', '/settings#x', '/api/billing', '/', '', ' /settings', '/settings ', 'settings', '/settings/../x', '/' + 'a'.repeat(200), '/%73ettings', '/domains/7?order=fix-one-domain&x=1', '/domains/7//x'];
+    const bad = ['//evil.example', '/\\evil.example', '\\\\evil.example', 'https://evil.example', 'http://evil.example/settings', 'javascript:alert(1)', '/%2F%2Fevil.example', '/settings%0d%0aLocation:evil', '/settings\n', '/settings\r', '/settings\t', '/settings\u0000', '/domains/0', '/domains/007', '/domains/1/settings', '/domains/x', '/domains/1234567890', '/settings?order=other', '/settings?next=https://evil.example', '/settings#x', '/api/billing', '', ' /settings', '/settings ', 'settings', '/settings/../x', '/' + 'a'.repeat(200), '/%73ettings', '/domains/7?order=fix-one-domain&x=1', '/domains/7//x', '/?zones=other', '/add?domain=-bad', '/add?domain=a.com&x=1', '//?zones=confirm', '/add?domain=%2e'];
     for (const p of bad) expect(safeReturnPath(p), JSON.stringify(p)).toBeNull();
     for (const v of [undefined, null, 5, {}, ['/settings'], true]) expect(safeReturnPath(v)).toBeNull();
   });

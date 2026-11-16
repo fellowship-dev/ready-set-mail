@@ -14,6 +14,11 @@ import type { TenantContext } from '../tenancy/context';
 import { revokeWorkspaceConnections, type RevokeSummary } from '../lifecycle/revoke';
 import { streamWorkspaceExport } from '../lifecycle/export';
 import { workspaceAdded } from '../product-analytics/steps';
+import { checkTransfer, createDecision, workspaceNeedsCardBody } from '../billing/plan-workspaces';
+import { cancelPlanForDelete, lapseWorkspace } from '../billing/plan-service';
+import { billingDeps, BillingError } from '../billing/deps';
+import { paidPathAvailable } from '../hosted/plan';
+import type { BoundEnv } from '../index';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -134,8 +139,20 @@ export async function handleWorkspaceRoutes(
     const id = `ws_${crypto.randomUUID().replace(/-/g, '')}`;
     const caps = deps.mode === 'saas' ? planLimits({ ...deps.env, MODE: 'saas' }) : null;
     if (caps) {
+      // The hosted plan (HOSTED_PLAN on): the person's first workspace holds their free domain; another is allowed when they already pay somewhere
+      // (its first domain is then a paid one); otherwise a card comes first (POST /api/billing/workspace-intents, src/billing/plan-workspaces.ts).
+      const env = { ...deps.env, MODE: 'saas', DB: deps.db } as BoundEnv;
+      let decision = await createDecision(env, deps.db, user);
+      if (decision === 'needs_card') return json(workspaceNeedsCardBody(env), 402);
       // Owned workspaces only (the sign-up workspace is one); atomic, so parallel creates cannot pass the cap together.
-      if (!(await lifecycle.createCapped(id, name, user.id, caps.workspacesPerUser))) return planLimitResponse(deps.env ?? {}, 'workspaces_per_user', caps.workspacesPerUser);
+      let made = await lifecycle.createCapped(id, name, user.id, caps.workspacesPerUser, decision === 'free' ? 'require' : decision === 'eligible' ? 'none' : 'if_free');
+      if (!made && decision === 'free') {
+        // Another create took the allowance first: decide again with what is true now.
+        decision = await createDecision(env, deps.db, user);
+        if (decision === 'needs_card') return json(workspaceNeedsCardBody(env), 402);
+        made = await lifecycle.createCapped(id, name, user.id, caps.workspacesPerUser, 'none');
+      }
+      if (!made) return planLimitResponse(deps.env ?? {}, 'workspaces_per_user', caps.workspacesPerUser);
     } else {
       await lifecycle.create(id, name, user.id);
     }
@@ -184,6 +201,16 @@ export async function handleWorkspaceRoutes(
     // for all of them; refuse before deleting any if not.
     const blocked = await deps.preflight(tenant, domains);
     if (blocked) return err(`Cloudflare cannot be reached for ${blocked}; nothing was deleted. Fix that (or reconnect Cloudflare) and try again.`, 502, 'cloudflare_preflight_failed');
+    // Pay as you go: the subscription ends first (no refund of the unused period), so billing never outlives the workspace.
+    if (deps.mode === 'saas' && deps.env && paidPathAvailable({ ...deps.env, MODE: 'saas' } as BoundEnv)) {
+      const bd = billingDeps({ ...deps.env, MODE: 'saas', DB: deps.db } as BoundEnv, ctx);
+      try {
+        if (await cancelPlanForDelete(bd, id)) await lapseWorkspace(bd, id, 'canceled');
+      } catch (e) {
+        if (e instanceof BillingError) return err(e.message, e.status, e.code);
+        throw e;
+      }
+    }
     const erased = await eraseWorkspace(deps, ctx, tenant, domains, { id: user.id, email: user.email });
     if (!erased.ok) return erased.response;
     // pasted_tokens: API tokens cannot be revoked from here; the owner revokes them in the Cloudflare dashboard.
@@ -200,12 +227,19 @@ export async function handleWorkspaceRoutes(
   // POST /api/workspaces/:id/transfer-ownership { user_id } — hand ownership to another member; the caller becomes an admin.
   if (m[2] === 'transfer-ownership' && method === 'POST') {
     if (role !== 'owner') return err('only an owner can transfer ownership', 403);
-    let body: { user_id?: unknown };
+    let body: { user_id?: unknown; confirm_amount?: unknown };
     try { body = await request.json(); } catch { return err('Invalid JSON body', 400); }
     const to = typeof body.user_id === 'string' ? body.user_id : '';
     if (!to || to === user.id) return err('user_id must be another member of this workspace', 400);
     const target = await (await deps.tenantFor(id)).scope.team.getMember(to);
     if (!target) return err('that person is not a member of this workspace', 404);
+    // The hosted plan: the free domain follows the new owner's count (src/billing/plan-workspaces.ts checkTransfer).
+    let transfer: Awaited<ReturnType<typeof checkTransfer>> = { ok: true };
+    if (deps.mode === 'saas' && deps.env) {
+      const confirmBody = body;
+      transfer = await checkTransfer({ ...deps.env, MODE: 'saas', DB: deps.db } as BoundEnv, deps.db, id, { id: to, name: (target as { name?: string }).name ?? '' }, { amount: confirmBody.confirm_amount }, ctx);
+      if (!transfer.ok) return json(transfer.body ?? { error: 'could not transfer ownership' }, transfer.status ?? 409);
+    }
     const caps = deps.mode === 'saas' ? planLimits({ ...deps.env, MODE: 'saas' }) : null;
     if (!(await lifecycle.transferOwnership(id, user.id, to, caps?.workspacesPerUser))) {
       // Nothing changed: the target is at the cap (and not already an owner here), or the request was stale.
@@ -213,6 +247,7 @@ export async function handleWorkspaceRoutes(
       return err('could not transfer ownership; reload and try again', 409);
     }
     await globalQueries(deps.db).users.setLegacyRole(to, 'admin');
+    if (transfer.after) ctx.waitUntil(transfer.after().catch(() => undefined));
     audit(id, { action: 'workspace.ownership_transferred', resource_type: 'user', resource_id: to, resource_name: target.email, before_value: { owner: user.email }, after_value: { owner: target.email } });
     return json({ ok: true });
   }

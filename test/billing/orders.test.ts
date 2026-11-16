@@ -442,7 +442,7 @@ describe('pending orders that never complete are reconciled', () => {
   });
   it('does nothing when billing is off', async () => {
     const w = await billingWorld({}, { stripe: false });
-    expect(await runBillingJob(w.env as never)).toEqual({ reconciled: 0, failed: 0, notified: 0, purged_events: 0, purged_sessions: 0, purged_orders: 0 });
+    expect(await runBillingJob(w.env as never)).toEqual({ reconciled: 0, failed: 0, notified: 0, purged_events: 0, purged_sessions: 0, purged_orders: 0, plans: { synced: 0, repaired: 0, lapsed: 0, failed: 0 }, org_domains_filled: 0, purged_intents: 0 });
   });
 });
 

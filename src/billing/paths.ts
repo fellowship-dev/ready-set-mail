@@ -5,11 +5,13 @@
 /** Where an unusable return path falls back to: the Billing section of Settings. */
 export const BILLING_PATH = '/settings';
 
-const ALLOWED = /^\/(?:settings|domains\/[1-9][0-9]{0,8})(?:\?order=fix-one-domain)?$/;
+// The app's routes Stripe's hosted page may return to: Settings (`?plan=start` is the start button), a domain page (`?order=fix-one-domain` the order confirm), the
+// Add domain page with the typed name (`/add?domain=<name>`: the paid-domain confirm), and the domains list (`/?zones=confirm`: the Cloudflare zones' confirm).
+const ALLOWED = /^\/(?:settings(?:\?plan=start)?|domains\/[1-9][0-9]{0,8}(?:\?order=fix-one-domain)?|add(?:\?domain=[a-z0-9][a-z0-9.-]{0,251}[a-z0-9])?|(?:\?zones=confirm)?)$/;
 
 /** The path if it is one of the app's own, else null. Same-origin relative only: one leading slash, no `//`, backslash, scheme or control characters. */
 export function safeReturnPath(raw: unknown): string | null {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 80) return null;
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 300) return null;
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\\]/.test(raw) || raw.includes('//') || !raw.startsWith('/') || raw.startsWith('//')) return null;
   let decoded: string;

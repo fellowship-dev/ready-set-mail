@@ -104,6 +104,7 @@ export async function provisionUser(
     // Hosted sign-up gives no name (it is asked for after the address is proven), so this starts from the email's domain.
     await globalQueries(db).workspaces.create(workspaceId, defaultWorkspaceName(user.name === user.email ? '' : user.name, user.email));
     await forWorkspace(db, workspaceId).team.addMember(user.id, 'owner');
+    await forWorkspace(db, workspaceId).plan.claimAllowance(user.id); // the person's one free domain lives here (src/hosted/plan.ts); recorded whether or not the plan is enforced yet
     placed = { workspaceId, role: 'owner' };
   } else {
     if (intent.kind !== 'setup' || !(await verifyBootstrapProof(env, intent.bootstrapProof))) return fail('installer proof required');

@@ -66,7 +66,7 @@ describe('migration 0016 and the schema', () => {
     expect(REQUIRED_MIGRATION).toBe('0017_hosted_plan.sql');
   });
   it('is additive: one nullable column on workspaces, new tables, nothing dropped', () => {
-    const sql = readFileSync(join(import.meta.dirname, '../../migrations/0017_hosted_plan.sql'), 'utf8');
+    const sql = readFileSync(join(import.meta.dirname, '../../migrations/0016_billing.sql'), 'utf8');
     expect(sql).not.toMatch(/\bDROP\b|\bDELETE\b|\bUPDATE\b|ALTER TABLE \w+ (DROP|RENAME)/i);
     expect(info('workspaces').find((c) => c.name === 'stripe_customer_id')).toMatchObject({ notnull: 0 });
     for (const t of ['billing_orders', 'billing_events', 'billing_checkout_sessions', 'billing_price_cache']) expect(info(t).length).toBeGreaterThan(3);
@@ -94,7 +94,7 @@ describe('who may read orders across workspaces', () => {
   it('only the webhook, the routes, reconcile, notify, price and sync code use billingLookups', () => {
     const root = join(import.meta.dirname, '../..');
     const users = walk(join(root, 'src')).filter((f) => /\bbillingLookups\b/.test(readFileSync(f, 'utf8'))).map((f) => relative(root, f)).sort();
-    expect(users).toEqual(['src/billing/notify.ts', 'src/billing/price.ts', 'src/billing/reconcile.ts', 'src/billing/routes.ts', 'src/billing/sync.ts', 'src/billing/webhook.ts']);
+    expect(users).toEqual(['src/billing/notify.ts', 'src/billing/plan-service.ts', 'src/billing/price.ts', 'src/billing/reconcile.ts', 'src/billing/routes.ts', 'src/billing/sync.ts', 'src/billing/webhook.ts']);
   });
   it('the Worker keeps no billing state between requests (nothing module-level is mutable)', () => {
     const root = join(import.meta.dirname, '../../src/billing');

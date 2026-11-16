@@ -165,6 +165,41 @@ export class StripeClient {
   retrieveInvoice(id: string) {
     return this.#call('GET', `/v1/invoices/${enc(id)}`, { expand: ['payments.data.payment.payment_intent'] });
   }
+  // ── Subscriptions (pay as you go: one subscription per workspace, one item, quantity = billable domains) ──
+  /**
+   * The workspace's subscription. Quantity may be 0 (Stripe keeps it active with a $0 first invoice); additions and removals later prorate onto the next
+   * invoice, so nothing is charged at the click. `error_if_incomplete`: a card that cannot pay fails here instead of leaving a half-made subscription.
+   */
+  createSubscription(p: { workspaceId: string; revision: number; customerId: string; priceId: string; quantity: number }) {
+    return this.#call('POST', '/v1/subscriptions', {
+      customer: p.customerId,
+      items: [{ price: p.priceId, quantity: p.quantity }],
+      collection_method: 'charge_automatically',
+      payment_behavior: 'error_if_incomplete',
+      proration_behavior: 'create_prorations',
+      metadata: { workspace_id: p.workspaceId },
+    }, `rsm-sub-${p.workspaceId}-${p.revision}`);
+  }
+  retrieveSubscription(id: string) {
+    return this.#call('GET', `/v1/subscriptions/${enc(id)}`, { expand: ['latest_invoice'] });
+  }
+  /** The ONLY write of a quantity. The key names workspace, item, target and the lease's revision: a retry repeats it, a later change gets a new one. */
+  setItemQuantity(p: { workspaceId: string; revision: number; itemId: string; quantity: number }) {
+    return this.#call('POST', `/v1/subscription_items/${enc(p.itemId)}`, { quantity: p.quantity, proration_behavior: 'create_prorations' }, `rsm-qty-${p.workspaceId}-${p.itemId}-${p.quantity}-${p.revision}`);
+  }
+  /** Cancel now (a deleted workspace): Stripe's default, no refund of the unused period. */
+  cancelSubscription(id: string) {
+    return this.#call('DELETE', `/v1/subscriptions/${enc(id)}`);
+  }
+  /** What the next invoice will be if the subscription item changes (read only). */
+  previewInvoice(p: { customerId: string; subscriptionId: string; itemId: string; quantity: number }) {
+    return this.#call('POST', '/v1/invoices/create_preview', { customer: p.customerId, subscription: p.subscriptionId, subscription_details: { items: [{ id: p.itemId, quantity: p.quantity }] } });
+  }
+  /** The upcoming invoice as it stands (read only). */
+  upcomingInvoice(p: { customerId: string; subscriptionId: string }) {
+    return this.#call('POST', '/v1/invoices/create_preview', { customer: p.customerId, subscription: p.subscriptionId });
+  }
+
   retrieveCharge(id: string) {
     return this.#call('GET', `/v1/charges/${enc(id)}`);
   }

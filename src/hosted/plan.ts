@@ -36,8 +36,8 @@ export const unitOf = (domain: string): string => organizationalDomain(domain) ?
 
 /** Subscription statuses in which new paid domains may be added. */
 const ACTIVE = new Set(['active', 'trialing']);
-/** Statuses that leave the plan standing but pause adding: Stripe is still retrying the payment. */
-const SOFT = new Set(['past_due', 'incomplete', 'unpaid']);
+/** Statuses that leave the plan standing but pause adding: Stripe is still retrying the payment. `unpaid` (retries over) and `canceled` lapse it. */
+const SOFT = new Set(['past_due', 'incomplete']);
 
 export type SubscriptionState = 'none' | 'active' | 'payment_problem' | 'lapsed';
 export const subscriptionState = (sub: Pick<SubscriptionRow, 'status' | 'lapsed_at'> | null): SubscriptionState =>
@@ -59,7 +59,7 @@ export interface PlanState {
   subscriptionState: SubscriptionState;
   /** A paid domain may be added now (an active subscription, or none yet and the plan can be started). */
   canAddPaid: boolean;
-  /** A free workspace that holds more than one unit (it grew before the plan): everything keeps working, the next add asks. */
+  /** A free workspace that holds more than its allowance (it grew before the plan): everything keeps working, the next add asks. */
   grandfathered: boolean;
   /** Rows by unit, for listings (billable domains and the like). */
   rows: { id: number; domain: string; org: string; paused: boolean; created_at: number }[];
@@ -97,7 +97,7 @@ export async function loadPlanState(env: BoundEnv, db: Db, workspaceId: string):
     units, billable: Math.max(0, units - (holdsAllowance ? 1 : 0)), pausedUnits: [...paused].filter((o) => orgs.has(o)).length,
     subscription: sub, subscriptionState: subState,
     canAddPaid: paidPathAvailable(env) && !exempt && (subState === 'active' || subState === 'none' || subState === 'lapsed'),
-    grandfathered: enforced && !exempt && plan === 'free' && holdsAllowance && units > 1 && paused.size === 0,
+    grandfathered: enforced && !exempt && plan === 'free' && units > (holdsAllowance ? 1 : 0) && paused.size === 0,
     rows: rows.map((r) => ({ id: r.id, domain: r.domain, org: r.org_domain ?? r.domain, paused: !!r.paused_at, created_at: r.created_at })),
     revision: ws?.plan_revision ?? 0,
     customerId: ws?.stripe_customer_id ?? null,

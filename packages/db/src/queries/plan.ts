@@ -80,6 +80,8 @@ export function planQueries(db: Db, workspaceId: string) {
 		/** Pause every live domain except the unit `keepOrg` (null: all). Returns the rows paused. */
 		pauseExcept: (keepOrg: string | null, nowSeconds: number) =>
 			db.update(domains).set({ paused_at: nowSeconds }).where(and(myDomains, isNull(domains.paused_at), keepOrg === null ? undefined : sql`COALESCE(${domains.org_domain}, ${domains.domain}) <> ${keepOrg}`)).run().then(changesOf),
+		/** Resume the rows of one unit (the one an owner keeps free). */
+		unpauseUnit: (org: string) => db.update(domains).set({ paused_at: null }).where(and(myDomains, isNotNull(domains.paused_at), sql`COALESCE(${domains.org_domain}, ${domains.domain}) = ${org}`)).run().then(changesOf),
 		unpauseAll: () => db.update(domains).set({ paused_at: null }).where(and(myDomains, isNotNull(domains.paused_at))).run().then(changesOf),
 
 		/** Undo a domain row added moments ago whose plan update failed: the row and its monitoring subscription go, nothing is remembered as removed. */

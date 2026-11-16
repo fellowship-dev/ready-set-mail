@@ -293,3 +293,10 @@ export function orderEvent(env: AnalyticsEnv, ctx: Ctx, order: Pick<OrderRow, 'w
 export function offerViewed(env: AnalyticsEnv, ctx: Ctx, workspaceId: string, hasCard: boolean): void {
   capture(env, ctx, { workspaceId }, 'Fix Offer Viewed', { offer: 'fix_one_domain', has_card: hasCard });
 }
+
+// ── Pay as you go ────────────────────────────────────────────
+
+/** The plan's moments as product events (docs/analytics.md): categories only. */
+export function planEvent(env: AnalyticsEnv, ctx: Ctx, workspaceId: string, event: 'Plan Started' | 'Paid Domain Added' | 'Subscription Failed' | 'Subscription Ended', props: Record<string, string | boolean | undefined> = {}): void {
+  capture(env, ctx, { workspaceId }, event, props as never);
+}

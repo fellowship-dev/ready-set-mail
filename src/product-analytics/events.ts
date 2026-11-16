@@ -93,6 +93,11 @@ export const EVENTS = {
   'Fix Order Failed': { offer: ['fix_one_domain'], reason: ['failed', 'canceled'] },
   'Fix Order Refunded': { offer: ['fix_one_domain'] },
   'Fix Order Delivered': { offer: ['fix_one_domain'], since_paid: LONG_WAIT },
+  // ── Pay as you go (src/billing/plan-service.ts): categories only, never an amount ──
+  'Plan Started': { interval: ['month', 'year'], via: ['add_domain', 'settings', 'new_workspace'] },
+  'Paid Domain Added': { via: ['single', 'cloudflare'], added: COUNT },
+  'Subscription Failed': { reason: ['payment_failed', 'action_required'] },
+  'Subscription Ended': { reason: ['lapsed', 'canceled'] },
 } as const satisfies Record<string, Record<string, Allowed>>;
 
 export type EventName = keyof typeof EVENTS;
