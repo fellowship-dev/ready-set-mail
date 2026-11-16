@@ -125,6 +125,7 @@ import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
 import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
+import { analyticsEnabled } from '../product-analytics/capture';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
@@ -741,7 +742,10 @@ async function _handleApi(
       const admission = await admitDomain(tenant, domain);
       if (admission.kind === 'taken') return err('this domain is already registered in another workspace', 409);
       if (admission.kind === 'limit') return err('too many unverified domains — verify or remove some first', 429);
-      if (admission.kind === 'pending') return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
+      if (admission.kind === 'pending') {
+        domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: true, domain, claimId: admission.claim.id }); // once per claim (docs/analytics.md)
+        return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
+      }
 
       // Persist base domain + derived values to D1.
       // Hosted: nothing is derived. Report intake is not connected, so there is no reports.<domain>, no rua@ address and
@@ -780,6 +784,8 @@ async function _handleApi(
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
       }
+      // A claim already counted as Domain Added (typed, then proven): only Ownership Verified follows, as for POST /api/domains.
+      const claimed = created !== null && analyticsEnabled(env) ? !!(await tenant.scope.claims.get(domain).catch(() => null)) : false;
       if (created !== null) await settleClaims(tenant, domain);
       // Hosted, proven through a parent domain or a Cloudflare zone: store the first DNS read, so the overview shows the real level.
       if (created !== null && isClaimProof(admission.via)) await recordFirstDnsCheck(tenant, created, domain);
@@ -790,7 +796,7 @@ async function _handleApi(
       // The first domain configured becomes the infrastructure hub.
       if (created !== null) {
         domainId = created;
-        domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: false, domain });
+        if (!claimed) domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: false, domain });
         ownershipVerified(tenant, ctx, domain, admission.via);
         logAudit(tenant, {
           actor_id: userBySession?.id ?? null, actor_email: userBySession?.email ?? null, actor_type: 'user',

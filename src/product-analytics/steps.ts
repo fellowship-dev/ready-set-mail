@@ -42,9 +42,11 @@ const liveDomains = (tenant: TenantContext) => tenant.scope.domains.list().then(
  * A request to add domains was accepted: `added` new domains or claims (0: it was all there already, nothing is counted). One name
  * (`domain`) also gets its DNS host and, when it was already read, the stored verdict.
  */
-export function domainAdded(tenant: TenantContext, ctx: Ctx, p: { source: 'typed' | 'bulk' | 'cloudflare_import' | 'agent'; added: number; needsProof: boolean; domain?: string }): void {
+export function domainAdded(tenant: TenantContext, ctx: Ctx, p: { source: 'typed' | 'bulk' | 'cloudflare_import' | 'agent'; added: number; needsProof: boolean; domain?: string; claimId?: number }): void {
   if (p.added <= 0) return;
   captureLater(tenant.env, ctx, async () => {
+    // A pending claim is counted once, however many times the same claim is answered again (admitDomain returns the same claim).
+    if (p.claimId !== undefined && !(await claimMarker(tenant.db, tenant.workspaceId, `claim:${p.claimId}`))) return null;
     const row = p.domain ? await tenant.scope.domains.getByName(p.domain) : null;
     const provider = p.source === 'cloudflare_import' ? 'cloudflare' : p.domain ? await dnsProvider(tenant, p.domain).catch(() => 'unknown' as const) : 'unknown';
     return { subject: ws(tenant), events: [ev('Domain Added', {
@@ -55,9 +57,9 @@ export function domainAdded(tenant: TenantContext, ctx: Ctx, p: { source: 'typed
 }
 
 /** One of the enrollment answers (src/domains/service.ts enrollDomain), as a Domain Added: a pending claim or a new domain; a repeat counts nothing. */
-export function enrollmentAdded(tenant: TenantContext, ctx: Ctx, source: 'typed' | 'agent', domain: string, result: { pending?: boolean; resumed?: boolean }): void {
+export function enrollmentAdded(tenant: TenantContext, ctx: Ctx, source: 'typed' | 'agent', domain: string, result: { pending?: boolean; resumed?: boolean; claim?: { id: number } }): void {
   if (result.resumed) return;
-  domainAdded(tenant, ctx, { source, added: 1, needsProof: !!result.pending, domain });
+  domainAdded(tenant, ctx, { source, added: 1, needsProof: !!result.pending, domain, ...(result.pending && result.claim ? { claimId: result.claim.id } : {}) });
 }
 
 /**
