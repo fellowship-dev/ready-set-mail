@@ -163,7 +163,7 @@ describe('GET with TLS reports', () => {
     await w.mta(w.A.token, 'POST', 1);
     const day = 86400;
     const t = Math.floor(Date.now() / 1000);
-    const ins = w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const ins = w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id, reporter_tier, reporter_identity) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'counted', 'google')");
     ins.run('Google', t - 2 * day, t - day, 50, 4, 45, 3, '["certificate-expired"]', w.A.ws);
     ins.run('Microsoft', t - 3 * day, t - 2 * day, 10, 0, null, null, null, w.A.ws); // stored before the MTA-STS sessions were kept
     ins.run('Old', t - 40 * day, t - 39 * day, 99, 0, 99, 0, '[]', w.A.ws);
@@ -194,7 +194,7 @@ describe('the health report\'s TLS history', () => {
   it('says the sessions under the MTA-STS policy once MTA-STS is on and serving, and its old totals otherwise', async () => {
     const w = await mtaWorld();
     const t = Math.floor(Date.now() / 1000);
-    const ins = w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id) VALUES (1, 'Google', ?, ?, 50, 4, 45, 3, '[]', ?)");
+    const ins = w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id, reporter_tier, reporter_identity) VALUES (1, 'Google', ?, ?, 50, 4, 45, 3, '[]', ?, 'counted', 'google')");
     ins.run(t - 2 * 86400, t - 86400, w.A.ws);
     const tls = async () => (await w.json(await w.api(w.A.token, 'GET', '/api/domains/1/health-report'))).sections.tls;
     expect((await tls()).data).toMatchObject({ total_success: 50, total_failure: 4, mta_sts: null });

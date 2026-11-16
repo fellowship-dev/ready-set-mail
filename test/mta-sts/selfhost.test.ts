@@ -10,15 +10,16 @@ import { refreshMtaStsForTenant } from '../../src/mta-sts/refresh';
 import { runCronForWorkspaces } from '../../src/cron';
 import { loadTenant } from '../../src/tenancy/load';
 import { quietLogs } from './world';
+import { fakeMessage, tlsRptMime, yesterdayRange } from '../helpers/mail';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
 beforeEach(() => { quietLogs(); resetSchemaReadyCache(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function selfHost(opts: { token?: string; reports?: boolean } = {}) {
+async function selfHost(opts: { token?: string; reports?: boolean; env?: Record<string, string> } = {}) {
   const db = createMigratedD1();
-  const env = makeEnv(db, { CLOUDFLARE_API_TOKEN: opts.token ?? 'cf-token', WORKER_NAME: 'rsm-worker' }) as any;
+  const env = makeEnv(db, { CLOUDFLARE_API_TOKEN: opts.token ?? 'cf-token', WORKER_NAME: 'rsm-worker', ...opts.env }) as any;
   const key = await setupOwner(env);
   db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address, verified_via) VALUES (1, 'acme.com', 'rua@reports.acme.com', 'legacy'), (2, 'unmanaged.net', 'x', 'legacy')").run();
   seedSettings(db, { ...(opts.reports === false ? {} : { base_domain: 'acme.com', reports_domain: 'reports.acme.com' }), zone_id: 'zone-acme', zone_name: 'acme.com', cf_account_id: 'cf-acct' });
@@ -108,5 +109,65 @@ describe('self-host', () => {
     expect(res.status).toBe(200);
     expect((await res.json() as any).mode).toBe('testing'); // grew while enforcing
     expect(w.cf.records.get('zone-acme')!.find((r) => r.id === 'old-txt')!.content).toMatch(/^v=STSv1; id=\d{14}a?$/);
+  });
+});
+
+// R2 item 1 on self-host: the same rule decides who may move the enforce gate. REPORT_COUNTING (default `all` here) only chooses what the numbers show.
+describe('self-host: TLS reports are authenticated before they can count', () => {
+  const DAY = 86400;
+  const GOOGLE = { from: 'noreply-smtp-tls-reporting@google.com', contact: 'smtp-tls-reporting@google.com', domain: 'google.com' };
+  const STRANGER = { from: 'noreply@stranger.example', contact: 'noreply@stranger.example', domain: 'stranger.example' };
+  let n = 0;
+  const report = (r: typeof GOOGLE, ok: number, bad = 0, types: string[] = []) => JSON.stringify({
+    'organization-name': 'Google Inc.', 'date-range': yesterdayRange(), 'contact-info': r.contact, 'report-id': `r-${++n}`,
+    policies: [{ policy: { 'policy-type': 'sts', 'policy-domain': 'acme.com' }, summary: { 'total-successful-session-count': ok, 'total-failure-session-count': bad }, ...(types.length ? { 'failure-details': types.map((t) => ({ 'result-type': t })) } : {}) }],
+  });
+  async function deliver(w: Awaited<ReturnType<typeof selfHost>>, r: typeof GOOGLE, json: string, signed = true) {
+    const headers: Record<string, string> = { 'TLS-Report-Submitter': r.domain, ...(signed ? { 'authentication-results': `mx.cloudflare.net; dkim=pass header.d=${r.domain}` } : {}) };
+    const m = fakeMessage('tls-rpt@reports.acme.com', tlsRptMime(json, false, r.from), { from: r.from, headers });
+    await worker.email(m, w.env, ctx);
+    return m;
+  }
+  async function enabled(env?: Record<string, string>) {
+    const w = await selfHost({ env });
+    await w.mta('POST');
+    const t = Math.floor(Date.now() / 1000);
+    w.db.sqlite.prepare('UPDATE mta_sts_config SET mode_changed_at = ?, policy_published_at = ? WHERE domain_id = 1').run(t - 10 * DAY, t - 10 * DAY);
+    const gate = async () => ((await (await w.mta('GET')).json()) as any).enforce;
+    return { ...w, gate };
+  }
+
+  it('with AUTHSERV_* unset (every existing install) reports are stored and shown, none can unlock enforce, and the page can say why', async () => {
+    const w = await enabled();
+    expect((await deliver(w, GOOGLE, report(GOOGLE, 40), false)).setReject).not.toHaveBeenCalled();
+    expect(w.rows('SELECT reporter_tier, reporter_auth, total_success FROM tls_reports')).toEqual([{ reporter_tier: 'unauthenticated', reporter_auth: 'none', total_success: 40 }]);
+    const view = (await (await w.mta('GET')).json()) as any;
+    expect(view.summary).toMatchObject({ total_success: 40, report_count: 1 }); // the numbers follow REPORT_COUNTING=all
+    expect(view.reports[0]).toMatchObject({ counted: false });
+    expect(view.evidence).toMatchObject({ counted_reports: 0, uncounted_reports: 1, verifiable: false });
+    expect(view.enforce.allowed).toBe(false);
+    expect(view.enforce.reasons.join(' ')).toMatch(/cannot tell who sent a TLS report/);
+  });
+
+  it('with AUTHSERV_* set: 50 passing reports from a stranger do not unlock it, 50 failing ones do not block it, one from Google does unlock it', async () => {
+    const w = await enabled({ AUTHSERV_ID: 'mx.cloudflare.net', AUTHSERV_HEADER: 'ar' });
+    for (let i = 0; i < 50; i++) await deliver(w, STRANGER, report(STRANGER, 900));
+    for (let i = 0; i < 50; i++) await deliver(w, GOOGLE, report(GOOGLE, 900), false);
+    expect((await w.gate()).allowed).toBe(false);
+    await deliver(w, GOOGLE, report(GOOGLE, 30));
+    expect((await w.gate()).allowed).toBe(true);
+    for (let i = 0; i < 50; i++) await deliver(w, STRANGER, report(STRANGER, 0, 9, ['certificate-host-mismatch']));
+    for (let i = 0; i < 50; i++) await deliver(w, GOOGLE, report(GOOGLE, 0, 9, ['certificate-host-mismatch']), false);
+    expect(await w.gate()).toMatchObject({ allowed: true, reasons: [] });
+    expect(w.rows("SELECT COUNT(*) AS n FROM tls_reports WHERE reporter_tier = 'counted'")).toEqual([{ n: 1 }]);
+  });
+
+  it('REPORT_COUNTING=all changes the numbers, never the gate; the same report twice counts once', async () => {
+    const w = await enabled({ AUTHSERV_ID: 'mx.cloudflare.net', AUTHSERV_HEADER: 'ar', REPORT_COUNTING: 'all' });
+    const json = report(STRANGER, 500);
+    await deliver(w, STRANGER, json);
+    await deliver(w, STRANGER, json);
+    expect(w.rows('SELECT COUNT(*) AS n FROM tls_reports')).toEqual([{ n: 1 }]);
+    expect((await w.gate()).allowed).toBe(false);
   });
 });

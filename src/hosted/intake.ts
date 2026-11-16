@@ -113,6 +113,8 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   if (rcpt.base !== 'rua' && rcpt.base !== 'tls-rpt') return refuse('bad_recipient');
   const kind = rcpt.base;
   seen.kind = kind;
+  /** Which identity the sender is matched against: a DMARC report's or a TLS report's (src/dmarc/known-reporters.ts). */
+  const reportKind = kind === 'tls-rpt' ? 'tls' : 'dmarc';
 
   const limits = intakeLimits(env);
   if (message.rawSize > limits.maxRawBytes) return refuse('raw_too_large', rawTooLarge(limits.maxRawBytes));
@@ -132,7 +134,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     const [forHeaders, afterHeaders] = raw.tee();
     raw = afterHeaders;
     const headers = await readAuthHeaders(forHeaders);
-    early = { headers, carrier: guardEnvelope(carrierFromHeaders(headers, env), message.from) };
+    early = { headers, carrier: guardEnvelope(carrierFromHeaders(headers, env, reportKind), message.from) };
     if (!(await takePeek(env, early.carrier, Date.now()))) {
       await globalQueries(env.DB).capObservations.note('fixed_address_busy', today()).catch(() => undefined);
       // Unauthenticated mail can never count: refuse it for good (a retry would only hold the ceiling, and nothing depends on what a
@@ -191,7 +193,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   }
   const trusted = !!(env.AUTHSERV_ID && env.AUTHSERV_HEADER && trustedResults(headers, env.AUTHSERV_ID, env.AUTHSERV_HEADER));
   logAuthservDiscovery(headers, env, trusted);
-  const carrier: Carrier = early?.carrier ?? guardEnvelope(carrierFromHeaders(headers, env), message.from);
+  const carrier: Carrier = early?.carrier ?? guardEnvelope(carrierFromHeaders(headers, env, reportKind), message.from);
   seen.dkim_org = carrier.dkimOrg;
   seen.from_org = carrier.fromOrg;
   const globals = globalQueries(env.DB);
@@ -240,7 +242,9 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
     if (result.outcome === 'accepted' && result.reason === 'ok') reportStored(tenant, ctx, tgt.domain_id); // docs/analytics.md
   } else {
-    result = await handleTlsRptReport(body, tenant, { hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
+    // The same carrier the caps were charged for: the tier is decided by the one rule (src/dmarc/reporter-auth.ts), and only counted reports are evidence.
+    result = await handleTlsRptReport(body, tenant, { carrier, authHeaders: headers, hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
+    Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
   }
   // Refused after the address was known (a cap on stored records, a report too big): tell the owner.
   if (result.outcome === 'refused' && OWNER_VISIBLE.has(result.reason) && !result.reason.startsWith('storage_failed')) {

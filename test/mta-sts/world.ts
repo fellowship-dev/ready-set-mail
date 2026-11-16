@@ -10,6 +10,8 @@ export const INTAKE = 'rua.readysetmail.com';
 export const POLICY_ENV = {
   INTAKE_DOMAIN: INTAKE, HOSTED_CONNECT_REPORTS: 'all', WORKER_NAME: 'rsm-worker',
   POLICY_HOST_ZONE: OP.zone, POLICY_HOST_TARGET: OP.target, POLICY_HOST_TOKEN: OP.token,
+  /** The receiving server whose Authentication-Results are trusted (the test mail says it was received by this one). */
+  AUTHSERV_ID: 'mx.cloudflare.net', AUTHSERV_HEADER: 'ar',
 } as const;
 
 export async function mtaWorld(extraEnv: Record<string, unknown> = {}, opts: { connect?: boolean } = {}) {

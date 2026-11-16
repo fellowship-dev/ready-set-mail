@@ -25,8 +25,8 @@ const publishedId = (w: MtaWorld) => w.cf.records.get(w.Z.a1)!.find((r) => r.nam
 let reportNo = 0;
 function ready(w: MtaWorld, domainId = 1) {
   w.db.sqlite.prepare('UPDATE mta_sts_config SET mode_changed_at = ?, policy_published_at = ? WHERE domain_id = ?').run(now() - 10 * DAY, now() - 10 * DAY, domainId);
-  w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id) VALUES (?, 'Google', ?, ?, 40, 0, 40, 0, '[]', ?)")
-    .run(domainId, now() - 3 * DAY - ++reportNo, now() - 2 * DAY, w.A.ws);
+  w.db.sqlite.prepare("INSERT INTO tls_reports (domain_id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, workspace_id, reporter_tier, reporter_identity) VALUES (?, 'Google', ?, ?, 40, 0, 40, 0, '[]', ?, 'counted', 'google')")
+    .run(domainId, now() - 3 * DAY - ++reportNo * 100, now() - 2 * DAY, w.A.ws);
 }
 
 describe('availability and the gate: every refusal is a true sentence, nothing is written', () => {
@@ -273,7 +273,7 @@ describe('modes', () => {
     const body = await w.json(res);
     expect(body).toMatchObject({ code: 'mta_sts_not_ready' });
     expect(body.reasons.join(' ')).toMatch(/days senders need to report/);
-    expect(body.reasons.join(' ')).toMatch(/No TLS report has arrived yet/);
+    expect(body.reasons.join(' ')).toMatch(/No verified TLS report has arrived yet/);
     expect(w.row(1).mode).toBe('testing');
 
     const get = await w.json(await w.mta(w.A.token, 'GET', 1));

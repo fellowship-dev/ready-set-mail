@@ -6,25 +6,27 @@ import { handleHostedEmail } from '../../src/hosted/intake';
 import { PEEK_BYTES, tlsReportAddress } from '../../src/hosted/fixed-address';
 import { peekTlsPolicyDomain, scanTlsPolicyDomain } from '../../src/hosted/tls-intake';
 import { stsStats } from '../../src/email/tls-rpt';
-import { fakeMessage, tlsRptJson, tlsRptMime } from '../helpers/mail';
+import { fakeMessage, tlsRptJson, tlsRptMime, yesterdayRange } from '../helpers/mail';
 import { INTAKE, mtaWorld, quietLogs, type MtaWorld } from '../mta-sts/world';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 
 const TO = tlsReportAddress(INTAKE);
-const GOOGLE = { headers: { 'authentication-results': 'mx.cloudflare.net; dkim=pass header.d=google.com header.s=s1' } };
+// Google's TLS-RPT identity (src/dmarc/known-reporters.ts): its own From address, DKIM d=google.com, contact-info smtp-tls-reporting@google.com.
+const FROM = 'noreply-smtp-tls-reporting@google.com';
+const GOOGLE = { from: FROM, headers: { 'authentication-results': 'mx.cloudflare.net; dkim=pass header.d=google.com header.s=s1', 'TLS-Report-Submitter': 'google.com' } };
 beforeEach(() => { quietLogs(); resetSchemaReadyCache(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 const report = (policies: object[], org = 'Google Inc.') => JSON.stringify({
-  'organization-name': org, 'date-range': { 'start-datetime': '2026-11-15T00:00:00Z', 'end-datetime': '2026-11-15T23:59:59Z' }, 'report-id': 'r1', policies,
+  'organization-name': org, 'date-range': yesterdayRange(), 'contact-info': 'smtp-tls-reporting@google.com', 'report-id': 'r1', policies,
 });
 const sts = (domain: string, ok = 10, bad = 0, details: object[] = []) => ({
   policy: { 'policy-type': 'sts', 'policy-domain': domain, 'policy-string': ['version: STSv1', 'mode: testing', 'mx: mx.a-corp.com', 'max_age: 86400'], 'mx-host': ['mx.a-corp.com'] },
   summary: { 'total-successful-session-count': ok, 'total-failure-session-count': bad }, ...(details.length ? { 'failure-details': details } : {}),
 });
-async function deliver(w: MtaWorld, json: string, o: { gz?: boolean; to?: string; opts?: Parameters<typeof fakeMessage>[2] } = {}) {
-  const m = fakeMessage(o.to ?? TO, tlsRptMime(json, o.gz ?? true), o.opts ?? GOOGLE);
+async function deliver(w: MtaWorld, json: string, o: { gz?: boolean; to?: string; from?: string; opts?: Parameters<typeof fakeMessage>[2] } = {}) {
+  const m = fakeMessage(o.to ?? TO, tlsRptMime(json, o.gz ?? true, o.from ?? FROM), o.opts ?? GOOGLE);
   await handleHostedEmail(m, w.env as any);
   return m;
 }
@@ -98,9 +100,11 @@ describe('tls-rpt@ on the fixed address', () => {
   it('is charged like the DMARC address: mail for an unowned domain is counted against the unattributed budget', async () => {
     const w = await mtaWorld({ INTAKE_MAX_UNATTRIBUTED_PER_SENDER_PER_DAY: '1' });
     await w.mta(w.A.token, 'POST', 1);
-    const first = await deliver(w, report([sts('nobody.example')]));
+    // A sender that is authenticated but not a known reporter is charged (a registry reporter is not).
+    const stranger = { from: 'noreply@stranger.example', opts: { from: 'noreply@stranger.example', headers: { 'authentication-results': 'mx.cloudflare.net; dkim=pass header.d=stranger.example' } } };
+    const first = await deliver(w, report([sts('nobody.example')]), stranger);
     expect(first.setReject).toHaveBeenCalledWith('Report is for a domain whose reports are not connected to this address');
-    const second = await deliver(w, report([sts('nobody.example')]));
+    const second = await deliver(w, report([sts('nobody.example')]), stranger);
     expect(second.setReject).toHaveBeenCalledWith(expect.stringMatching(/Daily intake limit/));
     // an owned domain still gets through: mail for unconnected domains never costs it its place
     expect((await deliver(w, report([sts('a-corp.com')]))).setReject).not.toHaveBeenCalled();

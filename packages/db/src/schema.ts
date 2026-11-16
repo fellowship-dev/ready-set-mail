@@ -260,12 +260,19 @@ export const tlsReports = sqliteTable(
 		sts_success: integer('sts_success'),
 		sts_failure: integer('sts_failure'),
 		sts_failure_types: text('sts_failure_types'),
+		/** Who sent the report mail (src/dmarc/reporter-auth.ts, the rule DMARC reports use): pass | fail | none, the tier (counted | unknown | unauthenticated) and the identity (registry id, authenticated organisation, or ~unauth). NULL on rows stored before 0020. */
+		reporter_auth: text('reporter_auth'),
+		reporter_tier: text('reporter_tier'),
+		reporter_identity: text('reporter_identity'),
+		/** The reporter's own report-id, or `~period|<start>|<end>|<policy-domain>` when it sent none: the replay key within (domain, identity). */
+		report_id: text('report_id'),
 		raw_json: text('raw_json'),
 		created_at: integer('created_at').notNull().default(now),
 		workspace_id: workspaceId(),
 	},
 	(t) => [
 		unique().on(t.domain_id, t.org_name, t.date_begin),
+		uniqueIndex('idx_tls_reports_dedup').on(t.domain_id, t.reporter_identity, t.report_id).where(sql`${t.report_id} IS NOT NULL`),
 		index('idx_tls_reports_domain').on(t.domain_id, t.date_begin),
 		index('idx_tls_reports_workspace').on(t.workspace_id),
 		index('idx_tls_reports_date_end').on(t.date_end),
@@ -309,7 +316,7 @@ export const mtaStsConfig = sqliteTable(
 		cname_record_id: text('cname_record_id'),
 		last_error: text('last_error'),
 		via: text('via', { enum: ['cloudflare', 'manual'] }),
-		state: text('state', { enum: ['creating', 'waiting_records', 'waiting_certificate', 'waiting_txt', 'active'] }).notNull().default('active'),
+		state: text('state', { enum: ['creating', 'waiting_records', 'waiting_certificate', 'waiting_txt', 'active', 'retiring'] }).notNull().default('active'),
 		policy_host: text('policy_host', { enum: ['worker_route', 'saas_hostname'] }).notNull().default('worker_route'),
 		ch_id: text('ch_id'),
 		ch_status: text('ch_status'),
@@ -321,6 +328,13 @@ export const mtaStsConfig = sqliteTable(
 		last_checked_at: integer('last_checked_at'),
 		notice: text('notice'),
 		notice_at: integer('notice_at'),
+		/** The last fetch of the policy URL by the reconcile: when, did it pass (1/0; NULL: never fetched), one reason code. */
+		fetch_checked_at: integer('fetch_checked_at'),
+		fetch_ok: integer('fetch_ok'),
+		fetch_reason: text('fetch_reason'),
+		/** Retiring (RFC 8461 section 8.3): serving mode none until this time, then the hostname and records go. Why: lost_proof | removed | evicted. */
+		retire_after: integer('retire_after'),
+		retire_reason: text('retire_reason', { enum: ['lost_proof', 'removed', 'evicted'] }),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		workspace_id: workspaceId(),

@@ -28,7 +28,8 @@ import { getMode } from '../tenancy/mode';
 import {
   DEFAULT_MAX_AGE, EVIDENCE_WINDOW_SECONDS, maxPolicyHosts, mtaStsHostedConfigured, policyHostConfig,
 } from './config';
-import { disableRule, enforceReadiness, maxAgeWords, splitHosts, type Readiness } from './evidence';
+import { disableRule, enforceReadiness, EVIDENCE_RULE, maxAgeWords, splitHosts, type Readiness } from './evidence';
+import { authservConfigured } from '../dmarc/reporter-auth';
 import { OperatorZone, policyHostname, strategyFor, type PolicyHostStrategy } from './policy-host';
 
 export interface Result { status: number; body: Record<string, unknown> }
@@ -173,11 +174,15 @@ function configView(r: MtaStsRow) {
   };
 }
 
-const reportView = (r: { id: number; org_name: string; date_begin: number; date_end: number; total_success: number; total_failure: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; created_at: number }) => {
+const reportView = (r: { id: number; org_name: string; date_begin: number; date_end: number; total_success: number; total_failure: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; reporter_tier: string | null; reporter_identity: string | null; created_at: number }) => {
   let types: string[] = [];
   try { const v = r.sts_failure_types ? JSON.parse(r.sts_failure_types) : []; if (Array.isArray(v)) types = v.filter((t): t is string => typeof t === 'string'); } catch { /* unknown */ }
   return {
-    id: r.id, reporter: r.org_name, period_start: r.date_begin, period_end: r.date_end, received_at: r.created_at,
+    id: r.id,
+    // Only a counted report is evidence. What an uncounted sender wrote about itself is a label, never shown as who it is: the authenticated organisation is.
+    counted: r.reporter_tier === 'counted',
+    reporter: r.reporter_tier === 'counted' || r.reporter_tier === null ? r.org_name : r.reporter_identity === '~unauth' ? 'unverified sender' : (r.reporter_identity ?? 'unverified sender'),
+    period_start: r.date_begin, period_end: r.date_end, received_at: r.created_at,
     successful_sessions: r.total_success, failed_sessions: r.total_failure,
     sts_successful_sessions: r.sts_success, sts_failed_sessions: r.sts_failure, failure_types: types,
   };
@@ -197,21 +202,25 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
   let reports: ReturnType<typeof reportView>[] = [];
   let summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null = null;
   let enforce: (Readiness & { allowed: boolean }) | null = null;
+  let evidence: { rule: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null = null;
+  const verifiable = authservConfigured(tenant.env);
   let disable: ReturnType<typeof disableRule> | null = null;
   if (row) {
     const since30 = now - 30 * 86400;
-    const [recent, totals, evidence] = await Promise.all([
+    const [recent, totals, counted, counts] = await Promise.all([
       tenant.scope.reports.tlsRecent(domain.id, since30, 20),
       tenant.scope.reports.tlsSummary(domain.id, since30),
       tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS),
+      tenant.scope.reports.tlsCounts(domain.id, since30),
     ]);
+    evidence = { rule: EVIDENCE_RULE, counted_reports: counts.counted, uncounted_reports: counts.uncounted, verifiable };
     reports = recent.map(reportView);
     summary = {
       total_success: totals?.total_success ?? 0, total_failure: totals?.total_failure ?? 0, report_count: totals?.report_count ?? 0,
       sts_success: totals?.sts_success ?? 0, sts_failure: totals?.sts_failure ?? 0,
     };
     if (row.mode === 'testing') {
-      const ready = enforceReadiness(row, evidence, mx.status === 'ok' ? mx.hosts : null, now);
+      const ready = enforceReadiness(row, counted, mx.status === 'ok' ? mx.hosts : null, now, { verifiable });
       enforce = { ...ready, allowed: ready.ready };
     }
     disable = disableRule(row, now);
@@ -236,6 +245,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       summary,
       reports,
       enforce,
+      evidence,
       disable,
       max_age: row?.max_age ?? DEFAULT_MAX_AGE,
     },
@@ -557,7 +567,7 @@ export async function changeMode(c: Ctx, mode: 'testing' | 'enforce'): Promise<R
   const now = nowSeconds();
   if (mode === 'enforce') {
     const [reports, mx] = await Promise.all([tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS), readMx(domain.domain, resolverFor(tenant.env))]);
-    const ready = enforceReadiness(row, reports, mx.status === 'ok' ? mx.hosts : null, now);
+    const ready = enforceReadiness(row, reports, mx.status === 'ok' ? mx.hosts : null, now, { verifiable: authservConfigured(tenant.env) });
     if (!ready.ready) return fail(422, `MTA-STS cannot enforce yet: ${ready.reasons.join(' ')}`, { code: 'mta_sts_not_ready', reasons: ready.reasons });
   }
   const newId = nextPolicyId(row.policy_id);

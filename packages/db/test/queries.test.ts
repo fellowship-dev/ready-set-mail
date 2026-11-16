@@ -170,7 +170,7 @@ describe('behaviour carried over from the old queries.ts', () => {
 
 	it('TLS reports upsert on (domain, org, date_begin)', async () => {
 		const d = Number((await a.domains.insert({ domain: 'acme.com', rua_address: 'x' })).meta.last_row_id);
-		const t = { domain_id: d, org_name: 'g', date_begin: 5, date_end: 6, total_success: 1, total_failure: 0, failure_details: null, raw_json: null };
+		const t = { domain_id: d, org_name: 'g', date_begin: 5, date_end: 6, total_success: 1, total_failure: 0, failure_details: null, raw_json: null, reporter_tier: 'counted' as const };
 		await a.reports.insertTls(t);
 		await a.reports.insertTls({ ...t, total_success: 7, total_failure: 3 });
 		expect(await a.reports.tlsSummary(d, 0)).toEqual({ total_success: 7, total_failure: 3, sts_success: 0, sts_failure: 0, report_count: 1 });

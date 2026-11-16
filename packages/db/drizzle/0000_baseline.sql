@@ -580,6 +580,11 @@ CREATE TABLE `mta_sts_config` (
 	`last_checked_at` integer,
 	`notice` text,
 	`notice_at` integer,
+	`fetch_checked_at` integer,
+	`fetch_ok` integer,
+	`fetch_reason` text,
+	`retire_after` integer,
+	`retire_reason` text,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
@@ -754,12 +759,17 @@ CREATE TABLE `tls_reports` (
 	`sts_success` integer,
 	`sts_failure` integer,
 	`sts_failure_types` text,
+	`reporter_auth` text,
+	`reporter_tier` text,
+	`reporter_identity` text,
+	`report_id` text,
 	`raw_json` text,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `idx_tls_reports_dedup` ON `tls_reports` (`domain_id`,`reporter_identity`,`report_id`) WHERE "tls_reports"."report_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_domain` ON `tls_reports` (`domain_id`,`date_begin`);--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_workspace` ON `tls_reports` (`workspace_id`);--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_date_end` ON `tls_reports` (`date_end`);--> statement-breakpoint

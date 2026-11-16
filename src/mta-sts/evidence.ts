@@ -11,7 +11,15 @@ export const BLOCKING_FAILURE_TYPES: readonly string[] = [
   'validation-failure', 'sts-policy-fetch-error', 'sts-policy-invalid', 'sts-webpki-invalid',
 ];
 
-export interface EvidenceRow { date_begin: number; date_end: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null }
+export interface EvidenceRow { date_begin: number; date_end: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; reporter_tier: string | null }
+
+/**
+ * The evidence rule, in one sentence (shown on the page and decided in ADR 0021): ONE counted report is enough. A counted report is authenticated (a valid DKIM
+ * signature by the reporting domain, RFC 8460 section 3) and from a known reporter (src/dmarc/known-reporters.ts: today Google or Microsoft), so it can only be
+ * forged by forging that reporter's signature; a second reporter would add coverage, not authenticity, and requiring both would lock out the many small domains
+ * that receive mail from only one of them.
+ */
+export const EVIDENCE_RULE = 'Enforce needs one TLS report signed by a known sender (Google or Microsoft) about the current policy, with successful sessions and no failure that would block mail in the last 14 days.';
 
 export interface Readiness { ready: boolean; reasons: string[] }
 
@@ -28,12 +36,14 @@ const days = (s: number) => Math.round(s / 86400);
  * May this domain switch to enforce now? All of:
  *  - setup is finished (policy host active, records verified);
  *  - it has been in testing for at least ENFORCE_AFTER_SECONDS;
- *  - at least one report whose period ended after the current policy id was published, with successful MTA-STS sessions;
- *  - no failure of a blocking type in the reports of the last EVIDENCE_WINDOW_SECONDS that ended after that publication;
+ *  - at least one COUNTED report (authenticated, from a known reporter: `reporter_tier = 'counted'`, whatever REPORT_COUNTING says: this decides whether mail
+ *    is refused, so a stranger must never move it) whose period ended after the current policy id was published, with successful MTA-STS sessions;
+ *  - no failure of a blocking type in the counted reports of the last EVIDENCE_WINDOW_SECONDS that ended after that publication;
  *  - every MX host is a hostname (not an address) and matches the policy's mx list (`liveMx` is today's MX list, null when it could not be read).
  */
-export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'>, reports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number): Readiness {
+export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'>, allReports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number, opts: { verifiable?: boolean } = {}): Readiness {
   const reasons: string[] = [];
+  const reports = allReports.filter((r) => r.reporter_tier === 'counted');
   if (cfg.mode === 'enforce') return { ready: false, reasons: ['It is already enforcing.'] };
   if (cfg.state !== 'active') reasons.push('Setup is not finished: the policy host or one of the DNS records is not confirmed yet.');
 
@@ -47,7 +57,9 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   const since = Math.max(now - EVIDENCE_WINDOW_SECONDS, published ?? 0);
   if (published === null) reasons.push('The current policy id is not published in DNS yet, so no report can be about it.');
   else if (!reports.some((r) => r.date_end > published && (r.sts_success ?? 0) > 0)) {
-    reasons.push('No TLS report has arrived yet for the current policy with successful sessions: senders have not shown they can deliver with TLS.');
+    reasons.push(opts.verifiable === false
+      ? 'This server cannot tell who sent a TLS report yet (AUTHSERV_ID and AUTHSERV_HEADER are not set), so no report can count.'
+      : 'No verified TLS report has arrived yet for the current policy with successful sessions: senders have not shown they can deliver with TLS.');
   }
   const failed = new Set<string>();
   let unexplained = 0;

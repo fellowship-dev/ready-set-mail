@@ -28,6 +28,8 @@ export interface AuthHeaders {
   from?: string | null;
   /** How many DKIM-Signature header fields the message carries (set by readAuthHeaders; undefined: not read, nothing checked against it). */
   dkimSignatures?: number;
+  /** The values of the `TLS-Report-Submitter` header (RFC 8460 section 5.3), lowercased: none when absent, more than one is a malformed message. */
+  submitters?: string[];
 }
 
 /** The one address in a From header value (`Name <a@b.c>` or `a@b.c`), lowercased, or null when it is not exactly one address. */
@@ -72,6 +74,8 @@ export async function readAuthHeaders(raw: ReadableStream<Uint8Array> | null | u
     if (from && ++froms === 1) out.from = singleAddress(from[1]);
     const ar = line.match(/^authentication-results:\s*(.*)$/i);
     if (ar && out.ar === null) out.ar = ar[1];
+    const submitter = line.match(/^tls-report-submitter:\s*(.*)$/i);
+    if (submitter) (out.submitters ??= []).push(submitter[1].trim().toLowerCase());
     const arc = line.match(/^arc-authentication-results:\s*(.*)$/i);
     if (arc && out.arc === null) out.arc = arc[1];
   }

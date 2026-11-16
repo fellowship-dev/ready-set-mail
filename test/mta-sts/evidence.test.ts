@@ -7,7 +7,7 @@ const cfg = (o: Partial<Parameters<typeof enforceReadiness>[0]> = {}) => ({
   state: 'active' as const, mode: 'testing' as const, mx_hosts: 'mx1.example.com,mx2.example.com',
   policy_published_at: NOW - 10 * DAY, mode_changed_at: NOW - 10 * DAY, ...o,
 });
-const report = (o: Partial<EvidenceRow> = {}): EvidenceRow => ({ date_begin: NOW - 3 * DAY, date_end: NOW - 2 * DAY, sts_success: 40, sts_failure: 0, sts_failure_types: '[]', ...o });
+const report = (o: Partial<EvidenceRow> = {}): EvidenceRow => ({ date_begin: NOW - 3 * DAY, date_end: NOW - 2 * DAY, sts_success: 40, sts_failure: 0, sts_failure_types: '[]', reporter_tier: 'counted', ...o });
 const MX = ['mx1.example.com', 'mx2.example.com'];
 
 describe('enforceReadiness', () => {
@@ -31,11 +31,11 @@ describe('enforceReadiness', () => {
 
   it('needs a report AFTER the current policy id was published, with successful sessions', () => {
     const none = enforceReadiness(cfg(), [], MX, NOW);
-    expect(none.reasons).toEqual([expect.stringMatching(/No TLS report has arrived yet for the current policy/)]);
+    expect(none.reasons).toEqual([expect.stringMatching(/No verified TLS report has arrived yet for the current policy/)]);
     // a report that ended before the policy was published says nothing about it
     expect(enforceReadiness(cfg(), [report({ date_end: NOW - 11 * DAY })], MX, NOW).ready).toBe(false);
     // failures only, no success
-    expect(enforceReadiness(cfg(), [report({ sts_success: 0, sts_failure: 3, sts_failure_types: '["starttls-not-supported"]' })], MX, NOW).reasons.join(' ')).toMatch(/No TLS report has arrived yet/);
+    expect(enforceReadiness(cfg(), [report({ sts_success: 0, sts_failure: 3, sts_failure_types: '["starttls-not-supported"]' })], MX, NOW).reasons.join(' ')).toMatch(/No verified TLS report has arrived yet/);
     // sessions that are not MTA-STS (null = unknown on old rows, 0 = none) do not count
     expect(enforceReadiness(cfg(), [report({ sts_success: null })], MX, NOW).ready).toBe(false);
   });
