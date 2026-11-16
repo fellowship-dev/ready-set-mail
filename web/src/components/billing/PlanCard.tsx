@@ -8,6 +8,13 @@ import { billingKeys, openPortal, startCardSession, type BillingView } from '../
 import { useStripParams } from '../../lib/card-return';
 import { cardMask, confirmSentence, errorCode, invoiceMoney, longDate, perInterval, usePaidPreview, usd, WORDS, type PlanView } from '../../lib/plan';
 import { KeepOne } from './KeepOne';
+import { PlanAlert, planAlertKind } from './PlanAlerts';
+
+/**
+ * Does the plan card carry the one way to Stripe's portal (card, invoices, cancel)? Then the card box below it keeps card and billing email as plain facts.
+ * A payment problem has its own "Update your card" in the alert, so the portal is not offered twice there either.
+ */
+export const planCardHasPortal = (plan: PlanView | null | undefined): boolean => !!plan && !plan.exempt && plan.can_manage && plan.name === 'payg' && !plan.lapsed && planAlertKind(plan) !== 'renewal';
 
 /**
  * Settings → Billing, the plan: its name (Free or Pay as you go), one or two sentences about it, and the ONE action its state calls for. No pricing table:
@@ -29,20 +36,21 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 
 	let body: React.ReactNode;
 	let action: React.ReactNode = null;
+	const alert = planAlertKind(plan);
 	if (plan.pending) {
-		body = <Alert variant="info" title={WORDS.waitingBank}>Your bank needs you to confirm the first payment. This updates by itself once you have.</Alert>;
+		body = <PlanAlert plan={plan} />;
 	} else if (!payg) {
 		const heldMore = plan.grandfathered ? `This workspace holds ${plan.units} domains and only one is free.` : null;
 		body = (
 			<div className="space-y-2">
-				{plan.lapsed ? <p className="text-sm text-ink-1">Pay as you go ended. {plan.paused_domains > 0 ? `${plan.includes_free_domain ? 'Domains beyond your free one are' : 'Your domains are'} paused: you can read and export them.` : ''}</p> : <p className="text-sm text-ink-1">{plan.includes_free_domain ? WORDS.freeIncludes : 'This workspace has no free domain.'}</p>}
+				{plan.lapsed ? <p className="text-sm text-ink-1">{plan.card_declined ? 'Pay as you go ended because a payment did not go through.' : 'Pay as you go ended.'} {plan.paused_domains > 0 ? `${plan.includes_free_domain ? 'Domains beyond your free one are' : 'Your domains are'} paused: you can read and export them.` : ''}</p> : <p className="text-sm text-ink-1">{plan.includes_free_domain ? WORDS.freeIncludes : 'This workspace has no free domain.'}</p>}
 				{heldMore && !starting ? <p className="text-sm text-ink-2">{heldMore}</p> : null}
 				{!plan.paid_available ? <p className="text-sm text-ink-2">More domains: talk to us.</p>
 					: !owner ? <p className="text-sm text-ink-1">{plan.lapsed ? 'Ask the workspace owner to start pay as you go again to resume them.' : WORDS.askOwner}</p>
-					: <p className="text-sm text-ink-2">{plan.lapsed ? 'Start pay as you go again to resume them.' : `More domains are pay as you go${money ? `: ${money} for each` : ''}. Cancel any time.`}</p>}
+					: <p className="text-sm text-ink-2">{plan.lapsed ? (plan.card_declined ? 'Update your card, then start pay as you go again to resume them.' : 'Start pay as you go again to resume them.') : `More domains are pay as you go${money ? `: ${money} for each` : ''}. Cancel any time.`}</p>}
 			</div>
 		);
-		if (owner && plan.paid_available && !starting) action = <Button onClick={() => setStarting(true)}>{plan.lapsed ? 'Start pay as you go again' : 'Start pay as you go'}</Button>;
+		if (owner && plan.paid_available && !starting) action = <Button variant={plan.card_declined ? 'secondary' : 'primary'} onClick={() => setStarting(true)}>{plan.lapsed ? 'Start pay as you go again' : 'Start pay as you go'}</Button>;
 	} else {
 		const sentence = plan.includes_free_domain ? `Your first domain is free. Each domain beyond it is ${money ?? 'billed monthly'}.` : `Each domain is ${money ?? 'billed monthly'}.`;
 		body = (
@@ -50,7 +58,10 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 				<p className="text-sm text-ink-1">{sentence} Subdomains are included.</p>
 				{owner ? (
 					<dl className="divide-y divide-line text-sm">
-						<Line label="Domains billed">{plan.billable === 0 ? 'None yet' : `${plan.billable}${money ? ` × ${perInterval(unit!)}` : ''}`}</Line>
+						<Line label="Domains billed">
+							{plan.billable === 0 ? 'None yet' : `${plan.billable}${money ? ` × ${perInterval(unit!)}` : ''}`}
+							{plan.domains.some((d) => d.billable) ? <ul className="mt-1 space-y-0.5 text-ink-2">{plan.domains.filter((d) => d.billable).map((d) => <li key={d.id} className="font-mono [overflow-wrap:anywhere]">{d.name}</li>)}</ul> : null}
+						</Line>
 						{plan.cancel_at_period_end && plan.period_end ? (
 							<Line label="Ends">{longDate(plan.period_end)}. Your domains keep working until then.</Line>
 						) : plan.next_invoice && plan.billable > 0 ? (
@@ -58,21 +69,9 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 						) : plan.billable === 0 ? <Line label="Next invoice">Nothing to pay yet</Line> : null}
 					</dl>
 				) : <p className="text-sm text-ink-1">{WORDS.askOwner}</p>}
-				{owner && plan.domains.some((d) => d.billable) ? (
-					<ul className="divide-y divide-line rounded-md border border-line text-sm">
-						{plan.domains.filter((d) => d.billable).map((d) => (
-							<li key={d.id} className="px-3 py-2"><span className="font-mono [overflow-wrap:anywhere]">{d.name}</span></li>
-						))}
-					</ul>
-				) : null}
-				{plan.action_required_url && owner ? <Alert variant="warning" title={WORDS.bank}>The renewal is waiting for you.</Alert>
-					: plan.payment_problem ? <Alert variant="warning" title="Your last payment did not go through">Update your card to add more domains. Your domains keep working.</Alert> : null}
+				{alert ? <PlanAlert plan={plan} /> : null}
 			</div>
 		);
-		if (owner) {
-			if (plan.action_required_url) action = <Button asChild><a href={plan.action_required_url} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden />Confirm the payment</a></Button>;
-			else if (plan.payment_problem) action = <Button loading={portal.isPending} onClick={() => portal.mutate()}><ExternalLink aria-hidden />Update your card</Button>;
-		}
 	}
 
 	return (
@@ -83,10 +82,10 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 				{owner && starting && !payg ? <StartPlan plan={plan} billing={billing} onCancel={() => { setStarting(false); strip('plan'); }} onStarted={() => { setStarting(false); strip('plan'); void qc.invalidateQueries({ queryKey: billingKeys.all }); }} /> : null}
 				{portal.isError ? <Alert variant="danger" title="That did not work">{errorMessage(portal.error)}</Alert> : null}
 			</CardContent>
-			{action || (payg && owner) ? (
+			{action || (payg && owner && !alert) ? (
 				<CardFooter className="flex-wrap justify-between gap-3">
 					<div>{action}</div>
-					{payg && owner ? <Button variant={action ? 'secondary' : 'secondary'} loading={portal.isPending && !action} onClick={() => portal.mutate()}><ExternalLink aria-hidden />Change card, see invoices or cancel</Button> : null}
+					{payg && owner && !alert ? <Button variant="secondary" loading={portal.isPending} onClick={() => portal.mutate()}><ExternalLink aria-hidden />Change card, see invoices or cancel</Button> : null}
 				</CardFooter>
 			) : null}
 		</Card>

@@ -38,6 +38,10 @@ export type CfConnectionInfo = {
 
 export interface CfConnectionZone { zone_id: string; zone_name: string; cf_account_id?: string | null; cf_account_name?: string | null }
 
+/** Rows per multi-row INSERT: at most 6 bound values a row, and D1 allows 100 in a statement. */
+const INSERT_ROWS = 15;
+const inRows = <T,>(xs: T[]): T[][] => Array.from({ length: Math.ceil(xs.length / INSERT_ROWS) }, (_, i) => xs.slice(i * INSERT_ROWS, (i + 1) * INSERT_ROWS));
+
 export function connectionQueries(db: Db, workspaceId: string) {
 	const mine = eq(cloudflareConnections.workspace_id, workspaceId);
 	const one = (id: string) => and(mine, eq(cloudflareConnections.id, id));
@@ -159,15 +163,12 @@ export function connectionQueries(db: Db, workspaceId: string) {
 		async setZones(connectionId: string, zones: CfConnectionZone[], blocked: { zone_id: string; zone_name: string }[] = []): Promise<boolean> {
 			const owned = await db.select({ id: cloudflareConnections.id }).from(cloudflareConnections).where(one(connectionId)).get();
 			if (!owned) return false;
+			// D1 takes at most 100 bound values in one statement: a multi-row insert is split into batches of INSERT_ROWS rows (an agency's account has dozens of zones).
 			const stmts = [
 				db.delete(cloudflareConnectionZones).where(and(myZones, eq(cloudflareConnectionZones.connection_id, connectionId))),
 				db.delete(cloudflareConnectionBlockedZones).where(and(eq(cloudflareConnectionBlockedZones.workspace_id, workspaceId), eq(cloudflareConnectionBlockedZones.connection_id, connectionId))),
-				...(zones.length
-					? [db.insert(cloudflareConnectionZones).values(zones.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase(), cf_account_id: z.cf_account_id ?? null, cf_account_name: z.cf_account_name ?? null })))]
-					: []),
-				...(blocked.length
-					? [db.insert(cloudflareConnectionBlockedZones).values(blocked.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase() })))]
-					: []),
+				...inRows(zones).map((part) => db.insert(cloudflareConnectionZones).values(part.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase(), cf_account_id: z.cf_account_id ?? null, cf_account_name: z.cf_account_name ?? null })))),
+				...inRows(blocked).map((part) => db.insert(cloudflareConnectionBlockedZones).values(part.map((z) => ({ connection_id: connectionId, workspace_id: workspaceId, zone_id: z.zone_id, zone_name: z.zone_name.toLowerCase() })))),
 			];
 			await db.batch(stmts as [(typeof stmts)[number], ...(typeof stmts)[number][]]);
 			return true;

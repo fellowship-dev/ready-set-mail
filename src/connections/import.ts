@@ -138,7 +138,7 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
       const wanted1 = [input.preferredDomain, caller.email?.split('@')[1]].map(d => (d ? unitOf(d) : null));
       const pick = free > 0 ? wanted1.map(u => (u ? fresh.find(z => unitOf(z.name) === u) : undefined)).find(Boolean) : undefined;
       if (!pick && free > 0) return { ...result, imported: [], needs_selection: { room: free, cap: room.units?.max ?? free, zones: fresh.map(choice) } };
-      const others = fresh.filter(z => z !== pick && !(pick && unitOf(z.name) === unitOf(pick.name)));
+      const others = fresh.filter(z => z !== pick && !(pick && unitOf(z.name) === unitOf(pick.name)) && !held.has(unitOf(z.name)));
       const sub = pick ? await importZones(tenant, connectionId, { zoneIds: [pick.id] }, caller, ctx) : { ...result };
       return { ...sub, other_zones: others.map(choice) };
     }
@@ -198,6 +198,10 @@ export async function suggestedZones(tenant: TenantContext): Promise<{ connectio
   const have = new Set((await tenant.scope.domains.list()).map(d => d.domain.toLowerCase()));
   const claimed = new Set((await tenant.scope.claims.list()).filter(c => c.status === 'pending').map(c => c.domain.toLowerCase()));
   const removed = await tenant.scope.removals.names();
+  // Under the plan a zone is "also in your account" only if adding it would be a new unit: a zone inside (or the apex of) a domain the workspace already
+  // holds is the same unit and costs nothing, and zones of one unit are offered once, by their shortest name (one price, not one per zone).
+  const plan = await loadPlanState(tenant.env, tenant.db, tenant.workspaceId);
+  const held = plan.enforced && !plan.exempt ? new Set(plan.rows.map(r => r.org)) : null;
   const out: Awaited<ReturnType<typeof suggestedZones>> = [];
   const seen = new Set<string>();
   for (const c of await tenant.scope.connections.list()) {
@@ -209,6 +213,16 @@ export async function suggestedZones(tenant: TenantContext): Promise<{ connectio
       seen.add(z.name);
       out.push({ connection_id: c.id, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null, zone_id: z.id, name: z.name, removed: removed.has(z.name) });
     }
+  }
+  if (held) {
+    const byUnit = new Map<string, (typeof out)[number]>();
+    for (const z of out) {
+      const unit = unitOf(z.name);
+      if (held.has(unit)) continue;
+      const best = byUnit.get(unit);
+      if (!best || z.name.length < best.name.length) byUnit.set(unit, z);
+    }
+    return [...byUnit.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }

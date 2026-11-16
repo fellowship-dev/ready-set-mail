@@ -49,6 +49,8 @@ export interface PlanView {
 	monthly_amount?: number | null;
 	next_invoice?: { amount_due: number; currency: string; date: number | null } | null;
 	action_required_url?: string | null;
+	/** The plan ended because the card was declined: the card on file is the one that failed. */
+	card_declined?: boolean;
 	/** Everyone else. */
 	ask_owner?: boolean;
 }
@@ -106,11 +108,11 @@ export function usePaidPreview(domains: string[], opts: { enabled?: boolean; sta
 }
 
 /** The plan_required answer of an add (HTTP 402), or null for any other error. */
-export function planRequiredOf(err: unknown): { message: string; paidAvailable: boolean; helpUrl: string | null; domain: string | null; grandfather: PaidPreview['grandfather'] } | null {
+export function planRequiredOf(err: unknown): { message: string; paidAvailable: boolean; helpUrl: string | null; domain: string | null; grandfather: PaidPreview['grandfather']; state: 'none' | 'active' | 'pending' | 'payment_problem' | 'lapsed' } | null {
 	if (!(err instanceof ApiError) || err.status !== 402) return null;
-	const b = err.body as { code?: string; paid_available?: boolean; help_url?: string | null; domain?: string; grandfather?: PaidPreview['grandfather'] } | undefined;
+	const b = err.body as { code?: string; paid_available?: boolean; help_url?: string | null; domain?: string; grandfather?: PaidPreview['grandfather']; state?: 'none' | 'active' | 'pending' | 'payment_problem' | 'lapsed' } | undefined;
 	if (b?.code !== 'plan_required') return null;
-	return { message: err.message, paidAvailable: b.paid_available === true, helpUrl: typeof b.help_url === 'string' ? b.help_url : null, domain: b.domain ?? null, grandfather: b.grandfather ?? null };
+	return { message: err.message, paidAvailable: b.paid_available === true, helpUrl: typeof b.help_url === 'string' ? b.help_url : null, domain: b.domain ?? null, grandfather: b.grandfather ?? null, state: b.state ?? 'none' };
 }
 
 export function errorCode(err: unknown): string | null {
@@ -145,6 +147,8 @@ export const WORDS = {
 	notCompleted: 'The payment was not completed, so the domain was not added. You have not been charged.',
 	freeIncludes: 'Free: one domain with all its subdomains.',
 	noChargeUntil: 'No charge until you add a domain beyond your free one.',
+	declinedCard: 'This card was declined.',
+	renewalWaiting: 'The renewal is waiting for you.',
 };
 
 /** The sentence above the one button of the paid-domain confirm. Every amount is Stripe's: the preview's, or the unit price itself. */
@@ -159,18 +163,33 @@ export function confirmSentence(p: PaidPreview, card: string, count = 1): string
 		if (p.charge_now === null || p.preview_failed) return [WORDS.noPreview];
 		const now = usd(p.charge_now, unit.currency);
 		const then = p.then ? `${usd(p.then.amount, p.then.currency)} a ${unit.interval}${p.then.date ? ` from ${shortDate(p.then.date)}` : ''}` : monthly;
-		return [`${now} now to ${card}, then ${then}.`, tail];
+		return [`${now} now, then ${then}. Card ${card}.`, tail];
 	}
 	if (p.preview_failed || !p.next_invoice) return [`${each}, billed with your next invoice.`, tail];
 	const inv = p.next_invoice;
 	return [`${each}, from today.`, `Your next invoice${inv.date ? ` on ${shortDate(inv.date)}` : ''} to ${card}: ${invoiceMoney(inv.amount_due, inv.currency)} (this month's part plus the next).`, tail];
 }
 
-/** The label of the one button. */
+/** The label of the one button: it names what happens at the click, so a charge now says so ("Pay $5 and add") and a prorated add says the monthly price. */
 export function confirmLabel(p: PaidPreview, count = 1): string {
 	if (p.no_charge && count === 0) return 'Start pay as you go';
 	const unit = p.unit_price;
 	if (!unit) return 'Add';
+	if (p.plan_starts && p.charge_now !== null && p.charge_now > 0) return `Pay ${usd(p.charge_now, unit.currency)} and add`;
 	if (count > 1) return `Add ${count} domains`;
 	return `Add for ${usd(unit.amount, unit.currency)} a ${unit.interval}`;
+}
+
+/** What the zone list's Add button says once something is ticked: the count and the monthly total ("Add 2: $10 a month"). The total is the unit price times the count. */
+export function addSelectedLabel(count: number, unit: Money | null | undefined): string {
+	if (count === 0) return 'Add';
+	return unit ? `Add ${count}: ${usd(unit.amount * count, unit.currency)} a ${unit.interval}` : `Add ${count}`;
+}
+
+/** The flash after an add, in what was true: charged at once, or prorated onto the next invoice. */
+export function addedText(count: number, unit: Money | null | undefined, chargedNow: number | null): string {
+	const noun = count > 1 ? `Added ${count} domains.` : 'Added.';
+	if (!unit) return noun;
+	if (chargedNow !== null && chargedNow > 0) return `${noun} ${usd(chargedNow, unit.currency)} paid now, then ${usd(unit.amount * count, unit.currency)} a ${unit.interval}.`;
+	return `${noun} ${usd(unit.amount, unit.currency)} a ${unit.interval}${count > 1 ? ' each' : ''} from today.`;
 }

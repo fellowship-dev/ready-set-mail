@@ -1,14 +1,12 @@
 import { Alert, Button, IconButton, toast } from '@ready-set-mail/ui';
-import { useMutation } from '@tanstack/react-query';
-import { ExternalLink, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { errorMessage } from '../../lib/api';
-import { openPortal } from '../../lib/billing';
 import { useStripParams } from '../../lib/card-return';
 import { usePlan, WORDS } from '../../lib/plan';
 import { useHosted } from '../../lib/session';
 import { useSearchParams } from 'react-router';
+import { PlanAlert, planAlertKind, sayingItsOwnPlanAlert } from './PlanAlerts';
 
 /**
  * What the plan needs the person to know, on every page, one plain sentence and one action each: the result of an add ("Added. $5 a month from today."),
@@ -21,7 +19,6 @@ export function PlanBanners() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const flash = (location.state as { planFlash?: { domains: string[]; text: string } } | null)?.planFlash ?? null;
-	const portal = useMutation({ mutationFn: openPortal });
 	// The one-time notice arrives once in the answer; it stays until it is dismissed.
 	const [notice, setNotice] = useState<string | null>(null);
 	useEffect(() => { if (plan?.notice) setNotice(plan.notice); }, [plan?.notice]);
@@ -47,34 +44,9 @@ export function PlanBanners() {
 			</Alert>,
 		);
 	}
-	if (plan.pending) {
-		items.push(
-			<Alert key="pending" variant="info" title={WORDS.waitingBank}>
-				<span className="[overflow-wrap:anywhere]">{plan.pending.domains.join(', ')} will be added once your bank has confirmed the payment. This updates by itself.</span>
-				{owner && plan.pending.action_url ? (
-					<div className="pt-2"><Button asChild variant="secondary" size="sm"><a href={plan.pending.action_url} target="_blank" rel="noopener noreferrer">Open the confirmation page<ExternalLink aria-hidden /></a></Button></div>
-				) : null}
-			</Alert>,
-		);
-	}
-	// The Add domain page says it itself, in its own place: not twice.
-	if (plan.payment_problem && !(plan.action_required_url && owner) && !location.pathname.startsWith('/add')) {
-		items.push(
-			<Alert key="problem" variant="warning" title="Your last payment did not go through">
-				<span>{owner ? 'Update your card to add more domains. Your domains keep working.' : 'Ask the workspace owner to update the card. Your domains keep working.'}</span>
-				{owner ? <div className="pt-2"><Button size="sm" loading={portal.isPending} onClick={() => portal.mutate()}>Update your card</Button></div> : null}
-			</Alert>,
-		);
-	}
-	if (plan.action_required_url && owner) {
-		items.push(
-			<Alert key="action" variant="warning" title={WORDS.bank}>
-				<span>The renewal is waiting for you.</span>
-				<div className="pt-2"><Button asChild size="sm"><a href={plan.action_required_url} target="_blank" rel="noopener noreferrer">Confirm the payment<ExternalLink aria-hidden /></a></Button></div>
-			</Alert>,
-		);
-	}
-	if (plan.paused_domains > 0) {
+	// A payment that needs the person: one alert, said where it is acted on (the Add domain confirm and Settings → Billing say it in their own place).
+	if (planAlertKind(plan) && !sayingItsOwnPlanAlert(location.pathname)) items.push(<PlanAlert key="payment" plan={plan} />);
+	if (plan.paused_domains > 0 && !(plan.lapsed && location.pathname.startsWith('/settings'))) {
 		const all = !plan.includes_free_domain;
 		items.push(
 			<Alert key="paused" variant="info" title={all ? 'Your domains are paused' : plan.paused_domains === 1 ? '1 domain is paused' : `${plan.paused_domains} domains are paused`}>
@@ -84,7 +56,6 @@ export function PlanBanners() {
 			</Alert>,
 		);
 	}
-	if (portal.isError) items.push(<Alert key="err" variant="danger" title="That did not work">{errorMessage(portal.error)}</Alert>);
 	if (items.length === 0) return null;
 	return <div className="space-y-3">{items}</div>;
 }

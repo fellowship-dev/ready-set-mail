@@ -7,6 +7,8 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 type Row = Record<string, unknown>;
 
+export const D1_MAX_BOUND_PARAMETERS = 100;
+
 class Statement {
 	constructor(
 		private readonly db: DatabaseSync,
@@ -24,6 +26,8 @@ class Statement {
 		return s;
 	}
 	private args() {
+		// D1 refuses a statement with more than 100 bound parameters; node:sqlite would take 32766, so a long IN list or multi-row insert would only fail in production.
+		if (this.params.length > D1_MAX_BOUND_PARAMETERS) throw new Error(`D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR (${this.params.length} bound parameters, the limit is ${D1_MAX_BOUND_PARAMETERS})`);
 		return this.params.map((p) => (p === undefined ? null : p)) as SQLInputValue[];
 	}
 

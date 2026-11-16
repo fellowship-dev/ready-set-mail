@@ -7,8 +7,9 @@ import { Section } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { cardLine, formatMoney, openPortal, orderDate, startCardSession, STATUS_WORDS, statusDate, useBilling, type Order } from '../../lib/billing';
 import { useCardReturn } from '../../lib/card-return';
+import { WORDS } from '../../lib/plan';
 import { useHosted } from '../../lib/session';
-import { PlanCard } from '../../components/billing/PlanCard';
+import { PlanCard, planCardHasPortal } from '../../components/billing/PlanCard';
 
 const TONE: Record<Order['status'], 'neutral' | 'success' | 'warning' | 'danger' | 'brand'> = {
 	pending: 'neutral', paid: 'success', started: 'brand', done: 'success', refunded: 'neutral', failed: 'danger', canceled: 'neutral',
@@ -30,6 +31,9 @@ export function BillingSection() {
 	if (q.isError) return null;
 	const b = q.data;
 	const failure = portal.error ?? add.error;
+	// ONE way to Stripe's portal on the page: when the plan card (or its payment alert) carries it, the card box is plain facts.
+	const declined = !!b?.plan?.card_declined;
+	const footer = !planCardHasPortal(b?.plan);
 
 	return (
 		<div ref={ref}>
@@ -42,30 +46,32 @@ export function BillingSection() {
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">
-								<Row label="Card">{b.card ? cardLine(b.card) : b.card_on_file ? 'A card is on file.' : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}</Row>
+								<Row label="Card">{b.card ? cardLine(b.card) : b.card_on_file ? 'A card is on file.' : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}{declined ? <> {WORDS.declinedCard}</> : null}</Row>
 								{b.can_manage ? <Row label="Billing email">{b.billing_email ?? <span className="text-ink-2">The owner's email address, once a card is added.</span>}</Row> : null}
 							</dl>
 						</CardContent>
-						<CardFooter className="flex-wrap justify-between gap-3">
-							{b.can_manage ? (
-								<>
-									<p className="text-sm text-ink-2">{b.has_customer ? 'The billing email is changed on Stripe too.' : ' '}</p>
-									{b.card || b.has_customer ? (
-										<Button variant="secondary" loading={portal.isPending} onClick={() => portal.mutate()}>
-											<ExternalLink aria-hidden />
-											Change card or see invoices
-										</Button>
-									) : (
-										<Button variant="secondary" loading={add.isPending} onClick={() => add.mutate()}>
-											<CreditCard aria-hidden />
-											Add a card
-										</Button>
-									)}
-								</>
-							) : (
-								<p className="text-sm text-ink-2">Only the workspace owner can add a card or buy.</p>
-							)}
-						</CardFooter>
+						{footer ? (
+							<CardFooter className="flex-wrap justify-between gap-3">
+								{b.can_manage ? (
+									<>
+										<p className="text-sm text-ink-2">{b.has_customer && !declined ? 'The billing email is changed on Stripe too.' : ' '}</p>
+										{b.card || b.has_customer ? (
+											<Button variant={declined ? 'primary' : 'secondary'} loading={portal.isPending} onClick={() => portal.mutate()}>
+												<ExternalLink aria-hidden />
+												{declined ? 'Update your card' : 'Change card or see invoices'}
+											</Button>
+										) : (
+											<Button variant="secondary" loading={add.isPending} onClick={() => add.mutate()}>
+												<CreditCard aria-hidden />
+												Add a card
+											</Button>
+										)}
+									</>
+								) : (
+									<p className="text-sm text-ink-2">Only the workspace owner can add a card or buy.</p>
+								)}
+							</CardFooter>
+						) : null}
 					</Card>
 					{failure ? (
 						<Alert variant="danger" title="That did not work">

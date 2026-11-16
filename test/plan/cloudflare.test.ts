@@ -91,3 +91,51 @@ describe('"Also in your Cloudflare account" is shown once', () => {
     expect((await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'))).dismissed).toBe(true);
   });
 });
+
+describe('an account with many zones (an agency)', () => {
+  const many = Array.from({ length: 50 }, (_, i) => `zone-${String(i).padStart(2, '0')}.com`);
+  it('connecting and importing with 50 zones works (D1 takes at most 100 bound values in a statement), and every other zone is offered', async () => {
+    const s = await setup(many);
+    const res = await s.imp({ preferred_domain: 'zone-07.com' });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.imported.map((i: any) => i.domain)).toEqual(['zone-07.com']);
+    expect(body.other_zones).toHaveLength(49);
+    const sug = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(sug.suggestions).toHaveLength(49);
+    expect(s.w.rows('SELECT COUNT(*) AS n FROM cloudflare_connection_zones')[0].n).toBe(50);
+  });
+  it('with HOSTED_PLAN off the same account imports whole', async () => {
+    const s = await setup(many.slice(0, 30), {});
+    const res = await s.imp({});
+    expect(res.status).toBe(200); // not a 500 "too many SQL variables"
+  });
+});
+
+describe('"Also in your Cloudflare account" lists only what would cost something', () => {
+  it('a zone whose domain is already held, or that is a subdomain of a held one, or the parent of a held one, is not offered; a removed zone is, marked', async () => {
+    const s = await setup(['held.com', 'sub.held.com', 'other.org', 'mail.other.org', 'new.net']);
+    await s.imp({ preferred_domain: 'held.com' });
+    const sug = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    // held.com is the unit held; a zone inside it is the same unit; the unrelated ones are what "also" means
+    expect(sug.suggestions.map((z: any) => z.name)).toEqual(['new.net', 'other.org']); // other.org and mail.other.org are ONE unit: offered once, by its apex
+  });
+  it('the parent zone of a held subdomain is the same unit: not offered', async () => {
+    const s = await setup(['parent.com', 'other.org']);
+    s.w.db.sqlite.prepare("INSERT INTO domains (domain, rua_address, workspace_id, verified_via) VALUES ('mail.parent.com', 'rua@reports.mail.parent.com', ?, 'txt')").run(s.ws);
+    const sug = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(sug.suggestions.map((z: any) => z.name)).toEqual(['other.org']);
+  });
+  it('a domain evicted from this workspace holds no unit: its zone is offered again like any other', async () => {
+    const s = await setup(['gone.com', 'other.org']);
+    s.w.db.sqlite.prepare("INSERT INTO domains (domain, rua_address, workspace_id, verified_via, evicted_at) VALUES ('gone.com', 'rua@reports.gone.com', ?, 'txt', unixepoch())").run(s.ws);
+    const sug = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(sug.suggestions.map((z: any) => z.name)).toEqual(['gone.com', 'other.org']);
+  });
+  it('with HOSTED_PLAN off the list is what it was: the parent zone of a held subdomain is still suggested', async () => {
+    const s = await setup(['parent.com', 'other.org'], {});
+    s.w.db.sqlite.prepare("INSERT INTO domains (domain, rua_address, workspace_id, verified_via) VALUES ('mail.parent.com', 'rua@reports.mail.parent.com', ?, 'txt')").run(s.ws);
+    const sug = await json(await s.w.api(s.token, 'GET', '/api/cloudflare/suggestions'));
+    expect(sug.suggestions.map((z: any) => z.name)).toEqual(['other.org', 'parent.com']);
+  });
+});
