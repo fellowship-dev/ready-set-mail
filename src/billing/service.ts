@@ -263,9 +263,10 @@ export async function runCharge(d: BillingDeps, order: OrderRow): Promise<Purcha
     }
     const item = await d.stripe.createInvoiceItem({ orderId: order.id, customerId, invoiceId, priceId: order.stripe_price_id, description: `${OFFER_NAME}: ${order.domain_name}` });
     // Defense in depth: before anything can be charged, the draft must be exactly what the buyer confirmed (one line, our price, the order's amount and currency).
+    // `total` is what was sold; `amount_due` already has the customer's credit balance taken off, so a buyer with credit would never pass if that were compared.
     const draft = await d.stripe.retrieveInvoice(invoiceId);
     if (draft.status === 'draft' || draft.status === 'open') {
-      const problem = soldProblem(order, draft) ?? (draft.amount_due !== order.amount ? `amount due ${String(draft.amount_due)} is not the order's ${order.amount}` : null);
+      const problem = soldProblem(order, draft) ?? (draft.total !== order.amount ? `total ${String(draft.total)} is not the order's ${order.amount}` : null);
       if (problem) {
         console.error(`[billing] order ${order.id}: invoice ${invoiceId} is not what was confirmed (${problem}); it is discarded, nothing was charged`);
         if (draft.status === 'draft' && typeof item.id === 'string') await d.stripe.deleteInvoiceItem(item.id).catch((e) => { if (!(e instanceof StripeError)) throw e; });

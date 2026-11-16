@@ -202,8 +202,12 @@ export function createFakeStripe(opts = {}) {
   function syncTotals(inv) {
     const t = invoiceTotal(inv);
     inv.subtotal = t; inv.total = t;
-    inv.amount_due = inv.status === 'paid' ? t : t;
-    inv.amount_remaining = inv.status === 'paid' ? 0 : t;
+    // Real Stripe (2025-09-30.clover): a customer's credit balance is already taken off a DRAFT's amount_due (total 14900, starting_balance -5000, amount_due 9900); the balance itself moves at finalize.
+    const cust = state.customers.get(inv.customer);
+    const credit = inv.status === 'draft' && cust && cust.balance < 0 ? Math.min(-cust.balance, Math.max(t, 0)) : 0;
+    if (inv.status === 'draft') inv.starting_balance = credit ? -credit : 0;
+    inv.amount_due = t - credit;
+    inv.amount_remaining = inv.status === 'paid' ? 0 : t - credit;
   }
   function linesOf(inv) {
     if (inv._lines) return { object: 'list', data: clone(inv._lines), has_more: false, url: `/v1/invoices/${inv.id}/lines` };
@@ -325,7 +329,8 @@ export function createFakeStripe(opts = {}) {
     if (action === 'succeed') markPaid(inv, pi);
     else if (action === 'fail') {
       pi.status = 'requires_payment_method';
-      pi.last_payment_error = { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_method: pi.payment_method };
+      // real Stripe, a 3-D Secure the buyer failed (sandbox round A): the developer sentence, not a decline
+      pi.last_payment_error = { type: 'invalid_request_error', code: 'payment_intent_authentication_failure', message: 'The provided PaymentMethod has failed authentication. You can provide payment_method_data or a new PaymentMethod to attempt to fulfill this PaymentIntent again.', payment_method: pi.payment_method };
       queue('invoice.payment_failed', invoiceOut(inv));
     } else throw new Error(`fake-stripe: unknown action ${action}`);
     return invoiceOut(inv);
@@ -778,9 +783,12 @@ export function createFakeStripe(opts = {}) {
       if (inv.customer !== cid) throw bad(`Invoice ${iid} does not belong to customer ${cid}.`, 'invoice_customer_mismatch', 'invoice');
       if (inv.status !== 'draft') throw bad('You can only add invoice items to a draft invoice.', 'invoice_not_editable', 'invoice');
       let amount; let currency = form.currency ?? inv.currency; let price = null;
-      if (form.price !== undefined) {
-        price = state.prices.get(form.price);
-        if (!price) throw missing('price', form.price);
+      // Real Stripe refuses `price` on this version: `400 parameter_unknown: Received unknown parameter: price. Did you mean pricing?`; the working form is pricing[price].
+      if (form.price !== undefined) throw bad('Received unknown parameter: price. Did you mean pricing?', 'parameter_unknown', 'price');
+      const priceId = form.pricing?.price;
+      if (priceId !== undefined) {
+        price = state.prices.get(priceId);
+        if (!price) throw missing('price', priceId);
         amount = price.unit_amount * (form.quantity ? Number(form.quantity) : 1); currency = price.currency;
       } else if (form.amount !== undefined) amount = Number(form.amount);
       else throw bad('Missing required param: price.', 'parameter_missing', 'price');
@@ -853,10 +861,10 @@ export function createFakeStripe(opts = {}) {
     if (action === 'finalize') {
       if (inv.status !== 'draft') throw bad("This invoice is already finalized, you can't re-finalize a non-draft invoice.", 'invoice_not_draft');
       syncTotals(inv);
-      // A credit on the customer's balance is applied when the invoice is finalized: what is due drops, what is sold does not.
+      // The credit shown on the draft is taken from the customer's balance when the invoice is finalized: what is due dropped already, what is sold did not.
       const cust = state.customers.get(inv.customer);
-      const credit = cust && cust.balance < 0 ? Math.min(-cust.balance, Math.max(inv.total, 0)) : 0;
-      if (credit) { cust.balance += credit; inv.starting_balance = -credit; inv.amount_due = inv.total - credit; inv.amount_remaining = inv.amount_due; }
+      const credit = -(inv.starting_balance ?? 0); // already applied to amount_due on the draft (syncTotals)
+      if (credit > 0 && cust) cust.balance += credit;
       if (inv.total < 0 && cust) { // GUESS: a negative invoice (prorated credit beyond the charges) owes nothing and the remainder goes to the customer balance
         cust.balance += inv.total; inv.ending_balance = cust.balance; inv.amount_due = 0; inv.amount_remaining = 0;
       }

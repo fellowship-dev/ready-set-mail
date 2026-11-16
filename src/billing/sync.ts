@@ -96,11 +96,20 @@ export async function applyInvoice(d: BillingDeps, order: OrderRow, invoiceId = 
   return 'pending';
 }
 
+/** Stripe's developer sentence for a 3-D Secure the buyer failed or abandoned is not for the buyer: say what happened and what to do. */
+export function buyerWords(why: { code: string | null; message: string }): { code: string | null; message: string } {
+  if (why.code === 'payment_intent_authentication_failure' || /failed authentication/i.test(why.message)) {
+    return { code: why.code ?? 'authentication_failure', message: 'Your bank did not confirm the payment. You have not been charged. Try again or use another card.' };
+  }
+  return why;
+}
+
 /**
  * The payment did not go through: void the invoice (so it can never be paid later) and end the order. If the void shows the invoice
  * was paid after all, the order goes paid instead. If it cannot be told, the error propagates and the order stays pending.
  */
-export async function failOrder(d: BillingDeps, order: OrderRow, why: { code: string | null; message: string }, to: 'failed' | 'canceled' = 'failed'): Promise<SyncResult> {
+export async function failOrder(d: BillingDeps, order: OrderRow, rawWhy: { code: string | null; message: string }, to: 'failed' | 'canceled' = 'failed'): Promise<SyncResult> {
+  const why = buyerWords(rawWhy);
   if (order.stripe_invoice_id) {
     try {
       await d.stripe.voidInvoice(order.id, order.stripe_invoice_id);

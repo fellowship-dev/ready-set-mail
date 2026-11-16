@@ -38,7 +38,7 @@ async function customerWithCard(fake: FakeStripe, card?: 'ok' | 'decline' | 'req
 
 async function openInvoice(fake: FakeStripe, cust: string) {
   const inv = (await api(fake, 'POST', '/v1/invoices', { customer: cust, collection_method: 'charge_automatically', auto_advance: 'false', currency: 'usd' })).json;
-  const item = await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, price: 'price_fake_fix_one_domain' });
+  const item = await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, 'pricing[price]': 'price_fake_fix_one_domain' });
   expect(item.json.amount).toBe(14900);
   const fin = await api(fake, 'POST', `/v1/invoices/${inv.id}/finalize`);
   expect(fin.json.status).toBe('open');
@@ -238,16 +238,27 @@ describe('invoices', () => {
     expect(paidEv.data.object).toMatchObject({ id: open.id, status: 'paid' });
   });
 
+  it('refuses a plain `price` on an invoice item, as real Stripe does on 2025-09-30.clover', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const inv = (await api(fake, 'POST', '/v1/invoices', { customer: cust, auto_advance: 'false', currency: 'usd' })).json;
+    const r = await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, price: 'price_fake_fix_one_domain' });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toMatchObject({ code: 'parameter_unknown', param: 'price' });
+  });
+
   it('lists the lines (price, quantity, currency), applies a customer credit at finalize, and deletes an item only from a draft', async () => {
     const fake = mk();
     const { cust } = await customerWithCard(fake);
     fake.setCustomerBalance(cust, -900);
     const inv = (await api(fake, 'POST', '/v1/invoices', { customer: cust, auto_advance: 'false', currency: 'usd' })).json;
-    const item = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, price: 'price_fake_fix_one_domain' })).json;
+    const item = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, 'pricing[price]': 'price_fake_fix_one_domain' })).json;
     const draft = (await api(fake, 'GET', `/v1/invoices/${inv.id}`)).json;
     expect(draft.lines.data).toHaveLength(1);
     expect(draft.lines.data[0]).toMatchObject({ quantity: 1, currency: 'usd', amount: 14900, pricing: { price_details: { price: 'price_fake_fix_one_domain' } }, parent: { invoice_item_details: { invoice_item: item.id } } });
-    expect(draft).toMatchObject({ amount_due: 14900, status: 'draft' });
+    // as real Stripe: the credit is already off a DRAFT's amount_due; the customer's balance moves at finalize
+    expect(draft).toMatchObject({ total: 14900, amount_due: 14000, starting_balance: -900, status: 'draft' });
+    expect(fake.state.customers.get(cust)!.balance).toBe(-900);
     const fin = (await api(fake, 'POST', `/v1/invoices/${inv.id}/finalize`)).json;
     expect(fin).toMatchObject({ total: 14900, amount_due: 14000, starting_balance: -900 });
     expect(fake.state.customers.get(cust)!.balance).toBe(0);
@@ -255,7 +266,7 @@ describe('invoices', () => {
     const paid = (await api(fake, 'POST', `/v1/invoices/${inv.id}/pay`, { off_session: 'true' })).json;
     expect(paid).toMatchObject({ status: 'paid', amount_paid: 14000 });
     const d2 = (await api(fake, 'POST', '/v1/invoices', { customer: cust, auto_advance: 'false', currency: 'usd' })).json;
-    const i2 = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: d2.id, price: 'price_fake_fix_one_domain' })).json;
+    const i2 = (await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: d2.id, 'pricing[price]': 'price_fake_fix_one_domain' })).json;
     expect((await api(fake, 'DELETE', `/v1/invoiceitems/${i2.id}`)).json).toMatchObject({ deleted: true });
     expect((await api(fake, 'GET', `/v1/invoices/${d2.id}`)).json.lines.data).toHaveLength(0);
   });
@@ -296,7 +307,7 @@ describe('invoices', () => {
     const a = (await api(fake, 'POST', '/v1/customers', { email: 'a@b.test' })).json.id;
     const b = (await api(fake, 'POST', '/v1/customers', { email: 'b@b.test' })).json.id;
     const inv = (await api(fake, 'POST', '/v1/invoices', { customer: a })).json;
-    const r = await api(fake, 'POST', '/v1/invoiceitems', { customer: b, invoice: inv.id, price: 'price_fake_fix_one_domain' });
+    const r = await api(fake, 'POST', '/v1/invoiceitems', { customer: b, invoice: inv.id, 'pricing[price]': 'price_fake_fix_one_domain' });
     expect(r.status).toBe(400);
     expect(fake.state.invoiceItems.size).toBe(0);
   });
@@ -338,7 +349,7 @@ describe('webhooks', () => {
     fake.setWebhookTarget(async req => { seen.push({ sig: req.headers.get('stripe-signature'), ct: req.headers.get('content-type'), body: await req.text() }); return new Response('ok'); });
     const cust = (await api(fake, 'POST', '/v1/customers', { email: 'a@b.test' })).json.id;
     const inv = (await api(fake, 'POST', '/v1/invoices', { customer: cust })).json;
-    await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, price: 'price_fake_fix_one_domain' });
+    await api(fake, 'POST', '/v1/invoiceitems', { customer: cust, invoice: inv.id, 'pricing[price]': 'price_fake_fix_one_domain' });
     await api(fake, 'POST', `/v1/invoices/${inv.id}/finalize`);
     expect(seen).toHaveLength(0);
     await fake.flush();

@@ -63,7 +63,7 @@ describe('1. 3-D Secure: invoice.payment_failed while the buyer still has to con
     const inv = firstInvoice(w);
     w.fake.completeInvoiceAction(inv.id, 'fail'); // PaymentIntent back to requires_payment_method + invoice.payment_failed
     await w.fake.flush();
-    expect(w.order(res.order.id)).toMatchObject({ status: 'failed', failure_message: 'Your card was declined.' });
+    expect(w.order(res.order.id)).toMatchObject({ status: 'failed', failure_code: 'payment_intent_authentication_failure', failure_message: 'Your bank did not confirm the payment. You have not been charged. Try again or use another card.' });
     expect(w.fake.state.invoices.get(inv.id)!.status).toBe('void');
   });
 });
@@ -236,7 +236,7 @@ describe('7. the draft invoice is checked before it is finalized', () => {
     };
   }
   const cases: Array<[string, (w: World) => void]> = [
-    ['the price moved between the steps', (w) => { w.fake.seedPrice({ id: 'price_fake_fix_one_domain', unit_amount: 99900 }); [...w.fake.state.invoiceItems.values()][0]!.amount = 99900; firstInvoice(w).amount_due = 99900; }],
+    ['the price moved between the steps', (w) => { w.fake.seedPrice({ id: 'price_fake_fix_one_domain', unit_amount: 99900 }); [...w.fake.state.invoiceItems.values()][0]!.amount = 99900; firstInvoice(w).total = 99900; firstInvoice(w).amount_due = 99900; }],
     ['an extra line appeared', (w) => { const it = [...w.fake.state.invoiceItems.values()][0]!; w.fake.state.invoiceItems.set('ii_extra', { ...structuredClone(it), id: 'ii_extra' }); }],
     ['the line is not our price', (w) => { [...w.fake.state.invoiceItems.values()][0]!.price.id = 'price_other'; }],
   ];

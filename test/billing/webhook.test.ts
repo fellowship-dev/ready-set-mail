@@ -211,12 +211,12 @@ describe('events are only pointers: everything is re-read from Stripe and must a
     await w.sendEvent(w.fake.makeEvent('invoice.payment_action_required', invoice));
     expect(w.order(orderId).status).toBe('paid');
   });
-  it('payment_failed after a bad bank confirmation uses Stripe\'s own words and voids the invoice', async () => {
+  it('payment_failed after a bad bank confirmation says it in the buyer\'s words and voids the invoice', async () => {
     const { w, orderId, invoice } = await withOrder('requires_action');
     w.fake.completeInvoiceAction(invoice.id, 'fail');
     const ev = [...w.fake.state.events.values()].find((e) => e.type === 'invoice.payment_failed')!;
     await w.sendEvent(ev);
-    expect(w.order(orderId)).toMatchObject({ status: 'failed', failure_code: 'generic_decline', failure_message: 'Your card was declined.' });
+    expect(w.order(orderId)).toMatchObject({ status: 'failed', failure_code: 'payment_intent_authentication_failure', failure_message: 'Your bank did not confirm the payment. You have not been charged. Try again or use another card.' });
     expect(w.fake.state.invoices.get(invoice.id)!.status).toBe('void');
   });
   it('a refund of a charge of another customer, or of no order of ours, changes nothing', async () => {

@@ -82,6 +82,8 @@ describe('StripeClient', () => {
     await c.voidInvoice('ord_1', 'in_1');
     await c.createSetupSession({ ref: 'bcs_1', customerId: 'cus_1', workspaceId: 'ws_1', purpose: 'add_card', successUrl: 'https://x/ok?s={CHECKOUT_SESSION_ID}', cancelUrl: 'https://x/no' });
     expect(calls.map((x) => (x.init.headers as Record<string, string>)['Idempotency-Key'])).toEqual(['rsm-ord_1-invoice', 'rsm-ord_1-item', 'rsm-ord_1-finalize', 'rsm-ord_1-pay', 'rsm-ord_1-void', 'rsm-cs-bcs_1']);
+    expect(String(calls[1]!.init.body)).toContain('pricing%5Bprice%5D=price_1');
+    expect(String(calls[1]!.init.body)).not.toMatch(/(^|&)price=/); // real Stripe: 400 parameter_unknown
     const invoice = String(calls[0]!.init.body);
     for (const part of ['collection_method=charge_automatically', 'auto_advance=false', 'pending_invoice_items_behavior=exclude', 'metadata%5Border_id%5D=ord_1', 'metadata%5Bworkspace_id%5D=ws_1', 'metadata%5Bdomain%5D=acme.com', 'metadata%5Boffer%5D=fix-one-domain']) expect(invoice).toContain(part);
     expect(String(calls[3]!.init.body)).toBe('off_session=true');

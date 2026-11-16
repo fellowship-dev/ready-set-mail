@@ -33,7 +33,7 @@ Beyond that one offer there is the hosted plan: free for one domain, **Pay as yo
 | Variable | | |
 |---|---|---|
 | `STRIPE_SECRET_KEY` | secret | a **restricted** key, `rk_live_…` or `rk_test_…`. A full `sk_…` key is refused (preflight: "STRIPE_SECRET_KEY is a full secret key") so a leaked Worker secret cannot read or refund everything |
-| `STRIPE_WEBHOOK_SECRET` | secret | the endpoint's signing secret, `whsec_…` |
+| `STRIPE_WEBHOOK_SECRET` | secret | the endpoint's signing secret, `whsec_…` (letters and digits only: Stripe's own secrets are; a secret you generate for a local test must be hex, `whsec_` + `openssl rand -hex 24`, because base64url's `-` and `_` are refused and billing stays off) |
 | `STRIPE_PRICE_LOOKUP_KEY` | optional | default `rsm_fix_one_domain` |
 | `STRIPE_API_BASE` | testing only | accepted only as `http://127.0.0.1:<port>` or `http://localhost:<port>` (the local fake); anything else is ignored and `https://api.stripe.com` is used |
 | `OWNER_EMAIL` | existing | the instance owner: emailed once per paid order, and the only person who sees the Orders list |
@@ -41,7 +41,7 @@ Beyond that one offer there is the hosted plan: free for one domain, **Pay as yo
 
 Billing is on only when the service is hosted (`MODE=saas`, `SAAS_ENABLED=1`), both Stripe secrets are well formed, and the price resolves. `GET /api/instance/preflight` (instance owner) reports `billing: { state: off | configured | misconfigured, reason?, livemode?, price? }` and an item per problem, by setting name, never a value. Apply migration `0016` first (`npm run migrate`).
 
-Every request is pinned to Stripe API version **`2025-09-30.clover`** (`STRIPE_API_VERSION` in `src/billing/config.ts`; the fake refuses any other). Shapes used: Invoices expose their payments through `expand[]=payments` (the `payment_intent` / `charge` fields of older versions are gone, so charge events are matched by the charge and payment-intent ids stored on the order, falling back to `GET /v1/invoice_payments`); `POST /v1/invoiceitems` takes `price`, `invoice` and `customer`; `POST /v1/invoices/:id/pay` takes `off_session=true`; Checkout `mode=setup` takes `payment_method_types[]=card`. Bump the constant and re-run the tests together.
+Every request is pinned to Stripe API version **`2025-09-30.clover`** (`STRIPE_API_VERSION` in `src/billing/config.ts`; the fake refuses any other). Shapes used: Invoices expose their payments through `expand[]=payments` (the `payment_intent` / `charge` fields of older versions are gone, so charge events are matched by the charge and payment-intent ids stored on the order, falling back to `GET /v1/invoice_payments`); `POST /v1/invoiceitems` takes `pricing[price]` (a plain `price` is answered `400 parameter_unknown`, seen against real Stripe test mode; the fake rejects it too), `invoice` and `customer`; the draft's `total` is what was sold, `amount_due` already has the customer's credit balance taken off; `POST /v1/invoices/:id/pay` takes `off_session=true`; Checkout `mode=setup` takes `payment_method_types[]=card`. Bump the constant and re-run the tests together.
 
 ## Stripe setup
 
