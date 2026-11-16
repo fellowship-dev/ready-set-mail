@@ -120,7 +120,7 @@ export interface Env {
   HOSTED_RECORDS_TOKEN?: string; // secret: least-privilege DNS:Edit token for that one zone
   POLICY_HOST_ZONE?: string;     // hosted MTA-STS: the operator's Cloudflare for SaaS zone (docs/hosted.md)
   POLICY_HOST_TARGET?: string;   // the hostname customers point mta-sts.<domain> at (inside that zone; the zone's fallback origin)
-  POLICY_HOST_TOKEN?: string;    // secret: SSL and Certificates Write + Workers Routes Write on that one zone
+  POLICY_HOST_TOKEN?: string;    // secret: Zone Read + SSL and Certificates Write + Workers Routes Write on that one zone
   MAX_POLICY_HOSTS?: string;     // hosted MTA-STS: policy hosts (custom hostnames) the instance may hold (default 100)
   // Email funnel and compliance (docs/email-funnel.md)
   RESEND_API_KEY?: string;       // secret: Resend API key; the onboarding sequence is sent with Resend (Cloudflare Email Service is transactional-only)
