@@ -116,6 +116,10 @@ test('connect Cloudflare with a token, review and write the records, land on the
 test('"I\'ll add DNS records myself" reaches the copy-and-paste records', async ({ page }) => {
  const inst: Instance = await startInstance({ mode: 'selfhost', port: 8812, tokenKey: true });
  try {
+  // The domain page and the setup status read DNS through DOH_BASE_URL (the fake) like everything else here: example.net exists there as a
+  // zone with an SPF record, as it exists in public DNS, so the wizard meets a name that resolves.
+  const zone = await (await fetch(`${inst.fake.url}/__zones`, { method: 'POST', body: JSON.stringify({ name: 'example.net' }) })).json() as { id: string };
+  await fetch(`${inst.fake.url}/client/v4/zones/${zone.id}/dns_records`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer e2e-fake-token-not-a-real-secret-0000' }, body: JSON.stringify({ type: 'TXT', name: 'example.net', content: 'v=spf1 -all' }) });
   await createOwner(page, inst);
   const before = flat(await state(inst));
   await expect(page.getByRole('region', { name: 'Connect Cloudflare' })).toBeVisible();

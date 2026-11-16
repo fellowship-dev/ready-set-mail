@@ -65,7 +65,7 @@ async function createOwnerAndAddDomain(page: Page, inst: Instance) {
   const list = Array.isArray(domains) ? domains : domains.domains ?? [];
   const id = list.find((d) => d.domain === DOMAIN)!.id;
   // The wizard links a domain to the connection when it writes its records; this spec does not go that far, so link it as Settings does.
-  const link = await page.request.put(`${inst.url}/api/domains/${id}/connection`, { data: { connection_id: String(inst.d1('SELECT id FROM cloudflare_connections')[0]!.id) }, headers: { Origin: new URL(inst.url).origin } });
+  const link = await page.request.put(`${inst.url}/api/domains/${id}/connection`, { data: { connection_id: String(sql(inst, 'SELECT id FROM cloudflare_connections')[0]!.id) }, headers: { Origin: new URL(inst.url).origin } });
   expect(link.status(), await link.text()).toBe(200);
   return id;
 }
@@ -77,14 +77,24 @@ const openTools = async (page: Page) => {
   if ((await b.getAttribute('aria-expanded')) !== 'true') await b.click();
 };
 
+/** The local D1 is a SQLite file the Worker also writes: a read or write from here can meet SQLITE_BUSY, so try again a few times. */
+const sql = (inst: Instance, q: string) => {
+  for (let i = 0; ; i++) {
+    try { return inst.d1(q); } catch (e) {
+      if (i >= 8 || !/locked|BUSY/.test(String(e))) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+    }
+  }
+};
+
 const runDailyJob = async (inst: Instance) => {
   // Not due until 20 hours after the last look: make every row due, as the next day would.
-  inst.d1('UPDATE spf_flatten_config SET last_attempt_at = NULL');
+  sql(inst, 'UPDATE spf_flatten_config SET last_attempt_at = NULL');
   const res = await fetch(`${inst.url}/cdn-cgi/handler/scheduled?cron=0+11+*+*+*`);
   expect(res.ok).toBe(true);
   await new Promise((r) => setTimeout(r, 4000));
 };
-const audits = (inst: Instance, action: string) => Number(inst.d1(`SELECT COUNT(*) AS n FROM audit_log WHERE action = '${action}'`)[0]!.n);
+const audits = (inst: Instance, action: string) => Number(sql(inst, `SELECT COUNT(*) AS n FROM audit_log WHERE action = '${action}'`)[0]!.n);
 
 test('turn on, a provider changes its addresses, the job follows it, an outside edit is kept, turn off restores the original', async ({ page }) => {
   const inst: Instance = await startInstance({ mode: 'selfhost', port: 8821, tokenKey: true });
@@ -109,7 +119,7 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     expect(first.length).toBeLessThanOrEqual(450);
     expect(first.match(/include:/g)!.length).toBeLessThan(11);
     expect(first).toContain('ip4:198.51.100.1');
-    expect(inst.d1('SELECT canonical_record AS c FROM spf_flatten_config')[0]!.c).toBe(ORIGINAL);
+    expect(sql(inst, 'SELECT canonical_record AS c FROM spf_flatten_config')[0]!.c).toBe(ORIGINAL);
     expect(audits(inst, 'spf_flatten.enable')).toBe(1);
 
     // The provider changes the address of the include we inlined (same size, so the choice of which include to inline does not move): the job rewrites the record, once, with an audit entry.
@@ -120,14 +130,14 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     expect(second).toContain('ip4:203.0.113.77');
     expect(second).not.toContain('ip4:198.51.100.1 ');
     expect(audits(inst, 'spf_flatten.update')).toBe(1);
-    expect(inst.d1('SELECT previous_record AS p FROM spf_flatten_config')[0]!.p).toBe(first);
+    expect(sql(inst, 'SELECT previous_record AS p FROM spf_flatten_config')[0]!.p).toBe(first);
 
     // A quiet day: nothing written, nothing audited.
-    const changedAt = inst.d1('SELECT last_flattened_at AS t FROM spf_flatten_config')[0]!.t;
+    const changedAt = sql(inst, 'SELECT last_flattened_at AS t FROM spf_flatten_config')[0]!.t;
     await runDailyJob(inst);
     expect((await apex(inst)).content).toBe(second);
     expect(audits(inst, 'spf_flatten.update')).toBe(1);
-    expect(inst.d1('SELECT last_flattened_at AS t FROM spf_flatten_config')[0]!.t).toBe(changedAt);
+    expect(sql(inst, 'SELECT last_flattened_at AS t FROM spf_flatten_config')[0]!.t).toBe(changedAt);
 
     // The page says what it did: when it looked, and what changed (the previous record is one line below).
     const wizardUrl = `${inst.url}/#/domains/${id}/spf-flatten`;
@@ -142,7 +152,7 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     await cf(inst, 'PATCH', `/zones/${providerZone}/dns_records/${ids[0]}`, { content: 'v=spf1 ip4:192.0.2.5 -all' });
     await runDailyJob(inst);
     expect((await apex(inst)).content).toBe(edited);
-    expect(inst.d1('SELECT problem_kind AS k FROM spf_flatten_config')[0]!.k).toBe('edited_outside');
+    expect(sql(inst, 'SELECT problem_kind AS k FROM spf_flatten_config')[0]!.k).toBe('edited_outside');
     await page.goto(`${wizardUrl}?review=1`);
     await page.reload();
     await expect(page.getByText(/someone changed it there/).first()).toBeVisible({ timeout: 30_000 });
@@ -156,7 +166,7 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     await page.getByRole('button', { name: 'Turn off' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Turn off' }).click();
     await expect.poll(async () => (await apex(inst)).content, { timeout: 30_000 }).toBe(ORIGINAL);
-    expect(inst.d1('SELECT COUNT(*) AS n FROM spf_flatten_config')[0]!.n).toBe(0);
+    expect(sql(inst, 'SELECT COUNT(*) AS n FROM spf_flatten_config')[0]!.n).toBe(0);
   } finally {
     await inst.stop();
   }
@@ -173,7 +183,7 @@ test('a provider that cannot be read keeps the last good record and the card say
     await cf(inst, 'DELETE', `/zones/${providerZone}/dns_records/${ids[0]}`);
     await runDailyJob(inst);
     expect((await apex(inst)).content).toBe(good);
-    expect(inst.d1('SELECT problem_kind AS k FROM spf_flatten_config')[0]!.k).toBe('include_unresolved');
+    expect(sql(inst, 'SELECT problem_kind AS k FROM spf_flatten_config')[0]!.k).toBe('include_unresolved');
     await page.goto(`${inst.url}/#/domains/${id}`);
     await openTools(page);
     await expect(page.getByText(/We could not read the SPF record of _spf1\.mailprovider-test\.net/)).toBeVisible({ timeout: 30_000 });
