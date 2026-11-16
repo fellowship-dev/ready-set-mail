@@ -19,6 +19,10 @@ How releases are cut and how each pull request adds its line under `[Unreleased]
 - **SPF flattening is a self-host tool.** Its routes answer 404 on the hosted service and the dashboard offers no entry point there. On self-host the screens no longer promise that the flattened record follows your providers' IP changes: the daily run re-reads the record published at the name, which after the first run is the flattened record, so only disabling and enabling flattening again takes new IPs. The refresh logic itself is unchanged.
 - The operator's "settings need your attention" banner is one line; its list opens on demand.
 
+### Fixed
+
+- **The "first report received" email now sends on the hosted service.** It was sent from a workspace sender that hosted workspaces never have, so it failed; it now uses the platform sender that sign-in emails use (a self-hosted workspace's own sender still wins). Its link now goes to the domain's page on the configured public origin instead of the Worker's workers.dev address, and the email is no longer cut off when the report handler returns. Subject and copy no longer promise things that are not true (an emoji, "24-48 hours"). No migration.
+
 ### Removed
 
 - **The opt-in self-host usage telemetry** (`src/telemetry.ts`, the "Share anonymous usage stats" checkbox at owner setup and its line in Settings, the daily heartbeat). Its endpoint never resolved, so it never sent anything. A stored `telemetry_opted_in` setting is ignored (and still exported). Settings now says whether usage analytics is on ("Off" on every self-hosted installation).
