@@ -8,6 +8,7 @@ vi.mock('../../src/api/auth', () => ({
 vi.mock('../../src/dns/provision', () => ({ provisionDomain: vi.fn(), deprovisionDomain: vi.fn(), DnsProvisionError: class extends Error {} }));
 
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { seedSettings } from '../helpers/tenant';
 import { handleApi } from '../../src/api/router';
@@ -20,6 +21,7 @@ function setup() {
   db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address) VALUES (1, 'acme.com', 'rua@reports.test.com')").run();
   seedSettings(db, { base_domain: 'acme.com', reports_domain: 'reports.test.com', from_email: 'noreply@reports.test.com', zone_id: 'zone-acme', zone_name: 'acme.com', cf_account_id: 'cf' });
   const cf = new FakeCloudflare({ 'acme.com': { id: 'zone-acme', cfAccountId: 'cf' } });
+  cf.realisticTxt = true;
   cf.seed('zone-acme', { id: 'spf-acme', type: 'TXT', name: 'acme.com', content: ORIGINAL });
   cf.doh['acme.com'] = [ORIGINAL];
   cf.doh['mail.test'] = ['v=spf1 ip4:198.51.100.0/28 ~all'];
@@ -27,7 +29,7 @@ function setup() {
   stubCloudflare(cf);
   const env = { DB: db as unknown as D1Database, API_KEY: 'k', CLOUDFLARE_API_TOKEN: 'tok', CLOUDFLARE_ACCOUNT_ID: 'cf', CLOUDFLARE_ZONE_ID: 'zone-acme' } as never;
   const send = (method: string, path: string, body?: unknown) => handleApi(new Request(`https://api.test${path}`, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }), env, ctx);
-  return { db, cf, send, live: () => cf.records.get('zone-acme')![0]!.content };
+  return { db, cf, send, live: () => decodeTxtData(cf.records.get('zone-acme')![0]!.content) };
 }
 afterEach(() => vi.unstubAllGlobals());
 

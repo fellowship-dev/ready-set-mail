@@ -23,6 +23,7 @@ const WORKSPACES = [
 function setup() {
   const db = createMigratedD1();
   const cf = new FakeCloudflare({}, undefined, undefined, {});
+  cf.realisticTxt = true;
   for (const a of WORKSPACES) {
     db.sqlite.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)').run(a.id, a.id);
     seedSettings(db, {
@@ -56,7 +57,7 @@ describe('cron iterates workspaces, each in its own try', () => {
 
     for (const a of WORKSPACES) {
       expect(state(a.id).last_error).toBeNull();
-      expect(cf.records.get(a.zone)).toEqual([expect.objectContaining({ content: 'v=spf1 ip4:192.0.2.1 -all' })]);
+      expect(cf.records.get(a.zone)).toEqual([expect.objectContaining({ content: '"v=spf1 ip4:192.0.2.1 -all"' })]);
     }
     // each workspace used its own token
     for (const a of WORKSPACES) {
@@ -74,7 +75,7 @@ describe('cron iterates workspaces, each in its own try', () => {
     expect(state('ws_a').flattened_record).toBe('v=spf1 ip4:192.0.2.77 -all');
     expect(state('ws_b').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
     expect(state('ws_c').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
-    expect(cf.records.get('zone-a')).toEqual([expect.objectContaining({ content: 'v=spf1 ip4:192.0.2.77 -all' })]); // left as it was
+    expect(cf.records.get('zone-a')).toEqual([expect.objectContaining({ content: '"v=spf1 ip4:192.0.2.77 -all"' })]); // left as it was
   });
 
   it('a workspace that fails to load is logged and skipped, the rest still run', async () => {
