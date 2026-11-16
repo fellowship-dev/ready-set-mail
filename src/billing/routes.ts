@@ -19,7 +19,7 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
-import { PLAN_NOTICE_KEY, addPaidDomains, applySubscription, keepOneDomain, planView, previewPaidAdd, previewRemoval, repairQuantity, startPlan } from './plan-service';
+import { PLAN_NOTICE_KEY, addPaidDomains, cancelPendingPlan, applySubscription, keepOneDomain, planView, previewPaidAdd, previewRemoval, repairQuantity, startPlan } from './plan-service';
 import { completeWorkspaceIntent, startWorkspaceIntent } from './plan-workspaces';
 import { planEnforced } from '../hosted/plan';
 import { cleanName } from '../auth/names';
@@ -225,6 +225,12 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const b = await body(request);
     if (b instanceof Response) return b;
     return json(await startPlan(d, me.ws, me.actor, { interval: b.interval === 'year' ? 'year' : 'month', ...(typeof b.expected_amount === 'number' ? { expectedAmount: b.expected_amount } : {}), ...(typeof b.expected_currency === 'string' ? { expectedCurrency: b.expected_currency } : {}), ...(typeof b.expected_charge === 'number' ? { expectedCharge: b.expected_charge } : {}) }), 201);
+  }
+  if (path === '/api/billing/plan/cancel-pending') {
+    if (!planEnforced(env)) return json({ error: 'not found' }, 404);
+    if (method !== 'POST') return fail(405, 'method_not_allowed', 'Method not allowed.');
+    if (!isOwner) return OWNER_ONLY();
+    return json(await cancelPendingPlan(d, me.ws, me.actor));
   }
   if (path === '/api/billing/plan/keep-one') {
     if (!planEnforced(env)) return json({ error: 'not found' }, 404);

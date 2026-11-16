@@ -16,7 +16,7 @@ import { DomainServiceError, enrollDomain, commitVerifiedDomain, requireDomainNa
 import { claimView, verifyClaim } from '../domains/ownership';
 import { planHelpUrl } from '../hosted/plan-limits';
 import {
-  PlanBusyError, billableAfter, loadPlanState, paidPathAvailable, planEnforced, subscriptionState, unitOf, withPlanLock,
+  PAYMENT_PROBLEM_TEXT, PENDING_TEXT, PlanBusyError, billableAfter, loadPlanState, paidPathAvailable, planEnforced, subscriptionState, unitOf, withPlanLock,
   type PlanLock, type PlanState,
 } from '../hosted/plan';
 import { planEvent } from '../product-analytics/steps';
@@ -29,8 +29,7 @@ import { StripeError, StripeNetworkError, type StripeObject } from './stripe-cli
 
 export const PAYMENT_FAILED_TEXT = 'Your card was declined. Use another card.';
 export const ACTION_REQUIRED_TEXT = 'Your bank needs you to confirm the payment.';
-export const PAYMENT_PROBLEM_TEXT = 'Your last payment did not go through. Update your card to add more domains.';
-export const PENDING_TEXT = "Waiting for your bank's confirmation.";
+export { PAYMENT_PROBLEM_TEXT, PENDING_TEXT } from '../hosted/plan';
 export const NOT_ADDED_TEXT = 'We could not update your plan; the domain was not added. Try again.';
 
 type Ctx = ExecutionContext | undefined;
@@ -460,19 +459,53 @@ async function activatePending(d: BillingDeps, workspaceId: string, interval: Pl
   }).catch((e) => { if (e instanceof PlanBusyError) throw new Error('plan busy: the event is retried'); throw e; });
 }
 
-/** The first payment never completed (the bank did not confirm in time): the pending domains are removed again, the plan was never started, the owner is told once. */
-async function abandonPending(d: BillingDeps, workspaceId: string): Promise<void> {
+/**
+ * The first payment never completed (the bank did not confirm in time, or the owner cancelled it): the pending domains are removed again, the plan was
+ * never started. The owner is told once when the payment simply never completed; one who cancelled it knows. Idempotent: with no subscription row left
+ * (the other of a cancel and its webhook got here first) there is nothing to do.
+ */
+async function abandonPending(d: BillingDeps, workspaceId: string, opts: { tell: boolean } = { tell: true }): Promise<void> {
   const q = forWorkspace(d.db, workspaceId).plan;
   await withPlanLock(d.env, d.db, workspaceId, d.now, async () => {
+    if (!(await q.subscription.get())) return;
     for (const r of await q.pendingRows()) {
       await q.rollbackDomain(r.id, r.domain);
       logAudit({ db: d.db, workspaceId }, { actor_id: null, actor_type: 'system', action: 'domain.add_rolled_back', resource_type: 'domain', resource_id: String(r.id), resource_name: r.domain }, d.ctx);
     }
     await q.subscription.remove();
     await q.setPlan('free');
-    await forWorkspace(d.db, workspaceId).settings.set(PLAN_NOTICE_KEY, 'payment_not_completed');
-    planEvent(d.env, d.ctx, workspaceId, 'Subscription Failed', { reason: 'payment_failed' });
+    if (opts.tell) await forWorkspace(d.db, workspaceId).settings.set(PLAN_NOTICE_KEY, 'payment_not_completed');
+    planEvent(d.env, d.ctx, workspaceId, 'Subscription Failed', { reason: opts.tell ? 'payment_failed' : 'cancelled_by_owner' });
   }).catch((e) => { if (e instanceof PlanBusyError) throw new Error('plan busy: the event is retried'); throw e; });
+}
+
+/**
+ * "Cancel" on a first payment that waits for the bank (a failed 3-D Secure leaves it waiting for up to a day): the incomplete subscription is cancelled at
+ * Stripe now, so a late confirmation cannot charge, and the domains added with it go again. Nothing was charged. Only while the payment is pending.
+ */
+export async function cancelPendingPlan(d: BillingDeps, ws: Ws, actor: Actor): Promise<{ cancelled: true; domains: string[] }> {
+  need(d);
+  const undoHit = await rateLimit(d, 'plan', ws.id, actor.userId);
+  const q = forWorkspace(d.db, ws.id).plan;
+  const sub = await q.subscription.get();
+  if (!sub || subscriptionState(sub) !== 'pending') throw new BillingError(409, 'not_pending', 'There is no payment waiting for your bank.');
+  const domains = (await q.pendingRows()).map((r) => r.domain);
+  try {
+    try {
+      await d.stripe.cancelSubscription(sub.stripe_subscription_id);
+    } catch (e) {
+      if (!(e instanceof StripeError && e.isNotFound)) {
+        console.error('[billing] a pending subscription could not be cancelled');
+        throw new BillingError(502, 'subscription_cancel_failed', 'We could not cancel just now. Nothing was changed; try again in a moment.');
+      }
+    }
+    await abandonPending(d, ws.id, { tell: false });
+  } catch (e) {
+    if (e instanceof Error && /plan busy/.test(e.message)) { await undoHit(); throw busy(); }
+    throw e;
+  }
+  logAudit({ db: d.db, workspaceId: ws.id }, { actor_id: actor.userId, actor_email: actor.email, actor_type: 'user', action: 'billing.pending_payment_cancelled', resource_type: 'billing', resource_id: ws.id, after_value: { domains } }, d.ctx);
+  return { cancelled: true, domains };
 }
 
 /** The one-time notice kept for the owner (read once by GET /api/billing). */
@@ -638,6 +671,8 @@ export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean }
     ...(who.isOwner ? {
       price, quantity: sub?.quantity_sent ?? null, monthly_amount: price && st.plan === 'payg' && interval === 'month' ? price.amount * st.billable : null,
       next_invoice: next, action_required_url: sub?.action_url ?? null, can_manage: true,
+      // The plan ended because the card was declined (the last payment failed, Stripe gave up): the card on file is the one that failed.
+      card_declined: state === 'lapsed' && !!sub?.last_failed_at,
     } : { ask_owner: true, can_manage: false }),
   };
 }

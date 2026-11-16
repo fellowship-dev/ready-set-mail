@@ -189,9 +189,15 @@ export async function withPlanLock<T>(env: BoundEnv, db: Db, workspaceId: string
 
 // ── What the person is told ─────────────────────────────────
 
+/** The sentence when adding is paused because the last payment did not go through (also what the dashboard says; one source). */
+export const PAYMENT_PROBLEM_TEXT = 'Your last payment did not go through. Update your card to add more domains.';
+export const PENDING_TEXT = "Waiting for your bank's confirmation.";
+
 export interface PlanRequiredBody {
   error: string;
   code: 'plan_required';
+  /** The subscription's state: the dashboard says the payment problem (or the wait for the bank) instead of "your free plan covers one domain". */
+  state: SubscriptionState;
   /** The paid path exists on this instance; false: "talk to us" (help_url). */
   paid_available: boolean;
   help_url: string | null;
@@ -205,6 +211,11 @@ export interface PlanRequiredBody {
 /** The 402 answer for an add that does not fit the free allowance. One sentence, no pricing: the confirm step states the money. */
 export function planRequiredBody(env: BoundEnv, state: PlanState, opts: { domain?: string; session: boolean }): PlanRequiredBody {
   const paid = paidPathAvailable(env);
+  const sub = state.subscriptionState;
+  if (paid && (sub === 'payment_problem' || sub === 'pending')) {
+    const text = sub === 'pending' ? `${PENDING_TEXT} More domains can be added once your bank has confirmed the payment.` : opts.session ? PAYMENT_PROBLEM_TEXT : `${PAYMENT_PROBLEM_TEXT} Sign in to the dashboard to do that.`;
+    return { error: text, code: 'plan_required', state: sub, paid_available: true, help_url: planHelpUrl(env), ...(opts.domain ? { domain: opts.domain } : {}), grandfather: null, needs_owner: true };
+  }
   const base = state.holdsAllowance || state.units > 0
     ? 'Your free plan covers one domain and all its subdomains.'
     : 'This workspace does not include a free domain.';
@@ -212,7 +223,7 @@ export function planRequiredBody(env: BoundEnv, state: PlanState, opts: { domain
     : opts.session ? ' The workspace owner can add more domains with pay as you go: Add domain, then enter it.'
     : ' Adding more domains needs the workspace owner: sign in to the dashboard and choose Add domain.';
   return {
-    error: base + next, code: 'plan_required', paid_available: paid, help_url: planHelpUrl(env), ...(opts.domain ? { domain: opts.domain } : {}),
+    error: base + next, code: 'plan_required', state: sub, paid_available: paid, help_url: planHelpUrl(env), ...(opts.domain ? { domain: opts.domain } : {}),
     grandfather: state.grandfathered ? { units: state.units, billable_now: state.billable, billable_after: billableAfter(state, 1) } : null,
     needs_owner: true,
   };
