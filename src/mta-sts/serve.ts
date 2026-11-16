@@ -46,8 +46,10 @@ export const isPolicyHostname = (hostname: string): boolean => hostname.toLowerC
 
 /**
  * The Worker with policy hosts answered FIRST, before anything else looks at the request (the OAuth/MCP layer, the relay, llms.txt, the API, the dashboard):
- * a customer's `mta-sts.<domain>` serves the policy file and 404s every other path, whatever else this Worker serves on its own host.
- * wrangler.jsonc `run_worker_first: true` is what makes static assets reach the Worker before they answer.
+ * a customer's `mta-sts.<domain>` serves the policy file and 404s every other path that REACHES the Worker, whatever else this Worker serves on its own host.
+ * What reaches it is decided before this code: `/.well-known/*` is in wrangler.jsonc `assets.run_worker_first`, so the policy path always runs the Worker; a path
+ * not in that list is answered by the static assets (the dashboard's single-page fallback) when a request for it reaches this Worker's version at all.
+ * On the hosted service only the one declared route (`*\/.well-known/mta-sts.txt`) sends a customer's host here; self-host: docs/mta-sts.md "Other paths".
  */
 export function withPolicyHostFirst<T extends { fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> }>(worker: T): T {
   return { ...worker, async fetch(request: Request, env: Env, ctx: ExecutionContext) {

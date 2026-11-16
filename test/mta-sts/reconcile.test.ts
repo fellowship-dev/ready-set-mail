@@ -126,6 +126,21 @@ describe('the declared route', () => {
     expect(w.cf.routes[OP_ZONE].map((r) => r.pattern)).toEqual([POLICY_ROUTE_PATTERN]);
   });
 
+  it('a wider route to this Worker (it would let the dashboard answer on a customer name) is said loudly and never touched; the declared one is not wide', async () => {
+    const w = await mtaWorld();
+    await active(w);
+    const loud = vi.spyOn(console, 'error');
+    await verify(w);
+    expect(loud).not.toHaveBeenCalledWith(expect.stringContaining('reaches policy hosts'));
+    w.cf.routes[OP_ZONE].push({ id: 'route-wide', pattern: '*/*', script: 'rsm-worker' }, { id: 'route-other', pattern: 'other.example.com/*', script: 'rsm-worker' });
+    w.cf.calls.length = 0;
+    const r = await verify(w);
+    expect(loud).toHaveBeenCalledWith(expect.stringContaining('route */* in'));
+    expect(loud).not.toHaveBeenCalledWith(expect.stringContaining('other.example.com'));
+    expect(operatorWrites(w)).toEqual([]);
+    expect(w.cf.routes[OP_ZONE].map((x) => x.id)).toContain('route-wide');
+  });
+
   it('a per-domain route left by an earlier build is taken away once the declared one is there (a dashboard-defined route does not survive a deploy)', async () => {
     const w = await mtaWorld();
     await active(w);

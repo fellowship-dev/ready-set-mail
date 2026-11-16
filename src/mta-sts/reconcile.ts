@@ -76,7 +76,7 @@ export function servedMessage(domain: string, reason: FetchReason | null): { mes
 }
 
 /** What several rows of one run share: the operator zone is opened once, and the declared route is looked up once. */
-export interface ReconcileShared { zone?: Promise<OperatorZone>; route?: Promise<{ route: WorkerRoute; created: boolean }> }
+export interface ReconcileShared { zone?: Promise<OperatorZone>; route?: Promise<{ route: WorkerRoute; created: boolean }>; wider?: Promise<WorkerRoute[]> }
 
 export interface Reconciled {
   row: MtaStsRow;
@@ -85,7 +85,7 @@ export interface Reconciled {
   hostname: CustomHostname | null;
   /** What was wrong on the operator side and could not be fixed, in a sentence; null when all is well. */
   operatorError: string | null;
-  /** What it changed at Cloudflare: 'hostname_created' | 'hostname_refreshed' | 'route_created' | 'legacy_route_deleted'. */
+  /** What it changed at Cloudflare: 'hostname_created' | 'hostname_refreshed' | 'route_created' | 'legacy_route_deleted' | 'wide_route'. */
   actions: string[];
 }
 
@@ -119,6 +119,12 @@ export async function reconcileMtaSts(c: Ctx, row: MtaStsRow, shared: ReconcileS
       if (declared.created && !actions.includes('route_created')) {
         actions.push('route_created');
         console.error(`[mta-sts] the declared route ${POLICY_ROUTE_PATTERN} was missing from ${zone.zone.name} and was created again: a deploy without it? Declare it in the hosted deploy config (docs/hosted.md), or the next deploy removes it.`);
+      }
+      // A wider route to this Worker would let the dashboard's static files answer on a customer's name (the Worker only runs first for the paths in wrangler.jsonc).
+      for (const wide of await (shared.wider ??= zone.widerRoutes()).catch(() => [] as WorkerRoute[])) {
+        if (row.route_id === wide.id) continue; // an earlier build's per-domain route: deleted just below
+        if (!actions.includes('wide_route')) actions.push('wide_route');
+        console.error(`[mta-sts] route ${wide.pattern} in ${zone.zone.name} reaches policy hosts for more than ${POLICY_ROUTE_PATTERN}: the dashboard's files could answer on a customer's name. Remove it.`);
       }
       if (row.route_id && row.route_id !== declared.route.id) {
         // An earlier build made a route for this one domain. It is redundant with the declared one and, made through the API, not safe across a deploy.

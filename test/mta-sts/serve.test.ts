@@ -1,6 +1,6 @@
-// R2 item 5: a policy host (`mta-sts.<domain>`) answers GET/HEAD of /.well-known/mta-sts.txt and nothing else: not the dashboard, not its static assets.
-// Static assets run BEFORE the Worker unless wrangler.jsonc says run_worker_first, so `/`, `/index.html` and `/assets/...` used to answer 200 on a
-// customer's policy host. The config below is what makes the Worker see them; the Worker's own answer is checked with an assets binding that must not be touched.
+// A policy host (`mta-sts.<domain>`) answers GET/HEAD of /.well-known/mta-sts.txt. Whatever else reaches the Worker on that host is a 404 (withPolicyHostFirst).
+// wrangler.jsonc keeps the path list `run_worker_first` of origin/main: it contains `/.well-known/*`, so the policy path always reaches the Worker, and every
+// other path is answered by the static assets (billing and routing: developers.cloudflare.com/workers/static-assets/billing-and-limitations/ and .../routing/worker-script/).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
@@ -13,15 +13,23 @@ const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
 beforeEach(() => { quietLogs(); resetSchemaReadyCache(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe('wrangler.jsonc runs the Worker before static assets on every request', () => {
-  it('run_worker_first is true (a path list cannot name a host, so only "everything" keeps assets off policy hosts)', () => {
-    const parsed = ts.parseConfigFileTextToJson('wrangler.jsonc', readFileSync('wrangler.jsonc', 'utf8'));
-    expect(parsed.config.assets.run_worker_first).toBe(true);
-    expect(parsed.config.assets.binding).toBe('ASSETS');
+describe('wrangler.jsonc keeps the assets routing of main, and the policy path is in it', () => {
+  // Main's list, verbatim: changing it (`true` bills every static file as a Worker request; 429 on Free past the limit) is a decision, not a side effect of MTA-STS.
+  const MAIN_RUN_WORKER_FIRST = ['/api/*', '/mcp', '/mcp/*', '/oauth/*', '/.well-known/*', '/health', '/llms.txt', '/relay/*'];
+  const assets = () => ts.parseConfigFileTextToJson('wrangler.jsonc', readFileSync('wrangler.jsonc', 'utf8')).config.assets;
+
+  it('run_worker_first is the list on main, not true', () => {
+    expect(assets().run_worker_first).toEqual(MAIN_RUN_WORKER_FIRST);
+    expect(assets().binding).toBe('ASSETS');
+    expect(assets().not_found_handling).toBe('single-page-application');
+  });
+
+  it('/.well-known/* is in it, so the policy path reaches the Worker and not an asset', () => {
+    expect(assets().run_worker_first).toContain('/.well-known/*');
   });
 });
 
-describe('a policy host serves the policy path and 404s everything else', () => {
+describe('a policy host serves the policy path and 404s every other path that reaches the Worker', () => {
   async function setup() {
     const w = await mtaWorld();
     w.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, workspace_id, mode, mx_hosts, policy_id, state) VALUES (1, ?, 'testing', 'mx.a-corp.com', 'p1', 'active')").run(w.A.ws);

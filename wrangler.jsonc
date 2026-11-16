@@ -14,9 +14,7 @@
 		"directory": "./web/dist",
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application",
-		// Every request runs the Worker first (it serves the dashboard's files itself through the ASSETS binding): a path list cannot name a host, and a
-		// customer's `mta-sts.<domain>` must answer the policy file and nothing else, not `/` or `/assets/...` (src/mta-sts/serve.ts).
-		"run_worker_first": true
+		"run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*", "/health", "/llms.txt", "/relay/*"]
 	},
 	"compatibility_date": "2025-03-01",
 	// Per-version preview URLs are off: an installation serves one origin, its BETTER_AUTH_URL.
@@ -90,7 +88,7 @@
 
 	// Hosted service only (MODE=saas + SAAS_ENABLED=1, see docs/hosted.md): INTAKE_DOMAIN, CANARY_DOMAIN,
 	// HOSTED_RECORDS_ZONE, HOSTED_RECORDS_LABEL, and the secret HOSTED_RECORDS_TOKEN. Self-hosters ignore these.
-	// Hosted MTA-STS (docs/hosted.md, ADR 0021): POLICY_HOST_ZONE, POLICY_HOST_TARGET, MAX_POLICY_HOSTS (default 100), and the secret POLICY_HOST_TOKEN.
+	// Hosted MTA-STS (docs/hosted.md, ADR 0026): POLICY_HOST_ZONE, POLICY_HOST_TARGET, MAX_POLICY_HOSTS (default 100), and the secret POLICY_HOST_TOKEN.
 	// Hosted plan caps (positive integers, anything else keeps the default; never applied when self-hosting):
 	//   MAX_WORKSPACES_PER_USER    workspaces one person may own (default 5; workspaces they were only invited to do not count)
 	//   MAX_DOMAINS_PER_WORKSPACE  domains one workspace may hold (default 10)

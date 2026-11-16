@@ -99,6 +99,12 @@ export function operatorPolicy(zone: { name: string; id?: () => string | undefin
 // ── The operator's zone ──────────────────────────────────────
 
 export interface CustomHostname { id: string; hostname: string; status: string; sslStatus: string | null; /** Cloudflare's own reasons the certificate is not issued (ssl.validation_errors), joined; empty when there are none. */ sslErrors: string }
+/** Does a Cloudflare route pattern (`*` matches anything, no scheme) match `hostAndPath`? */
+export function patternReaches(pattern: string, hostAndPath: string): boolean {
+  const re = new RegExp(`^${pattern.toLowerCase().split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+  return re.test(hostAndPath.toLowerCase());
+}
+
 export interface WorkerRoute { id: string; pattern: string; script: string | null }
 
 interface RawHostname { id: string; hostname: string; status?: string; ssl?: { status?: string; validation_errors?: Array<{ message?: string }> } }
@@ -226,6 +232,16 @@ export class OperatorZone {
     if (found.pattern !== pattern || found.script !== this.#script) throw new PolicyHostError(`refusing to delete route ${id}: it is ${found.pattern} → ${found.script ?? 'none'}, not ${pattern} → ${this.#script}`);
     await this.#cf.request('DELETE', `/zones/${this.zone.id}/workers/routes/${id}`);
     return true;
+  }
+
+  /**
+   * Routes to this Worker, other than the declared one, that would also reach a policy host's OTHER paths (`*\/*`, `*mta-sts.*`, `mta-sts.<d>/*`). The Worker
+   * answers those with a 404 (withPolicyHostFirst) only when the request is in `run_worker_first`; any other path is answered by the static assets first, so
+   * a wider route would put the dashboard on a customer's name. Nothing in this product makes one; the reconcile says so loudly when someone else did.
+   */
+  async widerRoutes(): Promise<WorkerRoute[]> {
+    const sample = 'mta-sts.policy-host-check.example/assets/index.js';
+    return (await this.listRoutes()).filter((r) => r.script === this.#script && r.pattern !== POLICY_ROUTE_PATTERN && patternReaches(r.pattern, sample));
   }
 
   /** Is this a per-domain route an earlier build created (an `mta-sts.<d>/*` pattern to this Worker)? */
