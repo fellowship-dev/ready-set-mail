@@ -34,3 +34,8 @@ steps:
     effect: write
     expect: Order paid when Stripe's invoice.paid webhook arrives, or at the next daily reconcile if it is lost (3-D Secure opens Stripe's hosted invoice page)
     first_value: true
+rule_overrides:
+  - id: FOLD-01
+    reason: the offer sits 0.63 screens below the fold at 375 on main already; this PR does not change that layout
+    by: coordinator
+    date: 2026-11-16

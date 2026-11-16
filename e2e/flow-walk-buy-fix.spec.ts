@@ -140,7 +140,7 @@ test('buy-fix-one-domain: the owner adds a card, pays once, the order is paid (w
 		expect(recoverable).toBe(true);
 		await expect(page.getByRole('dialog')).toContainText(/declin/i);
 		await page.reload();
-		const again = await page.getByRole('button', { name: 'Have us fix this domain: $149 USD' }).isVisible({ timeout: 60_000 }).catch(() => false);
+		const again = await expect(page.getByRole('button', { name: 'Have us fix this domain: $149 USD' })).toBeVisible({ timeout: 60_000 }).then(() => true, () => false);
 		deadEnds.push({ case: 'reload on the confirm step', words: 'the domain page again with the offer', recoverable: again, observed_at: new Date().toISOString() });
 		expect(again).toBe(true);
 
