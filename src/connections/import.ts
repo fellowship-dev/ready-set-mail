@@ -38,7 +38,7 @@ export interface ImportResult {
   /** The Cloudflare accounts the added domains belong to, with the names Cloudflare gave them. */
   accounts: { id: string | null; name: string | null }[];
   /** Importing everything would exceed the plan: nothing was imported, these are the zones to choose from. */
-  needs_selection?: { room: number; cap: number; zones: ZoneChoice[] };
+  needs_selection?: { room: number; cap: number; zones: ZoneChoice[]; /** Zone ids that are waiting claims: they hold a place already, so choosing them costs none of `room`. */ claimed: string[] };
   /** Pending claims that were verified through the allow-list. */
   verified_claims: string[];
 }
@@ -118,15 +118,18 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   }
 
   // The plan: hosted workspaces hold a limited number of domains. If they would not all fit, the person chooses.
-  // Room is the one rule (domainRoom): places = domains + domains waiting for proof. A zone that is a claim takes its own place when it is imported, not a second one.
+  // Room is the one rule (domainRoom): places = domains + domains waiting for proof. A zone that is a waiting claim already has its place, so importing it
+  // costs none; every other zone needs one of the places that are left.
   const cap = saas ? domainCap(tenant) : undefined;
   if (cap !== undefined) {
     const use = await domainUse(tenant);
-    const wanted = new Set(fresh.map(z => z.name));
-    const room = Math.max(0, cap - new Set([...use.domains, ...use.waiting].filter(n => !wanted.has(n))).size);
-    if (fresh.length > room) {
+    const used = new Set([...use.domains, ...use.waiting]);
+    const room = Math.max(0, cap - used.size);
+    const needing = fresh.filter(z => !used.has(z.name));
+    if (needing.length > room) {
       if (explicit) throw await planLimitError(tenant, cap);
-      return { ...result, imported: [], needs_selection: { room, cap, zones: fresh.map(choice) } };
+      const claimed = fresh.filter(z => used.has(z.name)).map(z => z.id);
+      return { ...result, imported: [], needs_selection: { room, cap, zones: fresh.map(choice), claimed } };
     }
   }
 

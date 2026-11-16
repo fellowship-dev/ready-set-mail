@@ -180,7 +180,7 @@ describe('the one-domain plan on the first run (MAX_DOMAINS_PER_WORKSPACE=1, thr
     expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
     const res = await json(await s.imp(await s.connect()));
     expect(res.imported).toEqual([]);
-    expect(res.needs_selection).toMatchObject({ room: 1, cap: 1 });
+    expect(res.needs_selection).toMatchObject({ room: 0, cap: 1, claimed: [zid('brightwave-mail.com')] }); // the claim holds the one place; choosing its zone costs none
     expect(s.domains()).toEqual([]);
     expect(s.w.rows('SELECT settled_at FROM domain_claims WHERE workspace_id = ? AND settled_at IS NULL', s.C.ws)).toHaveLength(1);
   });

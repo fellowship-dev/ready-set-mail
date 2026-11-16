@@ -82,24 +82,26 @@ test('hosted, a plan that covers fewer domains than there are zones: the list, t
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 		await connectWithToken(page);
 
-		await expect(page.getByText('Your plan covers 2 domains. Choose which to add.')).toBeVisible({ timeout: 60_000 });
+		// The typed domain (harbor-lane.org) is a claim waiting for proof: it holds one of the 2 places, so 1 is left, and choosing its zone costs none.
+		await expect(page.getByText('Your plan covers 2 domains. Choose which to add (1 left).')).toBeVisible({ timeout: 60_000 });
 		expect(inst.d1('SELECT domain FROM domains')).toEqual([]); // nothing was added before they chose
-		await page.getByRole('checkbox', { name: 'brightwave-mail.com' }).check();
-		await page.getByRole('checkbox', { name: 'quietfield.net' }).check();
-		await page.getByRole('checkbox', { name: 'harbor-lane.org' }).check();
-		await expect(page.getByText('3 of 2 chosen')).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Add 3 domains' })).toBeDisabled();
-		await page.getByRole('checkbox', { name: 'harbor-lane.org' }).uncheck();
+		await page.getByRole('checkbox', { name: /^brightwave-mail\.com/ }).check();
+		await page.getByRole('checkbox', { name: /^quietfield\.net/ }).check();
+		await expect(page.getByText('2 of 1 chosen')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Add 2 domains' })).toBeDisabled();
+		await page.getByRole('checkbox', { name: /^quietfield\.net/ }).uncheck();
+		await page.getByRole('checkbox', { name: /^harbor-lane\.org/ }).check(); // its own place: still 1 of 1
+		await expect(page.getByText('1 of 1 chosen')).toBeVisible();
 		await page.getByRole('button', { name: 'Add 2 domains' }).click();
 
 		await expect(page.getByRole('heading', { name: /change to / })).toBeVisible({ timeout: 60_000 }); // the review of the first of them
 		await page.getByRole('button', { name: 'Skip for now' }).click();
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByRole('link', { name: 'brightwave-mail.com', exact: true })).toBeVisible();
-		await expect(page.getByRole('link', { name: 'quietfield.net', exact: true })).toBeVisible();
+		await expect(page.getByRole('link', { name: 'harbor-lane.org', exact: true })).toBeVisible();
 		expect(inst.d1('SELECT domain, verified_via FROM domains ORDER BY domain')).toEqual([
 			{ domain: 'brightwave-mail.com', verified_via: 'cloudflare' },
-			{ domain: 'quietfield.net', verified_via: 'cloudflare' },
+			{ domain: 'harbor-lane.org', verified_via: 'cloudflare' },
 		]);
 	} finally {
 		await inst.stop();
