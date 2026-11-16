@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from './api';
-import type { DomainCheckSummary, DomainClaim, DomainStats, FailingSource, MtaStsStatus, NameSeen, OnboardingStatus, SpfFlatStatus, WizardState } from './types';
+import type { DomainCheckSummary, DomainClaim, DomainStats, FailingSources, MtaStsStatus, NameSeen, OnboardingStatus, SpfFlatStatus, WizardState } from './types';
 
 /** GET /api/domains/:id/dns-check. `error` is set when the lookup itself failed: that is not "no record". */
 export interface DnsCheck {
@@ -116,7 +116,7 @@ export const useStats = (id: number, days: number) =>
 	useQuery({ queryKey: domainKeys.stats(id, days), queryFn: () => fetchStats(id, days), placeholderData: (prev) => prev });
 export const useWizardState = (id: number) => useQuery({ queryKey: domainKeys.wizard(id), queryFn: () => api<WizardState>(`/api/domains/${id}/wizard-state`) });
 export const useFailingSources = (id: number) =>
-	useQuery({ queryKey: domainKeys.sources(id), queryFn: () => api<{ sources: FailingSource[] }>(`/api/domains/${id}/sources?days=7`).then((r) => r.sources) });
+	useQuery({ queryKey: domainKeys.sources(id), queryFn: () => api<FailingSources>(`/api/domains/${id}/sources?days=7`) });
 /** The names seen sending as this domain (its subdomains in the reports), 30 days. */
 export const useNames = (id: number, enabled = true) =>
 	useQuery({ queryKey: [...domainKeys.all(id), 'names'] as const, queryFn: () => api<{ names: NameSeen[] }>(`/api/domains/${id}/names?days=30`).then((r) => r.names), enabled });

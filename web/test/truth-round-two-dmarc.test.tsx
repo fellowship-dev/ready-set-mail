@@ -33,7 +33,7 @@ describe('item 5: DMARC tag helpers', () => {
 });
 
 describe('item 5: failing-mail explanation', () => {
-	const src = (over = {}) => ({ source_ip: '1.1.1.1', header_from: 'example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, org: null, base_domain: null, ...over }) as Parameters<typeof explain>[0];
+	const src = (over = {}) => ({ source_ip: '1.1.1.1', header_from: 'example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, verdict: 'failed', org: null, base_domain: null, ...over }) as Parameters<typeof explain>[0];
 	const live = (sp: string | null, pct = 100) => ({ domain: 'example.com', sp, pct });
 
 	it('pct below 100 limits what the policy asks for', () => {
@@ -89,7 +89,7 @@ describe('item 5: pages', () => {
 					'GET /api/domains/3/check-summary': { domain_id: 3, total_messages: 5 },
 					'GET /api/domains/3/reports': {
 						date: '2026-10-01', domain: 'example.com', summary: { total: 5, passed: 0, failed: 5 },
-						sources: [{ source_ip: '9.9.9.9', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
+						sources: [{ source_ip: '9.9.9.9', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, verdict: 'failed', disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
 					},
 				},
 			},

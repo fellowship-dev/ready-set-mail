@@ -7,7 +7,7 @@ import { BackLink, SourceTable, WindowPills, useRouteDomainId } from '../../comp
 import { ListSkeleton, LoadError, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { useDomain } from '../../lib/queries';
-import { DEFAULT_WINDOW, plural, splitActive, type WindowDays } from '../../lib/reports';
+import { DEFAULT_WINDOW, isFailing, isOneCheck, isUnrecorded, plural, splitActive, type WindowDays } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 
 export function AnomaliesPage() {
@@ -23,14 +23,19 @@ export function AnomaliesPage() {
 		enabled: !Number.isNaN(id),
 	});
 	const name = domain?.domain ?? q.data?.domain;
-	const { active, older } = splitActive(q.data?.anomalies ?? []);
+	const rows = q.data?.anomalies ?? [];
+	const { active, older } = splitActive(rows.filter(isFailing));
+	const oneCheck = rows.filter(isOneCheck);
+	const unrecorded = rows.filter(isUnrecorded);
+	const unrecordedSources = new Set(unrecorded.map((s) => s.source_ip)).size;
+	const unrecordedMessages = unrecorded.reduce((n, s) => n + s.total, 0);
 
 	return (
 		<div className="space-y-6">
 			<PageHeader
 				eyebrow={<BackLink to={`/domains/${id}`}>{name ?? 'Back'}</BackLink>}
 				title="Anomalies"
-				description="Sources whose mail failed DMARC: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain."
+				description="Sources whose mail failed DMARC: neither SPF nor DKIM passed and aligned with the From domain."
 				actions={<WindowPills value={days} onChange={setDays} />}
 			/>
 
@@ -40,10 +45,10 @@ export function AnomaliesPage() {
 				<ListSkeleton rows={3} label="Loading anomalies" />
 			) : q.isError ? (
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load anomalies" />
-			) : active.length + older.length === 0 ? (
+			) : active.length + older.length + oneCheck.length === 0 ? (
 				<EmptyState
-					title={`No failing sources in the last ${days} days`}
-					description="No source in the reports received for this window failed DMARC, SPF or DKIM. If no reports arrived, there is nothing to judge yet, so check what was received."
+					title={`No source failed DMARC in the last ${days} days`}
+					description="No source in the reports received for this window failed DMARC. If no reports arrived, there is nothing to judge yet, so check what was received."
 					action={
 						<Button asChild variant="secondary">
 							<Link to={`/domains/${id}/reports`}>See received reports</Link>
@@ -62,8 +67,18 @@ export function AnomaliesPage() {
 							<SourceTable sources={older} domainId={id} label="Older anomalies" />
 						</Section>
 					) : null}
+					{oneCheck.length > 0 ? (
+						<Section title="Passed, but one check failed" description="DMARC passed on SPF or DKIM alone. Worth fixing so there is a backup.">
+							<SourceTable sources={oneCheck} domainId={id} label="Sources that passed on one check" />
+						</Section>
+					) : null}
 				</>
 			)}
+			{!reportsOff && q.isSuccess && unrecorded.length > 0 ? (
+				<p className="text-sm text-ink-2">
+					{plural(unrecordedSources, 'source')} ({unrecordedMessages.toLocaleString()} messages) are in reports stored before Ready Set Mail kept each receiver's DMARC verdict: verdict not recorded.
+				</p>
+			) : null}
 		</div>
 	);
 }

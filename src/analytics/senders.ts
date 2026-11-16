@@ -1,7 +1,8 @@
 // Sender inventory: DMARC report records rolled up per sending IP, with a provider guess and alignment rates.
 //
-// D1 keeps each record's raw SPF/DKIM result and authenticated domain, not the report's own "aligned" verdict
-// (only the report totals use that). So alignment here is derived the way DMARC defines relaxed alignment:
+// D1 keeps each record's raw SPF/DKIM result and authenticated domain, and (since migration 0017) the receiver's own
+// aligned verdict per record (`report_records.spf_aligned/dkim_aligned`, `verdictSql`). This inventory still ESTIMATES
+// from the domains instead, and does not read that verdict. So alignment here is derived the way DMARC defines relaxed alignment:
 // the authenticated domain shares the organizational domain of the From domain, and the check passed.
 // Limits: only the first SPF and first DKIM result of each record are stored, so a message signed twice
 // (an ESP's domain first, yours second) can read as "DKIM not aligned" here though DMARC passed it. Strict

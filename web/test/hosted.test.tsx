@@ -31,7 +31,7 @@ const detailRoutes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/domains': { domains: [domain] },
 	'GET /api/hosted/config': { enabled: true, reports: false, records: true },
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: false, has_rua: false, current_record: null, cf_managed: false },
 	...over,

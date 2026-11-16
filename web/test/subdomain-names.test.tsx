@@ -72,14 +72,14 @@ describe('the failing-source row says which identifier did not align', () => {
 						days: 30, domain: 'example.com',
 						anomalies: [{
 							source_ip: '203.0.113.1', header_from: 'example.com', spf_domain: 'bounces.esp.example', dkim_domain: 'esp.example', total: 9, spf_pass: 1, dkim_pass: 1,
-							spf_aligned: 0, dkim_aligned: 0, dmarc_fail: 1, aspf: 'r', adkim: 'r', first_seen: '2026-01-01', last_seen: new Date().toISOString().slice(0, 10), base_domain: null, org: null,
+							spf_aligned: 0, dkim_aligned: 0, verdict: 'failed', dmarc_fail: 1, aspf: 'r', adkim: 'r', first_seen: '2026-01-01', last_seen: new Date().toISOString().slice(0, 10), base_domain: null, org: null,
 						}],
 					},
 				},
 			},
 		);
 		expect(await screen.findByText('Alignment fail')).toBeInTheDocument();
-		expect(screen.getByText(/Sources whose mail failed DMARC: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain\./)).toBeInTheDocument();
+		expect(screen.getByText(/Sources whose mail failed DMARC: neither SPF nor DKIM passed and aligned with the From domain\./)).toBeInTheDocument();
 		expect(screen.queryByText('Sources that failed SPF or DKIM.')).toBeNull();
 		expect(screen.getByText(/SPF passed for the return-path \(MAIL FROM\) domain bounces\.esp\.example, which is not in the same organization as example\.com/)).toBeInTheDocument();
 	});
@@ -100,7 +100,7 @@ describe('the report page states the true source of a subdomain\'s policy', () =
 					'GET /api/domains/1/names': { days: 30, domain: 'example.com', names: [name()] },
 					'GET /api/domains/1/reports': {
 						date: '2026-10-01', domain: 'example.com', summary: { total: 5, passed: 0, failed: 5 },
-						sources: [{ source_ip: '9.9.9.9', header_from: 'app.example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
+						sources: [{ source_ip: '9.9.9.9', header_from: 'app.example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, verdict: 'failed', disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
 					},
 				},
 			},

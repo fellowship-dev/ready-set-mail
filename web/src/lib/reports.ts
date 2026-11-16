@@ -1,13 +1,16 @@
 import type { CheckStatus } from '@ready-set-mail/ui';
 import { SPF_LOOKUP_LIMIT, spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
-import { alignmentVerdict, explainAlignment, type AlignModes } from '@ready-set-mail/dns-checks/alignment';
+import { alignmentFix, dmarcVerdict, explainAlignment, identifierAlignment, whyNotAligned, type AlignModes, type DmarcVerdict } from '@ready-set-mail/dns-checks/alignment';
 import { effectivePolicySentence, type EffectivePolicy } from '@ready-set-mail/dns-checks/effective-policy';
 import type { AnomalySource, CheckResult, ReportSource } from './types';
 
 /** Pure helpers for the report, source, email-check and audit screens. */
 
 export type AuthSource = Pick<ReportSource, 'source_ip' | 'header_from' | 'spf_domain' | 'dkim_domain' | 'spf_pass' | 'dkim_pass' | 'base_domain' | 'org'> &
-	Partial<Pick<ReportSource, 'spf_aligned' | 'dkim_aligned' | 'dmarc_fail' | 'aspf' | 'adkim'>>;
+	Partial<Pick<ReportSource, 'spf_aligned' | 'dkim_aligned' | 'dmarc_fail' | 'aspf' | 'adkim' | 'verdict'>>;
+
+/** The receiver's DMARC verdict of a source's records: the server's `verdict`, else the one rule applied to the stored columns (`dmarcVerdict`). */
+export const verdictOf = (src: Pick<AuthSource, 'spf_aligned' | 'dkim_aligned' | 'verdict'>): DmarcVerdict => src.verdict ?? dmarcVerdict(src);
 
 export const WINDOWS = [7, 30, 90] as const;
 export type WindowDays = (typeof WINDOWS)[number];
@@ -16,8 +19,17 @@ export const DEFAULT_WINDOW: WindowDays = 30;
 /** A source not seen in this many days is probably fixed already. */
 export const STALE_AFTER_DAYS = 2;
 
-/** Failing: SPF or DKIM did not pass, or DMARC failed although both passed (neither identifier aligned with the From domain). */
-export const isFailing = (src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'> & Partial<Pick<AuthSource, 'dmarc_fail'>>): boolean => !src.spf_pass || !src.dkim_pass || !!src.dmarc_fail;
+type VerdictInput = Pick<AuthSource, 'spf_aligned' | 'dkim_aligned' | 'verdict'>;
+
+/** Failing: the receiver's verdict is that DMARC failed (neither SPF nor DKIM passed and aligned with the From domain, RFC 9989 section 5.3.5). */
+export const isFailing = (src: VerdictInput): boolean => verdictOf(src) === 'failed';
+/** Passed DMARC on one check only: the other did not align, so there is no backup. */
+export const isOneCheck = (src: VerdictInput): boolean => verdictOf(src) === 'passed-one';
+/** Stored before the receiver's verdict was kept (or not recoverable): whether it passed is not recorded. */
+export const isUnrecorded = (src: VerdictInput): boolean => verdictOf(src) === 'not-recorded';
+
+/** The sentence for mail whose verdict is not recorded (stored before migration 0017 kept it). */
+export const NOT_RECORDED = "This report was stored before Ready Set Mail kept each receiver's DMARC verdict, so whether this mail passed DMARC is not recorded.";
 
 /** The sending service, when it differs from the From domain. */
 export function serviceVia(src: Pick<AuthSource, 'spf_domain' | 'dkim_domain' | 'header_from'>): string | null {
@@ -29,7 +41,8 @@ export function serviceVia(src: Pick<AuthSource, 'spf_domain' | 'dkim_domain' | 
 /** "Google" / "mailchimp.com", or null when the IP has no known owner. */
 export const providerName = (src: Pick<AuthSource, 'org' | 'base_domain'>): string | null => src.org || src.base_domain || null;
 
-export function failLabel(src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'> & Partial<Pick<AuthSource, 'dmarc_fail'>>): 'SPF + DKIM' | 'SPF' | 'DKIM' | 'Alignment' {
+/** Which raw result failed, for a source that FAILED DMARC (`isFailing`); 'Alignment' when SPF and DKIM both passed but for another domain. */
+export function failLabel(src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'>): 'SPF + DKIM' | 'SPF' | 'DKIM' | 'Alignment' {
 	if (!src.spf_pass && !src.dkim_pass) return 'SPF + DKIM';
 	if (src.spf_pass && src.dkim_pass) return 'Alignment';
 	return !src.spf_pass ? 'SPF' : 'DKIM';
@@ -111,17 +124,48 @@ export function failingMailFate(policy: KnownPolicy, live?: LiveDmarc, headerFro
 
 /** One line for a source whose SPF and DKIM passed but whose mail failed DMARC: which identifier did not align, and why. Null when there is nothing to say. */
 export function alignmentNote(src: AuthSource): string | null {
-	if (!src.spf_pass && !src.dkim_pass) return null;
-	const v = explainAlignment(src, alignModesOf(src));
-	return v.dmarcFailed && v.lines.length > 0 ? v.lines.map((l) => l.sentence).join(' ') : null;
+	if (!isFailing(src) || (!src.spf_pass && !src.dkim_pass)) return null;
+	const v = explainAlignment({ ...src, spf_aligned: 0, dkim_aligned: 0 }, alignModesOf(src));
+	return v.lines.length > 0 ? v.lines.map((l) => l.sentence).join(' ') : null;
 }
 
-/** Plain-language explanation and fix for a source that failed SPF, DKIM or DMARC alignment. */
+/** The sentence for the identifier that did not give the pass on a source that passed DMARC on the other one alone. */
+function otherCheck(src: AuthSource, other: 'SPF' | 'DKIM'): string {
+	const from = src.header_from ?? null;
+	if (other === 'SPF' && !src.spf_pass) {
+		const rp = src.spf_domain?.trim() || null;
+		const fromName = from ?? 'your domain';
+		if (!rp) return 'SPF did not pass for its return-path (MAIL FROM) domain, which the report does not name.';
+		if (rp.toLowerCase().replace(/\.$/, '') === from?.toLowerCase().replace(/\.$/, '')) {
+			return `SPF did not pass for ${fromName}, which is also its return-path (MAIL FROM) domain, so the SPF record at ${fromName} must authorize this server: add the service's SPF include or the server's address there.`;
+		}
+		return `SPF did not pass for its return-path (MAIL FROM) domain ${rp}, the name where SPF is checked for this mail, so an SPF record at ${fromName} does not apply to it. To fix SPF, the SPF record of ${rp} must authorize this server: add it there, or in the sending service's own settings if the service manages that domain.`;
+	}
+	const modes = alignModesOf(src);
+	const a = other === 'SPF'
+		? identifierAlignment('spf', src.spf_domain, !!src.spf_pass, from, modes.spf)
+		: identifierAlignment('dkim', src.dkim_domain, !!src.dkim_pass, from, modes.dkim);
+	return `${whyNotAligned(a, from)} ${alignmentFix(a, from)}`.trim();
+}
+
+/** Plain-language explanation and fix for a source, by the receiver's DMARC verdict (failed, passed on one check, not recorded). */
 export function explain(src: AuthSource, policy: KnownPolicy = null, live?: LiveDmarc, named?: NamePolicy | null): string {
 	const from = src.header_from ? `"${src.header_from}"` : 'your domain';
 	const service = serviceVia(src) ?? 'this server';
 	const fate = () => failingMailFate(policy, live, src.header_from, named);
+	const verdict = verdictOf(src);
 
+	if (verdict === 'not-recorded') return NOT_RECORDED;
+	if (verdict === 'passed') return `${service} passed DMARC as ${from}.`;
+	if (verdict === 'passed-one') {
+		const ok = src.spf_aligned === 1 ? 'SPF' : 'DKIM';
+		const other = ok === 'SPF' ? 'DKIM' : 'SPF';
+		return (
+			`${service} passed DMARC as ${from} on ${ok} alone. ${otherCheck(src, other)} ` +
+			`Worth fixing so there is a backup: if ${ok} breaks on the way (forwarding usually breaks SPF), this mail fails DMARC.`
+		);
+	}
+	// Failed (RFC 9989 section 5.3.5): neither identifier passed and aligned.
 	if (!src.spf_pass && !src.dkim_pass) {
 		return (
 			`${service} has no authorization to send as ${from}. ` +
@@ -129,25 +173,10 @@ export function explain(src: AuthSource, policy: KnownPolicy = null, live?: Live
 			`If it's a service you added recently, set up DKIM signing as ${src.header_from ?? 'your domain'} for it (and, where the service allows it, a custom return-path domain): DMARC needs SPF or DKIM to pass AND align with that domain.`
 		);
 	}
-	// At least one identifier passed. If DMARC still failed, say which identifier did not align, and why (RFC 9989 section 3.2.10).
-	const v = explainAlignment({ ...src, spf_pass: src.spf_pass, dkim_pass: src.dkim_pass }, alignModesOf(src));
-	if (v.dmarcFailed || src.dmarc_fail) {
-		const lines = v.lines.map((l) => `${l.sentence} ${l.fix}`).join(' ');
-		return `DMARC failed for ${service} sending as ${from}: SPF and DKIM do not align with it. ${lines} ${fate()}`;
-	}
-	if (!src.spf_pass) {
-		const where = src.spf_domain ? `the return-path domain ${src.spf_domain}` : 'its return-path (MAIL FROM) domain';
-		const passes = src.dkim_aligned === 1 ? ' DMARC still passes, because DKIM aligns.' : '';
-		return (
-			`${service} failed SPF for ${where}, the name where SPF is checked for it.${passes} ` +
-			`To fix SPF, the SPF record of ${src.spf_domain ?? 'that domain'} must authorize this server: add it there, or in the sending service's own settings if the service manages that domain. ` +
-			`An SPF record at ${src.header_from ?? 'your domain'} does not apply to this mail.`
-		);
-	}
-	return (
-		`${service} sent mail without a valid DKIM signature for ${from}. ` +
-		`SPF is passing, but DKIM isn't — configure DKIM signing for this service to fully protect your domain.`
-	);
+	// At least one identifier passed, and DMARC still failed: say which identifier did not align, and why (RFC 9989 section 4.4).
+	const v = explainAlignment({ ...src, spf_aligned: 0, dkim_aligned: 0 }, alignModesOf(src));
+	const lines = v.lines.map((l) => `${l.sentence} ${l.fix}`).join(' ');
+	return `DMARC failed for ${service} sending as ${from}: SPF and DKIM do not align with it. ${lines} ${fate()}`;
 }
 
 /** Still failing recently (`last_seen` is YYYY-MM-DD). */

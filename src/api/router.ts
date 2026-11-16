@@ -30,10 +30,10 @@
 //   DELETE /api/domains/:id                   — remove a domain: { ok, kept } (the DNS records it left in place, and why)
 //   GET    /api/domains/:id/stats             — daily pass/fail stats (days, max 90)
 //   GET    /api/domains/:id/reports?date=     — report sources for a specific date
-//   GET    /api/domains/:id/sources           — top failing sources (days, max 90)
+//   GET    /api/domains/:id/sources           — top sources that failed DMARC, plus the counts that passed on one check / have no recorded verdict (days, max 90)
 //   GET    /api/domains/:id/names             — subdomains seen sending as the domain, with the policy that applies to each (days, max 90)
 //   GET    /api/domains/:id/explore           — all sources with pass/fail (days, max 90)
-//   GET    /api/domains/:id/anomalies         — failing sources with Active/Older split
+//   GET    /api/domains/:id/anomalies         — sources that did not pass on both checks, one row per verdict (the page splits failed Active/Older)
 //   GET    /api/domains/:id/export            — CSV export
 //   GET    /api/domains/:id/dns-check         — check _dmarc TXT record in DNS
 //   *      /api/cloudflare/connections…, /api/cloudflare/oauth/…, PUT /api/domains/:id/connection — Cloudflare connections (owner/admin; src/connections/routes.ts)
@@ -483,8 +483,9 @@ async function getDomainSources(tenant: TenantContext, domainId: string, url: UR
   const days = intParam(url, 'days', 7, 1, 90);
   const since = Math.floor(Date.now() / 1000) - days * 86400;
 
-  const results = await tenant.scope.reports.topFailingSources(id, since);
-  return json({ sources: results });
+  const [results, tally] = await Promise.all([tenant.scope.reports.topFailingSources(id, since), tenant.scope.reports.verdictTally(id, since)]);
+  // `sources` are the ones that FAILED DMARC; the rest of the window that is not a plain pass is counted, not listed.
+  return json({ sources: results, one_check: tally['passed-one'], not_recorded: tally['not-recorded'] });
 }
 
 /** The names seen sending as this domain: its subdomains in the reports, with the policy that applies to each and where it comes from. */

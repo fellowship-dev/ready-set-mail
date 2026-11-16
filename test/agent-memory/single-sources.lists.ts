@@ -41,11 +41,13 @@ export const SINGLE: Single[] = [
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
   // Consolidated in the subdomain slice: the five sites that took the last two labels now call `organizationalDomain`.
-  { concept: 'Registrable domain (never "last two labels")', signature: /slice\(-2\)\.join\('\.'\)/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  { concept: 'Registrable domain (never "last two labels")', signature: /slice\(-2\)\.join\(\s*(['"`])\.\1\s*\)/, owners: ['packages/dns-checks/src/org-domain.ts'] },
   // The DKIM selectors to probe are listed once (the registry); `COMMON_DKIM_SELECTORS` is derived from it. Two selectors only the old second list held are the signature.
   { concept: 'DKIM selector list', signature: /['"](?:everlytickey1|scph0120)['"]/, owners: ['packages/dns-checks/src/email-service-providers.ts'] },
   // `hasCname` is how a dangling CNAME (NXDOMAIN with a CNAME in the answer) counts as an existing name: one rule, `nameExists`.
   { concept: 'Name existence (NXDOMAIN with a CNAME exists)', signature: /\.hasCname\b/, owners: ['packages/dns-checks/src/name-exists.ts'] },
+  // The receiver's DMARC verdict of a stored record (both identifiers not aligned = failed) is `verdictSql` (its TS twin: `dmarcVerdict`).
+  { concept: 'DMARC verdict of a stored record', signature: /spf_aligned\s*=\s*0\s+AND\s+\w*\.?dkim_aligned\s*=\s*0/, owners: ['packages/db/src/queries/verdict.ts'] },
 ];
 
 /** Still duplicated today: exactly these files. Consolidation order: docs/single-sources.md. */
@@ -67,6 +69,13 @@ export const MUST_NOT_GROW: Duplicate[] = [
     signature: /^export (const|function) (ROLLOUT_SEQUENCE|dmarcSteps|planNextStep|getNextStep)\b/m,
     authoritative: 'packages/dns-checks/src/dmarc-next-step.ts',
     sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'src/dmarc/rollout.ts'],
+  },
+  {
+    concept: 'Effective DMARC policy rule (own p=, else sp=/np=, else p=)',
+    // reading sp= or np= as a policy tag, or falling back from sp to p
+    signature: /tag:\s*['"](?:sp|np)['"]|\bsp\s*\?\?\s*[\w.]*\b(?:p|policy)\b/,
+    authoritative: 'packages/dns-checks/src/effective-policy.ts',
+    sites: ['packages/dns-checks/src/dmarc-rua.ts', 'packages/dns-checks/src/effective-policy.ts', 'src/dmarc/rollout.ts', 'web/src/lib/report-address.ts', 'web/src/lib/reports.ts'],
   },
   {
     concept: 'DMARC record validation',

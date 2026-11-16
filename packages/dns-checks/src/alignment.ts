@@ -69,8 +69,28 @@ export interface AlignmentInput {
   dkim_aligned?: number | null;
 }
 
+/**
+ * The receiver's DMARC verdict for one stored record, from `policy_evaluated` (RFC 9990 section 3.1.1.9: "the result of the DKIM/SPF DMARC
+ * Identifier Alignment test"). RFC 9989 section 5.3.5: a message passes DMARC when SPF OR DKIM passes AND aligns, so one is enough.
+ *   failed        neither aligned
+ *   passed        both aligned
+ *   passed-one    exactly one aligned (DMARC passed, but with no backup)
+ *   not-recorded  stored before 0017 kept the verdict (NULL), or not recoverable by the backfill (-1), or only one of the two known
+ * ONE rule: the SQL twin is `verdictSql` (packages/db/src/queries/verdict.ts), tested against this function for every combination.
+ */
+export type DmarcVerdict = 'failed' | 'passed' | 'passed-one' | 'not-recorded';
+
+export function dmarcVerdict(r: { spf_aligned?: number | null; dkim_aligned?: number | null }): DmarcVerdict {
+  const s = r.spf_aligned ?? null;
+  const d = r.dkim_aligned ?? null;
+  if (s === 0 && d === 0) return 'failed';
+  if (s === 1 && d === 1) return 'passed';
+  if (s === 1 || d === 1) return 'passed-one';
+  return 'not-recorded';
+}
+
 export interface AlignmentVerdict {
-  /** DMARC failed for this record: neither identifier aligned. null: not known (stored without the receiver's verdict, and nothing passed raw). */
+  /** DMARC failed for this record: the receiver's verdict says neither identifier aligned. An unknown verdict is never "failed". */
   dmarcFailed: boolean;
   spf: IdentifierAlignment;
   dkim: IdentifierAlignment;
@@ -78,16 +98,12 @@ export interface AlignmentVerdict {
 
 /**
  * Which identifier failed alignment. The receiver's verdict (`spf_aligned`/`dkim_aligned`) decides whether DMARC failed when it
- * was kept; the domains and the mode then say why. A record stored without it is judged by the same domains under `modes`
- * (relaxed unless the caller knows the record), as `buildSenders` always did.
+ * was kept; the domains and the mode then say why. A record stored without it is never called failed (`dmarcVerdict`).
  */
 export function alignmentVerdict(r: AlignmentInput, modes: AlignModes = RELAXED): AlignmentVerdict {
   const spf = identifierAlignment('spf', r.spf_domain, !!r.spf_pass, r.header_from, modes.spf);
   const dkim = identifierAlignment('dkim', r.dkim_domain, !!r.dkim_pass, r.header_from, modes.dkim);
-  const known = r.spf_aligned != null || r.dkim_aligned != null;
-  // Without the receiver's verdict, a passing identifier that came with no domain cannot be compared, so nothing is concluded from it.
-  const incomparable = (spf.passed && !spf.domain) || (dkim.passed && !dkim.domain);
-  const dmarcFailed = known ? !(r.spf_aligned === 1 || r.dkim_aligned === 1) : !incomparable && !spf.aligned && !dkim.aligned;
+  const dmarcFailed = dmarcVerdict(r) === 'failed';
   return { dmarcFailed, spf, dkim };
 }
 

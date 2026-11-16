@@ -13,19 +13,19 @@ const live = (over = {}) => ({ domain: 'example.com', sp: null, pct: 100, ...ove
 
 describe('B1: a source whose SPF and DKIM passed but whose mail failed DMARC is failing, and says which identifier did not align', () => {
 	it('is failing when the receiver says neither identifier aligned', () => {
-		expect(isFailing(src({ dmarc_fail: 1 }))).toBe(true);
+		expect(isFailing(src({ spf_aligned: 0, dkim_aligned: 0 }))).toBe(true);
 		expect(isFailing(src())).toBe(false);
-		expect(failLabel(src({ dmarc_fail: 1 }))).toBe('Alignment');
+		expect(failLabel(src())).toBe('Alignment');
 	});
 	it('names the return-path domain and the signing domain that did not align, and the fix at the right place (RFC 9989 section 3.2.10.1)', () => {
-		const t = explain(src({ header_from: 'example.com', spf_domain: 'bounces.esp.example', dkim_domain: 'esp.example', dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0 }), 'reject');
+		const t = explain(src({ header_from: 'example.com', spf_domain: 'bounces.esp.example', dkim_domain: 'esp.example', verdict: 'failed', dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0 }), 'reject');
 		expect(t).toContain('SPF passed for the return-path (MAIL FROM) domain bounces.esp.example');
 		expect(t).toContain('DKIM passed for the signing domain d=esp.example');
 		expect(t).toContain('not in the same organization as example.com');
 		expect(t).toContain('(<selector>._domainkey.<the d= it signs with>)');
 	});
 	it('under strict alignment the same organization is not enough, and the row says why (section 3.2.10.2)', () => {
-		const t = explain(src({ dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0, dkim_domain: 'mailer.example', aspf: 's' }), 'reject');
+		const t = explain(src({ verdict: 'failed', dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0, dkim_domain: 'mailer.example', aspf: 's' }), 'reject');
 		expect(t).toContain('aspf=s');
 		expect(t).toContain('identical domain app.example.com');
 	});
@@ -33,23 +33,23 @@ describe('B1: a source whose SPF and DKIM passed but whose mail failed DMARC is 
 
 describe('B6: the SPF fix is never "add the provider\'s bounce hostname to your SPF record"', () => {
 	it('an unaligned return-path: a custom return-path in the sending service\'s settings, not an include at the From name', () => {
-		const t = explain(src({ header_from: 'app.example.com', spf_domain: 'cf-bounce.app.example.com', dkim_pass: 0, dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0, aspf: 's' }), 'reject');
+		const t = explain(src({ header_from: 'app.example.com', spf_domain: 'cf-bounce.app.example.com', dkim_pass: 0, verdict: 'failed', dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0, aspf: 's' }), 'reject');
 		expect(t).not.toMatch(/Add include:cf-bounce/);
 		expect(t).not.toMatch(/to your SPF record/);
 		expect(t).toContain('strict alignment');
 	});
 	it('a different organization\'s return-path: say it is the service\'s custom return-path (MAIL FROM) setting, and that the From name\'s SPF record cannot help', () => {
-		const t = explain(src({ header_from: 'example.com', spf_domain: 'mailchimp.com', dkim_pass: 0, dmarc_fail: 1 }), 'none');
+		const t = explain(src({ header_from: 'example.com', spf_domain: 'mailchimp.com', dkim_pass: 0, verdict: 'failed', dmarc_fail: 1 }), 'none');
 		expect(t).not.toMatch(/Add include:mailchimp\.com/);
 		expect(t).toContain('custom return-path (MAIL FROM) domain under example.com');
 		expect(t).toContain('SPF is checked at mailchimp.com, not at example.com');
 	});
 	it('SPF failed but DMARC passes on aligned DKIM: the SPF record to fix is the one at the return-path domain, never at the From name', () => {
-		const t = explain(src({ header_from: 'example.com', spf_domain: 'mailchimp.com', spf_pass: 0, dkim_pass: 1, dkim_aligned: 1, spf_aligned: 0 }), 'reject');
+		const t = explain(src({ header_from: 'example.com', spf_domain: 'mailchimp.com', spf_pass: 0, dkim_pass: 1, dkim_aligned: 1, spf_aligned: 0, verdict: 'passed-one' }), 'reject');
 		expect(t).not.toMatch(/Add include:/);
-		expect(t).toContain('DMARC still passes, because DKIM aligns');
+		expect(t).toContain('passed DMARC as "example.com" on DKIM alone');
 		expect(t).toContain('SPF record of mailchimp.com');
-		expect(t).toContain('does not apply to this mail');
+		expect(t).toContain('does not apply to it');
 	});
 });
 

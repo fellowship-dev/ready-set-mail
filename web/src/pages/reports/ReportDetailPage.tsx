@@ -1,7 +1,7 @@
 import { Card, EmptyState, PageHeader, Stat, StatGroup, cn } from '@ready-set-mail/ui';
 import { ReportsNotConnected, useReportsNotConnected } from '../../components/ReportsNotConnected';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, ChevronDown, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleHelp, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useParams } from 'react-router';
 import { AuthBadge, BackLink, ProviderName, useRouteDomainId } from '../../components/reports';
@@ -11,7 +11,7 @@ import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '.
 import { useCheckSummary, useDnsCheck, useNames } from '../../lib/domain-queries';
 import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
-import { explain, formatDayWithRelative, isFailing, passRate, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
+import { explain, formatDayWithRelative, isFailing, isOneCheck, isUnrecorded, NOT_RECORDED, passRate, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
 import type { DayReport, NameSeen, ReportSource } from '../../lib/types';
 
 /** The policy the server read for a name that sent mail as a subdomain of this domain (null: not read). */
@@ -20,11 +20,12 @@ const namedPolicy = (names: NameSeen[] | undefined, headerFrom: string | null): 
 	return e ? { ...e, pct: e.pct ?? undefined } : null;
 };
 
-const sourceKey = (s: ReportSource) => `${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}`;
+const sourceKey = (s: ReportSource) => `${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}-${s.spf_aligned}-${s.dkim_aligned}-${s.disposition}`;
 
-function FailingCard({ src, policy, live, named }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc; named?: NamePolicy | null }) {
+/** One source with its explanation: a danger border when it failed DMARC, a neutral one when it passed on one check only. */
+function FailingCard({ src, policy, live, named, quiet = false }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc; named?: NamePolicy | null; quiet?: boolean }) {
 	return (
-		<Card className="space-y-3 border-danger/40 p-4">
+		<Card className={cn('space-y-3 p-4', quiet ? 'border-line' : 'border-danger/40')}>
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0 space-y-0.5">
 					<ProviderName src={src} />
@@ -45,7 +46,8 @@ function FailingCard({ src, policy, live, named }: { src: ReportSource; policy: 
 	);
 }
 
-function PassingRow({ src }: { src: ReportSource }) {
+/** One collapsed source: passing, or (`unrecorded`) one whose DMARC verdict was not kept. */
+function PassingRow({ src, unrecorded = false }: { src: ReportSource; unrecorded?: boolean }) {
 	const [open, setOpen] = useState(false);
 	const panelId = `passing-${sourceKey(src).replace(/[^a-z0-9]/gi, '-')}`;
 	const details: Array<[string, string | number | null, boolean]> = [
@@ -64,8 +66,8 @@ function PassingRow({ src }: { src: ReportSource }) {
 				onClick={() => setOpen((o) => !o)}
 				className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/60"
 			>
-				<CheckCircle2 aria-hidden className="size-4 shrink-0 text-success" />
-				<span className="sr-only">Passing: </span>
+				{unrecorded ? <CircleHelp aria-hidden className="size-4 shrink-0 text-ink-2" /> : <CheckCircle2 aria-hidden className="size-4 shrink-0 text-success" />}
+				<span className="sr-only">{unrecorded ? 'Verdict not recorded: ' : 'Passing: '}</span>
 				<span className="min-w-0 flex-1">
 					<ProviderName src={src} />
 				</span>
@@ -150,13 +152,15 @@ export function ReportDetailPage() {
 
 	const { summary, sources } = q.data;
 	const failing = sources.filter(isFailing);
-	const passing = sources.filter((s) => !isFailing(s));
+	const oneCheck = sources.filter(isOneCheck);
+	const unrecorded = sources.filter(isUnrecorded);
+	const passing = sources.filter((s) => !isFailing(s) && !isOneCheck(s) && !isUnrecorded(s));
 	const rate = passRate(summary.passed, summary.total);
 
 	const hero =
 		summary.total === 0
 			? null
-			: failing.length === 0
+			: summary.failed === 0
 				? `${summary.total.toLocaleString()} messages analyzed — everything passed.`
 				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} need attention.`;
 
@@ -173,8 +177,8 @@ export function ReportDetailPage() {
 				/>
 			) : (
 				<>
-					<p className={cn('flex items-center gap-2 text-base font-medium', failing.length > 0 ? 'text-danger' : 'text-success')}>
-						{failing.length > 0 ? <XCircle aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
+					<p className={cn('flex items-center gap-2 text-base font-medium', summary.failed > 0 ? 'text-danger' : 'text-success')}>
+						{summary.failed > 0 ? <XCircle aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
 						{hero}
 					</p>
 					<StatGroup className={'sm:grid-cols-4'}>
@@ -185,12 +189,32 @@ export function ReportDetailPage() {
 					</StatGroup>
 
 					{failing.length > 0 ? (
-						<Section title="Needs attention" description="These sources failed DMARC for this day: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain.">
+						<Section title="Needs attention" description="These sources failed DMARC for this day: neither SPF nor DKIM passed and aligned with the From domain.">
 							<div className="space-y-3">
 								{failing.map((s) => (
 									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />
 								))}
 							</div>
+						</Section>
+					) : null}
+
+					{oneCheck.length > 0 ? (
+						<Section title="Passed, but one check failed" description="DMARC passed on SPF or DKIM alone. Worth fixing so there is a backup.">
+							<div className="space-y-3">
+								{oneCheck.map((s) => (
+									<FailingCard key={sourceKey(s)} quiet src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />
+								))}
+							</div>
+						</Section>
+					) : null}
+
+					{unrecorded.length > 0 ? (
+						<Section title="Verdict not recorded" description={NOT_RECORDED}>
+							<ul className="overflow-hidden rounded-lg border border-line bg-surface-1">
+								{unrecorded.map((s) => (
+									<PassingRow key={sourceKey(s)} src={s} unrecorded />
+								))}
+							</ul>
 						</Section>
 					) : null}
 

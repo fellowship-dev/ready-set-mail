@@ -60,7 +60,7 @@ describe('review item 7: an sp= that is not a policy is absent, and said to be i
 		expect(weakerSubdomainPolicy('v=DMARC1; p=reject; sp=none')).toBe('none');
 		expect(weakerSubdomainPolicy('v=DMARC1; p=quarantine; sp=reject')).toBeNull();
 	});
-	const src = { source_ip: '1.1.1.1', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, org: null, base_domain: null } as Parameters<typeof explain>[0];
+	const src = { source_ip: '1.1.1.1', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, verdict: 'failed', org: null, base_domain: null } as Parameters<typeof explain>[0];
 	it('the failing-mail explanation says the value is not valid and that receivers do not apply the record as written (RFC 9989 section 4.10.1)', () => {
 		const t = explain(src, 'reject', { domain: 'example.com', sp: null, invalidSp: 'bogus', pct: 100 });
 		expect(t).toContain('its sp=bogus is not a valid policy, so receivers do not apply that record as written');
@@ -138,7 +138,7 @@ describe('review item 7: the domain page says an invalid sp= is not valid', () =
 				routes: {
 					'GET /api/domains': { domains: [parent, child] },
 					'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-					'GET /api/domains/1/sources': { sources: [] },
+					'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=reject; sp=bogus', cf_managed: false },
 				},

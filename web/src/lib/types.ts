@@ -64,12 +64,30 @@ export interface AddDomainResult {
   resumed?: boolean;
 }
 
+/** A source whose mail failed DMARC in the window; `total` counts the failed messages. */
 export interface FailingSource {
   source_ip: string;
   total: number;
   header_from: string | null;
+  spf_domain: string | null;
+  dkim_domain: string | null;
+  spf_pass: number;
+  dkim_pass: number;
+  reverse_dns: string | null;
   base_domain: string | null;
   org: string | null;
+  /** Not a known sending service, and neither SPF nor DKIM passed for a name of the domain's organization. */
+  likely_not_yours: boolean;
+}
+
+/** Sources and messages in one verdict class (`GET /api/domains/:id/sources`). */
+export interface VerdictCount { sources: number; messages: number }
+
+/** GET /api/domains/:id/sources: the sources that failed DMARC, and how many passed on one check only or have no recorded verdict. */
+export interface FailingSources {
+  sources: FailingSource[];
+  one_check: VerdictCount;
+  not_recorded: VerdictCount;
 }
 
 /** GET /api/domains/:id/names: a subdomain seen sending as the domain, with the policy that applies to it and where it comes from. */
@@ -98,7 +116,9 @@ export interface ReportSource {
   /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
   spf_aligned?: number | null;
   dkim_aligned?: number | null;
-  /** 1 when DMARC failed for some of this source's mail (neither identifier aligned), even if SPF and DKIM passed. */
+  /** The receiver's DMARC verdict of these records: failed (neither aligned), passed, passed-one (one aligned), not-recorded (stored before it was kept). */
+  verdict?: 'failed' | 'passed' | 'passed-one' | 'not-recorded';
+  /** 1 when `verdict` is failed. */
   dmarc_fail?: number;
   /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
   aspf?: string | null;
@@ -120,7 +140,9 @@ export interface AnomalySource {
   /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
   spf_aligned?: number | null;
   dkim_aligned?: number | null;
-  /** 1 when DMARC failed for some of this source's mail (neither identifier aligned), even if SPF and DKIM passed. */
+  /** The receiver's DMARC verdict of these records: failed (neither aligned), passed, passed-one (one aligned), not-recorded (stored before it was kept). */
+  verdict?: 'failed' | 'passed' | 'passed-one' | 'not-recorded';
+  /** 1 when `verdict` is failed. */
   dmarc_fail?: number;
   /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
   aspf?: string | null;
@@ -309,6 +331,8 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   dns_last_good_status: string | null;
   total_messages: number;
   pass_messages: number;
+  /** Of the failing messages, those from servers that are not a known sending service and passed SPF or DKIM for no name of this domain (likelyNotYours). */
+  failed_not_yours?: number;
   fail_messages: number;
   dkim_total: number;
   dkim_pass: number;

@@ -31,6 +31,18 @@ describe('B1: failed mail whose raw SPF and DKIM pass is listed, with the identi
     expect(top.map((s: { total: number }) => s.total)).toEqual([9]);
   });
 
+  it('the sources route lists the failed sources and counts the ones that passed on one check or have no recorded verdict', async () => {
+    const w = await hostedOwner();
+    await w.send(reportXml('readysetmail.com', 'r-mix', [
+      { from: 'readysetmail.com', spf: 'bounces.esp.example', dkim: 'esp.example', spfAligned: false, dkimAligned: false, n: 9 },
+      { from: 'readysetmail.com', spf: 'readysetmail.com', dkim: 'esp.example', spfAligned: true, dkimAligned: false, n: 4 },
+    ]));
+    const res = await w.api('GET', '/api/domains/1/sources?days=3650');
+    expect(res.body.sources.map((s: { total: number }) => s.total)).toEqual([9]);
+    expect(res.body.one_check).toEqual({ sources: 1, messages: 4 });
+    expect(res.body.not_recorded).toEqual({ sources: 0, messages: 0 });
+  });
+
   it('strict alignment: the receiver says aspf=s, so the return-path subdomain does not align and the row says so', async () => {
     const w = await hostedOwner();
     // app. sends through cf-bounce.app.: relaxed alignment holds (same organizational domain); under aspf=s it fails, and DKIM is a provider's d=

@@ -28,7 +28,7 @@ const base = (o: Record<string, unknown> = {}) => ({
 	'GET /api/domains/1/check-summary': SUM(),
 	'GET /api/domains/summaries': { summaries: [SUM()], next_after: null, window_days: 30 },
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'PUT /api/domains/1/wizard-state': {},
 	'GET /api/domains/1/rollout-next': { __status: 404, body: {} },

@@ -121,6 +121,19 @@ describe('known duplicates: must not grow (docs/single-sources.md)', () => {
   }
 });
 
+describe('the signatures catch every spelling', () => {
+  const registrable = SINGLE.find(x => x.concept === 'Registrable domain (never "last two labels")')!.signature;
+  for (const code of ["labels.slice(-2).join('.')", 'labels.slice(-2).join(".")', 'labels.slice(-2).join(`.`)', 'labels.slice(-2).join( "." )']) {
+    it(`registrable domain: ${code}`, () => expect(registrable.test(code)).toBe(true));
+  }
+  it('registrable domain: a join by another character is not the construct', () => expect(registrable.test('labels.slice(-2).join("-")')).toBe(false));
+  const verdict = SINGLE.find(x => x.concept === 'DMARC verdict of a stored record')!.signature;
+  it('DMARC verdict: both columns 0, with or without an alias', () => {
+    expect(verdict.test('rr.spf_aligned = 0 AND rr.dkim_aligned = 0')).toBe(true);
+    expect(verdict.test('spf_aligned = 0 AND dkim_aligned = 0')).toBe(true);
+  });
+});
+
 describe('the escape hatch (ALLOW)', () => {
   const concepts = new Map([...SINGLE.map(s => [s.concept, s.signature] as const), ...MUST_NOT_GROW.map(d => [d.concept, d.signature] as const)]);
   const today = new Date().toISOString().slice(0, 10);

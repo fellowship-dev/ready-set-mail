@@ -74,7 +74,7 @@ const routes = (c: (typeof CASES)[number], m: (typeof MODES)[number]) => {
 		'GET /api/domains/summaries': { summaries: [s], next_after: null, window_days: 30 },
 		'GET /api/domains/1/check-summary': s,
 		'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-		'GET /api/domains/1/sources': { sources: [] },
+		'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 		'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 		'GET /api/domains/1/dns-check': { found: true, has_rua: c.record.includes(RUA), current_record: c.record, cf_managed: true },
 		'GET /api/domains/1/onboarding-status': ONB(c.record, m.rua),

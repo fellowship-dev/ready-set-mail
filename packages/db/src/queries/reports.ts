@@ -4,6 +4,8 @@ import { aggregateReports, domains, reportRecords, tlsReports } from '../schema'
 import { counted, type CountingMode } from './counting';
 import { batchStatements } from '../client';
 import { storeStatements, type StoreReportInput } from './report-store';
+import { verdictSql, type DmarcVerdict } from './verdict';
+import { likelyNotYours } from '@ready-set-mail/dns-checks/sender-providers';
 
 export interface DomainWeeklyStat {
 	domain_id: number;
@@ -17,13 +19,25 @@ export interface DomainWeeklyStat {
 	uncounted_reports: number;
 }
 
+/** A source whose mail FAILED DMARC (verdict 'failed', see verdict.ts): `total` counts the failed messages only. */
 export interface FailingSource {
 	source_ip: string;
 	total: number;
 	header_from: string | null;
+	/** What SPF and DKIM authenticated, and whether each raw result was pass, in the source's largest group of failed records. */
+	spf_domain: string | null;
+	dkim_domain: string | null;
+	spf_pass: number;
+	dkim_pass: number;
+	reverse_dns: string | null;
 	base_domain?: string | null;
 	org?: string | null;
+	/** Not a known sending service, and neither SPF nor DKIM passed for a name of the domain's organization, in every group (`likelyNotYours`). */
+	likely_not_yours: boolean;
 }
+
+/** Sources and messages in one DMARC verdict (`verdictTally`). */
+export interface VerdictCount { sources: number; messages: number }
 
 export interface AnomalySource {
 	source_ip: string;
@@ -36,7 +50,9 @@ export interface AnomalySource {
 	/** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: stored before 0017. */
 	spf_aligned: number | null;
 	dkim_aligned: number | null;
-	/** 1 if any record failed DMARC (neither identifier aligned). */
+	/** The receiver's DMARC verdict of these records (`verdictSql`); each row is one verdict. */
+	verdict: DmarcVerdict;
+	/** 1 when `verdict` is 'failed'. */
 	dmarc_fail: number;
 	/** The alignment modes of the policy the receiver applied ('s' if any report said strict); null: not stored. */
 	aspf: string | null;
@@ -52,7 +68,7 @@ export interface NameSeenRow {
 	name: string;
 	role: 'from' | 'return-path';
 	messages: number;
-	/** Messages the receiver passed (SPF or DKIM aligned) and failed (neither); the rest were stored before the receiver's verdict was kept. */
+	/** Messages the receiver passed (SPF or DKIM aligned) and failed (neither); the rest have no recorded verdict. */
 	passed: number;
 	failed: number;
 }
@@ -74,6 +90,7 @@ export interface ReportSource {
 	dkim_pass: number;
 	spf_aligned: number | null;
 	dkim_aligned: number | null;
+	verdict: DmarcVerdict;
 	dmarc_fail: number;
 	aspf: string | null;
 	adkim: string | null;
@@ -132,6 +149,8 @@ export interface DomainCheckSummary {
 	from_dkim_aligned?: number;
 	from_spf_at_name?: number;
 	from_unjudged?: number;
+	/** Messages in the window whose verdict is 'failed' from sources that are likely not the domain's own (`likelyNotYours`): the evidence for "nothing to fix". */
+	failed_not_yours?: number;
 	mta_sts_enabled: number; // 0 or 1
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
@@ -238,7 +257,7 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) THEN r.count ELSE 0 END) AS from_messages,
 				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND r.dkim_aligned = 1 THEN r.count ELSE 0 END) AS from_dkim_aligned,
 				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND lower(r.spf_domain) = lower(dd.domain) THEN r.count ELSE 0 END) AS from_spf_at_name,
-				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND r.dkim_aligned IS NULL THEN r.count ELSE 0 END) AS from_unjudged
+				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND ${verdictSql('r')} = 'not-recorded' THEN r.count ELSE 0 END) AS from_unjudged
 			FROM report_records r
 			JOIN aggregate_reports a ON a.id = r.report_id AND a.workspace_id = ${A}
 			JOIN domains dd ON dd.id = a.domain_id AND dd.workspace_id = ${A}
@@ -249,6 +268,40 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 		WHERE d.workspace_id = ${A} ${where}
 		${tail}
 	`;
+}
+
+interface FailedGroup {
+	domain_id: number;
+	domain: string;
+	source_ip: string;
+	header_from: string | null;
+	spf_domain: string | null;
+	dkim_domain: string | null;
+	spf_pass: number;
+	dkim_pass: number;
+	total: number;
+	reverse_dns: string | null;
+	base_domain: string | null;
+	org: string | null;
+}
+
+/** One domain's failed groups (largest first) rolled up per source IP, largest source first. */
+function rollUpFailing(groups: readonly FailedGroup[]): FailingSource[] {
+	const bySource = new Map<string, FailingSource>();
+	for (const g of groups) {
+		const own = likelyNotYours({ ...g }, g.domain);
+		const seen = bySource.get(g.source_ip);
+		if (seen) {
+			seen.total += Number(g.total);
+			seen.likely_not_yours &&= own;
+		} else {
+			bySource.set(g.source_ip, {
+				source_ip: g.source_ip, total: Number(g.total), header_from: g.header_from, spf_domain: g.spf_domain, dkim_domain: g.dkim_domain,
+				spf_pass: Number(g.spf_pass), dkim_pass: Number(g.dkim_pass), reverse_dns: g.reverse_dns, base_domain: g.base_domain, org: g.org, likely_not_yours: own,
+			});
+		}
+	}
+	return [...bySource.values()].sort((a, b) => b.total - a.total);
 }
 
 /** Which time a report window is measured on: the period it covers (`date_begin`) or when it was received (`created_at`). */
@@ -313,6 +366,34 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		const out = new Map<number, CountedReporter[]>();
 		for (const r of rows) out.set(r.dk, [...(out.get(r.dk) ?? []), { reporter: r.reporter, label: (r.known_as ?? r.org) as string, reports: r.reports, messages: r.messages }]);
 		for (const [id, list] of out) out.set(id, list.sort((a, b) => b.messages - a.messages).slice(0, 20));
+		return out;
+	};
+
+	/**
+	 * The records that FAILED DMARC (`verdictSql` 'failed'), grouped by source and by what was authenticated, per domain: ONE statement
+	 * behind `topFailingSources` and `failed_not_yours`. The raw SPF / DKIM results are grouped too, so a group is one set of facts.
+	 */
+	const failedGroups = (where: ReturnType<typeof sql>, since: number, limit: number) =>
+		db.all<FailedGroup>(sql`
+			SELECT ar.domain_id, d.domain, rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain,
+			       CASE WHEN rr.spf_result = 'pass' THEN 1 ELSE 0 END AS spf_pass, CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END AS dkim_pass,
+			       SUM(rr.count) AS total, MAX(rr.reverse_dns) AS reverse_dns, MAX(rr.base_domain) AS base_domain, MAX(rr.org) AS org
+			FROM report_records rr
+			JOIN aggregate_reports ar ON ar.id = rr.report_id
+			JOIN domains d ON d.id = ar.domain_id AND d.workspace_id = ${A}
+			WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} ${where} AND ar.date_begin >= ${since}
+			  AND ${verdictSql('rr')} = 'failed'
+			GROUP BY ar.domain_id, rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain, spf_pass, dkim_pass
+			ORDER BY total DESC
+			LIMIT ${limit}
+		`);
+	/** `failed_not_yours` per domain id in the range: failed messages from sources every group of which is `likelyNotYours`. One statement. */
+	const failedNotYoursByDomain = async (range: { fromId: number; toId: number }, since: number): Promise<Map<number, number>> => {
+		const rows = await failedGroups(sql`AND ar.domain_id BETWEEN ${range.fromId} AND ${range.toId}`, since, 2000);
+		const out = new Map<number, number>();
+		const byDomain = new Map<number, FailedGroup[]>();
+		for (const r of rows) byDomain.set(r.domain_id, [...(byDomain.get(r.domain_id) ?? []), r]);
+		for (const [domainId, group] of byDomain) out.set(domainId, rollUpFailing(group).filter((x) => x.likely_not_yours).reduce((n, x) => n + x.total, 0));
 		return out;
 	};
 
@@ -469,21 +550,31 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			`);
 		},
 
-		topFailingSources(domainId: number, since: number, limit = 5) {
-			return db.all<FailingSource>(sql`
-				SELECT rr.source_ip, SUM(rr.count) AS total, rr.header_from,
-				       MAX(rr.base_domain) AS base_domain, MAX(rr.org) AS org
-				FROM report_records rr
-				JOIN aggregate_reports ar ON ar.id = rr.report_id
-				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
-				  AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
-				  AND (rr.dkim_result = 'fail' OR rr.spf_result = 'fail' OR (rr.spf_aligned = 0 AND rr.dkim_aligned = 0))
-				GROUP BY rr.source_ip
-				ORDER BY total DESC
-				LIMIT ${limit}
-			`);
+		/**
+		 * The sources whose mail FAILED DMARC (verdict 'failed': the receiver found neither SPF nor DKIM aligned, RFC 9989 section 5.3.5), by failed
+		 * messages. Grouped in SQL by what was authenticated (largest 500 groups), rolled up per source here: the largest group names the
+		 * authenticated domains, and a source is `likely_not_yours` only when every group is.
+		 */
+		async topFailingSources(domainId: number, since: number, limit = 5): Promise<FailingSource[]> {
+			const rows = await failedGroups(sql`AND ar.domain_id = ${domainId}`, since, 500);
+			return rollUpFailing(rows).slice(0, limit);
 		},
 
+		/** Per verdict, how many sources and messages the domain's counted reports hold since `since`: what the failing-sources list leaves out. */
+		async verdictTally(domainId: number, since: number): Promise<Record<DmarcVerdict, VerdictCount>> {
+			const rows = await db.all<{ verdict: DmarcVerdict; sources: number; messages: number }>(sql`
+				SELECT ${verdictSql('rr')} AS verdict, COUNT(DISTINCT rr.source_ip) AS sources, COALESCE(SUM(rr.count), 0) AS messages
+				FROM report_records rr
+				JOIN aggregate_reports ar ON ar.id = rr.report_id
+				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
+				GROUP BY verdict
+			`);
+			const out: Record<DmarcVerdict, VerdictCount> = { failed: { sources: 0, messages: 0 }, passed: { sources: 0, messages: 0 }, 'passed-one': { sources: 0, messages: 0 }, 'not-recorded': { sources: 0, messages: 0 } };
+			for (const r of rows) out[r.verdict] = { sources: Number(r.sources), messages: Number(r.messages) };
+			return out;
+		},
+
+		/** Every record group that did not pass on both identifiers (verdict not 'passed'), one row per verdict. */
 		anomalySources(domainId: number, since: number) {
 			return db.all<AnomalySource>(sql`
 				SELECT
@@ -494,9 +585,10 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS total,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
-					MAX(rr.spf_aligned) AS spf_aligned,
-					MAX(rr.dkim_aligned) AS dkim_aligned,
-					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					rr.spf_aligned AS spf_aligned,
+					rr.dkim_aligned AS dkim_aligned,
+					${verdictSql('rr')} AS verdict,
+					CASE WHEN ${verdictSql('rr')} = 'failed' THEN 1 ELSE 0 END AS dmarc_fail,
 					MAX(ar.aspf) AS aspf,
 					MAX(ar.adkim) AS adkim,
 					MIN(date(datetime(ar.date_begin, 'unixepoch'))) AS first_seen,
@@ -508,8 +600,8 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
 				  AND ar.domain_id = ${domainId}
 				  AND ar.date_begin >= ${since}
-				  AND (rr.spf_result != 'pass' OR rr.dkim_result != 'pass' OR (rr.spf_aligned = 0 AND rr.dkim_aligned = 0))
-				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain
+				  AND ${verdictSql('rr')} <> 'passed'
+				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain, rr.spf_aligned, rr.dkim_aligned
 				ORDER BY total DESC
 			`);
 		},
@@ -524,9 +616,10 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS total,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
-					MAX(rr.spf_aligned) AS spf_aligned,
-					MAX(rr.dkim_aligned) AS dkim_aligned,
-					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					rr.spf_aligned AS spf_aligned,
+					rr.dkim_aligned AS dkim_aligned,
+					${verdictSql('rr')} AS verdict,
+					CASE WHEN ${verdictSql('rr')} = 'failed' THEN 1 ELSE 0 END AS dmarc_fail,
 					MAX(ar.aspf) AS aspf,
 					MAX(ar.adkim) AS adkim,
 					MIN(date(datetime(ar.date_begin, 'unixepoch'))) AS first_seen,
@@ -538,7 +631,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
 				  AND ar.domain_id = ${domainId}
 				  AND ar.date_begin >= ${since}
-				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain
+				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain, rr.spf_aligned, rr.dkim_aligned
 				ORDER BY total DESC
 			`);
 		},
@@ -552,14 +645,14 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			const suffix = `.${domain}`;
 			return db.all<NameSeenRow>(sql`
 				SELECT n.name AS name, n.role AS role, SUM(n.count) AS messages,
-				       SUM(CASE WHEN n.spf_aligned = 1 OR n.dkim_aligned = 1 THEN n.count ELSE 0 END) AS passed,
-				       SUM(CASE WHEN n.spf_aligned = 0 AND n.dkim_aligned = 0 THEN n.count ELSE 0 END) AS failed
+				       SUM(CASE WHEN n.verdict IN ('passed', 'passed-one') THEN n.count ELSE 0 END) AS passed,
+				       SUM(CASE WHEN n.verdict = 'failed' THEN n.count ELSE 0 END) AS failed
 				FROM (
-					SELECT lower(rr.header_from) AS name, 'from' AS role, rr.count, rr.spf_aligned, rr.dkim_aligned
+					SELECT lower(rr.header_from) AS name, 'from' AS role, rr.count, ${verdictSql('rr')} AS verdict
 					FROM report_records rr JOIN aggregate_reports ar ON ar.id = rr.report_id
 					WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
 					UNION ALL
-					SELECT lower(rr.spf_domain), 'return-path', rr.count, rr.spf_aligned, rr.dkim_aligned
+					SELECT lower(rr.spf_domain), 'return-path', rr.count, ${verdictSql('rr')}
 					FROM report_records rr JOIN aggregate_reports ar ON ar.id = rr.report_id
 					WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ar.date_begin >= ${since}
 				) n
@@ -593,9 +686,10 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					SUM(rr.count) AS count,
 					MAX(CASE WHEN rr.spf_result  = 'pass' THEN 1 ELSE 0 END) AS spf_pass,
 					MAX(CASE WHEN rr.dkim_result = 'pass' THEN 1 ELSE 0 END) AS dkim_pass,
-					MAX(rr.spf_aligned) AS spf_aligned,
-					MAX(rr.dkim_aligned) AS dkim_aligned,
-					MAX(CASE WHEN rr.spf_aligned = 0 AND rr.dkim_aligned = 0 THEN 1 ELSE 0 END) AS dmarc_fail,
+					rr.spf_aligned AS spf_aligned,
+					rr.dkim_aligned AS dkim_aligned,
+					${verdictSql('rr')} AS verdict,
+					CASE WHEN ${verdictSql('rr')} = 'failed' THEN 1 ELSE 0 END AS dmarc_fail,
 					MAX(ar.aspf) AS aspf,
 					MAX(ar.adkim) AS adkim,
 					rr.disposition,
@@ -605,7 +699,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')}
 				  AND ar.domain_id = ${domainId}
 				  AND date(datetime(ar.date_begin, 'unixepoch')) = ${date}
-				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain, rr.disposition
+				GROUP BY rr.source_ip, rr.header_from, rr.spf_domain, rr.dkim_domain, rr.spf_aligned, rr.dkim_aligned, rr.disposition
 				ORDER BY count DESC
 			`);
 		},
@@ -650,7 +744,9 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 
 		async checkSummary(domainId: number, since: number): Promise<DomainCheckSummary | null> {
 			const rows = await db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.id = ${domainId}`, sql``));
-			return rows[0] ?? null;
+			const row = rows[0];
+			if (!row) return null;
+			return { ...row, failed_not_yours: (await failedNotYoursByDomain({ fromId: domainId, toId: domainId }, since)).get(domainId) ?? 0 };
 		},
 
 		/**
@@ -658,7 +754,10 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		 * page). One query for the overview instead of one request per domain.
 		 */
 		async checkSummaries(since: number, page: { afterId?: number; limit: number }): Promise<DomainCheckSummary[]> {
-			return db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.evicted_at IS NULL AND d.id > ${page.afterId ?? 0}`, sql`ORDER BY d.id LIMIT ${page.limit}`));
+			const rows = await db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.evicted_at IS NULL AND d.id > ${page.afterId ?? 0}`, sql`ORDER BY d.id LIMIT ${page.limit}`));
+			if (rows.length === 0) return rows;
+			const notYours = await failedNotYoursByDomain({ fromId: rows[0].domain_id, toId: rows[rows.length - 1].domain_id }, since);
+			return rows.map((r) => ({ ...r, failed_not_yours: notYours.get(r.domain_id) ?? 0 }));
 		},
 
 		// ── TLS-RPT ───────────────────────────────────────────────

@@ -13,7 +13,7 @@ import { DoThisNext } from '../../components/domain/DoThisNext';
 import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
 import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
-import { FailingSources } from '../../components/domain/FailingSources';
+import { FailingSources, notRecordedLine, oneCheckLine } from '../../components/domain/FailingSources';
 import { SubdomainNames } from '../../components/domain/SubdomainNames';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
@@ -317,7 +317,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
 		summary: summary.data ?? (summary.isError ? null : undefined),
-		sources: sources.data ?? null,
+		sources: sources.data?.sources ?? null,
 		// A fix to an inherited policy belongs on the parent: link to it when it is in this workspace (as the overview does).
 		parentId: all.find((d) => d.domain === summary.data?.dmarc_inherited_from)?.id,
 		summaryFresh,
@@ -339,7 +339,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
 	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
-	const failing = sources.data?.length ?? 0;
+	const failing = sources.data?.sources.length ?? 0;
+	const oneCheck = sources.data?.one_check.sources ?? 0;
+	const unrecorded = sources.data?.not_recorded.sources ?? 0;
 
 	return (
 		<div className="space-y-8">
@@ -487,8 +489,17 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 					</Disclosure>
 				)}
 
-				{!reportsOff && (failing > 0 || sources.isError) ? (
-					<Disclosure title="Failing senders" summary={sources.isError ? 'Could not be loaded.' : `${plural(failing, 'source')} sent mail that failed DMARC in the last 7 days.`}>
+				{!reportsOff && (failing > 0 || oneCheck > 0 || unrecorded > 0 || sources.isError) ? (
+					<Disclosure
+						title={failing > 0 || sources.isError ? 'Failing senders' : 'Senders to look at'}
+						summary={
+							sources.isError
+								? 'Could not be loaded.'
+								: failing > 0
+									? `${plural(failing, 'source')} sent mail that failed DMARC in the last 7 days.`
+									: [oneCheck > 0 ? oneCheckLine(oneCheck) : null, unrecorded > 0 ? notRecordedLine(unrecorded, sources.data?.not_recorded.messages ?? 0) : null].filter(Boolean).join(' ')
+						}
+					>
 						<FailingSources domainId={domain.id} q={sources} />
 					</Disclosure>
 				) : null}

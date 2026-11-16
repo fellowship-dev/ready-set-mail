@@ -232,7 +232,7 @@ describe('domainActions: the live-read parts of Do this next', () => {
 	});
 
 	it('the largest failing source is named next to "Fix the senders"', () => {
-		const got = domainActions(input({ summary: summary({ ...passing(80), dmarc_policy: 'none', dmarc_p: 'none' }), sources: [{ source_ip: '198.2.180.1', total: 40, header_from: 'example.com', base_domain: 'mcsv.net', org: 'Mailchimp' }] }));
+		const got = domainActions(input({ summary: summary({ ...passing(80), dmarc_policy: 'none', dmarc_p: 'none' }), sources: [{ source_ip: '198.2.180.1', total: 40, header_from: 'example.com', base_domain: 'mcsv.net', org: 'Mailchimp', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, reverse_dns: null, likely_not_yours: false }] }));
 		expect(got[0]!.why).toMatch(/largest failing source is Mailchimp/);
 	});
 

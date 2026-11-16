@@ -36,7 +36,7 @@ const base = {
 	'GET /api/domains': { domains: [domain] },
 	'GET /api/domains/1/check-summary': summary,
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-10-20', total: 100, passed: 97, failed: 3 }] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: current, cf_managed: true },
 	'GET /api/domains/1/onboarding-status': onboarding,

@@ -116,8 +116,8 @@ function seedDomain(db: TestDb, stat: DomainWeeklyStat, failingSources: FailingS
       for (const s of failingSources) {
         db.sqlite
           .prepare(
-            `INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, spf_result, header_from)
-             VALUES (?, ?, ?, 'none', 'fail', 'fail', ?)`,
+            `INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, spf_result, header_from, spf_aligned, dkim_aligned)
+             VALUES (?, ?, ?, 'none', 'fail', 'fail', ?, 0, 0)`,
           )
           .run(res.lastInsertRowid, s.source_ip, s.total, s.header_from);
       }
