@@ -33,7 +33,7 @@
 //  - A 200 from PostHog "does not imply that events are valid" (the capture page: PostHog answers 200 even for an event without a
 //    distinct id), so tests check the payload, never the status.
 //  - Never harms the product: config is read with typeof checks, and capture, captureMany and captureLater catch everything at their
-//    boundary (counted in `analyticsDropped`), so no setting, event or hook can throw into the request, webhook, email or cron it rides on.
+//    boundary (each drop logged as one `[product-analytics] dropped: <stage>` line, no details), so no setting, event or hook can throw into the request, webhook, email or cron it rides on.
 import { getMode } from '../tenancy/mode';
 import { allowed, type EventName, type PropsOf } from './events';
 import { analyticsIdFor } from './identity';
@@ -55,8 +55,10 @@ export const RETRY_DELAY_MS = 250;
 /** PostHog's own ingestion origins (US and EU Cloud): the only places events are sent. Never a proxy on our own domain. */
 export const ALLOWED_HOSTS = ['https://us.i.posthog.com', 'https://eu.i.posthog.com'] as const;
 
-/** Errors and failed sends swallowed so far in this isolate (tests read it; nothing else does). */
-export const analyticsDropped = { errors: 0, sends: 0 };
+/** A swallowed failure, counted as one log line naming only the stage (never the error, which could carry a value). */
+export function dropped(stage: 'capture' | 'later' | 'send' | 'post'): void {
+  try { console.warn(`[product-analytics] dropped: ${stage}`); } catch { /* nothing */ }
+}
 
 /** A local fake PostHog for tests and e2e only: plain http on the loopback with a port, the origin only. */
 function localFake(url: URL): boolean {
@@ -130,7 +132,7 @@ async function post(url: string, body: string): Promise<boolean> {
     // Only a server-side failure is worth the one retry; a 4xx will not change.
     return res.status < 500 && res.status !== 429;
   } catch {
-    analyticsDropped.sends++;
+    dropped('post');
     return false;
   }
 }
@@ -152,7 +154,7 @@ export async function send(env: AnalyticsEnv, subject: Subject, events: readonly
     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     await post(cfg.batchUrl, body);
   } catch {
-    analyticsDropped.errors++; // analytics must never affect the product
+    dropped('send'); // analytics must never affect the product
   }
 }
 
@@ -171,7 +173,7 @@ export function captureMany(env: AnalyticsEnv, ctx: Pick<ExecutionContext, 'wait
     const at = Date.now();
     extend(ctx, send(env, subject, events.map((e) => ({ ...e, at: e.at ?? at }))));
   } catch {
-    analyticsDropped.errors++;
+    dropped('capture');
   }
 }
 
@@ -196,11 +198,11 @@ export function captureLater(env: AnalyticsEnv, ctx: Pick<ExecutionContext, 'wai
         const b = await work();
         if (b) await send(env, b.subject, b.events.map((e) => ({ ...e, at: e.at ?? at })));
       } catch {
-        analyticsDropped.errors++;
+        dropped('later');
       }
     })());
   } catch {
-    analyticsDropped.errors++;
+    dropped('later');
   }
 }
 

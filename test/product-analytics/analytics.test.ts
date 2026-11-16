@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { EVENTS, allowed, countBucket, codeWait, longWait, shortWait, triesBucket, resendsBucket, issuesBucket } from '../../src/product-analytics/events';
-import { ALLOWED_HOSTS, analyticsConfig, analyticsDropped, analyticsState, batchBody, capture, captureLater, captureMany, ev, send, toSecond, RETRY_DELAY_MS } from '../../src/product-analytics/capture';
+import { ALLOWED_HOSTS, analyticsConfig, analyticsState, batchBody, capture, captureLater, captureMany, ev, send, toSecond, RETRY_DELAY_MS } from '../../src/product-analytics/capture';
 import { adoptAnalyticsId, analyticsIdFor, mintedId } from '../../src/product-analytics/identity';
 import { call, makeEnv, signupVerified } from '../auth/helpers';
 import { POSTHOG_HOST, POSTHOG_KEY, SECRETS, STRAY_VID, runWalk } from './walk';
@@ -552,7 +552,7 @@ describe('the other paths: a pasted token, records added by hand, a sign-up with
 describe('never harms what it rides on', () => {
   it('capture, captureMany and captureLater never throw, whatever they are given; the failure is counted', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')));
-    const before = analyticsDropped.errors;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const hostileEvents = new Proxy([], { get: () => { throw new Error('boom'); } }) as never;
     const badCtx = { waitUntil: () => { throw new Error('cannot extend'); } };
     expect(() => captureMany(ON, undefined, { analyticsId: VISITOR_ID }, hostileEvents)).not.toThrow();
@@ -566,7 +566,9 @@ describe('never harms what it rides on', () => {
       expect(() => capture({ MODE: bad, POSTHOG_KEY, POSTHOG_HOST }, undefined, { analyticsId: VISITOR_ID }, 'Signed In')).not.toThrow();
     }
     await new Promise((r) => setTimeout(r, 0));
-    expect(analyticsDropped.errors).toBeGreaterThan(before);
+    const drops = warn.mock.calls.map((c) => String(c[0]));
+    expect(drops).toEqual(expect.arrayContaining(['[product-analytics] dropped: capture', '[product-analytics] dropped: later']));
+    expect(drops.every((d) => /^\[product-analytics\] dropped: [a-z]+$/.test(d))).toBe(true); // the stage only, never the error
   });
 
   it('malformed POSTHOG_KEY / POSTHOG_HOST: requests, the Stripe webhook, report intake and the cron all work, and nothing is sent', async () => {
