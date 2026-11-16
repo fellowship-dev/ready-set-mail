@@ -211,7 +211,7 @@ test('hosted with report intake: step 4 writes only the policy record; Connect r
 		await page.getByRole('button', { name: 'Connect reports' }).click();
 		await expect(page.getByTestId('change-dmarc')).toContainText(`rua=mailto:rua@${intake}`);
 		await page.getByRole('button', { name: 'Apply', exact: true }).click();
-		await expect(page.getByText('Report address added.')).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText(/Published, waiting for the first report|Written to Cloudflare, not in public DNS yet/)).toBeVisible({ timeout: 30_000 }); // the step re-reads its status, so the panel that is shown now is the connected one
 		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual([`v=DMARC1; p=none; rua=mailto:rua@${intake}`]);
 		expect(inst.d1(`SELECT rua_address, reports_connected_at IS NOT NULL AS connected FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: `rua@${intake}`, connected: 1 }]);
