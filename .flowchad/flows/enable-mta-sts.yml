@@ -12,7 +12,6 @@ covers:
   - src/email/mta-sts.ts
   - src/email/tls-rpt.ts
   - src/hosted/tls-intake.ts
-  - src/hosted/policy-host.ts
   - packages/dns-checks/src/mta-sts.ts
 url: /#/domains/1/mta-sts
 tags: [mta-sts, value, protected]

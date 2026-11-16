@@ -118,7 +118,7 @@ export function tlsRptAddress(tenant: TenantContext): string | null {
     return d ? tlsReportAddress(d) : null;
   }
   const rd = tenant.settings.reportsDomain;
-  return rd ? `tls-rpt@${rd}` : null;
+  return rd ? tlsReportAddress(rd) : null;
 }
 
 /** Where `mta-sts.<d>` is to point. Hosted: the operator's target. Self-host: this Worker's own host (null when it cannot be told). */

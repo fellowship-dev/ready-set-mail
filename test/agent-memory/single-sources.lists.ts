@@ -120,8 +120,8 @@ export const MUST_NOT_GROW: Duplicate[] = [
   },
   {
     concept: 'Report address construction',
-    // `rua@…`, `dmarc@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
-    signature: /(?<![\w.+-])(?:rua|dmarc)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
+    // `rua@…`, `dmarc@…`, `tls-rpt@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
+    signature: /(?<![\w.+-])(?:rua|dmarc|tls-rpt)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc|tls-rpt)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
     authoritative: 'src/hosted/fixed-address.ts',
     sites: [
       'packages/report/src/catalog/dmarc-missing.ts', 'packages/report/src/catalog/dmarc-p-none-no-rua.ts', 'packages/report/src/fixes.ts', 'packages/report/src/render-md.ts',

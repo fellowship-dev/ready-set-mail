@@ -8,12 +8,26 @@ import { assertSchemaReady, intakeLookups, SchemaNotReadyError, type MtaStsRow }
 import { buildPolicyFile } from '@ready-set-mail/dns-checks';
 import type { Env } from '../index';
 import { scope } from '../db/scope';
-import { resolvePolicyHost } from '../hosted/policy-host';
+import { resolveDomainOwner } from '../tenancy/resolver';
 import { maxAgeFor } from './config';
 import { splitHosts } from './evidence';
 
 const POLICY_PATH = '/.well-known/mta-sts.txt';
 const notFound = (text = 'Not found') => new Response(text, { status: 404, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
+
+// Which tenant serves an MTA-STS policy hostname:
+//   self-host   mta-sts.<domain>            → the workspace monitoring that domain, else the implicit workspace
+//   saas        mta-sts.<customer domain>   → the workspace that owns the domain by the one proven-owner rule (packages/db `provenOwnerOf`, the rule report intake uses): the
+//               domain is live and proven. Never the default workspace in saas: an unknown or unproven host is a 404 (a policy being RETIRED is the exception, see below).
+export interface PolicyHost { workspaceId: string; domain: string }
+
+export async function resolvePolicyHost(env: Env, hostname: string): Promise<PolicyHost | null> {
+  const host = hostname.toLowerCase();
+  if (!host.startsWith('mta-sts.')) return null;
+  const domain = host.slice('mta-sts.'.length);
+  const owner = await resolveDomainOwner(env, domain);
+  return owner ? { workspaceId: owner, domain } : null;
+}
 
 /** The mode the policy file says. */
 export const servedMode = (config: Pick<MtaStsRow, 'mode'>): 'testing' | 'enforce' | 'none' => config.mode;

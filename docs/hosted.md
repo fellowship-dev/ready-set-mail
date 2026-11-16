@@ -660,7 +660,7 @@ the fixed free-check reply is sent, and the result lands in the global `check_re
 Free-check senders are also enrolled in the onboarding sequence and every non-transactional email carries an unsubscribe link: see [email-funnel.md](email-funnel.md).
 Rate limits (shared `auth_rate_limits` counters, 1-hour windows): 5 per **authenticated** sender domain (a passing DMARC/DKIM/SPF result in the `Authentication-Results` header Cloudflare adds, reduced to its registrable domain), 20 for senders that authenticate as nothing (one shared bucket), and 500 overall. The `From` header is never used as a key, so a spoofed From cannot use up a real domain's allowance; the cost of that is that unauthenticated senders compete for one small bucket.
 
-**MTA-STS host** (`src/hosted/policy-host.ts`): `mta-sts.<customer domain>` → the workspace that owns the domain by the one proven-owner rule (the domain is live and proven, so a lapsed proof stops the policy at once); anything else, and every other path on such a host, 404. Never the implicit workspace in `saas`.
+**MTA-STS host** (`resolvePolicyHost` in `src/mta-sts/serve.ts`): `mta-sts.<customer domain>` → the workspace that owns the domain by the one proven-owner rule (the domain is live and proven, so a lapsed proof stops the policy at once); anything else, and every other path on such a host, 404. Never the implicit workspace in `saas`.
 
 ## API
 
