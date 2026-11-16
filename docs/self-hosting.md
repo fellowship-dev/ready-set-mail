@@ -110,14 +110,13 @@ Cloudflare sends this mail only to addresses verified as Email Routing destinati
 
 ## Scheduled jobs
 
-The Worker runs five cron triggers (times in UTC). They start when it is deployed, and do nothing until there are domains to work on.
+The Worker runs four cron triggers (times in UTC). They start when it is deployed, and do nothing until there are domains to work on.
 
 | Cron | When | What |
 |---|---|---|
 | `0 8 * * *` | daily 08:00 | Re-reads each domain's DNS (SPF lookup count, DMARC policy), runs monitor checks and change alerts, rollout regression checks, MTA-STS MX refresh |
 | `0 9 * * 1` | Mondays 09:00 | Weekly DMARC digest email |
-| `0 10 * * *` | daily 10:00 | SPF flattening refresh, only for domains that turned flattening on |
-| `0 11 * * *` | daily 11:00 | Nothing on a self-hosted installation (the hosted service's product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)) |
+| `0 11 * * *` | daily 11:00 | SPF flattening refresh: re-resolves every flattened record from the original you had and rewrites it only when your providers' addresses changed ([spf-flattening.md](spf-flattening.md)). Nothing else on a self-hosted installation (the hosted service's product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)). Older installations also list `0 10 * * *`: it runs the same refresh and can be removed |
 | `0 4 * * *` | daily 04:00 | Data lifecycle: retries failed Cloudflare revocations, then deletes data past its retention period ([data retention](data-retention.md)) |
 
 ## Upgrade

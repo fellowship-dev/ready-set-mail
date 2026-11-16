@@ -63,8 +63,10 @@ is reported but never used to claim "no DKIM".
 * More than 2 void lookups (NXDOMAIN or empty answers on a/mx/exists/include targets) → `permerror`.
 * Include/redirect loops are detected along the active path (diamonds are fine) → `permerror`.
 * Multiple SPF records at any visited name → `permerror`. An include of a name without SPF → `permerror`.
-* `previewFlatten()` / `collectIps()` flatten to `ip4:`/`ip6:`; if `incomplete` is true (DNS error, loop…)
-  the result must **not** be published.
+* `flattenFromSource()` (`src/spf-flatten.ts`) flattens a stored original record into `ip4:`/`ip6:` terms, inlining only as many
+  top-level includes as it takes to land within 10 lookups and 450 bytes; a failed resolution, a macro in an include target or no
+  choice that fits returns `ok: false` with one sentence, and nothing is to be published. `sameSpfRecord()` compares two records
+  regardless of term order, case and spacing.
 
 ## DMARC organizational domain
 

@@ -38,6 +38,12 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  {
+    concept: 'SPF flattening (resolving a stored original into a flat record)',
+    // the names of the old and the new walkers: a second flattener that resolves includes into ip4:/ip6: terms would reuse or reinvent them
+    signature: /\bcollectIps\b|\bbuildFlatRecord\b|\bwithSpfSource\b|\bpreviewFlatten\b|\bflattenFromSource\b/,
+    owners: ['packages/dns-checks/src/spf-flatten.ts', 'src/spf/', 'src/hosted/service.ts', 'src/hosted/cron.ts'],
+  },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];

@@ -49,6 +49,11 @@ Home: `src/connections/`; the import is `importZones` in `src/connections/import
 The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
 Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 
+**Original record**, **flattened record** and **refresh** (SPF flattening):
+The *original record* is the SPF record as the owner had it, with its `include:` terms, stored when flattening is turned on and never rewritten while it is on (`spf_flatten_config.canonical_record`). The *flattened record* is what is published instead: some or all includes replaced by the addresses behind them, within 10 lookups and 450 bytes (`flattenFromSource`, `packages/dns-checks/src/spf-flatten.ts`). A *refresh* is the daily check that resolves the original again and rewrites the flattened record only if the answer changed (`refreshSpf`, `src/spf/refresh.ts`; `docs/spf-flattening.md`). SPF flattening is an **add-on** (`addOnAccess`, `src/hosted/plan-limits.ts`; ADR 0019).
+_Avoid_: canonical record (in UI copy), "re-resolved daily" for what a refresh does not do (it checks every day and writes only on change), snapshot
+Home: `src/spf/refresh.ts`; the state in `spf_flatten_config`; the words in `web/src/lib/spf-flatten.ts`.
+
 ## Judging a domain
 
 **Check** — **two meanings**:

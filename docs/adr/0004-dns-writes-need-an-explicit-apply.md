@@ -17,5 +17,5 @@ Connecting Cloudflare, importing zones, adding a domain and reading a plan never
 - Written as a side effect, without a button for that record:
   - a bulk add, `POST /api/domains/bulk-import` (`src/domains/bulk.ts`), writes each new domain's report-authorization record `<domain>._report._dmarc.<reports domain>` on the reports domain (self-host; the hosted service has no reports domain);
   - taking a domain from another workspace (a stronger proof in this workspace) deletes that workspace's hosted and report-authorization records for it (`src/domains/ownership.ts`);
-  - the daily crons in `src/cron.ts` rewrite records a person turned on: the flattened SPF record (10:00 UTC) and the MTA-STS policy id when the MX hosts change (08:00 UTC). The hosted cron writes only the operator's hosted-records zone (`src/hosted/cron.ts`).
+  - the daily crons in `src/cron.ts` rewrite records a person turned on: the flattened SPF record (11:00 UTC, re-resolved from the stored original, never over an edit made outside the app: ADR 0018) and the MTA-STS policy id when the MX hosts change (08:00 UTC). The hosted cron writes only the operator's hosted-records zone (`src/hosted/cron.ts`).
 - `docs/coding-agents.md` tells agents to show records and ask before any DNS change. A new automatic write needs a new ADR.

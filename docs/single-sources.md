@@ -19,6 +19,8 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, the first-day card | must-not-grow (standing rules) |
 | Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
 | Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE` | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
+| SPF flattening (resolving a stored original into a flat record) | `packages/dns-checks/src/spf-flatten.ts` (pure) and `src/spf/refresh.ts` (Worker) | `flattenFromSource`, `sameSpfRecord`; `enableSpf`, `refreshSpf`, `disableSpf`, `rollbackSpf`, `runSpfRefresh` | routes (`src/api/router.ts`), the daily job (`src/cron.ts`), hosted records (`src/hosted/service.ts`, `src/hosted/cron.ts`) | single; `test/agent-memory/single-sources.test.ts` (ADR 0018) |
+| Operator allow-settings (`owner` / `all` / workspace ids) | `src/hosted/allow.ts` | `parseAllow`, `allowed`, `workspaceIsOperators`; the add-on answer `addOnAccess` in `src/hosted/plan-limits.ts` | `HOSTED_CONNECT_REPORTS` (`src/hosted/fixed-address.ts`), `HOSTED_SPF_FLATTENING` | not guarded (two callers; a third parser would be a second copy: extend `parseAllow`) |
 | Sign-up attempt (fields kept until the account exists) | `src/auth/codes.ts` | `startAttempt`, `checkCode` | `src/auth/routes.ts` | — |
 
 ## Known duplicates: to be consolidated

@@ -25,13 +25,14 @@ const coversOf = (text: string): string[] => {
 };
 
 describe('protected value flows', () => {
-  it('there are five, one per value flow on main', () => {
+  it('there are six, one per value flow on main', () => {
     expect(protectedFlows.map(f => f.id).sort()).toEqual([
       'agent-connects-and-reads-report',
       'buy-fix-one-domain',
       'invited-teammate-joins',
       'signup-to-records-live-cloudflare',
       'signup-to-records-live-manual',
+      'spf-flattening',
     ]);
   });
 

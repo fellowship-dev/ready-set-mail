@@ -7,7 +7,7 @@ Short records of decisions already made, with who made them. A change that contr
 | 0001 | [Hosted sign-in is a password plus a 6-digit emailed code, limited by daily caps](0001-sign-in-password-and-emailed-code.md) | accepted |
 | 0002 | [A domain in an active zone of a connected Cloudflare account is owned by that fact](0002-cloudflare-zone-proves-ownership.md) | accepted |
 | 0003 | [Connecting Cloudflare imports every proven zone and writes nothing to the importer's DNS](0003-cloudflare-import-adds-all-active-zones-and-writes-nothing.md) | accepted, superseded in part by 0014 |
-| 0004 | [A domain's own DNS records change only when a person asks](0004-dns-writes-need-an-explicit-apply.md) | accepted |
+| 0004 | [A domain's own DNS records change only when a person asks](0004-dns-writes-need-an-explicit-apply.md) | accepted, SPF refresh narrowed by 0018 |
 | 0005 | [A workspace can hold several Cloudflare connections, shown by account](0005-several-cloudflare-accounts-per-workspace.md) | accepted |
 | 0006 | [Hosted customers that connect reports publish one shared report address](0006-one-shared-hosted-report-address.md) | accepted, owner sign-off not recorded |
 | 0007 | [Billing: one card per workspace, Stripe-hosted pages, Stripe decides paid](0007-billing-one-card-per-workspace-stripe-hosted.md) | accepted |
@@ -18,5 +18,10 @@ Short records of decisions already made, with who made them. A change that contr
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
+| 0015 | reserved for an open pull request (the leads follow-up, #184) | reserved |
+| 0016 | reserved for an open pull request (the hosted plan, #180) | reserved |
+| 0017 | reserved for an open pull request (failing mail never counts, #180) | reserved |
+| 0018 | [SPF flattening has one refresh engine, and it resolves the stored original](0018-one-spf-flattening-refresh-engine.md) | accepted |
+| 0019 | [SPF flattening is an add-on, per domain; its price is open](0019-spf-flattening-is-an-add-on-per-domain-price-open.md) | accepted, price open |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

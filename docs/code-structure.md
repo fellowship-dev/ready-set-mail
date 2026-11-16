@@ -50,9 +50,9 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 
 | Cron | Time | Task |
 |------|------|------|
-| `0 11 * * *` | 11am UTC daily | Hosted product analytics' daily step ("No Report After 3 Days"); a no-op unless PostHog is configured ([analytics.md](analytics.md)) |
+| `0 11 * * *` | 11am UTC daily | SPF flattening refresh (`runSpfRefresh`, `src/spf/refresh.ts`; [spf-flattening.md](spf-flattening.md)); hosted product analytics' daily step ("No Report After 3 Days"), a no-op unless PostHog is configured ([analytics.md](analytics.md)); then, on the hosted service, `src/hosted/cron.ts` |
 | `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` |
-| `0 10 * * *` | 10am UTC daily | SPF flatten refresh — re-flattens all enabled domains via CF DNS |
+| `0 10 * * *` | 10am UTC daily | Older installations only (they kept the trigger): the same SPF refresh as `0 11` |
 | `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, then retention sweeps (own invocation) |
 | `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS MX refresh |
 
@@ -116,7 +116,7 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 | Worker module | Role |
 |---------------|------|
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
-| `src/email/spf-flattener.ts` | `collectIps` (throws on incomplete resolution) + Cloudflare DNS PATCH/restore |
+| `src/spf/refresh.ts`, `src/spf/target.ts` | SPF flattening: turn on, refresh, turn off, roll back, the daily job, over `flattenFromSource` in `packages/dns-checks/src/spf-flatten.ts`; where the record lives (the customer's zone or the hosted zone) |
 | `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + Cloudflare provisioning |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |
 
