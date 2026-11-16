@@ -1,5 +1,5 @@
 // The hosted plan in the dashboard: the sentences (every amount is the server's, taken from Stripe's preview), the paid-domain confirm, the plan card.
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PaidAdd } from '../src/components/billing/PaidAdd';
@@ -306,6 +306,21 @@ describe('Settings → Billing: one portal button, plain facts', () => {
 		expect(portalish().map((x) => x.textContent)).toEqual(['Update your card']);
 		// starting again is still possible, but it is not the primary action while the card is the problem
 		expect(screen.getByRole('button', { name: 'Start pay as you go again' })).toBeTruthy();
+	});
+	it('the grandfather choice is one decision with two actions, and the card box does not offer a second "Add a card"', async () => {
+		const noCard = { card_on_file: false, card: null, has_customer: false, billing_email: null };
+		renderApp(<BillingSection />, { status: { mode: 'saas' }, route: '/settings?plan=start', routes: { 'GET /api/billing': billing(noCard, plan({ units: 3, grandfathered: true, billable: 2 })), 'GET /api/billing/domains/preview?start=1': preview({ needs_confirm: true, plan_starts: true, reason: 'start', grandfather: { units: 3, billable_now: 2, billable_after: 2 }, charge_now: null, preview_failed: true, can_confirm: false }) } });
+		await screen.findByText(/This workspace holds 3 domains and only one is free/);
+		const region = screen.getByRole('region', { name: 'Billing' });
+		const buttons = within(region).getAllByRole('button').map((b) => b.textContent);
+		expect(buttons).toEqual(['Add a card to continue', 'Keep one free domain instead']);
+	});
+	it('the intro is one short sentence and an empty Orders block is not shown', async () => {
+		section(plan());
+		await screen.findByRole('heading', { name: 'Free' });
+		const region = screen.getByRole('region', { name: 'Billing' });
+		expect(within(region).getByText('Your plan and your card.')).toBeTruthy();
+		expect(region.textContent).not.toMatch(/Orders|never here/);
 	});
 	it('lapsed because the owner cancelled: no card complaint', async () => {
 		section(plan({ lapsed: true, paused_domains: 1, resume_by_starting: true, card_declined: false }));

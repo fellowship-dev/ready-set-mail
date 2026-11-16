@@ -348,7 +348,8 @@ describe('Settings -> Billing', () => {
 		await userEvent.click(section.getByRole('button', { name: 'Add a card' }));
 		await waitFor(() => expect(assign).toHaveBeenCalledWith('https://stripe.test/c/pay/cs_2'));
 		expect(r.calls.find((c) => c.path === '/api/billing/card-session')!.body).toEqual({ return_path: '/settings' });
-		expect(section.getByText('No orders yet. When a domain has something to fix, its page offers to do it for you.')).toBeInTheDocument();
+		expect(section.queryByText(/No orders yet/)).toBeNull(); // nothing to list: no heading, no sentence
+		expect(section.queryByRole('heading', { name: 'Orders' })).toBeNull();
 	});
 
 	it('admins and members see the card and orders and the plain note, and no buttons', async () => {

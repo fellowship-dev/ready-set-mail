@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, CardContent, CardFooter, Skeleton } from '@ready-set-mail/ui';
 import { useMutation } from '@tanstack/react-query';
 import { CreditCard, ExternalLink } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Section } from '../../components/states';
 import { errorMessage } from '../../lib/api';
@@ -25,6 +25,7 @@ export function BillingSection() {
 	const [params] = useSearchParams();
 	const arriving = params.get('plan') === 'start' && !!q.data;
 	useEffect(() => { if (arriving) ref.current?.scrollIntoView({ block: 'start' }); }, [arriving]);
+	const [starting, setStarting] = useState(false);
 	const portal = useMutation({ mutationFn: openPortal });
 	const add = useMutation({ mutationFn: () => startCardSession('/settings') });
 	if (!hosted || q.data === null) return null;
@@ -33,16 +34,17 @@ export function BillingSection() {
 	const failure = portal.error ?? add.error;
 	// ONE way to Stripe's portal on the page: when the plan card (or its payment alert) carries it, the card box is plain facts.
 	const declined = !!b?.plan?.card_declined;
-	const footer = !planCardHasPortal(b?.plan);
+	// Starting the plan is a step of its own with its own "Add a card to continue": the card box offers nothing beside it.
+	const footer = !planCardHasPortal(b?.plan) && !starting;
 
 	return (
 		<div ref={ref}>
-		<Section title="Billing" description={b?.plan ? 'Your plan, the card and your orders. Cards are added and changed on Stripe\'s own pages, never here.' : "One card per workspace. Cards are added and changed on Stripe's own pages, never here."}>
+		<Section title="Billing" description={b?.plan ? 'Your plan and your card.' : 'One card per workspace.'}>
 			{!b ? (
 				<Skeleton className="h-32 w-full" />
 			) : (
 				<>
-					{b.plan ? <PlanCard plan={b.plan} billing={b} /> : null}
+					{b.plan ? <PlanCard plan={b.plan} billing={b} onStarting={setStarting} /> : null}
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">
@@ -79,10 +81,10 @@ export function BillingSection() {
 						</Alert>
 					) : null}
 
-					<h3 className="pt-2 text-base font-semibold tracking-tight">Orders</h3>
-					{b.orders.length === 0 ? (
-						<p className="text-sm text-ink-2">No orders yet. When a domain has something to fix, its page offers to do it for you.</p>
-					) : (
+					{/* Orders appear once there is one: an empty heading and a sentence on every state would be noise. */}
+					{b.orders.length > 0 ? (
+						<>
+						<h3 className="pt-2 text-base font-semibold tracking-tight">Orders</h3>
 						<div className="relative overflow-x-auto rounded-lg border border-line bg-surface-1">
 							<table className="w-full min-w-[34rem] text-left text-sm">
 								<thead className="border-b border-line text-xs uppercase text-ink-2">
@@ -109,7 +111,8 @@ export function BillingSection() {
 								</tbody>
 							</table>
 						</div>
-					)}
+						</>
+					) : null}
 				</>
 			)}
 		</Section>

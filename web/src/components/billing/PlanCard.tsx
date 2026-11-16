@@ -1,7 +1,7 @@
 import { Alert, Button, Card, CardContent, CardFooter, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { api, errorMessage } from '../../lib/api';
 import { billingKeys, openPortal, startCardSession, type BillingView } from '../../lib/billing';
@@ -20,13 +20,14 @@ export const planCardHasPortal = (plan: PlanView | null | undefined): boolean =>
  * Settings → Billing, the plan: its name (Free or Pay as you go), one or two sentences about it, and the ONE action its state calls for. No pricing table:
  * the unit price is said in a sentence. Owners act; everyone else reads and is told whom to ask.
  */
-export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingView }) {
+export function PlanCard({ plan, billing, onStarting }: { plan: PlanView; billing: BillingView; /** Told whether the start step is open, so the page can leave the card box quiet beside it. */ onStarting?: (starting: boolean) => void }) {
 	const qc = useQueryClient();
 	const [params] = useSearchParams();
 	const strip = useStripParams();
 	const [starting, setStarting] = useState(() => params.get('plan') === 'start');
 	const portal = useMutation({ mutationFn: openPortal });
 	const owner = plan.can_manage;
+	useEffect(() => { onStarting?.(starting && owner && plan.name !== 'payg'); }, [starting, owner, plan.name]); // eslint-disable-line react-hooks/exhaustive-deps
 	const unit = plan.price ?? null;
 	const money = unit ? perInterval(unit) : null;
 	const payg = plan.name === 'payg' && !plan.lapsed;
@@ -138,7 +139,7 @@ function StartPlan({ plan, billing, onCancel, onStarted }: { plan: PlanView; bil
 			<div className="flex flex-wrap gap-2">
 				{hasCard ? <Button loading={start.isPending} disabled={!p.can_confirm || start.isPending} onClick={() => { setProblem(null); start.mutate(); }}>Start pay as you go</Button> : <Button loading={card.isPending} onClick={() => card.mutate()}>Add a card to continue</Button>}
 				{p.grandfather && plan.includes_free_domain ? <Button variant="secondary" onClick={() => setKeeping(true)}>Keep one free domain instead</Button> : null}
-				<Button variant="secondary" onClick={onCancel}>Cancel</Button>
+				{p.grandfather && plan.includes_free_domain ? null : <Button variant="secondary" onClick={onCancel}>Cancel</Button>}
 			</div>
 			{keeping ? <KeepOne plan={plan} onClose={() => setKeeping(false)} onDone={() => { setKeeping(false); onStarted(); }} /> : null}
 		</div>
