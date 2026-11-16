@@ -1,0 +1,40 @@
+name: Hosted owner adds a second domain on Pay as you go
+goal: The workspace owner adds a domain beyond the free one, sees what it costs and when it is billed, confirms once, and lands on the domain list with the domain added
+value_moment: Domain added and billed - the subscription's quantity is raised and the list says "Added. $5 a month from today."
+# Not protected yet: the dashboard half is built in the next phase of the pull request; add it to the protected list (AGENTS.md) when the walk record exists.
+covers:
+  - web/src/pages/domains/AddDomainPage.tsx
+  - web/src/components/billing/*
+  - web/src/pages/settings/BillingSection.tsx
+  - src/billing/plan-service.ts
+  - src/billing/routes.ts
+  - src/hosted/plan.ts
+url: /#/add
+tags: [billing, value]
+priority: P0
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+  billing: on (test keys)
+  plan: HOSTED_PLAN=free_one_domain, one free domain already added
+steps:
+  - action: navigate
+    url: /#/add
+    expect: Add domain page
+  - action: type
+    selector: "input"
+    value: second.example.org
+    expect: The name typed
+  - action: click
+    selector: "text=Add domain"
+    expect: Confirm step - what it costs per month, the next invoice's amount and date, the card, subdomains included, cancel any time (or, without a card, Add a card to continue)
+  - action: click
+    selector: "text=Add a card to continue"
+    effect: write
+    expect: Stripe-hosted Checkout in setup mode, then back to the same confirm step with the card shown
+  - action: click
+    selector: "text=Add for $5 a month"
+    effect: write
+    expect: The domain list with "Added. $5 a month from today." inline (the proof record comes next when the domain is not proven yet)
+    first_value: true

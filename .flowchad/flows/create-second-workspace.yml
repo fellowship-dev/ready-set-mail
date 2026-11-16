@@ -1,0 +1,30 @@
+name: Hosted owner creates a second workspace
+goal: A person who already holds their free domain creates another workspace: at once when they already pay, otherwise after adding a card, and lands in the new workspace
+value_moment: The new workspace exists and the person is in it (the workspace is created only once its card is verified)
+# Not protected yet: the dashboard half is built in the next phase of the pull request.
+covers:
+  - web/src/pages/settings/*
+  - src/workspaces/routes.ts
+  - src/billing/plan-workspaces.ts
+  - src/billing/routes.ts
+url: /#/settings
+tags: [billing, value]
+priority: P1
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+  billing: on (test keys)
+  plan: HOSTED_PLAN=free_one_domain, the person's free domain already used
+steps:
+  - action: navigate
+    url: /#/settings
+    expect: Settings with the workspaces list
+  - action: click
+    selector: "text=New workspace"
+    expect: Name the workspace; when the person is not yet paying, one screen "Add a card to create more workspaces" with what it means in one sentence
+  - action: click
+    selector: "text=Add a card to continue"
+    effect: write
+    expect: Stripe-hosted Checkout in setup mode, then back with the workspace created
+    first_value: true
