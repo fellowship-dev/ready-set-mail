@@ -201,14 +201,14 @@ describe('SPF flattening is not offered on the hosted service', () => {
 			</Routes>,
 			{ route: '/domains/1/spf-flatten', ...HOSTED, routes: baseRoutes() },
 		);
-		expect(await screen.findByText('SPF flattening is not available on the hosted service yet.')).toBeInTheDocument();
+		expect(await screen.findByText('SPF flattening is not available on the hosted service.')).toBeInTheDocument();
 		unmount();
 	});
 
 	it('self-host keeps the tool and says only what the daily run does', async () => {
-		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, ip_count: 7 }, lookup_count: 1 } }), { status: {} });
+		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, original_record: 'v=spf1 include:a.example ~all', flattened_record: 'v=spf1 ip4:192.0.2.1 ~all', previous_record: null, ip_count: 7, lookups_before: 12, lookups_after: 1, last_changed_at: 1_700_000_000, last_refreshed_at: Math.floor(Date.now() / 1000), problem: null, pending: null }, lookup_count: 12 } }), { status: {} });
 		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
-		expect(await screen.findByText('7 IPs, as resolved when it ran. Not updated when your providers change theirs.')).toBeInTheDocument();
+		expect(await screen.findByText(/^On: 7 addresses in your record, using 1 of the 10 lookups\. Checked just now; not changed since you turned it on\. Checked again every day around 11:00 UTC\.$/)).toBeInTheDocument();
 		expect(screen.queryByText(/re-resolved daily/)).not.toBeInTheDocument();
 	});
 });

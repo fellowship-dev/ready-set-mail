@@ -14,6 +14,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { domainKeys } from '../../lib/domain-queries';
 import { CHECK_AGAIN_NOW, droppedTerms, NOT_ALLOWED_ON_SENTENCE, NOT_NEEDED_WHY, onSentence, pendingSentence, PENDING_WHY, plural, spfState, SPF_CHECK_AT, SPF_LOOKUP_ALLOWED, staleSentence, stoppedSentence, TURN_ON_RISK } from '../../lib/spf-flatten';
 import { RadioCard } from '../../components/wizard/RadioCard';
+import { ToolOff } from '../../components/wizard/ToolOff';
 import { useAddOns } from '../../lib/session';
 import type { SpfFlatConfig, SpfFlatPreview, SpfFlatStatus } from '../../lib/types';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
@@ -46,18 +47,15 @@ function dropSentence(live: string, flat: string): string {
 	return dropped.length ? `These will be dropped: ${dropped.join(', ')}.` : 'Nothing in it will be dropped.';
 }
 
-/** The page behind a pasted address on a workspace without the add-on: the same sentence the API gives. */
-function NotAvailable() {
-	return (
-		<StepCard title="SPF flattening">
-			<p className="text-sm text-ink-2">SPF flattening is not available on the hosted service.</p>
-		</StepCard>
-	);
+/** The page behind a pasted address on a workspace without the add-on: the same sentence the API gives, and a way back. */
+function NotAvailable({ backTo }: { backTo: string }) {
+	return <ToolOff title="SPF flattening" line="SPF flattening is not available on the hosted service." backTo={backTo} />;
 }
 
 export function SpfFlattenPage() {
 	const available = useAddOns().spf_flattening;
-	return available ? <SpfFlattenWizard /> : <NotAvailable />;
+	const id = useRouteDomainId();
+	return available ? <SpfFlattenWizard /> : <NotAvailable backTo={`/domains/${id}`} />;
 }
 
 function SpfFlattenWizard() {
@@ -128,7 +126,7 @@ function SpfFlattenWizard() {
 		const allowed = flat.access?.allowed !== false;
 
 		if (!allowed && state.kind === 'off') {
-			body = <NotAvailable />;
+			body = <NotAvailable backTo={back} />;
 		} else if (!allowed && state.kind !== 'off') {
 			// The add-on went away while a domain had flattening on: the record keeps what the last check wrote and nothing refreshes it. Only what still works is offered.
 			const c = state.config;

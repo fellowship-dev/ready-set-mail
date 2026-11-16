@@ -23,7 +23,7 @@ const spfRoute = (
 describe('DNS tool routes where the tool is off', () => {
 	it('hosted: SPF flattening is one line and a link back, and asks the tool nothing', async () => {
 		const { calls, container } = renderApp(spfRoute, { ...hosted, route: '/domains/3/spf-flatten', routes: { 'GET /api/hosted/config': { enabled: true, records: true }, 'GET /api/domains/3/hosted': hostedStatus } });
-		expect(await screen.findByText('SPF flattening is not available on the hosted service yet.')).toBeInTheDocument();
+		expect(await screen.findByText('SPF flattening is not available on the hosted service.')).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'Back to domain' })).toHaveAttribute('href', '/domains/3');
 		expect(screen.queryByText(/Cloudflare/)).not.toBeInTheDocument();
 		expect(screen.queryByRole('button')).not.toBeInTheDocument();
