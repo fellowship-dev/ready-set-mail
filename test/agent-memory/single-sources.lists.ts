@@ -132,7 +132,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
   {
     concept: 'Level ladder (computing or naming rungs)',
     signature: /let level: Level = 0|\{ 0: 'Unprotected'|name: ["']Delivering["']|status = '(protected|exposed)'/,
-    authoritative: 'none: owner to choose (docs/adr/OPEN.md)',
+    authoritative: 'none: owner to choose',
     sites: ['packages/dns-checks/src/report.ts', 'packages/ui/src/components/level-ladder.tsx', 'src/email/report-formatter.ts', 'web/src/lib/levels.ts'],
   },
   {

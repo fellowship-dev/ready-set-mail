@@ -20,8 +20,8 @@ const protectedFlows = readdirSync(FLOWS)
   .filter(f => /^tags:.*[[, ]protected[\], ]/m.test(f.text));
 
 const coversOf = (text: string): string[] => {
-  const block = text.match(/^covers:\n((?:[ \t]+-[^\n]*\n)+)/m);
-  return block ? [...block[1].matchAll(/-\s+(\S+)/g)].map(m => m[1]) : [];
+  const block = text.match(/^covers:\n((?:[ \t]+-[^\n]*\n|[ \t]*#[^\n]*\n)+)/m);
+  return block ? [...block[1].matchAll(/^[ \t]+-[ \t]+(\S+)/gm)].map(m => m[1]) : [];
 };
 
 describe('protected value flows', () => {
@@ -84,10 +84,11 @@ describe('AGENTS.md lists every protected flow with exactly its covers', () => {
 });
 
 describe('scripts/check-flows.mjs: which records count', () => {
-  const baseTime = Date.parse('2026-11-15T12:00:00Z');
+  const baseTime = Date.now() - 3 * 86400_000;
+  const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
   const ctx = { id: 'buy-fix-one-domain', baseTime, newFlow: false, commitState: (sha: string) => (sha.startsWith('aaaa') ? 'in-base' : 'new') };
   const gateRecord = (o: Record<string, string> = {}) => {
-    const f = { Flow: 'Hosted owner buys Fix one domain', 'Value moment': 'Fix ordered', Walked: '2026-11-16T10:00:00Z', Target: 'http://127.0.0.1:8787/ (local-copy)', Commit: 'bbbbbbb', Kind: 'screens', Gate: 'PASS', Rules: RULES_VERSION, ...o };
+    const f = { Flow: 'Hosted owner buys Fix one domain', 'Value moment': 'Fix ordered', Walked: at(3600_000), Target: 'http://127.0.0.1:8787/ (local-copy)', Commit: 'bbbbbbb', Kind: 'screens', Gate: 'PASS', Rules: RULES_VERSION, ...o };
     return `# Walk record: buy-fix-one-domain\n\n${Object.entries(f).map(([k, v]) => `- **${k}:** ${v}`).join('\n')}\n`;
   };
   it('a record the gate wrote, walked after the base at a new commit, counts', () => {
@@ -97,7 +98,7 @@ describe('scripts/check-flows.mjs: which records count', () => {
     expect(walkRecordProblems('- **Commit:** abc1234\n', ctx).length).toBeGreaterThan(3);
   });
   it('an old walk, a walk at a commit already in the base, a failed gate or another rules version does not', () => {
-    expect(walkRecordProblems(gateRecord({ Walked: '2026-11-14T10:00:00Z' }), ctx).join()).toMatch(/not after the base/);
+    expect(walkRecordProblems(gateRecord({ Walked: at(4 * 86400_000) }), ctx).join()).toMatch(/not after the base/);
     expect(walkRecordProblems(gateRecord({ Commit: 'aaaaaaa' }), ctx).join()).toMatch(/already in the base/);
     expect(walkRecordProblems(gateRecord({ Gate: 'FAIL' }), ctx).join()).toMatch(/Gate is FAIL/);
     expect(walkRecordProblems(gateRecord({ Rules: '0.0.1' }), ctx).join()).toMatch(/Rules/);
