@@ -8,7 +8,7 @@ bumped in the release pull request, before the tag.
 ## Versions
 
 - The product version is the root `package.json` `version`. `/health`, `GET /api/version`, the weekly digest, the MCP
-  server's `serverInfo` and telemetry all report it (`src/version.ts`).
+  server's `serverInfo` all report it (`src/version.ts`).
 - Workspace packages (`packages/*`, `web/`, `tools/*`) and the agent plugin (`plugins/ready-set-mail`) keep their own
   `0.x` versions. They are internal: nothing publishes them or reads them as the product version, so they are not bumped
   with a release.

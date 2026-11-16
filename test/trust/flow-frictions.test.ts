@@ -15,7 +15,6 @@ import { __resetPreviewCacheForTests } from '../../src/domains/claim-preview';
 import { createAuth } from '../../src/auth';
 import { codeEmailText, codeSubject } from '../../src/auth/mail';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 
 let zone: Zone;

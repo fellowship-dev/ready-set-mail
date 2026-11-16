@@ -34,7 +34,7 @@ function twoWorkspaceEnv() {
 
   seedSettings(db, {
     base_domain: 'a-corp.com', reports_domain: 'reports.a-corp.com', from_email: 'noreply@reports.a-corp.com',
-    zone_id: 'zone-a', zone_name: 'a-corp.com', cf_account_id: 'cf-a', brand_color: '#ff0000', telemetry_opted_in: 'true',
+    zone_id: 'zone-a', zone_name: 'a-corp.com', cf_account_id: 'cf-a', brand_color: '#ff0000',
   }, 'ws_a');
   seedSettings(db, {
     base_domain: 'b-corp.org', reports_domain: 'reports.b-corp.org', from_email: 'noreply@reports.b-corp.org',
@@ -111,7 +111,7 @@ describe('two concurrent requests for different workspaces in one isolate', () =
     expect(cf.records.get('zone-home')).toEqual([expect.objectContaining({ name: '_dmarc.home.example' })]);
   });
 
-  it('keeps branding, from-address and telemetry opt-in per workspace', async () => {
+  it('keeps branding and from-address per workspace', async () => {
     const { env } = twoWorkspaceEnv();
     const [a, b] = await Promise.all([
       loadTenant(env as any, { workspaceId: 'ws_a' }),
@@ -131,8 +131,6 @@ describe('two concurrent requests for different workspaces in one isolate', () =
     expect(htmlB).toContain('#00ff00');
     expect(htmlB).not.toContain('#ff0000');
 
-    expect(await a.telemetryEnabled()).toBe(true);
-    expect(await b.telemetryEnabled()).toBe(false);
   });
 
   it('resolves the same domain name to different zones for different tenants', async () => {

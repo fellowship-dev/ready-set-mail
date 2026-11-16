@@ -13,6 +13,7 @@ import { planLimitResponse, planLimits } from '../hosted/plan-limits';
 import type { TenantContext } from '../tenancy/context';
 import { revokeWorkspaceConnections, type RevokeSummary } from '../lifecycle/revoke';
 import { streamWorkspaceExport } from '../lifecycle/export';
+import { workspaceAdded } from '../product-analytics/steps';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -139,6 +140,7 @@ export async function handleWorkspaceRoutes(
       await lifecycle.create(id, name, user.id);
     }
     audit(id, { action: 'workspace.created', resource_type: 'workspace', resource_id: id, resource_name: name });
+    if (deps.env) workspaceAdded({ ...deps.env, DB: deps.db }, ctx, id);
     return json({ id, name, role: 'owner', member_count: 1 }, 201);
   }
 

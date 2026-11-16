@@ -112,12 +112,10 @@ describe('a workspace-scoped query cannot see or touch another workspace', () =>
 		expect(await b.team.list()).toEqual([]);
 		expect(await b.team.getMember('u1')).toBeNull();
 		expect(await b.team.firstAdmin()).toBeNull();
-		expect(await b.heartbeat()).toMatchObject({ domain_count: 0, team_member_count: 0, reports_30d: 0 });
 		// …and A sees all of it.
 		expect(await a.domains.list()).toHaveLength(1);
 		expect(await a.reports.recent()).toHaveLength(1);
 		expect(await a.team.list()).toHaveLength(1);
-		expect(await a.heartbeat()).toMatchObject({ domain_count: 1, team_member_count: 1 });
 	});
 
 	it('writes', async () => {
@@ -245,14 +243,6 @@ describe('behaviour carried over from the old queries.ts', () => {
 		await a.team.removeUser('u3');
 		expect(await globalQueries(d1).users.byEmail('three@x.test')).toBeNull();
 		expect((await a.team.list()).map((u) => u.id)).toEqual(['u1']);
-	});
-
-	it('heartbeat counts', async () => {
-		const d = Number((await a.domains.insert({ domain: 'acme.com', rua_address: 'x' })).meta.last_row_id);
-		await a.domains.setDnsRecord(d, 'cf', { provisioned: true });
-		await a.spf.upsert({ domain_id: d, canonical_record: 'x', lookup_count: 1, cf_record_id: null });
-		await a.mtaSts.insert({ domain_id: d, mode: 'enforce', mx_hosts: '[]', policy_id: 'p', mta_sts_record_id: null, tls_rpt_record_id: null, cname_record_id: null });
-		expect(await a.heartbeat()).toMatchObject({ domain_count: 1, dns_verified_count: 1, spf_flatten_count: 1, mta_sts_enforce_count: 1, mta_sts_testing_count: 0 });
 	});
 });
 

@@ -10,7 +10,6 @@ vi.mock('../../src/env-utils', async (importOriginal) => {
   return { ...actual, enrichEnv: vi.fn().mockResolvedValue(undefined), getBaseDomain: vi.fn().mockReturnValue(undefined),
     reportsDomain: vi.fn().mockReturnValue('reports.example.com'), fromEmail: vi.fn().mockReturnValue('noreply@reports.example.com') };
 });
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const saas = () => makeEnv(createMigratedD1(), { MODE: 'saas', SAAS_ENABLED: '1' });
 const rows = (db: any, sql: string) => db.sqlite.prepare(sql).all() as any[];

@@ -8,7 +8,6 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { resetSchemaReadyCache } from '@ready-set-mail/db';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import worker from '../../src/index';
 import { handleHostedEmail } from '../../src/hosted/intake';

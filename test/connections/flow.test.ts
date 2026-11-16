@@ -4,7 +4,6 @@ import { newVerifier, signState } from '../../src/connections/oauth';
 import { KEY, Z, world, type World } from './world';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 beforeEach(() => {
   for (const m of ['warn', 'log', 'error', 'info'] as const) vi.spyOn(console, m).mockImplementation(() => {});

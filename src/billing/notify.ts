@@ -6,6 +6,7 @@ import { senderAddress } from '../auth/mail';
 import { mailFooter } from '../auth/legal';
 import type { BoundEnv } from '../index';
 import { OFFER_NAME } from './offer';
+import { orderEvent } from '../product-analytics/steps';
 
 export type BillingAuditAction =
   | 'billing.card_session_started' | 'billing.card_added'
@@ -15,12 +16,13 @@ export type BillingAuditAction =
 export interface AuditActor { userId?: string | null; email?: string | null }
 
 /** One audit entry in the order's workspace. `actor` absent = the system (a webhook or the daily job). */
-export function auditOrder(env: Pick<BoundEnv, 'DB'>, ctx: ExecutionContext | undefined, order: Pick<OrderRow, 'id' | 'workspace_id' | 'domain_name'>, action: BillingAuditAction, actor?: AuditActor, after?: Record<string, unknown>): void {
+export function auditOrder(env: Pick<BoundEnv, 'DB' | 'MODE' | 'POSTHOG_KEY' | 'POSTHOG_HOST'>, ctx: ExecutionContext | undefined, order: Pick<OrderRow, 'id' | 'workspace_id' | 'domain_name'> & Partial<OrderRow>, action: BillingAuditAction, actor?: AuditActor, after?: Record<string, unknown>): void {
   logAudit({ db: env.DB, workspaceId: order.workspace_id }, {
     actor_id: actor?.userId ?? null, actor_email: actor?.email ?? null, actor_type: actor ? 'user' : 'system',
     action, resource_type: 'billing_order', resource_id: order.id, resource_name: order.domain_name,
     ...(after ? { after_value: after } : {}),
   }, ctx);
+  orderEvent(env, ctx, order, action); // docs/analytics.md: the same steps, as product events
 }
 
 /** Money for people: 14900 usd → "USD 149.00". Used only in the owner's email. */

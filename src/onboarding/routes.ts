@@ -15,6 +15,7 @@ import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
 import { ReportAddressError, connectReports } from '../hosted/report-address';
+import { applyClicked, applyDone, dnsChecked } from '../product-analytics/steps';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -164,6 +165,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const { plan, exec } = await buildPlan(tenant, input.ids);
     if (plan.plan_id !== input.body.plan_id) return json({ error: 'Cloudflare changed since you looked; review again.', code: 'plan_changed', plan }, 409);
     const writes = plan.steps.find(s => s.key === step)?.writes ?? [];
+    const changes = writes.filter(w => w.action !== 'none').length;
+    applyClicked(tenant, ctx, step, changes);
     const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string; reports?: 'connected' | 'refused' }[] = [];
     // Hosted: a record that carries our report address connects the domain's reports (the "Connect reports" step), so nothing is left to connect.
     const connect = async (x: { domainId?: number; reportAddress?: string } | undefined): Promise<'connected' | 'refused' | undefined> => {
@@ -193,6 +196,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });
       }
     }
+    const reports = results.some(r => r.reports === 'connected') ? 'connected' : results.some(r => r.reports === 'refused') ? 'refused' : 'none';
+    applyDone(tenant, ctx, { step, changes, failed: results.filter(r => !r.ok).length, reports, domainIds: writes.flatMap(w => { const id = exec.get(w.id)?.domainId; return id ? [id] : []; }) });
     return json({ results });
   }
 
@@ -203,6 +208,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     for (const d of await writableDomains(tenant, input.ids)) {
       const id = d.id;
       results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain, { resolver: resolverFor(tenant.env) })) !== null });
+      dnsChecked(tenant, ctx, id);
     }
     return json({ results });
   }

@@ -10,6 +10,7 @@
  * email (or a sign-out) clears it, so the next person on a shared browser never sees someone else's domain.
  */
 import { normalizeDomainInput } from './domain-input';
+import { captureVisit } from './visitor';
 
 export const SIGNUP_DOMAIN_KEY = 'ia_signup_domain';
 export const SIGNUP_DOMAIN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -106,12 +107,16 @@ const SIGNUP_URL = '/#/signup';
  */
 export function captureSignupIntent(loc: { pathname: string; search: string; hash: string }, now = Date.now()): string | null {
 	if (loc.pathname === '/signup' || loc.pathname === '/signup/') {
-		rememberSignupDomain(new URLSearchParams(loc.search).get('domain'), now);
+		const params = new URLSearchParams(loc.search);
+		rememberSignupDomain(params.get('domain'), now);
+		captureVisit(params);
 		return SIGNUP_URL;
 	}
 	const m = /^#\/signup\/?\?(.*)$/.exec(loc.hash);
 	if (m) {
-		rememberSignupDomain(new URLSearchParams(m[1]).get('domain'), now);
+		const params = new URLSearchParams(m[1]);
+		rememberSignupDomain(params.get('domain'), now);
+		captureVisit(params);
 		return '#/signup';
 	}
 	return null;

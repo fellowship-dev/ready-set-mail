@@ -5,7 +5,6 @@ import { call, makeEnv, setupOwner, inviteAndAccept, signupVerified } from '../a
 import { delegatedKey } from '../auth/grant-fixture';
 import { HOSTED_ENV } from '../hosted/world';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const rows = (db: any, sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
 const json = async (res: Response) => (await res.json()) as any;

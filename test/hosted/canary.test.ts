@@ -5,7 +5,6 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 vi.mock('cloudflare:email', () => ({
   EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} },
 }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { handleHostedEmail } from '../../src/hosted/intake';
 import { CANARY_GLOBAL_LIMIT, CANARY_PER_DOMAIN_LIMIT, CANARY_TTL_SECONDS, CANARY_UNAUTHENTICATED_LIMIT } from '../../src/hosted/canary';

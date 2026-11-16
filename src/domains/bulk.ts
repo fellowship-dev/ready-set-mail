@@ -12,6 +12,7 @@ import { domainCap, domainRefusal } from './service';
 import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { recordFirstDnsCheck } from './first-check';
+import { ownershipVerified } from '../product-analytics/steps';
 
 const BATCH_LIMIT = 50;
 
@@ -139,6 +140,7 @@ export async function bulkInsertDomains(
     }
 
     await settleClaims(tenant, domain);
+    ownershipVerified(tenant, audit.ctx, domain, admission.via);
     logAudit(tenant, {
       actor_id: audit.actorId ?? null,
       actor_email: audit.actorEmail ?? null,

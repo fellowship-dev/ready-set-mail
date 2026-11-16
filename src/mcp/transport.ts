@@ -11,7 +11,7 @@ export function createInboxMcpHandler(options: { reportOptions?: ReportOptions }
   if (new URL(request.url).origin !== local.issuer || (origin && origin !== local.issuer)) return Response.json({ error: 'Invalid origin' }, { status: 403 });
   if (!await resolveMcpIdentity(env, ctx.props)) return Response.json({ error: 'invalid_token' }, { status: 401 });
   // Fresh server and authorization context per HTTP exchange; SDK owns modern and legacy wire semantics.
-  const handler = createMcpHandler(() => createInboxMcpServer({ env, identity: ctx.props, reportOptions: options.reportOptions }), { legacy: 'stateless' });
+  const handler = createMcpHandler(() => createInboxMcpServer({ env, identity: ctx.props, reportOptions: options.reportOptions, ctx }), { legacy: 'stateless' });
   return handler.fetch(request);
  } };
 }

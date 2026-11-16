@@ -49,14 +49,14 @@ Legend: `- [x]` = one user-visible feature/action to re-verify in the port. `API
 
 ### 1.3 Startup loader (AuthGate, while `/api/auth/status` pending)
 - [x] `StartupLoader`: logo "Ready Set Mail", 1s ticker with animated dots (0-3). Message by elapsed seconds: 0 "Starting up", 6 "Running database setup", 20 "Setting up your instance", 40 "Almost there". From 6s also shows "First startup runs database migrations - only happens once."
-- [x] If `/api/auth/status` fetch fails/throws, falls back to a status of `{configured:false, prefill:{}, telemetry_default:false, turnstile_site_key:null, has_domain:false}` (=> user sees the CREATE ACCOUNT form, not an error).
+- [x] If `/api/auth/status` fetch fails/throws, falls back to a status of `{configured:false, prefill:{}, turnstile_site_key:null, has_domain:false}` (=> user sees the CREATE ACCOUNT form, not an error).
 - [x] App-level probe: if no `ia_api_key` in localStorage, App renders nothing (`null`) while probing `GET /api/auth/get-session` (cookie session from OAuth). If response ok and JSON non-null => `hasKey=true` (cookie-auth session; **subsequent `apiFetch` still sends empty `X-Api-Key: ''`**, so backend must accept cookie sessions). Any failure => AuthGate.
 
 ### 1.4 AuthGate main form
-- API: `GET /api/auth/status` -> `AuthStatus {configured, prefill:{name,email}, telemetry_default, turnstile_site_key|null, has_domain, mode?:'self-host'|'saas', signup_open?, oauth_providers?: string[]}`. Prefills name, email, telemetry checkbox from status.
+- API: `GET /api/auth/status` -> `AuthStatus {configured, prefill:{name,email}, product_analytics?, turnstile_site_key|null, has_domain, mode?:'self-host'|'saas', signup_open?, oauth_providers?: string[]}`. Prefills name and email from status.
 - [x] Mode "Sign in" (`configured && !creating`): title "Welcome back"; Email (autofocus), Password; button "Sign in ->". API: `POST /api/auth/login` `{email,password[,cf_turnstile_token]}` -> `{token, has_domain?}`.
-- [x] Mode "Create account" (first-time instance setup when `!configured`, OR saas signup when `creating`): title "Create your account", subtitle "Set up your Ready Set Mail instance. You'll use these credentials to log in."; fields Your name (optional, autocomplete name), Email (hint "Used to log in and receive monitoring alerts."), Password (placeholder "Choose a password (8+ chars)"), Confirm password, checkbox "Share anonymous usage stats" (telemetry; default from `telemetry_default`; text: no personal data, change later). Validation: match + >= 8 chars. Button "Create account ->".
-  - API: `!configured` => `POST /api/auth/setup` `{name,email,password,telemetry[,cf_turnstile_token]}`; `configured && creating` => `POST /api/auth/signup` same body.
+- [x] Mode "Create account" (first-time instance setup when `!configured`, OR saas signup when `creating`): title "Create your account", subtitle "Set up your Ready Set Mail instance. You'll use these credentials to log in."; fields Your name (optional, autocomplete name), Email (hint "Used to log in and receive monitoring alerts."), Password (placeholder "Choose a password (8+ chars)"), Confirm password. Validation: match + >= 8 chars. Button "Create account ->".
+  - API: `!configured` => `POST /api/auth/setup` `{name,email,password[,cf_turnstile_token]}`; `configured && creating` => `POST /api/auth/signup` `{email,password[,cf_turnstile_token][,vid,entry]}` (vid/entry: in-memory from the sign-up link, docs/analytics.md).
   - After first-time setup (`!status.configured`): sets `location.hash = has_domain ? '#/' : '#/setup'` then `onSave`. After signup/login: just `onSave` (App then runs its own has_domain redirect).
 - [x] Toggle: if `configured && signup_open`, link "New here? Create an account" / "<- Back to sign in" toggles `creating` and clears error.
 - [x] "Forgot your password?" (only in sign-in mode) -> view `forgot`.
@@ -379,7 +379,7 @@ Library: `jspdf`, client-side only, A4 mm, filename `email-auth-report.pdf` (`do
 
 - [x] API keys screen `#/keys`: create (name, optional expiry) shows the secret once with copy; list with prefix, created, last used, expiry, owner (admins see the workspace's keys); revoke one; revoke all of mine. API: `GET/POST /api/keys`, `DELETE /api/keys/:id`, `POST /api/keys/revoke-all`.
 - [x] Role awareness: `GET /api/me` (added in this lane) gives the role; write controls disabled for members everywhere; Team and Audit explain when the API says "admin required".
-- [x] Settings screen `#/settings`: workspace (name, email, role), change password (`POST /api/auth/change-password`), theme, instance (version, base domain, custom domain, telemetry state where readable), sign out everywhere else.
+- [x] Settings screen `#/settings`: workspace (name, email, role), change password (`POST /api/auth/change-password`), theme, instance (version, base domain, custom domain, whether usage analytics is on), sign out everywhere else.
 - [x] Theme toggle (light/dark) in the top bar and wizard chrome.
 - [x] Sidebar app shell with collapsible sidebar and mobile drawer.
 - [x] Domain overview as Level cards (Delivering → Authenticated → Protected) with findings (`web/src/lib/levels.ts`).

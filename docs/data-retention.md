@@ -93,6 +93,10 @@ byte budget allows at least 1,600 maximum-size reports a day, and the daily cap 
 
 Hosted billing (see [billing.md](billing.md)) keeps one row per purchase in `billing_orders`: the workspace id and a snapshot of its name, the domain name, the buyer's email, the amount and currency, the Stripe ids (customer, invoice, payment intent, charge) and the status and dates. These are **accounting records**, so they have no foreign key to the workspace or the domain and **survive deleting either**; the workspace name and domain name in the row are snapshots, taken when the order was made. They are kept for **seven years** from the order's creation (the accounting period assumed for Fellowship), then deleted by the daily job. The buyer's email is part of the accounting record and is not erased on request while it must be kept; Stripe holds its own copy under Stripe's terms. No card number, brand or last four is ever stored by Ready Set Mail (the card is read from Stripe when someone looks at Settings). The Stripe Customer is not deleted by Ready Set Mail, not even when the workspace is deleted. The binding rows of "add a card" sessions (`billing_checkout_sessions`) are deleted with the workspace and in any case after 30 days. Billing exists on the hosted service only; a self-hosted instance stores none of this.
 
+## Product analytics (hosted)
+
+When the hosted service has PostHog configured ([analytics.md](analytics.md)), each workspace has one random analytics id (`settings.analytics_id`) and a few one-time markers (`settings` keys starting `analytics:`, holding only a unix time, e.g. when a domain's records went live) so that "first time" steps are counted once. They are deleted with the workspace. PostHog keeps the events themselves (category and bucket properties only, under the random id) under its own retention; deleting the workspace deletes the only link between the id and the account. A self-hosted installation stores none of this.
+
 ## Deleting a workspace
 
 `DELETE /api/workspaces/:id` (owners; `?confirm=<name>` when it has domains). In order:
