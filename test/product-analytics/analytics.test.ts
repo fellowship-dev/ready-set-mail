@@ -1,5 +1,6 @@
 // Product analytics (docs/analytics.md): off by default, the allow-list, the send itself, and the forbidden-property checks of
 // ticket A7: over every event and value the code can send, over every call site in src/, and over a full fixture walk.
+import { CARD_LAST4 } from '../helpers/card-text';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -626,7 +627,8 @@ describe('the other paths: a pasted token, records added by hand, a sign-up with
     expect(mine.filter((e) => e.event === 'Signup Started')).toHaveLength(1);
     expect(mine.filter((e) => e.event === 'Signed In')).toHaveLength(1);
     expect(mine.map((e) => e.event)).not.toContain('Signup Code Sent');
-    clean(w, new Set([w.analyticsId]), ['octo-walk', 'gho_walk', '4242']);
+    clean(w, new Set([w.analyticsId]), ['octo-walk', 'gho_walk']);
+    for (const r of w.sent) expect(r.body, 'the GitHub id').not.toMatch(CARD_LAST4); // 4242, as a token of its own: a random id may contain those digits
   }, 60_000);
 });
 

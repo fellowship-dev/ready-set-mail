@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { billingWorld, call, json, rows, flushBackground, type World } from './world';
 import { runBillingJob } from '../../src/billing/reconcile';
+import { CARD_LAST4 } from '../helpers/card-text';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -65,7 +66,8 @@ describe('buying "Fix one domain"', () => {
     const { subject, text } = mails[0]!;
     expect(subject).toBe('New order: Fix one domain for acme.com');
     for (const fact of [w.owner.workspaceId, 'acme.com', 'owner@example.com', 'USD 149.00', id, w.order(id).stripe_invoice_id]) expect(text).toContain(fact);
-    expect(text).not.toMatch(/cus_|pm_|4242/);
+    expect(text).not.toMatch(/cus_|pm_/);
+    expect(text).not.toMatch(CARD_LAST4);
     expect(w.order(id).owner_notified_at).toBeTruthy();
     // nothing goes to the buyer from here
     const toBuyer = (await import('../auth/helpers')).mailsTo(w.env, 'owner@example.com').filter((m) => /order|invoice|receipt|paid/i.test(m.subject));
