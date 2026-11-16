@@ -150,6 +150,29 @@ describe('the plan', () => {
   });
 });
 
+describe('the one-domain plan on the first run (MAX_DOMAINS_PER_WORKSPACE=1, three zones, the company path)', () => {
+  // The limit is read from the one plan module (src/hosted/plan-limits.ts -> domainCap -> importZones), so nothing here is special to the first run.
+  it('with no zone chosen it imports nothing and asks the person to choose (the pending claim stays open)', async () => {
+    const s = await setup({ 'brightwave-mail.com': {}, 'harbor-lane.org': {}, 'quietfield.net': {} }, { MAX_DOMAINS_PER_WORKSPACE: '1' });
+    expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
+    const res = await json(await s.imp(await s.connect()));
+    expect(res.imported).toEqual([]);
+    expect(res.needs_selection).toMatchObject({ room: 1, cap: 1 });
+    expect(s.domains()).toEqual([]);
+    expect(s.w.rows('SELECT settled_at FROM domain_claims WHERE workspace_id = ? AND settled_at IS NULL', s.C.ws)).toHaveLength(1);
+  });
+  it('with the set-up zone passed as zone_ids it imports that one, settles its claim, and lists the rest as suggestions', async () => {
+    const s = await setup({ 'brightwave-mail.com': {}, 'harbor-lane.org': {}, 'quietfield.net': {} }, { MAX_DOMAINS_PER_WORKSPACE: '1' });
+    expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
+    const res = await json(await s.imp(await s.connect(), { zone_ids: [zid('brightwave-mail.com')] }));
+    expect(res.imported.map((i: any) => i.domain)).toEqual(['brightwave-mail.com']);
+    expect(s.domains().map(d => d.domain)).toEqual(['brightwave-mail.com']);
+    expect(s.w.rows('SELECT settled_at FROM domain_claims WHERE workspace_id = ? AND settled_at IS NULL', s.C.ws)).toEqual([]);
+    const sug = (await json(await s.w.api(s.C.token, 'GET', '/api/cloudflare/suggestions'))).suggestions;
+    expect(sug.map((x: any) => x.name)).toEqual(['harbor-lane.org', 'quietfield.net']);
+  });
+});
+
 describe("an agency's account (\"My clients'\"): only the client being set up is imported", () => {
   it('importing the one client zone adds it, settles its claim, leaves every other zone out of the workspace and the allow-list, and offers them as suggestions', async () => {
     const s = await setup({ 'brightwave-mail.com': {}, 'harbor-lane.org': {}, 'quietfield.net': {} });

@@ -129,7 +129,7 @@ function FirstDayBody({ state, email, emailCheck, workspaceId, onSeen }: { state
 			if (state.applied) {
 				return (
 					<Frame title={`Written to Cloudflare: waiting for public DNS to show ${state.domain}'s new record`}>
-						<p className="max-w-prose text-sm text-ink-2">DNS changes can take a few minutes to show up. We look again every 15 seconds while this page is open.</p>
+						<p className="max-w-prose text-sm text-ink-2">We look again every 15 seconds while this page is open.</p>
 						<Button asChild variant="secondary" size="sm">
 							<Link to={`/domains/${state.domainId}`}>Open {state.domain}</Link>
 						</Button>

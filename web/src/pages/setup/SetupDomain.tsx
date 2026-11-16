@@ -193,8 +193,8 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 					<aside aria-label="What happens next" className="space-y-3 rounded-lg border border-line bg-surface-1 p-5 text-sm text-ink-2 max-lg:hidden sm:p-6">
 						<h2 className="text-base font-semibold text-ink-1">What happens next</h2>
 						<ol className="list-decimal space-y-2 pl-5">
-							<li>We read the domain's SPF, DKIM and DMARC from public DNS. Nothing in its DNS changes.</li>
-							<li>You choose how to set it up, by who hosts its DNS.</li>
+							<li>We read its SPF, DKIM and DMARC from public DNS.</li>
+							<li>You choose how to set it up.</li>
 							<li>You see every record before anything is written.</li>
 						</ol>
 					</aside>

@@ -14,7 +14,7 @@ import { useSession } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 
 /** The sentence under the records. Said once, the same everywhere SPF and DKIM come up. */
-export const NOT_CHANGED = 'Not changed: SPF and DKIM. They depend on which services send your mail. Once reports show who sends, we suggest the exact records.';
+export const NOT_CHANGED = 'Not changed: SPF and DKIM, until reports show who sends.';
 
 /** A DMARC value with its report address picked out, so what is added is the thing the eye finds. */
 function WithRua({ value, mark }: { value: string; mark: boolean }): ReactNode {

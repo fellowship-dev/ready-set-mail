@@ -72,7 +72,7 @@ describe('C2: what will be written', () => {
 		expect(card.querySelector('mark')).toHaveTextContent(RUA); // the added part is the thing the eye finds
 		expect(card).toHaveTextContent('Adds the address that receives your reports. Your policy stays as it is.');
 		expect(screen.getByText(NOT_CHANGED)).toBeInTheDocument();
-		expect(NOT_CHANGED).toBe('Not changed: SPF and DKIM. They depend on which services send your mail. Once reports show who sends, we suggest the exact records.');
+		expect(NOT_CHANGED).toBe('Not changed: SPF and DKIM, until reports show who sends.');
 		expect(screen.getByRole('button', { name: 'Apply 1 change' })).toBeInTheDocument();
 		expect(screen.getByText('Also in Brightwave Studio: 4 more domains, added and watched. Nothing was written to them.')).toBeInTheDocument();
 		// nothing here is for pasting

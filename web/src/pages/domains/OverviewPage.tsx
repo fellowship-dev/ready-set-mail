@@ -257,7 +257,8 @@ export function OverviewPage() {
 						<p className="text-lg font-semibold tracking-tight text-ink-1 [overflow-wrap:anywhere] sm:text-xl" aria-live="polite" data-testid="am-i-done">
 							{headline}
 						</p>
-						{!empty ? (
+						{/* While the first-day card speaks the headline is "Getting <domain> set up.": the card is the answer, so the line explaining the list waits. */}
+						{!empty && headline === answer ? (
 							<p className="max-w-prose text-sm text-ink-2">
 								{reportsOff ? 'Each domain below says what public DNS shows, and who acts next. Most urgent first.' : `Each domain below says what public DNS and its last ${WINDOW} days of reports show, and who acts next. Most urgent first.`}
 							</p>
