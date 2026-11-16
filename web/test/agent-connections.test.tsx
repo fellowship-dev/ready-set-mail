@@ -215,6 +215,18 @@ describe('access keys for scripts and services', () => {
 		await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/mcp/connections/a1')).toBe(true));
 	});
 
+	it('shows the endpoint and points to Agents for the steps: no second copy of them, no plugin', async () => {
+		for (const [hosted, label] of [[false, "This installation's MCP endpoint"], [true, 'Agent address']] as const) {
+			const { unmount } = renderApp(<AgentConnectionsSection />, { status: hosted ? { mode: 'saas' } : undefined, routes: connections });
+			expect(await screen.findByLabelText(label)).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/agents');
+			expect(document.body.textContent).toContain('How to connect Claude, ChatGPT, Cursor or VS Code');
+			expect(document.body.textContent).not.toMatch(/plugin|Reload your client|Restart the agent|Call whoami/i);
+			expect(document.querySelector('ol')).toBeNull();
+			unmount();
+		}
+	});
+
 	it('lists each approved app by name, with what it can reach, when it was approved and last used, and whether it is verified', async () => {
 		const day = 1_700_000_000;
 		renderApp(<AgentConnectionsSection />, {

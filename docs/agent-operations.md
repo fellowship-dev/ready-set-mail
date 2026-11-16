@@ -16,7 +16,7 @@ Upgrades build, migrate and deploy in that order (`npm run deploy`). Creating a 
 
 1. Complete owner setup, then enroll a domain in the browser. A clean self-host can use manual enrollment; the report does not require granting Cloudflare DNS write access. Hosted enrollment returns a durable pending claim until ownership is proved; retrying resumes the claim rather than creating another monitored domain.
 2. In **Settings → Agents**, copy this installation's HTTPS `/mcp` endpoint (the **Agents** page in the navigation shows it too, with the steps for each assistant).
-3. From the repository, create a new installation-specific plugin directory:
+3. Optional: a local plugin instead of adding the endpoint as a custom connector (Claude, ChatGPT, Cursor and VS Code need no plugin; the **Agents** page has their steps). From the repository, create a new installation-specific plugin directory:
 
    ```sh
    node tools/configure-agent-plugin.mjs --endpoint https://mail.example.com/mcp --out /tmp/my-ready-set-mail-plugin

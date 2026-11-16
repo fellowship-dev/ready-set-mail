@@ -45,33 +45,18 @@ export function AgentConnectionsSection() {
 			<Section title="Agents" description="Let an AI agent look at your domains, with your approval.">
 				<Card>
 					<CardContent className="space-y-5">
-						<p className="text-sm text-ink-2">
-							New to agents?{' '}
-							<Link to="/agents" className="text-brand-ink underline underline-offset-4">
-								Agents
-							</Link>{' '}
-							explains what they can do here and gives you a first question to ask.
-						</p>
 						<CopyValue
 							label={hosted ? 'Agent address' : "This installation's MCP endpoint"}
 							value={endpoint}
 							copyLabel={hosted ? 'Copy agent address' : 'Copy MCP endpoint'}
 						/>
-						{hosted ? (
-							<ol className="list-decimal space-y-1 pl-5 text-sm text-ink-2">
-								<li>In your AI agent, add Ready Set Mail and paste the agent address above.</li>
-								<li>Restart the agent so it picks up Ready Set Mail.</li>
-								<li>Sign in here when asked and approve which domains it may see, what it may do and for how long.</li>
-								<li>Ask it for a health report on one of your domains. Adding it is not enough: it is connected once you approve.</li>
-							</ol>
-						) : (
-							<ol className="list-decimal space-y-1 pl-5 text-sm text-ink-2">
-								<li>Install the Ready Set Mail plugin and set this HTTPS endpoint.</li>
-								<li>Reload your client so its MCP tools become available.</li>
-								<li>Sign in to this installation and approve exact resources, actions and expiry.</li>
-								<li>Call whoami, then request a domain health report. Installation alone does not establish a connection.</li>
-							</ol>
-						)}
+						<p className="text-sm text-ink-2">
+							How to connect Claude, ChatGPT, Cursor or VS Code, and what an agent can and cannot do: see{' '}
+							<Link to="/agents" className="text-brand-ink underline underline-offset-4">
+								Agents
+							</Link>
+							.
+						</p>
 					</CardContent>
 				</Card>
 				<ApprovedAgents workspace={workspace} />
