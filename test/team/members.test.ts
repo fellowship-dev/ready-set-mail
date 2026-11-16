@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, inviteAndAccept, makeEnv, setupOwner } from '../auth/helpers';
 import { delegatedKey } from '../auth/grant-fixture';
+import { forWorkspace } from '@ready-set-mail/db';
 
 const rows = (db: any, sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
 const json = async (res: Response) => (await res.json()) as any;
@@ -82,10 +83,109 @@ describe('POST /api/team/invite twice for the same address', () => {
     expect(rows(w.db, "SELECT resource_name FROM audit_log WHERE action = 'auth.invite_revoked'")).toEqual([{ resource_name: 'new@example.com' }]);
   });
 
+  it('requests made at once leave exactly one live link: the newest, never none', async () => {
+    for (const n of [2, 3, 6]) {
+      const w = await world();
+      const sent = await Promise.all(Array.from({ length: n }, () => call(w.env, 'POST', '/api/team/invite', { key: w.owner, body: { email: 'race@example.com' } })));
+      expect(sent.map(r => r.status)).toEqual(Array(n).fill(201));
+      const tokens = (await Promise.all(sent.map(json))).map(b => b.token as string);
+      expect(rows(w.db, "SELECT token FROM invites WHERE email = 'race@example.com' AND used_at IS NULL")).toHaveLength(1);
+      const live = (await Promise.all(tokens.map(t => call(w.env, 'GET', `/api/invites/${t}`)))).filter(r => r.status === 200);
+      expect(live, `${n} requests`).toHaveLength(1);
+    }
+  });
+
+  it('the worst interleaving: every request inserts before any of them revokes the others, and the newest still survives', async () => {
+    const w = await world();
+    const team = forWorkspace(w.db as any, 'ws_default').team;
+    const tokens = ['t1', 't2', 't3', 't4'];
+    for (const token of tokens) await team.insertInvite({ token, email: 'race@example.com', role: 'member', invited_by: 'owner@example.com', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+    for (const token of tokens) await team.revokePendingFor('race@example.com', token);
+    expect(rows(w.db, "SELECT token FROM invites WHERE email = 'race@example.com'")).toEqual([{ token: 't4' }]);
+    // the other order of the revokes gives the same result
+    const w2 = await world();
+    const team2 = forWorkspace(w2.db as any, 'ws_default').team;
+    for (const token of tokens) await team2.insertInvite({ token, email: 'race@example.com', role: 'member', invited_by: 'owner@example.com', expires_at: Math.floor(Date.now() / 1000) + 3600 });
+    for (const token of [...tokens].reverse()) await team2.revokePendingFor('race@example.com', token);
+    expect(rows(w2.db, "SELECT token FROM invites WHERE email = 'race@example.com'")).toEqual([{ token: 't4' }]);
+  });
+
+  it('an admin\'s member invite does not cancel the owner\'s admin invite to the same address: refused, and the owner\'s link keeps working', async () => {
+    const w = await world();
+    const ownerInvite = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.owner, body: { email: 'new@example.com', role: 'admin' } }));
+    const refused = await call(w.env, 'POST', '/api/team/invite', { key: w.admin, body: { email: 'new@example.com', role: 'member' } });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error).toBe('new@example.com already has an open admin invite from an owner. Ask an owner to change it, or wait until it is used.');
+    expect((await call(w.env, 'GET', `/api/invites/${ownerInvite.token}`)).status).toBe(200);
+    expect(rows(w.db, "SELECT role FROM invites WHERE email = 'new@example.com'")).toEqual([{ role: 'admin' }]);
+    // an admin's member invite still replaces an earlier MEMBER invite, and the owner may replace anything
+    const m1 = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.admin, body: { email: 'plain@example.com' } }));
+    const m2 = await json(await call(w.env, 'POST', '/api/team/invite', { key: w.admin, body: { email: 'plain@example.com' } }));
+    expect(m2.replaced).toBe(1);
+    expect((await call(w.env, 'GET', `/api/invites/${m1.token}`)).status).not.toBe(200);
+    expect((await json(await call(w.env, 'POST', '/api/team/invite', { key: w.owner, body: { email: 'new@example.com', role: 'member' } }))).replaced).toBe(1);
+  });
+
   it('invites to different addresses stay separate', async () => {
     const w = await world();
     for (const email of ['a@example.com', 'b@example.com']) await call(w.env, 'POST', '/api/team/invite', { key: w.owner, body: { email } });
     expect((await json(await call(w.env, 'GET', '/api/team/invites', { key: w.owner }))).invites).toHaveLength(2);
+  });
+});
+
+describe('a person in two workspaces: a change in one never touches the other', () => {
+  /** member@ also belongs to ws_two, as an admin, with an API key and an agent approval there. */
+  async function twoWorkspaces() {
+    const w = await world();
+    const userId = w.id('member@example.com');
+    w.db.sqlite.exec("INSERT INTO workspaces (id, name) VALUES ('ws_two', 'Two')");
+    w.db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES ('ws_two', ?, 'admin')").run(userId);
+    w.db.sqlite.prepare("INSERT INTO api_keys (id, workspace_id, user_id, name, prefix, key_hash) VALUES ('k-two', 'ws_two', ?, 'two', 'rsm_', 'h-two')").run(userId);
+    w.db.sqlite.prepare("INSERT INTO api_keys (id, workspace_id, user_id, name, prefix, key_hash) VALUES ('k-one', 'ws_default', ?, 'one', 'rsm_', 'h-one')").run(userId);
+    // Only an owner approves agents: they are one for a moment, as in the removal test above.
+    const setRoles = (one: string, two: string) => { w.db.sqlite.prepare("UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = 'ws_default'").run(one, userId); w.db.sqlite.prepare("UPDATE memberships SET role = ? WHERE user_id = ? AND workspace_id = 'ws_two'").run(two, userId); };
+    setRoles('owner', 'owner');
+    const agent = await delegatedKey(w.db as any, { workspaceId: 'ws_two', userId, name: 'Agent in two', domain: 'two.example.com' });
+    const agentOne = await delegatedKey(w.db as any, { workspaceId: 'ws_default', userId, name: 'Agent in one', domain: 'one.example.com' });
+    setRoles('member', 'admin');
+    const roleIn = (workspace: string) => rows(w.db, 'SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?', workspace, userId)[0]?.role;
+    return { w, userId, agent, agentOne, roleIn };
+  }
+
+  it('changing a role here leaves the role there', async () => {
+    const { w, userId, roleIn } = await twoWorkspaces();
+    const up = await w.setRole(w.owner, userId, 'admin');
+    expect(up.status).toBe(200);
+    expect(roleIn('ws_default')).toBe('admin');
+    expect(roleIn('ws_two')).toBe('admin');
+    expect((await w.setRole(w.owner, userId, 'member')).status).toBe(200);
+    expect(roleIn('ws_default')).toBe('member');
+    expect(roleIn('ws_two')).toBe('admin'); // not demoted with it
+    // and the data layer on its own: a workspace's team query reaches only its own rows
+    rows(w.db, "UPDATE memberships SET role = 'admin' WHERE workspace_id = 'ws_default' AND user_id = ?", userId);
+    await forWorkspace(w.db as any, 'ws_default').team.setRole(userId, 'member');
+    expect(roleIn('ws_two')).toBe('admin');
+  });
+
+  it('removing them here ends their keys and agent approvals here, and only here', async () => {
+    const { w, userId, agent, agentOne, roleIn } = await twoWorkspaces();
+    expect((await call(w.env, 'DELETE', `/api/team/${userId}`, { key: w.owner })).status).toBe(200);
+    expect(roleIn('ws_default')).toBeUndefined();
+    expect(roleIn('ws_two')).toBe('admin');
+    expect(rows(w.db, "SELECT id, revoked_at IS NOT NULL AS r FROM api_keys WHERE id IN ('k-one', 'k-two') ORDER BY id")).toEqual([{ id: 'k-one', r: 1 }, { id: 'k-two', r: 0 }]);
+    expect(rows(w.db, 'SELECT workspace_id, disabled_at IS NOT NULL AS d FROM access_principals WHERE user_id = ? ORDER BY workspace_id', userId)).toEqual([{ workspace_id: 'ws_default', d: 1 }, { workspace_id: 'ws_two', d: 0 }]);
+    expect(rows(w.db, 'SELECT workspace_id, revoked_at IS NOT NULL AS r FROM access_grants ORDER BY workspace_id')).toEqual([{ workspace_id: 'ws_default', r: 1 }, { workspace_id: 'ws_two', r: 0 }]);
+    expect(rows(w.db, 'SELECT workspace_id, revoked_at IS NOT NULL AS r FROM access_credentials ORDER BY workspace_id')).toEqual([{ workspace_id: 'ws_default', r: 1 }, { workspace_id: 'ws_two', r: 0 }]);
+    expect((await call(w.env, 'GET', '/api/resources', { key: agentOne.key })).status).toBe(401);
+    expect((await call(w.env, 'GET', '/api/resources', { key: agent.key })).status).toBe(200); // the other workspace's approval still works
+  });
+
+  it('leaving here does the same: the other workspace keeps their keys and approvals', async () => {
+    const { w, userId, roleIn } = await twoWorkspaces();
+    expect((await call(w.env, 'POST', '/api/workspaces/ws_default/leave', { key: w.member, body: {} })).status).toBe(200);
+    expect(roleIn('ws_two')).toBe('admin');
+    expect(rows(w.db, "SELECT id FROM api_keys WHERE revoked_at IS NULL AND user_id = ?", userId)).toEqual([{ id: 'k-two' }]);
+    expect(rows(w.db, 'SELECT COUNT(*) AS n FROM access_credentials WHERE revoked_at IS NULL')[0].n).toBe(1);
   });
 });
 

@@ -157,10 +157,20 @@ export function teamQueries(db: Db, workspaceId: string) {
 			return res.length > 0;
 		},
 
-		/** Revoke the pending invites for an address except `keep` (the new one replacing them). Returns the revoked invites. */
-		async revokePendingFor(email: string, keep: string) {
+		/**
+		 * Revoke the pending invites for an address that are OLDER than `keep` (the new one replacing them), in one statement. Older, not "all the others":
+		 * requests made at once each delete the ones before their own, so the newest always survives. (Deleting every other invite let three
+		 * simultaneous requests delete each other's and leave no live link at all.) Age is the insert order (rowid), not `created_at`, which is
+		 * whole seconds. `keepAdmin`: an admin invite is left alone (a member invite by an admin must not cancel the owner's admin invite).
+		 * Returns the revoked invites.
+		 */
+		async revokePendingFor(email: string, keep: string, opts: { keepAdmin?: boolean } = {}) {
 			return db.delete(invites)
-				.where(and(eq(invites.workspace_id, workspaceId), eq(invites.email, email.toLowerCase().trim()), isNull(invites.used_at), ne(invites.token, keep)))
+				.where(and(
+					eq(invites.workspace_id, workspaceId), eq(invites.email, email.toLowerCase().trim()), isNull(invites.used_at), ne(invites.token, keep),
+					sql`${invites}.rowid < (SELECT i.rowid FROM invites i WHERE i.workspace_id = ${workspaceId} AND i.token = ${keep})`,
+					opts.keepAdmin ? ne(invites.role, 'admin') : undefined,
+				))
 				.returning({ token: invites.token, role: invites.role, invited_by: invites.invited_by }).all();
 		},
 

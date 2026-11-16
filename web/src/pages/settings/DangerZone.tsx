@@ -8,7 +8,7 @@ import { downloadFile } from '../../lib/download';
 import { useHosted, useSession } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
 import { canCreateWorkspace, useWorkspaces } from '../../lib/workspaces';
-import { DeleteButton, LeaveButton, leaveNote, useCurrentWorkspace } from './WorkspaceSection';
+import { DeleteButton, LeaveButton, lastOwnerNote, leaveNote, useCurrentWorkspace } from './WorkspaceSection';
 
 interface Blocking {
 	id: string;
@@ -38,18 +38,19 @@ export function DangerZone() {
 	const { current, others, goElsewhere } = useCurrentWorkspace();
 	const all = useWorkspaces(!!me?.user).data ?? [];
 	if (!me?.user) return null;
-	const canDelete = others.length > 0;
+	const only = others.length === 0;
 	const canCreate = canCreateWorkspace(status?.mode, all);
+	const lastOwner = role === 'owner' && current?.owner_count === 1 ? lastOwnerNote(current.member_count === 1) : undefined;
 	return (
 		<Section title="Danger zone" description="Take your data with you, leave or delete this workspace, or delete your account.">
 			{role === 'owner' && me.workspace_id ? <ExportCard workspaceId={me.workspace_id} /> : null}
 			{current ? (
-				<DangerRow title="Leave this workspace" action={<LeaveButton id={current.id} name={current.name} only={!canDelete} canCreate={canCreate} then={goElsewhere} />}>
-					{leaveNote(!canDelete, canCreate)}
+				<DangerRow title="Leave this workspace" action={<LeaveButton id={current.id} name={current.name} only={only} canCreate={canCreate} blocked={lastOwner} then={goElsewhere} />}>
+					{lastOwner ? <span id={`leave-blocked-${current.id}`}>{lastOwner}</span> : leaveNote(only, canCreate)}
 				</DangerRow>
 			) : null}
-			{current && canDelete && role === 'owner' ? (
-				<DangerRow title="Delete this workspace" action={<DeleteButton id={current.id} name={current.name} then={goElsewhere} />}>
+			{current && role === 'owner' ? (
+				<DangerRow title="Delete this workspace" action={<DeleteButton id={current.id} name={current.name} only={only} canCreate={canCreate} then={goElsewhere} />}>
 					Removes its domains, reports, members&apos; access and Cloudflare connections for everyone. This cannot be undone.
 				</DangerRow>
 			) : null}

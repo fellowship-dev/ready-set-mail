@@ -69,6 +69,10 @@ const MAX_PASSWORD = 256;
 /** The one sentence for a failed password sign-in: it says neither that the address has no account nor that the password is wrong. */
 export const INVALID_CREDENTIALS = 'That email and password do not match. Check both, or reset your password.';
 export const WRONG_CURRENT_PASSWORD = 'Your current password is not right. Check it and try again.';
+/** Better Auth's other refusals of a password change, in a person's words. Its own message text (a validation path like "[body.newPassword] Invalid input") never reaches the dashboard. */
+const NEW_PASSWORD_TOO_SHORT = 'The new password is too short. Use at least 8 characters.';
+const NEW_PASSWORD_TOO_LONG = 'The new password is too long. Use at most 128 characters.';
+const PASSWORD_NOT_CHANGED = 'The password could not be changed. Check the current and the new password, then try again.';
 
 /** Better Auth endpoints reachable from outside, as `METHOD /path`. */
 const PASSTHROUGH: readonly RegExp[] = [
@@ -988,7 +992,9 @@ export async function handleAuthRoute(
     if (changing && !res.ok) {
       const refusal = await res.clone().json().catch(() => null) as { code?: string; message?: string } | null;
       if (refusal?.code === 'INVALID_PASSWORD') return err(WRONG_CURRENT_PASSWORD, res.status, 'wrong_current_password');
-      if (refusal?.message) return err(refusal.message, res.status, refusal.code?.toLowerCase());
+      if (refusal?.code === 'PASSWORD_TOO_SHORT') return err(NEW_PASSWORD_TOO_SHORT, res.status, 'password_too_short');
+      if (refusal?.code === 'PASSWORD_TOO_LONG') return err(NEW_PASSWORD_TOO_LONG, res.status, 'password_too_long');
+      return err(PASSWORD_NOT_CHANGED, res.status, 'password_not_changed');
     }
     if (fromBrowser(request) && res.headers.has('set-auth-token')) {
       // Same rule as sessionResponse: a browser holds its session in the cookie only.

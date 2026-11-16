@@ -1,12 +1,12 @@
 import { PlanLimitError, ProofIncompleteError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
-import { EVICTED_KEEP_DAYS, admitDomain, claimLimitBody, claimView, freeingFor, proofColumns, restoreInPlace, settleClaims, type VerifiedVia } from './ownership';
+import { EVICTED_KEEP_DAYS, admitDomain, claimLimitBody, claimView, freeingFor, proofColumns, refusedInsertBody, restoreInPlace, roomRefusal, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
 import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
 import { isClaimProof, recordFirstDnsCheck } from './first-check';
-import { planLimitBody, planLimits } from '../hosted/plan-limits';
+import { planLimits, type DomainUse } from '../hosted/plan-limits';
 import { INVALID_DOMAIN_MESSAGE, normalizeDomainName, specialUseMessage, type DomainNameResult } from '@ready-set-mail/dns-checks';
 
 export class DomainServiceError extends Error {
@@ -35,16 +35,16 @@ export function requireDomainName(raw: string): string {
 /** The cap in force for this tenant (hosted only), or undefined. */
 export const domainCap = (tenant: TenantContext): number | undefined => planLimits(tenant.env)?.domainsPerWorkspace;
 
-/** The refusal for a workspace at its domain cap, as an error the callers turn into the 403 body. */
-export function planLimitError(tenant: TenantContext, max: number): DomainServiceError {
-  const body = planLimitBody(tenant.env, 'domains_per_workspace', max);
+/** The refusal for an insert the database turned down at the domain cap, as an error the callers turn into the 403 body (it names the claims waiting for proof, like `assertDomainRoom`). */
+export async function planLimitError(tenant: TenantContext, max: number): Promise<DomainServiceError> {
+  const body = await refusedInsertBody(tenant, max);
   return new DomainServiceError(body.error, 403, body);
 }
 
-/** Early, non-atomic: is the workspace already at its domain cap? Throws the refusal when so. Never run for a domain it already has. */
-export async function assertDomainRoom(tenant: TenantContext): Promise<void> {
-  const max = domainCap(tenant);
-  if (max !== undefined && (await tenant.scope.domains.list()).length >= max) throw planLimitError(tenant, max);
+/** Early, non-atomic: has the workspace room for `name` (the one room rule, `domainRoom`)? Throws the refusal when not. A name it already holds, or has a claim for, needs none. */
+export async function assertDomainRoom(tenant: TenantContext, name: string, use?: DomainUse): Promise<void> {
+  const refusal = await roomRefusal(tenant, name, use);
+  if (refusal) throw new DomainServiceError(refusal.error, 403, refusal);
 }
 
 /** What the holder of a name that another workspace proved is told (by the email, and by "prove again" on the old row): the new holder keeps it, the history stays read-only. */
@@ -97,7 +97,7 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
   await assertAgentEnrollmentSafe(tenant, domain);
   const existing = await tenant.scope.domains.getByName(domain);
   if (existing) await assertExistingProductMapping(tenant, existing, options);
-  if (!existing) await assertDomainRoom(tenant); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
+  await assertDomainRoom(tenant, domain); // before a claim exists, or anything is verified or evicted: nobody publishes a TXT record for a domain that can never be added
   const admission = await admitDomain(tenant, domain);
   if (admission.kind === 'taken') throw new DomainServiceError('domain already registered in another workspace', 409);
   if (admission.kind === 'limit') {
@@ -143,7 +143,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
       // A concurrent verify of the same domain may have taken the last place: that is this domain being added, not a cap.
       const raced = await resumeExistingDomain(tenant, domain, options);
       if (raced) return raced;
-      throw planLimitError(tenant, e.max);
+      throw await planLimitError(tenant, e.max);
     }
     if (e instanceof ProofIncompleteError) throw proofIncomplete(domain);
     if (e?.message?.includes('UNIQUE')) {

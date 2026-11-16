@@ -50,8 +50,8 @@ export async function preflightWorkspace(deps: WorkspaceDeps, tenant: TenantCont
 /**
  * Delete a workspace and everything in it: its domains one at a time through the normal delete (DNS and hosted
  * records first; each is final), then the Cloudflare access (OAuth grants are revoked remotely; a failed revoke is
- * tombstoned and retried by the cron, never blocking the delete), then the data. People who belonged only to this
- * workspace are deleted with it. The caller has checked who may do this, and run preflightWorkspace.
+ * tombstoned and retried by the cron, never blocking the delete), then the data. Its members keep their accounts (ADR 0019): their
+ * memberships, keys and agent approvals for it go with it, and they land on "No workspace yet" when it was their only one. The caller has checked who may do this, and run preflightWorkspace.
  */
 export async function eraseWorkspace(
   deps: WorkspaceDeps, ctx: ExecutionContext, tenant: TenantContext, domains: Array<{ id: number; domain: string }>, actor: Actor,
@@ -84,10 +84,7 @@ export async function eraseWorkspace(
       ),
     };
   }
-  const members = (await tenant.scope.team.list()).map((u) => u.id);
-  await workspaceLifecycle(deps.db).purge(tenant.workspaceId);
-  // People who belonged only to this workspace have nowhere to sign in to any more.
-  for (const uid of members) await globalQueries(deps.db).users.deleteIfOrphan(uid);
+  await workspaceLifecycle(deps.db).purge(tenant.workspaceId); // memberships, keys and agent approvals go with the workspace; the people and their logins stay
   return { ok: true, cloudflare };
 }
 
@@ -175,7 +172,6 @@ export async function handleWorkspaceRoutes(
   if (!m[2] && method === 'DELETE') {
     if (role !== 'owner') return err('only an owner can delete a workspace', 403);
     if (id === IMPLICIT_WORKSPACE_ID) return err('the default workspace cannot be deleted', 400, 'default_workspace');
-    if ((await lifecycle.listForUser(user.id)).length <= 1) return err('you cannot delete your only workspace — create another first', 409, 'only_workspace');
 
     const tenant = await deps.tenantFor(id);
     const domains = (await tenant.scope.domains.list()).map(d => ({ id: d.id, domain: d.domain }));

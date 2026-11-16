@@ -11,6 +11,8 @@ export interface WorkspaceSummary {
 	name: string;
 	role: Role;
 	member_count: number;
+	/** How many members are owners: with one, an owner cannot leave. */
+	owner_count: number;
 	created_at: number;
 }
 
@@ -77,11 +79,13 @@ export function useLeaveWorkspace(id: string, then: () => void) {
 
 export function useDeleteWorkspace(id: string, then: () => void) {
 	const qc = useQueryClient();
+	const { signedIn } = useSession();
 	return useMutation({
 		mutationFn: (confirm?: string) => api(`/api/workspaces/${id}${confirm ? `?confirm=${encodeURIComponent(confirm)}` : ''}`, { method: 'DELETE' }),
 		onSuccess: async () => {
 			workspaceStore.forget();
 			await qc.invalidateQueries({ queryKey: workspaceKeys.all });
+			await signedIn(); // with no workspace left, "No workspace yet" is what the page now shows
 			toast({ variant: 'success', title: 'Workspace deleted' });
 			then();
 		},

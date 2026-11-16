@@ -150,6 +150,29 @@ describe('the plan', () => {
   });
 });
 
+describe('the one room rule: a claim waiting for proof holds a place (src/hosted/plan-limits.ts domainRoom)', () => {
+  it('Cloudflare import counts the waiting claim: room is cap minus domains and claims, and the refusal names the claim and its Remove', async () => {
+    const s = await setup({ 'a1.com': {}, 'a2.com': {}, 'a3.com': {} }, { MAX_DOMAINS_PER_WORKSPACE: '3' });
+    expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'typed-elsewhere.org' } })).status).toBe(202); // not a zone of the connection
+    const id = await s.connect();
+    const auto = await json(await s.imp(id));
+    expect(auto.imported).toEqual([]);
+    expect(auto.needs_selection).toMatchObject({ room: 2, cap: 3 });
+    const all = Object.values(s.w.cf.zones).map(z => z.id);
+    const tooMany = await s.imp(id, { zone_ids: all });
+    expect(tooMany.status).toBe(403);
+    expect(await json(tooMany)).toMatchObject({ code: 'plan_limit', error: expect.stringContaining('typed-elsewhere.org). Use Remove on its card') });
+    expect(s.domains()).toEqual([]);
+    expect((await json(await s.imp(id, { zone_ids: all.slice(0, 2) }))).imported).toHaveLength(2);
+  });
+  it('a zone that is itself the waiting claim takes its own place, not a second one', async () => {
+    const s = await setup({ 'a1.com': {}, 'a2.com': {} }, { MAX_DOMAINS_PER_WORKSPACE: '2' });
+    expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'a1.com' } })).status).toBe(202);
+    const res = await json(await s.imp(await s.connect()));
+    expect(res.imported.map((i: any) => i.domain).sort()).toEqual(['a1.com', 'a2.com']);
+  });
+});
+
 describe('the one-domain plan on the first run (MAX_DOMAINS_PER_WORKSPACE=1, three zones, the company path)', () => {
   // The limit is read from the one plan module (src/hosted/plan-limits.ts -> domainCap -> importZones), so nothing here is special to the first run.
   it('with no zone chosen it imports nothing and asks the person to choose (the pending claim stays open)', async () => {

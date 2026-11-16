@@ -35,9 +35,6 @@ export function globalQueries(dbLike: DbLike) {
 			discardPassword: (userId: string) =>
 				db.update(authAccounts).set({ password: '!' }).where(and(eq(authAccounts.userId, userId), eq(authAccounts.providerId, 'credential'))).run(),
 			markEmailVerified: (userId: string) => db.update(users).set({ email_verified: 1 }).where(eq(users.id, userId)).run(),
-			/** Delete a user who belongs to no workspace any more (their sessions and keys go with them). */
-			deleteIfOrphan: (userId: string) =>
-				db.run(sql`DELETE FROM users WHERE id = ${userId} AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = ${userId})`),
 		},
 
 		sessions: {

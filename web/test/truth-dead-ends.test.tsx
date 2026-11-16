@@ -91,10 +91,17 @@ describe('Members', () => {
 		current_user_id: current,
 	});
 
-	it('the name column keeps a readable width: it wraps below the badge and buttons instead of shrinking to a sliver (375 px)', async () => {
+	it('the invite form comes before the list of people, so it stays in reach however many there are (FOLD-01 at 375 px)', async () => {
+		renderApp(<MembersPage />, { role: 'owner', routes: { 'GET /api/team': team('o1') } });
+		const email = await screen.findByLabelText('Email');
+		const list = await screen.findByRole('list', { name: 'Members' });
+		expect(email.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it('the name column keeps a readable width: it wraps below the role and the actions instead of shrinking to a sliver (375 px)', async () => {
 		renderApp(<MembersPage />, { role: 'owner', routes: { 'GET /api/team': team('o1'), 'GET /api/team/invites': { invites: [{ id: 'i1', email: 'p@example.com', role: 'member', invited_by: 'owner@example.com', created_at: 1, expires_at: 2_000_000_000 }] } } });
 		const name = (await screen.findByText('Adam')).parentElement!;
-		expect(name.className).toMatch(/basis-56/);
+		expect(name.className).toMatch(/basis-40/);
 		expect((await screen.findByText('p@example.com')).parentElement!.className).toMatch(/basis-56/);
 	});
 
@@ -204,7 +211,7 @@ describe('Settings: your only workspace', () => {
 		const { onlyWorkspaceNote, leaveNote } = await import('../src/pages/settings/WorkspaceSection');
 		expect(onlyWorkspaceNote(true, false)).toBe('This is your only workspace. If you leave it: you keep your account and land on a page where you can start a workspace of your own.');
 		expect(onlyWorkspaceNote(false, false)).toBe('This is your only workspace. If you leave it: you keep your account and land on a page where you wait for an invitation, because only the owner of this instance can create workspaces.');
-		expect(onlyWorkspaceNote(true, true)).toBe('This is your only workspace, so it cannot be deleted. To leave it, make another member an owner first. You keep your account and land on a page where you can start a workspace of your own.');
+		expect(onlyWorkspaceNote(true, true)).toBe('This is your only workspace. Delete it, or make another member an owner and leave it: either way you keep your account and land on a page where you can start a workspace of your own.');
 		expect(leaveNote(false, true)).toBe('You lose access to its domains and reports. An owner can invite you back.');
 		expect(leaveNote(true, false)).toMatch(/An owner can invite you back\. You keep your account and land on a page where you wait for an invitation/);
 		const { canCreateWorkspace } = await import('../src/lib/workspaces');

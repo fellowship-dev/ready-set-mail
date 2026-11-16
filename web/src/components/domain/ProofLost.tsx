@@ -1,19 +1,12 @@
-import { Alert, Button } from '@ready-set-mail/ui';
+import { Alert } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, errorMessage } from '../../lib/api';
 import { useDomainClaims } from '../../lib/queries';
 import type { Domain } from '../../lib/types';
+import { isUnproven, proofLapsed } from '../../lib/proof';
+import { WriteButton } from '../states';
 import { ClaimCard } from './ClaimCard';
-
-/** A domain this workspace has but can no longer show it controls (a zone proof that lapsed, a parent that left): it is held, not removed. */
-/** The part of a domain row the proven rule reads (so callers type what they pass without naming the column). */
-export type ProofShape = Pick<Domain, 'verified_via'>;
-/** What a caller may pass when it holds the domain row only in part (the verdict reads a row; a bare name has no proof to judge). */
-export type ProofState = Partial<Pick<Domain, 'verified_via' | 'proof_lost_at'>>;
-export const isUnproven = (d: Partial<ProofShape>): boolean => d.verified_via === 'legacy';
-/** Unproven because a proof that was made lapsed (as opposed to one that never was). */
-export const proofLapsed = (d: ProofState): boolean => d.proof_lost_at != null;
 
 /**
  * "Proof lost: prove it is still yours": the way back after a proof lapsed, on the SAME domain. Prove again re-runs the proof (the zone through any current
@@ -44,9 +37,9 @@ export function ProofLost({ domain, canWrite }: { domain: Pick<Domain, 'id' | 'd
 					<ClaimCard claim={claim} canWrite={canWrite} />
 				) : (
 					<div className="flex flex-wrap items-center gap-2">
-						<Button loading={prove.isPending} disabled={!canWrite} onClick={() => { setError(''); prove.mutate(); }}>
+						<WriteButton loading={prove.isPending} reasonVisible onClick={() => { setError(''); prove.mutate(); }}>
 							Prove again
-						</Button>
+						</WriteButton>
 						<span className="text-sm text-ink-2">Checks your Cloudflare connections, then the TXT record. Your report history stays.</span>
 					</div>
 				)}

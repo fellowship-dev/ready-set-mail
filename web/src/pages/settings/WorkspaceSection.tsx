@@ -21,11 +21,15 @@ export function useCurrentWorkspace() {
 const afterLeavingOnly = (canCreate: boolean): string =>
 	`You keep your account and land on a page ${canCreate ? 'where you can start a workspace of your own' : 'where you wait for an invitation, because only the owner of this instance can create workspaces'}.`;
 
-/** The Settings sentence for your only workspace: it can be left (an owner hands ownership on first) but not deleted. */
+/** The Settings sentence for your only workspace: leaving or deleting it both keep your account (an owner hands ownership on before leaving). */
 export const onlyWorkspaceNote = (canCreate: boolean, owner: boolean): string =>
 	owner
-		? `This is your only workspace, so it cannot be deleted. To leave it, make another member an owner first. ${afterLeavingOnly(canCreate)}`
+		? `This is your only workspace. Delete it, or make another member an owner and leave it: either way ${afterLeavingOnly(canCreate).replace(/^You/, 'you')}`
 		: `This is your only workspace. If you leave it: ${afterLeavingOnly(canCreate).replace(/^You/, 'you')}`;
+
+/** Why the only owner cannot leave, and what to do instead. */
+export const lastOwnerNote = (alone: boolean): string =>
+	alone ? 'You are the only owner and the only member. Delete the workspace instead, or invite someone and make them an owner first.' : 'You are the only owner. Make another member an owner first (Members), or delete the workspace.';
 
 /** The leave dialog: what is lost, and, when it is the only workspace, where you end up. */
 export const leaveNote = (only: boolean, canCreate: boolean): string =>
@@ -76,12 +80,12 @@ function RenameForm({ id, name }: { id: string; name: string }) {
 	);
 }
 
-export function LeaveButton({ id, name, only, canCreate, then }: { id: string; name: string; only: boolean; canCreate: boolean; then: () => void }) {
+export function LeaveButton({ id, name, only, canCreate, blocked, then }: { id: string; name: string; only: boolean; canCreate: boolean; /** Why leaving is refused (the only owner), shown beside the disabled button. */ blocked?: string; then: () => void }) {
 	const [open, setOpen] = useState(false);
 	const leave = useLeaveWorkspace(id, then);
 	return (
 		<>
-			<Button variant="danger" onClick={() => setOpen(true)}>
+			<Button variant="danger" disabled={!!blocked} aria-describedby={blocked ? `leave-blocked-${id}` : undefined} onClick={() => setOpen(true)}>
 				Leave workspace
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
@@ -105,7 +109,7 @@ export function LeaveButton({ id, name, only, canCreate, then }: { id: string; n
 	);
 }
 
-export function DeleteButton({ id, name, then }: { id: string; name: string; then: () => void }) {
+export function DeleteButton({ id, name, only, canCreate, then }: { id: string; name: string; only: boolean; canCreate: boolean; then: () => void }) {
 	const [open, setOpen] = useState(false);
 	const [typed, setTyped] = useState('');
 	const domains = useDomains();
@@ -131,7 +135,9 @@ export function DeleteButton({ id, name, then }: { id: string; name: string; the
 							<DialogDescription>
 								{count > 0
 									? `This removes its ${count} ${count === 1 ? 'domain' : 'domains'} (and the DNS records Ready Set Mail added for them), every report, its members' access and its Cloudflare connections. This cannot be undone.`
-									: 'It has no domains. Its members lose access. This cannot be undone.'}
+									: 'It has no domains. Its members lose access. This cannot be undone.'}{' '}
+								Everyone in it keeps their account: whoever has no other workspace lands on a page where they can{canCreate ? ' start one of their own' : ' wait for an invitation'}.
+								{only ? ` ${afterLeavingOnly(canCreate)}` : ''}
 							</DialogDescription>
 						</DialogHeader>
 						{needsConfirm ? (

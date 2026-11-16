@@ -82,6 +82,32 @@ describe('overview', () => {
 		expect(await screen.findByText(TITLE)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Prove again' })).toBeDisabled();
 	});
+
+	it('a read-only member is told why, and the row says an owner or admin proves it, not "you"', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com'), REJECT(2, 'fine.org')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [LOST, OK] },
+		}, 'member');
+		await screen.findByText(TITLE);
+		const button = screen.getByRole('button', { name: 'Prove again' });
+		expect(button).toBeDisabled();
+		expect(button).toHaveAccessibleDescription('Your role is member, which is read-only. Ask an owner or admin to make this change.');
+		const alert = screen.getByTestId('proof-lost-1');
+		expect(alert.textContent).toContain('Your role is member, which is read-only. Ask an owner or admin to make this change.'); // in words, not only in a tooltip
+		const sold = (await screen.findAllByRole('listitem')).find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('sold.com'))!;
+		expect(sold.textContent).toContain('Next, an owner or admin:');
+		expect(sold.textContent).not.toContain('Next, you:');
+	});
+
+	it('an owner is still told "you"', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [LOST] },
+		}, 'owner');
+		await screen.findByText(TITLE);
+		const sold = (await screen.findAllByRole('listitem')).find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('sold.com'))!;
+		expect(sold.textContent).toContain('Next, you:');
+	});
 });
 
 describe('the domain card follows the ownership source: a lost proof is never Verified, never "nothing to do"', () => {

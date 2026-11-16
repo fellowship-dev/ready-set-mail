@@ -12,6 +12,7 @@
 // others are marked `lost`.
 import { claimLookups, isUnprovenRow, ProofIncompleteError, workspaceLifecycle, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
+import { CfApiError, CfNetworkError } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
 import { cleanName, PLACEHOLDER_NAME_KEY } from '../auth/names';
@@ -21,7 +22,7 @@ import { removeAuthRecord, removeHostedRecords } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
-import { planLimits, planLimitWaitingBody } from '../hosted/plan-limits';
+import { domainRoom, planLimits, planLimitWaitingBody, type DomainUse } from '../hosted/plan-limits';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
@@ -57,7 +58,7 @@ export type Admission =
   | { kind: 'pending'; claim: DomainClaimRow }
   /** Another workspace already owns this domain. */
   | { kind: 'taken' }
-  | { kind: 'limit'; cap: number; held: number; waiting: number };
+  | { kind: 'limit'; cap: number; held: number; waiting: string[] };
 
 export interface ClaimView {
   id: number;
@@ -136,6 +137,7 @@ export async function cloudflareProof(tenant: TenantContext, domain: string, res
 /** Why a connection that lists the zone still does not prove the name: said in words by `cloudflareGapSentence`. */
 export type CloudflareGap =
   | { kind: 'unreadable'; zone: string; connection: string }
+  | { kind: 'unreachable'; zone: string; connection: string }
   | { kind: 'changed'; zone: string; connection: string }
   | { kind: 'read_only'; zone: string; connection: string }
   | { kind: 'not_delegated'; zone: string; connection: string }
@@ -167,10 +169,16 @@ async function cloudflareProofOrGap(tenant: TenantContext, domain: string, resol
           return { gap: null, proof: { method: 'cloudflare_zone', connection_id: c.id, cf_account_id: live.account?.id ?? c.cf_account_id, zone_id: zone.zone_id, zone_name: zone.zone_name.toLowerCase(), name_servers: (live.name_servers ?? []).map(normalizeName).sort(), at: Math.floor(Date.now() / 1000) } };
         }
         gap ??= { kind: delegation === 'unknown' ? 'delegation_unknown' : 'not_delegated', ...at };
-      } catch { gap ??= { kind: 'unreadable', ...at }; /* unreachable or refused: not proven */ }
+      } catch (e) { gap ??= { kind: cloudflareUnreachable(e) ? 'unreachable' : 'unreadable', ...at }; /* not proven: Cloudflare did not answer (try again), or refused (the connection lost the zone) */ }
     }
   }
   return { proof: null, gap };
+}
+
+/** Cloudflare did not answer (no response, a 5xx, rate limited): a moment's trouble, not a lost connection. A refusal (401/403), a missing zone (404) or an unusable connection is not. */
+function cloudflareUnreachable(e: unknown): boolean {
+  if (e instanceof CfNetworkError) return true;
+  return e instanceof CfApiError && (e.status === undefined || e.status === 429 || e.status >= 500);
 }
 
 /** What a person is told when their Cloudflare connection lists the zone but the proof did not hold: the real reason, not a missing TXT record. */
@@ -178,6 +186,7 @@ export function cloudflareGapSentence(gap: CloudflareGap): string {
   const where = `${gap.connection}'s zone ${gap.zone}`;
   switch (gap.kind) {
     case 'unreadable': return `Cloudflare no longer lets the connection ${gap.connection} read the zone ${gap.zone}: the zone left that account, or the connection lost access to it. Reconnect Cloudflare, or prove ownership with the TXT record instead.`;
+    case 'unreachable': return `Could not reach Cloudflare just now to check ${gap.zone}: try again in a minute, or prove ownership with the TXT record instead.`;
     case 'changed': return `${where} is not active on that account any more, or it moved. Reconnect Cloudflare, or prove ownership with the TXT record instead.`;
     case 'read_only': return `The connection ${gap.connection} cannot edit DNS for ${gap.zone}, so it cannot prove ownership. Reconnect it with DNS edit access, or prove ownership with the TXT record instead.`;
     case 'not_delegated': return `Public DNS does not point ${gap.zone} to the Cloudflare zone in ${gap.connection} (its name servers are elsewhere). Point the domain's name servers at Cloudflare, or prove ownership with the TXT record instead.`;
@@ -369,8 +378,28 @@ async function nameClientWorkspace(tenant: TenantContext, domain: string): Promi
   }
 }
 
-/** The 403 body (code `plan_limit`) for a name that cannot wait for proof because the workspace's domain slots are full. */
-export const claimLimitBody = (tenant: TenantContext, a: { cap: number; held: number; waiting: number }) => planLimitWaitingBody(tenant.env, a.cap, a.held, a.waiting);
+/** The 403 body (code `plan_limit`) for a name that cannot be added because the workspace's places are full: names the claims waiting for proof and where to remove them. */
+export const claimLimitBody = (tenant: TenantContext, a: { cap: number; held: number; waiting: string[] }) => planLimitWaitingBody(tenant.env, a.cap, a.held, a.waiting);
+
+/** What the workspace has used of its places: its live domains and its open claims (a claim is a domain waiting for proof). */
+export async function domainUse(tenant: TenantContext): Promise<DomainUse> {
+  return { domains: (await tenant.scope.domains.list()).map(d => d.domain), waiting: (await tenant.scope.claims.list()).map(c => c.domain) };
+}
+
+/** The refusal for `name` under the hosted cap (src/hosted/plan-limits.ts `domainRoom`, the one room rule), or null when it fits, always on a self-hosted instance. */
+export async function roomRefusal(tenant: TenantContext, name: string, use?: DomainUse) {
+  const cap = planLimits(tenant.env)?.domainsPerWorkspace;
+  if (cap === undefined) return null;
+  const room = domainRoom(cap, use ?? await domainUse(tenant), name);
+  return room.ok ? null : claimLimitBody(tenant, room);
+}
+
+/** The 403 body for an insert the database refused at the cap (a race, or a claim that cannot become a domain): the same words as `roomRefusal`, read after the fact. */
+export async function refusedInsertBody(tenant: TenantContext, max: number) {
+  const use = await domainUse(tenant);
+  const held = new Set(use.domains);
+  return planLimitWaitingBody(tenant.env, max, held.size, use.waiting.filter(n => !held.has(n)));
+}
 
 async function admitDomainInner(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
@@ -390,12 +419,12 @@ async function admitDomainInner(tenant: TenantContext, domain: string): Promise<
     if (existing.status === 'lost') await tenant.scope.claims.delete(existing.id); // the other workspace may have since let go: start again
     else return { kind: 'pending', claim: existing };
   }
-  // A claim is a domain waiting for proof: it takes one of the workspace's domain slots (src/hosted/plan-limits.ts), so 12 claims cannot wait in a workspace that holds 10.
+  // A claim is a domain waiting for proof: it takes one of the workspace's places like a domain does (domainRoom). A row already held needs none.
   const cap = planLimits(tenant.env)?.domainsPerWorkspace;
   if (cap !== undefined) {
-    const waiting = await tenant.scope.claims.count();
-    const held = (await tenant.scope.domains.list()).length - (own ? 1 : 0); // a row already held takes no second slot for its own claim
-    if (held + waiting >= cap) return { kind: 'limit', cap, held, waiting };
+    const use = await domainUse(tenant);
+    const room = domainRoom(cap, use, domain);
+    if (!room.ok) return { kind: 'limit', cap: room.cap, held: room.held, waiting: room.waiting };
   }
   return { kind: 'pending', claim: await tenant.scope.claims.upsert(domain, newToken()) };
 }

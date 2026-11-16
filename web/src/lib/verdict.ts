@@ -9,7 +9,7 @@ import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, type Host
 import type { Domain, DomainCheckSummary } from './types';
 import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from './uncounted';
 import { HELP_PRIORITY } from '../components/TalkToMax';
-import { isUnproven, proofLapsed, type ProofState } from '../components/domain/ProofLost';
+import { isUnproven, proofLapsed, type ProofState } from './proof';
 
 /**
  * "Am I done?" for one domain, in the status vocabulary shared with the website: one state, the level under it, one
@@ -35,6 +35,8 @@ export interface NextAction {
 	who: string;
 	/** Where the action happens. Absent when there is nothing to open. */
 	to?: string;
+	/** The action changes something: a read-only member is told an owner or admin does it (the row says so, as the domain page does). */
+	writes?: boolean;
 }
 
 export interface DomainVerdict {
@@ -145,7 +147,7 @@ function unprovenVerdict(domain: Pick<Domain, 'id' | 'domain'> & ProofState): Co
 		sentence: lapsed ? `Ownership of ${domain.domain} is no longer proven, so reports for it are not accepted until you prove it again.` : `Ownership of ${domain.domain} has not been proven in this workspace, so reports for it are not accepted yet.`,
 		evidence: null,
 		checked: null,
-		next: { label: 'Prove it is still yours', who: WHO.you, to: `/domains/${domain.id}` },
+		next: { label: 'Prove it is still yours', who: WHO.you, to: `/domains/${domain.id}`, writes: true },
 	};
 }
 

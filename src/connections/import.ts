@@ -15,7 +15,8 @@
 import { isPublicSuffix } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
-import { admitByZone, within } from '../domains/ownership';
+import { admitByZone, domainUse, within } from '../domains/ownership';
+import { domainRoom, type DomainUse } from '../hosted/plan-limits';
 import { DomainServiceError, commitVerifiedDomain, domainCap, planLimitError } from '../domains/service';
 import { ConnectionInputError } from './service';
 import { getMode } from '../tenancy/mode';
@@ -47,6 +48,12 @@ export const NOT_PROVEN = 'Cloudflare does not answer for this domain\'s DNS yet
 /** A zone refused because a parent or a subdomain of the name is verified by another workspace: said apart from "not proven", and without saying who. */
 export const RELATED_VERIFIED = 'A parent or a subdomain of this name is already verified in another workspace, so a Cloudflare zone cannot prove it here. Add it with the DNS record instead.';
 
+/** A claim that became its domain: one place, now held by a domain. */
+function becameDomain(use: DomainUse, name: string): void {
+  use.waiting = use.waiting.filter(n => n !== name);
+  use.domains.push(name);
+}
+
 interface Caller { id?: string | null; email?: string | null }
 
 const choice = (z: { id: string; name: string; cfAccountId?: string; cfAccountName?: string }): ZoneChoice => ({ id: z.id, name: z.name, account_id: z.cfAccountId ?? null, account_name: z.cfAccountName ?? null });
@@ -56,16 +63,16 @@ export async function verifyPendingClaims(tenant: TenantContext, caller: Caller,
   if (getMode(tenant.env) !== 'saas') return [];
   const done: string[] = [];
   const cap = domainCap(tenant);
-  let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
+  const use = cap === undefined ? undefined : await domainUse(tenant);
   for (const claim of await tenant.scope.claims.list()) {
     if (claim.status !== 'pending' || claim.settled_at !== null) continue;
-    if (cap !== undefined && held >= cap) break; // a full plan: nothing is verified, and nobody's domain is taken, for a domain that cannot be added
+    if (cap !== undefined && !domainRoom(cap, use!, claim.domain).ok) break; // a plan over its places: nothing is verified, and nobody's domain is taken, for a domain that cannot be added
     const r = await admitByZone(tenant, claim.domain);
     if (r.kind !== 'verified') continue;
     try {
       await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined); // linked to the proving connection (proofColumns)
       done.push(claim.domain);
-      held++;
+      if (use) becameDomain(use, claim.domain);
     } catch (e) {
       if (!(e instanceof DomainServiceError)) throw e; // a full plan leaves the claim as it was
     }
@@ -111,11 +118,16 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   }
 
   // The plan: hosted workspaces hold a limited number of domains. If they would not all fit, the person chooses.
+  // Room is the one rule (domainRoom): places = domains + domains waiting for proof. A zone that is a claim takes its own place when it is imported, not a second one.
   const cap = saas ? domainCap(tenant) : undefined;
-  if (cap !== undefined && fresh.length > Math.max(0, cap - have.size)) {
-    const room = Math.max(0, cap - have.size);
-    if (explicit) throw planLimitError(tenant, cap);
-    return { ...result, imported: [], needs_selection: { room, cap, zones: fresh.map(choice) } };
+  if (cap !== undefined) {
+    const use = await domainUse(tenant);
+    const wanted = new Set(fresh.map(z => z.name));
+    const room = Math.max(0, cap - new Set([...use.domains, ...use.waiting].filter(n => !wanted.has(n))).size);
+    if (fresh.length > room) {
+      if (explicit) throw await planLimitError(tenant, cap);
+      return { ...result, imported: [], needs_selection: { room, cap, zones: fresh.map(choice) } };
+    }
   }
 
   // The allow-list: what it held, the zones of domains the workspace already has, and the zones to add. Zones that turn out unproven leave it again.
@@ -222,10 +234,10 @@ export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ct
     .slice(0, CLAIM_AUTOCHECKS_PER_REQUEST);
 
   const cap = domainCap(tenant);
-  let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
+  const use = cap === undefined ? undefined : await domainUse(tenant);
   const done: string[] = [];
   for (const { claim } of due) {
-    if (cap !== undefined && held >= cap) break; // a full plan: nothing is checked, nothing verified, nobody evicted
+    if (cap !== undefined && !domainRoom(cap, use!, claim.domain).ok) break; // a plan over its places: nothing is checked, nothing verified, nobody evicted
     const key = autocheckKey(claim.id);
     await tenant.scope.settings.deleteExpired(key, nowSeconds);
     if (!(await tenant.scope.settings.claim(key, String(nowSeconds + CLAIM_AUTOCHECK_SECONDS)))) continue; // another request took it
@@ -234,7 +246,7 @@ export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ct
     try {
       await commitVerifiedDomain(tenant, claim.domain, r.via, caller.email ?? undefined, ctx, caller.id ?? undefined); // linked to the proving connection (proofColumns)
       done.push(claim.domain);
-      held++;
+      if (use) becameDomain(use, claim.domain);
     } catch (e) {
       if (!(e instanceof DomainServiceError)) throw e; // a full plan leaves the claim as it was
     }

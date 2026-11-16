@@ -6,6 +6,7 @@ import { call, makeEnv, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { dohFetch } from '../../packages/dns-checks/test/helpers';
 import { ConnectionService } from '../../src/connections/service';
+import { CfApiError, CfAuthError, CfNetworkError, CfNotFoundError } from '../../src/tenancy/cf-client';
 
 const json = async (r: Response) => await r.json() as any;
 const ZONE_ID = '1'.repeat(32);
@@ -331,7 +332,7 @@ describe('a Verify that fails says the real reason when a Cloudflare connection 
     const w = await world();
     const c = await w.claim(w.A, 'acme.com');
     w.connect(w.A.ws);
-    vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({ getZone: async () => { throw new Error('Cloudflare 403'); } }) as any);
+    vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({ getZone: async () => { throw new CfAuthError('Cloudflare GET /zones/1 failed: 403', 'GET', '/zones/1', 403); } }) as any);
     const res = await w.verify(w.A, c.id);
     expect(res.status).toBe(422);
     const body = await json(res);
@@ -339,6 +340,31 @@ describe('a Verify that fails says the real reason when a Cloudflare connection 
     expect(body.error).toBe('Cloudflare no longer lets the connection x read the zone acme.com: the zone left that account, or the connection lost access to it. Reconnect Cloudflare, or prove ownership with the TXT record instead.');
     expect(body.error).not.toMatch(TXT_WORDS);
     expect(body.claim.last_error).toBe(body.error);
+  });
+
+  it('a refused or missing zone is a lost connection; Cloudflare not answering (no response, 5xx, 429) says try again, and never "Reconnect"', async () => {
+    const lost = 'Cloudflare no longer lets the connection x read the zone acme.com';
+    const again = 'Could not reach Cloudflare just now to check acme.com: try again in a minute, or prove ownership with the TXT record instead.';
+    const cases: [string, Error, string][] = [
+      ['403', new CfAuthError('x', 'GET', '/zones/1', 403), lost],
+      ['401', new CfAuthError('x', 'GET', '/zones/1', 401), lost],
+      ['zone not found', new CfNotFoundError('x', 'GET', '/zones/1', 404), lost],
+      ['not a Cloudflare error', new Error('boom'), lost],
+      ['503', new CfApiError('x', 'GET', '/zones/1', 503), again],
+      ['500', new CfApiError('x', 'GET', '/zones/1', 500), again],
+      ['429', new CfApiError('x', 'GET', '/zones/1', 429), again],
+      ['timeout', new CfNetworkError('x', 'GET', '/zones/1'), again],
+    ];
+    for (const [label, error, expected] of cases) {
+      const w = await world();
+      const c = await w.claim(w.A, 'acme.com');
+      w.connect(w.A.ws);
+      vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({ getZone: async () => { throw error; } }) as any);
+      const body = await json(await w.verify(w.A, c.id));
+      expect(body.code, label).toBe('cloudflare_unproven');
+      expect(body.error, label).toContain(expected);
+      if (expected === again) expect(body.error, label).not.toMatch(/Reconnect|no longer lets/);
+    }
   });
 
   it('a lapsed domain (proof lost): Prove again opens the claim, and Verify names the zone problem', async () => {

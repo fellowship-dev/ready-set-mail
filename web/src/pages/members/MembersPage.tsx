@@ -85,6 +85,8 @@ export function MembersPage() {
 				<LoadError error={team.error} onRetry={() => team.refetch()} title="Could not load the members" />
 			) : (
 				<>
+					{/* The invite form comes first: it is what most visits are for, and it stays in reach however many people are listed. */}
+					<InviteSection isOwner={myRole === 'owner'} />
 					<Section title="Members">
 						<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1" aria-label="Members">
 							{team.data.users.map((m) => (
@@ -92,7 +94,6 @@ export function MembersPage() {
 							))}
 						</ul>
 					</Section>
-					<InviteSection isOwner={myRole === 'owner'} />
 					<PendingInvites />
 				</>
 			)}
@@ -141,12 +142,13 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 	else if (member.role === 'owner') blocked = 'The owner cannot be removed.';
 	else if (member.role === 'admin' && myRole !== 'owner') blocked = 'Only the owner can remove an admin.';
 
+	// Two lines at 375 (name and role, then last sign-in and the actions), one from sm: a row that is not tall keeps the people, and the invite form, in reach.
 	return (
-		<li className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
-			<span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-sm font-semibold text-brand-ink">
+		<li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3 sm:p-4">
+			<span aria-hidden className="hidden size-9 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-sm font-semibold text-brand-ink sm:flex">
 				{(cleanName(member.name) || member.email).charAt(0).toUpperCase()}
 			</span>
-			<div className="min-w-0 flex-1 basis-56">
+			<div className="min-w-0 flex-1 basis-40">
 				<p className="truncate font-medium">
 					{cleanName(member.name) || member.email}
 					{isSelf ? <span className="ml-2 text-sm font-normal text-ink-2">(you)</span> : null}
@@ -155,8 +157,8 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 			</div>
 			{roleEditable ? (
 				<Select value={member.role} onValueChange={(v) => changeRole.mutate(v as 'admin' | 'member')} disabled={changeRole.isPending}>
-					<SelectTrigger aria-label={`Role of ${member.email}`} className="w-48">
-						<SelectValue />
+					<SelectTrigger aria-label={`Role of ${member.email}`} className="h-8 w-32 shrink-0">
+						<SelectValue>{member.role === 'admin' ? 'Admin' : 'Member'}</SelectValue>
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="member">Member (read-only)</SelectItem>
@@ -166,15 +168,17 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 			) : (
 				<Badge variant={member.role === 'member' ? 'neutral' : 'brand'}>{member.role}</Badge>
 			)}
-			<p className="text-sm text-ink-2">{member.last_login_at ? `Last sign-in ${formatDate(member.last_login_at)}` : 'Never signed in'}</p>
-			{myRole === 'owner' && !isSelf && member.role !== 'owner' ? (
-				<Button variant="secondary" size="sm" onClick={() => setHanding(true)} aria-label={`Make ${member.email} the owner`}>
-					Make owner
-				</Button>
-			) : null}
-			<WriteButton variant="secondary" size="sm" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setConfirming(true)} aria-label={`Remove ${member.email}`}>
-				Remove
-			</WriteButton>
+			<p className="min-w-0 flex-1 basis-32 text-xs text-ink-2 sm:flex-none sm:text-sm">{member.last_login_at ? `Signed in ${formatDate(member.last_login_at)}` : 'Never signed in'}</p>
+			<div className="ml-auto flex items-center gap-2">
+				{myRole === 'owner' && !isSelf && member.role !== 'owner' ? (
+					<Button variant="secondary" size="sm" onClick={() => setHanding(true)} aria-label={`Make ${member.email} the owner`}>
+						Make owner
+					</Button>
+				) : null}
+				<WriteButton variant="secondary" size="sm" disabled={!!blocked} title={blocked ?? undefined} onClick={() => setConfirming(true)} aria-label={`Remove ${member.email}`}>
+					Remove
+				</WriteButton>
+			</div>
 			<Dialog open={handing} onOpenChange={setHanding}>
 				<DialogContent>
 					<DialogHeader>

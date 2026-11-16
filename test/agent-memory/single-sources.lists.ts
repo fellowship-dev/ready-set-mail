@@ -102,7 +102,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
       'packages/db/src/queries/intake.ts', 'packages/db/src/queries/plan-limit.ts', 'packages/db/src/schema.ts',
       'src/api/router.ts', 'src/billing/service.ts', 'src/domains/bulk.ts', 'src/domains/ownership.ts', 'src/domains/proof-recheck.ts', 'src/domains/service.ts',
       'src/email/dmarc-report.ts', 'src/hosted/report-address.ts', 'src/onboarding/domains.ts',
-      'web/src/components/domain/ProofLost.tsx', 'web/src/lib/types.ts',
+      'web/src/components/domain/ProofLost.tsx', 'web/src/lib/proof.ts', 'web/src/lib/types.ts',
     ],
   },
   {

@@ -161,7 +161,7 @@ describe('leave', () => {
 });
 
 describe('delete', () => {
-  it('owners only; never the default workspace; never your only workspace', async () => {
+  it('owners only; never the default workspace; your only workspace may be deleted (you keep your login)', async () => {
     const { env, owner, db } = await selfHost();
     const admin = await inviteAndAccept(env, owner, 'a@example.com', 'admin');
     expect((await call(env, 'DELETE', '/api/workspaces/ws_default', { key: admin })).status).toBe(403);
@@ -202,15 +202,29 @@ describe('delete', () => {
     expect(rows(db, "SELECT domain FROM domains WHERE workspace_id = 'ws_default'")).toEqual([{ domain: 'fellowship.example.com' }]);
   });
 
-  it('people who belonged only to the deleted workspace are removed; people with another workspace keep their login', async () => {
+  it('people in the deleted workspace keep their login, in or out of other workspaces; their keys for it go with it and their keys elsewhere stay', async () => {
     const { env, owner, db } = await selfHost();
     const lexgo = await create(env, owner, 'Lexgo');
-    const inv = await json(await call(env, 'POST', '/api/team/invite', { key: owner, headers: ws(lexgo), body: { email: 'only@lexgo.test', role: 'member' } }));
-    await call(env, 'POST', `/api/invites/${inv.token}`, { body: { name: 'Only', password: 'password-123' } });
-    expect(rows(db, "SELECT COUNT(*) n FROM users WHERE email = 'only@lexgo.test'")).toEqual([{ n: 1 }]);
+    const accept = async (email: string, workspace: string) => {
+      const inv = await json(await call(env, 'POST', '/api/team/invite', { key: owner, headers: ws(workspace), body: { email, role: 'member' } }));
+      await call(env, 'POST', `/api/invites/${inv.token}`, { body: { name: email, password: 'password-123' } });
+    };
+    await accept('only@lexgo.test', lexgo);
+    await accept('both@lexgo.test', lexgo);
+    const both = rows(db, "SELECT id FROM users WHERE email = 'both@lexgo.test'")[0].id as string;
+    const only = rows(db, "SELECT id FROM users WHERE email = 'only@lexgo.test'")[0].id as string;
+    db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES ('ws_default', ?, 'member')").run(both);
+    const key = db.sqlite.prepare("INSERT INTO api_keys (id, workspace_id, user_id, name, prefix, key_hash) VALUES (?, ?, ?, 'k', 'rsm_', ?)");
+    key.run('k-only', lexgo, only, 'h1'); key.run('k-both-lexgo', lexgo, both, 'h2'); key.run('k-both-default', 'ws_default', both, 'h3');
     expect((await call(env, 'DELETE', `/api/workspaces/${lexgo}`, { key: owner })).status).toBe(200);
-    expect(rows(db, "SELECT COUNT(*) n FROM users WHERE email = 'only@lexgo.test'")).toEqual([{ n: 0 }]);
-    expect(rows(db, "SELECT COUNT(*) n FROM users WHERE email = 'owner@example.com'")).toEqual([{ n: 1 }]);
+    expect(rows(db, "SELECT email FROM users WHERE email IN ('only@lexgo.test', 'both@lexgo.test', 'owner@example.com') ORDER BY email").map(r => r.email)).toEqual(['both@lexgo.test', 'only@lexgo.test', 'owner@example.com']);
+    expect(rows(db, 'SELECT workspace_id FROM memberships WHERE user_id = ?', only)).toEqual([]);
+    expect(rows(db, 'SELECT workspace_id FROM memberships WHERE user_id = ?', both)).toEqual([{ workspace_id: 'ws_default' }]);
+    expect(rows(db, "SELECT id FROM api_keys WHERE id LIKE 'k-%' ORDER BY id")).toEqual([{ id: 'k-both-default' }]);
+    expect(rows(db, "SELECT revoked_at IS NULL AS live FROM api_keys WHERE id = 'k-both-default'")).toEqual([{ live: 1 }]);
+    // the person with nowhere left is signed in, in no workspace
+    expect(rows(db, "SELECT COUNT(*) n FROM users WHERE email = 'only@lexgo.test'")).toEqual([{ n: 1 }]);
+    expect(rows(db, 'SELECT COUNT(*) n FROM auth_accounts WHERE user_id = ?', only)[0].n).toBeGreaterThan(0); // the password login is still there
   });
 });
 

@@ -121,11 +121,10 @@ import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../d
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
-import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, refusedInsertBody, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
-import { planLimitResponse } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
@@ -269,10 +268,11 @@ async function inviteId(token: string): Promise<string> {
 
 /**
  * One open invite per address in a workspace: a new invite revokes the earlier open ones, so two live links never go to the same person.
- * Called once the new invite stands (a refused or unsent one leaves the old link working). Returns how many it replaced.
+ * Called once the new invite stands (a refused or unsent one leaves the old link working). Only OLDER invites go (packages/db team.revokePendingFor), so requests made
+ * at once leave exactly one live link, the newest. Returns how many it replaced.
  */
-async function replaceOpenInvites(tenant: TenantContext, actor: { id: string; email: string }, email: string, keep: string, ctx: ExecutionContext): Promise<number> {
-  const gone = await tenant.scope.team.revokePendingFor(email, keep);
+async function replaceOpenInvites(tenant: TenantContext, actor: { id: string; email: string }, email: string, keep: string, ctx: ExecutionContext, opts: { keepAdmin?: boolean } = {}): Promise<number> {
+  const gone = await tenant.scope.team.revokePendingFor(email, keep, opts);
   for (const g of gone) {
     logAudit(tenant, {
       actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
@@ -824,7 +824,7 @@ async function _handleApi(
       const domain = named.domain;
 
       // Hosted plan cap, advisory: no claim for a domain that can never be added (the insert below enforces it exactly).
-      if (!(await tenant.scope.domains.getByName(domain))) await assertDomainRoom(tenant);
+      await assertDomainRoom(tenant, domain);
 
       // SaaS: the hub domain is a claim like any other until its owner is proven.
       const admission = await admitDomain(tenant, domain);
@@ -868,7 +868,7 @@ async function _handleApi(
           : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
       } catch (e: any) {
         if (e instanceof ProofIncompleteError) return json(proofIncomplete(domain).body, 409);
-        if (e instanceof PlanLimitError) return planLimitResponse(env, 'domains_per_workspace', e.max);
+        if (e instanceof PlanLimitError) return json(await refusedInsertBody(tenant, e.max), 403);
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
       }
@@ -956,7 +956,7 @@ async function _handleApi(
         return json(added, 200);
       }
       if (claim.settled_at !== null) return err('claim not found', 404); // it became a domain that has since been removed
-      if (!(await tenant.scope.domains.getByName(claim.domain))) await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A row the workspace has (unproven) takes no new place.
+      await assertDomainRoom(tenant, claim.domain); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A claim becoming its own domain, or a row the workspace has, takes no new place.
       const outcome = await verifyClaim(tenant, claim);
       if (outcome.kind === 'taken') return json({ error: 'another workspace has already verified this domain', code: 'domain_taken', claim: claimView({ ...claim, status: 'lost' }) }, 409);
       if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, ...(outcome.code ? { code: outcome.code } : {}), claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);
@@ -1843,6 +1843,10 @@ async function _handleApi(
         if (body.role !== 'admin') return err('a hand-off invites an admin', 400);
         return sendHandoff(env, tenant, request, actor, inviteEmail, body.handoff_domain, ctx);
       }
+      // An admin's member invite never cancels an admin invite: only an owner hands out admin, so it is the owner's (replacing it would silently downgrade it).
+      if (workspace.role !== 'owner' && (await tenant.scope.team.listPendingInvites()).some(i => i.email === inviteEmail && i.role === 'admin')) {
+        return err(`${inviteEmail} already has an open admin invite from an owner. Ask an owner to change it, or wait until it is used.`, 409);
+      }
       const token = crypto.randomUUID();
       const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7 days
       const inviteRole = body.role === 'admin' ? 'admin' : 'member';
@@ -1853,7 +1857,7 @@ async function _handleApi(
         invited_by: actor.email,
         expires_at: expiresAt,
       });
-      const replaced = await replaceOpenInvites(tenant, actor, inviteEmail, token, ctx);
+      const replaced = await replaceOpenInvites(tenant, actor, inviteEmail, token, ctx, { keepAdmin: workspace.role !== 'owner' });
       logAudit(tenant, {
           actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
         action: 'auth.invite_sent',

@@ -22,6 +22,6 @@ Short records of decisions already made, with who made them. A change that contr
 | 0016 | reserved for open pull request #180 | not yet written |
 | 0017 | reserved for open pull request #180 | not yet written |
 | 0018 | reserved for open pull request #186 | not yet written |
-| 0019 | [A person removed from, or leaving, their only workspace keeps their account](0019-removed-or-leaving-keeps-the-account.md) | accepted |
+| 0019 | [A person removed from, leaving, or left by a deleted workspace keeps their account](0019-removed-or-leaving-keeps-the-account.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.
