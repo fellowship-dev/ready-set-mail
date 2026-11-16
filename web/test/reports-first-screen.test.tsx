@@ -25,7 +25,7 @@ const baseRoutes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/hosted/config': { enabled: true, reports: true, records: false },
 	'GET /api/domains/1/report-address': addr(),
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: 'v=DMARC1; p=reject;', cf_managed: false },
 	'GET /api/domains/1/monitor-subs': { subs: [] },

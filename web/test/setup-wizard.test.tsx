@@ -201,7 +201,7 @@ describe('DNS lookup failures are not missing records', () => {
 				status: () => status({ rua_address: connected ? 'rua@rua.example.net' : '', cf_available: false, dmarc: { ...none, auth_record: { found: false, record_name: null } } }),
 				extra: {
 					'GET /api/hosted/config': { enabled: true, reports: true, records: false },
-					'GET /api/domains/7/report-address': () => view(connected ? { address: 'rua@rua.example.net', state: 'not_published' } : {}),
+					'GET /api/domains/7/report-address': () => view(connected ? { address: 'rua@rua.example.net', state: 'not_published', dns: { checked_at: 1, error: null, plan: { kind: 'add', name: '_dmarc.example.com', current: null, record: 'v=DMARC1; p=none; rua=mailto:rua@rua.example.net', created: true } } } : {}),
 					'POST /api/domains/7/report-address': () => { connected = true; return { __status: 201, body: view({ address: 'rua@rua.example.net', state: 'not_published' }) }; },
 				},
 			}),
