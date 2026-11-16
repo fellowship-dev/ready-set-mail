@@ -302,11 +302,13 @@ describe('modes', () => {
     expect(body.policy_id).not.toBe(oldId);
     expect(seenAtTxtWrite).toBe('enforce');
     expect(publishedId(w)).toBe(`v=STSv1; id=${body.policy_id}`);
-    expect(w.row(1)).toMatchObject({ mode: 'enforce', policy_id: body.policy_id });
+    expect(w.row(1)).toMatchObject({ mode: 'enforce', policy_id: body.policy_id, max_age: 604800 });
+    // enforce is cached for weeks (RFC 8461 section 3.2; Proton serves 604800), testing for a day
+    expect(await (await w.mta(w.A.token, 'GET', 1, undefined, '/policy')).text()).toBe('version: STSv1\nmode: enforce\nmx: mx.a-corp.com\nmax_age: 604800\n');
     expect(w.rows("SELECT action FROM audit_log WHERE action = 'mta_sts.mode_change'")).toHaveLength(1);
     const get = await w.json(await w.mta(w.A.token, 'GET', 1));
     expect(get.enforce).toBeNull();
-    expect(get.disable).toMatchObject({ allowed: false, reason: expect.stringMatching(/^Switch to testing first\. Senders keep the enforce policy for up to 1 day/) });
+    expect(get.disable).toMatchObject({ allowed: false, reason: expect.stringMatching(/^Switch to testing first\. Senders keep the enforce policy for up to 7 days/) });
   });
 
   it('a failed TXT write leaves the mode and the id where they were', async () => {
@@ -429,17 +431,18 @@ describe('disable', () => {
     await w.mta(w.A.token, 'PATCH', 1, { mode: 'enforce' });
     const blocked = await w.mta(w.A.token, 'DELETE', 1);
     expect(blocked.status).toBe(409);
-    expect(await w.json(blocked)).toMatchObject({ code: 'mta_sts_disable_blocked', error: 'Switch to testing first. Senders keep the enforce policy for up to 1 day; you can disable it after that.' });
+    expect(await w.json(blocked)).toMatchObject({ code: 'mta_sts_disable_blocked', error: 'Switch to testing first. Senders keep the enforce policy for up to 7 days; you can disable it after that.' });
     expect(w.rows('SELECT * FROM mta_sts_config')).toHaveLength(1);
 
     await w.mta(w.A.token, 'PATCH', 1, { mode: 'testing' });
     const early = await w.mta(w.A.token, 'DELETE', 1);
     expect(early.status).toBe(409);
     const left = w.row(1).left_enforce_at;
-    expect((await w.json(early)).after).toBe(left + DAY);
+    expect((await w.json(early)).after).toBe(left + 7 * DAY);
+    expect(await (await w.mta(w.A.token, 'GET', 1, undefined, '/policy')).text()).toMatch(/mode: testing[\s\S]*max_age: 86400\n$/);
     expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
 
-    w.db.sqlite.prepare('UPDATE mta_sts_config SET left_enforce_at = ? WHERE domain_id = 1').run(now() - DAY - 5);
+    w.db.sqlite.prepare('UPDATE mta_sts_config SET left_enforce_at = ? WHERE domain_id = 1').run(now() - 7 * DAY - 5);
     expect((await w.mta(w.A.token, 'DELETE', 1)).status).toBe(200);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
   });

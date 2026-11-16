@@ -3,7 +3,7 @@
 
 import { isIpLiteral, mxMatchesPattern } from '@ready-set-mail/dns-checks';
 import type { MtaStsRow } from '@ready-set-mail/db';
-import { ENFORCE_AFTER_SECONDS, EVIDENCE_WINDOW_SECONDS } from './config';
+import { ENFORCE_AFTER_SECONDS, EVIDENCE_WINDOW_SECONDS, MAX_AGE_ENFORCE } from './config';
 
 /** RFC 8460 §4.3 failure types that mean a sender could not use TLS (or the policy) as the policy asks. */
 export const BLOCKING_FAILURE_TYPES: readonly string[] = [
@@ -19,6 +19,7 @@ export interface EvidenceRow { date_begin: number; date_end: number; sts_success
  * forged by forging that reporter's signature; a second reporter would add coverage, not authenticity, and requiring both would lock out the many small domains
  * that receive mail from only one of them.
  */
+export const NO_REPORTS_NOTE = 'A domain that receives no TLS reports can never switch to enforce.';
 export const EVIDENCE_RULE = 'Enforce needs one TLS report signed by a known sender (Google or Microsoft) about the current policy, with successful sessions and no failure that would block mail in the last 14 days.';
 
 export interface Readiness { ready: boolean; reasons: string[] }
@@ -86,14 +87,18 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   return { ready: reasons.length === 0, reasons };
 }
 
-/** Disable rule (ADR 0021): only in testing, and only once senders that fetched an enforce policy no longer hold it. */
-export function disableRule(cfg: Pick<MtaStsRow, 'mode' | 'left_enforce_at' | 'max_age'>, now: number): { allowed: boolean; after: number | null; reason: string | null } {
+/**
+ * Disable rule (ADR 0021): only in testing, and only once senders that fetched an ENFORCE policy no longer hold it: its max_age (MAX_AGE_ENFORCE, a week) after
+ * the switch back. The testing policy's own max_age is shorter and says nothing about what senders still hold from before (RFC 8461 section 8.3: "the previously
+ * published policy was last served plus that policy's max_age").
+ */
+export function disableRule(cfg: Pick<MtaStsRow, 'mode' | 'left_enforce_at'>, now: number): { allowed: boolean; after: number | null; reason: string | null } {
   if (cfg.mode === 'enforce') {
-    return { allowed: false, after: null, reason: `Switch to testing first. Senders keep the enforce policy for up to ${maxAgeWords(cfg.max_age)}; you can disable it after that.` };
+    return { allowed: false, after: null, reason: `Switch to testing first. Senders keep the enforce policy for up to ${maxAgeWords(MAX_AGE_ENFORCE)}; you can disable it after that.` };
   }
-  const after = cfg.left_enforce_at ? cfg.left_enforce_at + cfg.max_age : null;
+  const after = cfg.left_enforce_at ? cfg.left_enforce_at + MAX_AGE_ENFORCE : null;
   if (after !== null && now < after) {
-    return { allowed: false, after, reason: `Senders keep the enforce policy for up to ${maxAgeWords(cfg.max_age)}. You can disable MTA-STS after ${new Date(after * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC.` };
+    return { allowed: false, after, reason: `Senders keep the enforce policy for up to ${maxAgeWords(MAX_AGE_ENFORCE)}. You can disable MTA-STS after ${new Date(after * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC.` };
   }
   return { allowed: true, after: null, reason: null };
 }

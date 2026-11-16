@@ -90,24 +90,26 @@ describe('enforceReadiness', () => {
 });
 
 describe('disableRule', () => {
-  const row = (o: Partial<Parameters<typeof disableRule>[0]> = {}) => ({ mode: 'testing' as const, left_enforce_at: null, max_age: DAY, ...o });
+  const row = (o: Partial<Parameters<typeof disableRule>[0]> = {}) => ({ mode: 'testing' as const, left_enforce_at: null, ...o });
 
   it('allows disabling from testing when it was never in enforce', () => {
     expect(disableRule(row(), NOW)).toEqual({ allowed: true, after: null, reason: null });
   });
   it('refuses from enforce and says switch to testing first, with the max_age', () => {
-    expect(disableRule(row({ mode: 'enforce' }), NOW)).toMatchObject({ allowed: false, reason: 'Switch to testing first. Senders keep the enforce policy for up to 1 day; you can disable it after that.' });
+    expect(disableRule(row({ mode: 'enforce' }), NOW)).toMatchObject({ allowed: false, reason: 'Switch to testing first. Senders keep the enforce policy for up to 7 days; you can disable it after that.' });
   });
   it('refuses until max_age after the switch back to testing, saying when, then allows', () => {
     const left = NOW - 3600;
     const early = disableRule(row({ left_enforce_at: left }), NOW);
     expect(early.allowed).toBe(false);
-    expect(early.after).toBe(left + DAY);
-    expect(early.reason).toMatch(/up to 1 day\. You can disable MTA-STS after \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\./);
-    expect(disableRule(row({ left_enforce_at: left }), left + DAY).allowed).toBe(true);
+    expect(early.after).toBe(left + 7 * DAY);
+    expect(early.reason).toMatch(/up to 7 days\. You can disable MTA-STS after \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\./);
+    expect(disableRule(row({ left_enforce_at: left }), left + 7 * DAY).allowed).toBe(true);
   });
-  it('uses the row\'s own max_age', () => {
-    expect(disableRule(row({ left_enforce_at: NOW - DAY, max_age: 7 * DAY }), NOW).allowed).toBe(false);
+  it('waits the ENFORCE policy\'s max_age (RFC 8461 section 3.2, weeks), whatever the testing policy said', () => {
+    expect(disableRule(row({ left_enforce_at: NOW - DAY }), NOW).allowed).toBe(false);
+    expect(disableRule(row({ left_enforce_at: NOW - 6 * DAY }), NOW).allowed).toBe(false);
+    expect(disableRule(row({ left_enforce_at: NOW - 7 * DAY }), NOW).allowed).toBe(true);
   });
   it('says the age in plain words', () => {
     expect(maxAgeWords(86400)).toBe('1 day');

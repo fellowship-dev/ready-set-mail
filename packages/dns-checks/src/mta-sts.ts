@@ -136,7 +136,7 @@ export function mxMatchesPattern(host: string, pattern: string): boolean {
   return i > 0 && h.slice(i + 1) === rest;
 }
 
-export function buildPolicyFile(mode: 'testing' | 'enforce', mxHosts: string[], maxAge: number): string {
+export function buildPolicyFile(mode: 'testing' | 'enforce' | 'none', mxHosts: string[], maxAge: number): string {
   return ['version: STSv1', `mode: ${mode}`, ...mxHosts.map(mx => `mx: ${mx}`), `max_age: ${maxAge}`].join('\n') + '\n';
 }
 

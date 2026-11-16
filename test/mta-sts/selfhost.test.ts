@@ -103,7 +103,7 @@ describe('self-host', () => {
     w.cf.seed('zone-acme', { id: 'old-txt', type: 'TXT', name: '_mta-sts.acme.com', content: 'v=STSv1; id=1' });
     w.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, mode, mx_hosts, policy_id, mta_sts_record_id, workspace_id) VALUES (1, 'enforce', 'old.acme.com', '1', 'old-txt', 'ws_default')").run();
     const view = await (await w.mta('GET')).json() as any;
-    expect(view.config).toMatchObject({ state: 'active', via: 'cloudflare', policy_host: 'worker_route', mode: 'enforce', max_age: 86400 });
+    expect(view.config).toMatchObject({ state: 'active', via: 'cloudflare', policy_host: 'worker_route', mode: 'enforce', max_age: 604800 });
     w.cf.mx['acme.com'] = ['10 mx.acme.com.'];
     const res = await w.mta('PATCH', 1, { refresh_mx: true });
     expect(res.status).toBe(200);

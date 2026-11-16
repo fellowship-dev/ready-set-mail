@@ -17,8 +17,15 @@ export interface PolicyHostEnv extends HostedEnv {
   CLOUDFLARE_API_BASE_URL?: string;
 }
 
-/** What a policy file says senders may cache it for. One day in both modes (ADR 0021): a mistake or an MX change heals within a day. */
-export const DEFAULT_MAX_AGE = 86400;
+/**
+ * What a policy file says senders may cache it for, by mode (ADR 0021). RFC 8461 section 3.2: max_age is "typically in the range of weeks or greater"
+ * (a short one lets an attacker wait out the cache), and Proton serves 604800 in enforce; section 5: start in testing, where a mistake or an MX change
+ * should heal within a day. `none` (the removal policy, section 8.3) is one day: "a small max_age (e.g., one day)".
+ */
+export const MAX_AGE_TESTING = 86400;
+export const MAX_AGE_ENFORCE = 604800;
+export const MAX_AGE_NONE = 86400;
+export const maxAgeFor = (mode: 'testing' | 'enforce' | 'none'): number => (mode === 'enforce' ? MAX_AGE_ENFORCE : mode === 'none' ? MAX_AGE_NONE : MAX_AGE_TESTING);
 /** Policy hosts (Cloudflare for SaaS custom hostnames) one instance holds: the hostnames the Cloudflare plan includes. */
 export const DEFAULT_MAX_POLICY_HOSTS = 100;
 /** Enforce is offered after this long in testing (CHANGELOG 1.2.0), and only with evidence (src/mta-sts/evidence.ts). */

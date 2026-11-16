@@ -26,10 +26,11 @@ import { mayUseMtaSts } from '../hosted/plan-limits';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
 import {
-  DEFAULT_MAX_AGE, EVIDENCE_WINDOW_SECONDS, maxPolicyHosts, mtaStsHostedConfigured, policyHostConfig,
+  EVIDENCE_WINDOW_SECONDS, maxAgeFor, maxPolicyHosts, mtaStsHostedConfigured, policyHostConfig,
 } from './config';
-import { disableRule, enforceReadiness, EVIDENCE_RULE, maxAgeWords, splitHosts, type Readiness } from './evidence';
+import { disableRule, enforceReadiness, EVIDENCE_RULE, NO_REPORTS_NOTE, maxAgeWords, splitHosts, type Readiness } from './evidence';
 import { authservConfigured } from '../dmarc/reporter-auth';
+import { servedMode } from './serve';
 import { OperatorZone, policyHostname, strategyFor, type PolicyHostStrategy } from './policy-host';
 
 export interface Result { status: number; body: Record<string, unknown> }
@@ -167,7 +168,7 @@ const certificateOf = (r: MtaStsRow) => (r.policy_host === 'saas_hostname' ? { s
 function configView(r: MtaStsRow) {
   return {
     enabled: r.enabled, mode: r.mode, state: r.state, via: r.via ?? 'cloudflare', policy_host: r.policy_host,
-    mx_hosts: r.mx_hosts, mx_host_list: splitHosts(r.mx_hosts), policy_id: r.policy_id, max_age: r.max_age,
+    mx_hosts: r.mx_hosts, mx_host_list: splitHosts(r.mx_hosts), policy_id: r.policy_id, max_age: maxAgeFor(servedMode(r)),
     policy_published_at: r.policy_published_at, mode_changed_at: r.mode_changed_at, left_enforce_at: r.left_enforce_at, last_checked_at: r.last_checked_at,
     last_error: r.last_error, notice: r.notice, notice_at: r.notice_at, created_at: r.created_at, updated_at: r.updated_at,
     domain_id: r.domain_id, mta_sts_record_id: r.mta_sts_record_id, tls_rpt_record_id: r.tls_rpt_record_id, cname_record_id: r.cname_record_id,
@@ -202,7 +203,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
   let reports: ReturnType<typeof reportView>[] = [];
   let summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null = null;
   let enforce: (Readiness & { allowed: boolean }) | null = null;
-  let evidence: { rule: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null = null;
+  let evidence: { rule: string; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null = null;
   const verifiable = authservConfigured(tenant.env);
   let disable: ReturnType<typeof disableRule> | null = null;
   if (row) {
@@ -213,7 +214,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS),
       tenant.scope.reports.tlsCounts(domain.id, since30),
     ]);
-    evidence = { rule: EVIDENCE_RULE, counted_reports: counts.counted, uncounted_reports: counts.uncounted, verifiable };
+    evidence = { rule: EVIDENCE_RULE, no_reports_note: NO_REPORTS_NOTE, counted_reports: counts.counted, uncounted_reports: counts.uncounted, verifiable };
     reports = recent.map(reportView);
     summary = {
       total_success: totals?.total_success ?? 0, total_failure: totals?.total_failure ?? 0, report_count: totals?.report_count ?? 0,
@@ -247,7 +248,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       enforce,
       evidence,
       disable,
-      max_age: row?.max_age ?? DEFAULT_MAX_AGE,
+      max_age: maxAgeFor(row ? servedMode(row) : 'testing'),
     },
   };
 }
@@ -574,13 +575,13 @@ export async function changeMode(c: Ctx, mode: 'testing' | 'enforce'): Promise<R
   const leftEnforce = row.mode === 'enforce' && mode === 'testing';
   const pub = publishedPatch(row, now);
   // The stored policy first, then the record: a sender that sees the new id must find the new policy.
-  await tenant.scope.mtaSts.updateMode(domain.id, mode, newId, now, { leftEnforce });
+  await tenant.scope.mtaSts.updateMode(domain.id, mode, newId, now, { leftEnforce, maxAge: maxAgeFor(mode) });
   await tenant.scope.mtaSts.update(domain.id, pub);
   try {
     await publishId(c, row, newId);
   } catch (e) {
     await tenant.scope.mtaSts.update(domain.id, {
-      mode: row.mode, policy_id: row.policy_id, mode_changed_at: row.mode_changed_at, left_enforce_at: row.left_enforce_at,
+      mode: row.mode, max_age: row.max_age, policy_id: row.policy_id, mode_changed_at: row.mode_changed_at, left_enforce_at: row.left_enforce_at,
       policy_published_at: row.policy_published_at, state: row.state,
     });
     const f = cfFailureBody(e, 502);
@@ -609,13 +610,13 @@ export async function applyMxChange(c: Ctx, row: MtaStsRow, live: readonly strin
   const mode = switched ? 'testing' : row.mode;
   const newId = nextPolicyId(row.policy_id);
   await tenant.scope.mtaSts.updateMxHosts(domain.id, live.join(','), newId);
-  if (switched) await tenant.scope.mtaSts.updateMode(domain.id, 'testing', newId, now, { leftEnforce: true });
+  if (switched) await tenant.scope.mtaSts.updateMode(domain.id, 'testing', newId, now, { leftEnforce: true, maxAge: maxAgeFor('testing') });
   await tenant.scope.mtaSts.update(domain.id, publishedPatch(row, now));
   try {
     await publishId(c, row, newId);
   } catch (e) {
     await tenant.scope.mtaSts.update(domain.id, {
-      mx_hosts: row.mx_hosts, mode: row.mode, policy_id: row.policy_id, mode_changed_at: row.mode_changed_at, left_enforce_at: row.left_enforce_at,
+      mx_hosts: row.mx_hosts, mode: row.mode, max_age: row.max_age, policy_id: row.policy_id, mode_changed_at: row.mode_changed_at, left_enforce_at: row.left_enforce_at,
       policy_published_at: row.policy_published_at, state: row.state,
     });
     throw e;
@@ -717,7 +718,7 @@ export async function disableMtaSts(c: Ctx): Promise<Result> {
   const rule = disableRule(row, nowSeconds());
   if (!rule.allowed) return fail(409, rule.reason!, { code: 'mta_sts_disable_blocked', after: rule.after });
   const t = await teardownMtaSts(c, row);
-  return { status: 200, body: { ok: true, kept: t.kept, operator: t.operator, message: `Senders that already fetched the policy may keep it for up to ${maxAgeWords(row.max_age)}.` } };
+  return { status: 200, body: { ok: true, kept: t.kept, operator: t.operator, message: `Senders that already fetched the policy may keep it for up to ${maxAgeWords(maxAgeFor(servedMode(row)))}.` } };
 }
 
 /** The records of a removed or evicted domain, torn down without asking (the domain left: delete, eviction, a lapsed proof). Best effort. */

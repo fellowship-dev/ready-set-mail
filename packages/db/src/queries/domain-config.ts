@@ -102,9 +102,10 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 		},
 
 		/** A new mode: its id, when the mode changed, and (leaving enforce) when it left. The policy is as published as the caller says. */
-		updateMode(domainId: number, mode: MtaStsMode, policy_id: string, nowSeconds: number = Math.floor(Date.now() / 1000), opts: { leftEnforce?: boolean; published?: boolean } = {}) {
+		updateMode(domainId: number, mode: MtaStsMode, policy_id: string, nowSeconds: number = Math.floor(Date.now() / 1000), opts: { leftEnforce?: boolean; published?: boolean; maxAge?: number } = {}) {
 			return db.update(mtaStsConfig).set({
-				mode, policy_id, last_error: null, updated_at: touch, mode_changed_at: nowSeconds,
+				mode, policy_id,
+				...(opts.maxAge === undefined ? {} : { max_age: opts.maxAge }), last_error: null, updated_at: touch, mode_changed_at: nowSeconds,
 				...(opts.leftEnforce ? { left_enforce_at: nowSeconds } : {}),
 				...(opts.published ? { policy_published_at: nowSeconds } : {}),
 			}).where(forDomain(domainId)).run();

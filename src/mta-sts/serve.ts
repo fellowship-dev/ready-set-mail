@@ -9,14 +9,19 @@ import { buildPolicyFile } from '@ready-set-mail/dns-checks';
 import type { Env } from '../index';
 import { scope } from '../db/scope';
 import { resolvePolicyHost } from '../hosted/policy-host';
+import { maxAgeFor } from './config';
 import { splitHosts } from './evidence';
 
 const POLICY_PATH = '/.well-known/mta-sts.txt';
 const notFound = (text = 'Not found') => new Response(text, { status: 404, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
 
-/** The policy file of a stored config: its mode, its MX hosts, and the max_age on the row (one place builds it). */
-export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts' | 'max_age'>): string {
-  return buildPolicyFile(config.mode, splitHosts(config.mx_hosts), config.max_age);
+/** The mode the policy file says: the stored mode, or `none` while the policy is being retired (RFC 8461 section 8.3, src/mta-sts/service.ts). */
+export const servedMode = (config: Pick<MtaStsRow, 'mode' | 'state'>): 'testing' | 'enforce' | 'none' => (config.state === 'retiring' ? 'none' : config.mode);
+
+/** The policy file of a stored config: its mode, its MX hosts and the max_age OF THAT MODE (one place builds it; the row's own max_age column is only a copy). */
+export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts' | 'state'>): string {
+  const mode = servedMode(config);
+  return buildPolicyFile(mode, splitHosts(config.mx_hosts), maxAgeFor(mode));
 }
 
 /** Is this an MTA-STS policy hostname (`mta-sts.<something>`)? */
