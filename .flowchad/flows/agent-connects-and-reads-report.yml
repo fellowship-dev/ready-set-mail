@@ -2,11 +2,13 @@ name: An AI agent connects by MCP and reads its first email report
 goal: An MCP client is authorized by its person and gets a useful report for one domain
 value_moment: The agent receives its first useful report (get_email_report)
 covers:
-  - src/mcp/consent.ts
-  - src/mcp/discovery.ts
   - src/llms-txt.ts
   - web/src/pages/agent/AgentSetupPage.tsx
   - web/src/pages/auth/*
+  # Server files that implement the steps: discovery, OAuth and consent, the grants, the tools.
+  - src/mcp/*
+  - src/access/*
+  - src/auth/mcp-issuer.ts
 url: /llms.txt
 tags: [agents, value, protected]
 priority: P1

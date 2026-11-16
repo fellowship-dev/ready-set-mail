@@ -1,5 +1,5 @@
 name: Hosted owner buys Fix one domain in the app
-goal: The workspace owner pays for Fix one domain with the workspace's card and the order is paid by Stripe's webhook
+goal: The workspace owner pays for Fix one domain with the workspace's card and the order becomes paid once Stripe says the invoice is paid
 value_moment: Fix ordered - the invoice is paid (invoice.paid webhook)
 covers:
   - web/src/components/billing/*
@@ -8,6 +8,8 @@ covers:
   - web/src/pages/operator/OrdersPage.tsx
   - web/src/lib/billing.ts
   - web/src/lib/card-return.ts
+  # Server files that implement the steps: the offer, the card, the purchase, Stripe, the webhook and the reconcile.
+  - src/billing/*
 url: /#/domains/1
 tags: [billing, value, protected]
 priority: P0
@@ -21,14 +23,14 @@ steps:
     url: /#/domains/1
     expect: Domain page with the Fix one domain offer card
   - action: click
-    selector: "text=Fix one domain"
+    selector: "text=Have us fix this domain"
     expect: Confirm step - scope, refund rule, terms links
   - action: click
-    selector: "text=Add a card"
+    selector: "text=Add a card to continue"
     effect: write
     expect: Stripe-hosted Checkout in setup mode, then back to the same confirm step
   - action: click
     selector: "text=Pay"
     effect: write
-    expect: Order paid when Stripe's invoice.paid webhook arrives (3-D Secure opens Stripe's hosted invoice page)
+    expect: Order paid when Stripe's invoice.paid webhook arrives, or at the next daily reconcile if it is lost (3-D Secure opens Stripe's hosted invoice page)
     first_value: true

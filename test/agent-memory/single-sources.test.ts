@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { ALLOW, LIST_FILE, MUST_NOT_GROW, SINGLE, type Allow } from './single-sources.lists';
 
-// "There is exactly one of these" (docs/single-sources.md), enforced. Two kinds of guard:
-//  - single: only the owning module (or folder) may contain the signature. A new site anywhere else fails.
-//  - must not grow: a concept that is still duplicated today. The list is exactly today's sites, so a NEW site fails, and a
-//    site that goes away must be taken off the list (the list only shrinks, towards one).
-// Signatures are matched on production code with full-line and trailing `//` comments removed. Tests are not scanned.
-// When a guard fails: extend the owning module instead. If the change really is the consolidation, update the list here and
-// the table in docs/single-sources.md in the same pull request.
+// "There is exactly one of these" (docs/single-sources.md), enforced. The lists and the escape hatch are in
+// test/agent-memory/single-sources.lists.ts; this file scans the code and explains every failure.
 
 const ROOT = join(__dirname, '../..');
-const DIRS = ['src', 'web/src', 'packages/db/src', 'packages/dns-checks/src', 'packages/report/src', 'packages/ui/src', 'scripts', 'tools', 'plugins'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', 'tests']);
+const MAP = 'docs/single-sources.md';
+
+/** Production code: these folders, without tests, fixtures, mocks or build output. Nothing else is scanned. */
+export const DIRS = ['src', 'web/src', 'packages/db/src', 'packages/dns-checks/src', 'packages/report/src', 'packages/ui/src', 'scripts', 'tools', 'plugins'];
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', 'tests', '__tests__', '__fixtures__', 'fixtures', '__mocks__', 'e2e']);
+export const isProduction = (name: string): boolean => /\.(ts|tsx|mts|mjs|js|cjs)$/.test(name) && !/\.(test|spec|stories|fixture)\./.test(name) && !name.endsWith('.d.ts');
 
 function sources(dir: string): string[] {
   let names: string[];
@@ -20,11 +20,11 @@ function sources(dir: string): string[] {
   return names.flatMap(name => {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) return SKIP_DIRS.has(name) ? [] : sources(p);
-    return /\.(ts|tsx|mts|mjs|js|cjs)$/.test(name) && !/\.(test|spec)\./.test(name) ? [p] : [];
+    return isProduction(name) ? [p] : [];
   });
 }
 
-/** Removes full-line comments, block comments that start a line, and trailing `// …` comments (not `https://`). */
+/** Blanks full-line comments, block comments that start a line, and trailing `// …` comments (not `https://`). Keeps line numbers. */
 export function stripComments(text: string): string {
   let inBlock = false;
   return text.split('\n').map(line => {
@@ -36,69 +36,59 @@ export function stripComments(text: string): string {
   }).join('\n');
 }
 
-const files = DIRS.flatMap(d => sources(join(ROOT, d))).map(p => ({ path: relative(ROOT, p), text: stripComments(readFileSync(p, 'utf8')) }));
-const sitesOf = (signature: RegExp): string[] => files.filter(f => signature.test(f.text)).map(f => f.path).sort();
+const files = DIRS.flatMap(d => sources(join(ROOT, d))).map(p => ({ path: relative(ROOT, p).split('\\').join('/'), text: stripComments(readFileSync(p, 'utf8')) }));
 
-interface Single { concept: string; signature: RegExp; owners: string[] }
-interface Duplicate { concept: string; signature: RegExp; sites: string[] }
+/** The first line of `text` the signature matches, as `path:line: code`, or null. Multi-line signatures report the match start. */
+function firstHit(path: string, text: string, signature: RegExp): string | null {
+  const re = new RegExp(signature.source, signature.flags.replace('g', ''));
+  const m = re.exec(text);
+  if (!m) return null;
+  const line = text.slice(0, m.index).split('\n').length;
+  return `${path}:${line}: ${text.split('\n')[line - 1].trim().slice(0, 140)}`;
+}
+const sitesOf = (signature: RegExp) => files.flatMap(f => { const hit = firstHit(f.path, f.text, signature); return hit ? [{ path: f.path, hit }] : []; });
+const allowed = (concept: string) => new Set(ALLOW.filter(a => a.concept === concept).map(a => a.file));
+const ownedBy = (owners: string[], p: string) => owners.some(o => (o.endsWith('/') ? p.startsWith(o) : p === o));
 
-/** Single today: only these files or folders (a trailing `/`) may contain the signature. */
-export const SINGLE: Single[] = [
-  { concept: 'Stripe API calls', signature: /api\.stripe\.com/, owners: ['src/billing/'] },
-  { concept: 'PostHog sends (none on main; PR #178 adds the module)', signature: /posthog\.com|\/batch\//, owners: ['src/product-analytics/', 'scripts/posthog-setup.mjs'] },
-  { concept: 'Cloudflare API calls (Worker: CfClient; plus the installer and the operator scripts)', signature: /api\.cloudflare\.com/,
-    owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'] },
-  { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
-  { concept: 'Public Suffix List (registrable domain)', signature: /from ['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
-];
-
-/** Still duplicated today: exactly these sites. Consolidation order: docs/single-sources.md. */
-export const MUST_NOT_GROW: Duplicate[] = [
-  { concept: 'Level ladder (computing or naming rungs)', signature: /let level: Level = 0|\{ 0: 'Unprotected'|name: ["']Delivering["']|status = '(protected|exposed)'/,
-    sites: ['packages/dns-checks/src/report.ts', 'packages/ui/src/components/level-ladder.tsx', 'src/email/report-formatter.ts', 'web/src/lib/levels.ts'] },
-  { concept: 'DMARC record builders', signature: /\['v=DMARC1'|`v=DMARC1; p=\$\{|\[`v=DMARC1`/,
-    sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'packages/dns-checks/src/dmarc-rua.ts', 'packages/report/src/fixes.ts', 'src/analytics/readiness.ts', 'src/dmarc/dns-record.ts', 'src/hosted/records.ts', 'src/onboarding/dmarc-plan.ts', 'web/src/lib/dmarc-record.ts'] },
-  { concept: 'DMARC next-policy ladder', signature: /^export (const|function) (ROLLOUT_SEQUENCE|dmarcSteps|planNextStep|getNextStep)\b/m,
-    sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'src/dmarc/rollout.ts'] },
-  { concept: 'DMARC record validation', signature: /^export function dmarcRecordProblem/m,
-    sites: ['packages/dns-checks/src/dmarc-problem.ts', 'src/dmarc/dns-record.ts'] },
-  { concept: 'SPF/DKIM/DMARC record parsers and judges', signature: /^export (async )?(function|const) (parse|is|enforcement)\w*(dmarc|spf|dkim)\w*/im,
-    sites: ['packages/dns-checks/src/dkim.ts', 'packages/dns-checks/src/dmarc-problem.ts', 'packages/dns-checks/src/dmarc-tags.ts', 'packages/dns-checks/src/dmarc.ts', 'packages/dns-checks/src/spf-terms.ts', 'packages/dns-checks/src/spf.ts',
-      'src/dmarc/dns-record.ts', 'src/dmarc/parse-email.ts', 'src/dmarc/rollout.ts', 'web/src/lib/dkim.ts', 'web/src/lib/dmarc-record.ts'] },
-  { concept: 'Domain standing ("needs attention") rules', signature: /status: 'attention'/,
-    sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'web/src/lib/actions.ts', 'web/src/lib/verdict.ts'] },
-  { concept: 'Domain enrollment inserts', signature: /domains\.insert\(|baseDomain\.apply\(/,
-    sites: ['src/api/router.ts', 'src/domains/bulk.ts', 'src/domains/service.ts'] },
-  { concept: 'The "proven" rule restated (legacy verification)', signature: /verified_via\s*[!=]==?\s*'legacy'|verified_via = 'legacy'|verified_via, 'legacy'/,
-    sites: ['packages/db/src/queries/claims.ts', 'packages/db/src/queries/intake.ts', 'packages/db/src/queries/plan-limit.ts', 'src/api/router.ts', 'src/domains/ownership.ts', 'src/domains/service.ts', 'src/email/dmarc-report.ts', 'src/hosted/report-address.ts', 'web/src/components/domain/ProofLost.tsx'] },
-  { concept: 'Untrusted Authentication-Results reads (sender trust)', signature: /extractAuthResults\(/,
-    sites: ['src/email/free-check.ts', 'src/email/parse-headers.ts', 'src/hosted/canary.ts'] },
-  { concept: 'Counting mode default', signature: /counting: CountingMode = |opts\.counting \?\?/,
-    sites: ['packages/db/src/queries/analytics.ts', 'packages/db/src/queries/index.ts', 'packages/db/src/queries/reports.ts'] },
-  { concept: 'Report address construction', signature: /`rua@\$\{|`rua\+|`\$\{kind\}\+\$\{token\}@/,
-    sites: ['src/api/router.ts', 'src/digest/weekly.ts', 'src/domains/bulk.ts', 'src/domains/service.ts', 'src/hosted/fixed-address.ts', 'src/hosted/tokens.ts', 'src/onboarding/plan.ts'] },
-  { concept: 'Verdict labels', signature: /label: ['"](Protected|At risk|Exposed|Needs attention)/,
-    sites: ['packages/ui/src/components/status.tsx', 'web/src/components/wizard/SeverityBadge.tsx', 'web/src/lib/reports.ts', 'web/src/pages/leads/LeadsPage.tsx'] },
-  { concept: 'DNS-over-HTTPS endpoints', signature: /cloudflare-dns\.com|dns\.google/,
-    sites: ['packages/dns-checks/src/doh.ts', 'src/dmarc/ip-info.ts', 'src/public-reports/resolver.ts', 'tools/audit-fleet/lib/doh.ts'] },
-  { concept: 'Registrable domain by "last two labels"', signature: /slice\(-2\)\.join\('\.'\)/,
-    sites: ['scripts/setup-email-routing.mts', 'scripts/setup-email-routing.ts', 'src/dmarc/ip-info.ts', 'src/dmarc/parse-aggregate.ts', 'tools/audit-fleet/lib/checker.ts'] },
-  { concept: 'Fix-offer scope promising reject (contradicts ADR 0013)', signature: /moved to reject|move DMARC from none/,
-    sites: ['src/billing/offer.ts', 'src/funnel/copy.ts'] },
-];
+const fail = (lines: string[]) => { if (lines.length) throw new Error(`\n${lines.join('\n')}\n`); };
 
 describe('the comment stripper', () => {
-  it('drops comments and keeps URLs in code', () => {
-    expect(stripComments('// api.stripe.com\nconst a = 1; // api.stripe.com\n/* x\n api.stripe.com */\n * api.stripe.com')).not.toMatch(/stripe/);
+  it('drops comments, keeps URLs in code and keeps line numbers', () => {
+    const out = stripComments('// api.stripe.com\nconst a = 1; // api.stripe.com\n/* x\n api.stripe.com */\n * api.stripe.com');
+    expect(out).not.toMatch(/stripe/);
+    expect(out.split('\n')).toHaveLength(5);
     expect(stripComments("const u = 'https://api.stripe.com';")).toMatch(/api\.stripe\.com/);
+  });
+  it('scans production code only', () => {
+    expect(isProduction('charge.ts')).toBe(true);
+    expect(isProduction('charge.test.ts')).toBe(false);
+    expect(isProduction('charge.spec.tsx')).toBe(false);
+    expect(isProduction('env.d.ts')).toBe(false);
+    expect(files.some(f => /(^|\/)(test|tests|__fixtures__|fixtures|__mocks__)\//.test(f.path))).toBe(false);
+  });
+});
+
+describe('production code does not import tests, fixtures or mocks (so skipping them hides nothing that ships)', () => {
+  it('no import from a test, fixture or mock folder', () => {
+    const bad = files.flatMap(f => {
+      const hit = firstHit(f.path, f.text, /(?:from\s+|import\(\s*|require\(\s*)['"][^'"]*\/(?:test|tests|__tests__|__fixtures__|fixtures|__mocks__)\/[^'"]*['"]/);
+      return hit ? [`${hit}\n  production code imports a test-only folder; the guards do not scan those folders, so move the code into production source.`] : [];
+    });
+    fail(bad);
   });
 });
 
 describe('single sources: one module each', () => {
   for (const s of SINGLE) {
     it(s.concept, () => {
-      const strays = sitesOf(s.signature).filter(p => !s.owners.some(o => (o.endsWith('/') ? p.startsWith(o) : p === o)));
-      expect(strays, `extend ${s.owners.join(', ')} instead`).toEqual([]);
+      const ok = allowed(s.concept);
+      const strays = sitesOf(s.signature).filter(x => !ownedBy(s.owners, x.path) && !ok.has(x.path));
+      fail(strays.map(x => [
+        `NEW site of "${s.concept}": ${x.hit}`,
+        `  This concept has one module: ${s.owners.join(', ')}. Call it or extend it there instead.`,
+        `  If this file really is a second owner, add it to \`owners\` of "${s.concept}" in ${LIST_FILE} and to the "One module each" row in ${MAP}, in this pull request;`,
+        `  for a reviewed exception, add an ALLOW entry ({ concept, file, reason, by, date }) in ${LIST_FILE}.`,
+      ].join('\n')));
     });
   }
 });
@@ -106,14 +96,77 @@ describe('single sources: one module each', () => {
 describe('known duplicates: must not grow (docs/single-sources.md)', () => {
   for (const d of MUST_NOT_GROW) {
     it(d.concept, () => {
-      expect(sitesOf(d.signature), 'a new site: extend an existing one; a removed site: take it off this list').toEqual([...d.sites].sort());
+      const ok = allowed(d.concept);
+      const found = sitesOf(d.signature).filter(x => !ok.has(x.path));
+      const added = found.filter(x => !d.sites.includes(x.path));
+      const gone = d.sites.filter(p => !found.some(x => x.path === p));
+      const out: string[] = [];
+      for (const x of added) {
+        out.push(
+          `NEW site of "${d.concept}": ${x.hit}`,
+          `  Do not add another copy: call or extend the authoritative one (${d.authoritative}).`,
+          gone.length ? `  If this is ${gone.join(' or ')} renamed or moved, replace that path with ${x.path} in \`sites\` of "${d.concept}" in ${LIST_FILE} and in "Sites, by concept" in ${MAP}.`
+            : `  If the change is the consolidation itself, update \`sites\` of "${d.concept}" in ${LIST_FILE}, and the count and "Sites, by concept" in ${MAP}; for a reviewed exception, add an ALLOW entry in ${LIST_FILE}.`,
+        );
+      }
+      for (const p of gone) {
+        if (added.length) continue; // reported with the new site as a likely rename
+        out.push(
+          `GONE: ${p} no longer contains "${d.concept}" (or no longer exists).`,
+          `  If it moved, put the new path in \`sites\` in ${LIST_FILE}; if it was consolidated, delete it there. Update the count and "Sites, by concept" in ${MAP} to match.`,
+        );
+      }
+      fail(out);
     });
   }
 });
 
+describe('the escape hatch (ALLOW)', () => {
+  const concepts = new Map([...SINGLE.map(s => [s.concept, s.signature] as const), ...MUST_NOT_GROW.map(d => [d.concept, d.signature] as const)]);
+  const today = new Date().toISOString().slice(0, 10);
+  const realDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+  const problems = (a: Allow): string[] => {
+    const out: string[] = [];
+    const sig = concepts.get(a.concept);
+    if (!sig) out.push(`concept "${a.concept}" is not a guarded concept`);
+    if (a.reason.trim().length < 20 || a.reason.trim().split(/\s+/).length < 4) out.push('reason must say why in at least 20 characters and four words');
+    if (!/[\p{L}\p{N}]/u.test(a.by)) out.push('by must name who agreed');
+    if (!realDate(a.date) || a.date > today) out.push(`date ${a.date} is not a real date on or before today`);
+    const f = files.find(x => x.path === a.file);
+    if (!f) out.push(`${a.file} is not a production file`);
+    else if (sig && !firstHit(f.path, f.text, sig)) out.push(`${a.file} no longer matches: delete this entry`);
+    const s = SINGLE.find(x => x.concept === a.concept);
+    if (s && ownedBy(s.owners, a.file)) out.push(`${a.file} is an owner already: delete this entry`);
+    if (MUST_NOT_GROW.find(x => x.concept === a.concept)?.sites.includes(a.file)) out.push(`${a.file} is listed in sites already: delete this entry`);
+    return out;
+  };
+  it('every entry is complete, dated, and still needed', () => {
+    fail(ALLOW.flatMap(a => problems(a).map(p => `ALLOW ${a.file} (${a.concept}) in ${LIST_FILE}: ${p}`)));
+  });
+  it('rejects an entry without a reason or date, and one that is no longer needed', () => {
+    expect(problems({ concept: 'Stripe API calls', file: 'src/index.ts', reason: 'ok', by: '', date: '2099-01-01' }).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
 describe('the map and the guards agree', () => {
-  const map = readFileSync(join(ROOT, 'docs/single-sources.md'), 'utf8');
-  it('docs/single-sources.md names every guarded concept', () => {
-    for (const c of [...SINGLE, ...MUST_NOT_GROW]) expect(map, c.concept).toContain(c.concept);
+  const map = readFileSync(join(ROOT, MAP), 'utf8');
+  const rows = map.split('\n').filter(l => l.startsWith('|')).map(l => l.split('|').slice(1, -1).map(c => c.trim()));
+  it('docs/single-sources.md names every single-source concept in "One module each"', () => {
+    for (const s of SINGLE) expect(rows.some(r => r[0] === s.concept), s.concept).toBe(true);
+  });
+  for (const d of MUST_NOT_GROW) {
+    it(`"${d.concept}": the count, the authoritative module and the listed sites match the guard`, () => {
+      const row = rows.find(r => r[1] === d.concept);
+      expect(row, `a "Known duplicates" row whose Concept cell is exactly "${d.concept}"`).toBeTruthy();
+      expect(Number.parseInt(row![2], 10), `Sites count of "${d.concept}" in ${MAP}`).toBe(d.sites.length);
+      expect(row![3], `Authoritative cell of "${d.concept}" in ${MAP}`).toContain(d.authoritative);
+      const listed = map.split('\n').find(l => l.startsWith(`- **${d.concept}** (`));
+      expect(listed, `a "- **${d.concept}** (N): …" line under "Sites, by concept" in ${MAP}`).toBeTruthy();
+      expect([...listed!.matchAll(/`([^`]+)`/g)].map(m => m[1]).sort(), `sites of "${d.concept}" in ${MAP}`).toEqual([...d.sites].sort());
+      expect(Number.parseInt(listed!.match(/\((\d+)\)/)![1], 10)).toBe(d.sites.length);
+    });
+  }
+  it('every listed site exists', () => {
+    fail(MUST_NOT_GROW.flatMap(d => d.sites.filter(p => !existsSync(join(ROOT, p))).map(p => `${p} (${d.concept}) does not exist: take it off ${LIST_FILE} and ${MAP}`)));
   });
 });

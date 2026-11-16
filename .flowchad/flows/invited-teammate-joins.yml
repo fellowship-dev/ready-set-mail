@@ -1,11 +1,15 @@
-name: Invited teammate joins the workspace and sees the one step left
+name: Invited teammate joins the workspace and sees its domains
 goal: A person invited by an owner joins with the one-time link and lands on the workspace overview
-value_moment: The teammate sees the workspace's domains and the one action left
+value_moment: The teammate (a read-only member unless invited as admin) sees the workspace's domains with each one's verdict
 covers:
   - web/src/pages/members/MembersPage.tsx
   - web/src/pages/auth/InvitePage.tsx
   - web/src/pages/auth/CodeStep.tsx
   - web/src/pages/domains/OverviewPage.tsx
+  # Server files that implement the steps: the invite link (members routes), accepting it, the code.
+  - src/api/router.ts
+  - src/auth/routes.ts
+  - src/auth/codes.ts
 url: /#/members
 tags: [collaboration, value, protected]
 priority: P1
@@ -26,5 +30,5 @@ steps:
   - action: click
     selector: "button[type=submit]"
     effect: write
-    expect: Overview of the workspace with its domains and the next action
+    expect: Overview of the workspace with its domains and their verdicts (the setup stepper shows only to owners and admins)
     first_value: true

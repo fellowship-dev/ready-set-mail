@@ -1,6 +1,6 @@
 name: New hosted user signs up and gets DMARC with the report address live through Cloudflare
-goal: A new workspace has its domains imported from Cloudflare and one domain's DMARC record, with the report address, applied and visible in public DNS
-value_moment: Records live - ownership proven and DMARC with the report address seen in public DNS
+goal: A new workspace has its domains imported from Cloudflare and one domain's DMARC record applied and visible in public DNS
+value_moment: Records live - ownership proven and DMARC seen in public DNS, carrying the shared report address when the server admits the workspace to reports (HOSTED_CONNECT_REPORTS; by default only the operator's own workspaces)
 # Pages on the path (the dashboard screens a person sees). A change to any of them needs a fresh walk record.
 covers:
   - web/src/app.tsx
@@ -12,6 +12,19 @@ covers:
   - web/src/pages/domains/DomainDetailPage.tsx
   - web/src/components/GetStarted.tsx
   - web/src/components/domain/*
+  # Server files that implement the steps: sign-up and the code, the first screen, ownership, adding domains, and the writes.
+  - src/auth/routes.ts
+  - src/auth/codes.ts
+  - src/auth/signup-policy.ts
+  - src/auth/bot-protection.ts
+  - src/auth/turnstile.ts
+  - src/domains/ownership.ts
+  - src/domains/service.ts
+  - src/api/router.ts
+  - src/connections/*
+  - src/onboarding/*
+  - src/dns/write-policy.ts
+  - src/tenancy/cf-client.ts
 url: /#/signup
 tags: [onboarding, value, protected]
 priority: P0
@@ -40,5 +53,5 @@ steps:
   - action: click
     selector: "text=Apply"
     effect: write
-    expect: DMARC record with the report address written to the zone and read back from public DNS
+    expect: DMARC record written to the zone (POST /api/domains/:id/apply-dmarc) and read back from public DNS; with the report address only for a workspace HOSTED_CONNECT_REPORTS admits
     first_value: true
