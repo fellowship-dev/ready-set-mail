@@ -1,0 +1,21 @@
+---
+status: accepted
+date: 2026-11-15
+decided-by: recorded by the coordinator as an owner decision; no owner quote found
+---
+# A domain's own DNS records change only when a person asks
+
+Connecting Cloudflare, importing zones, adding a domain and reading a plan never change the records of the domain itself. The product shows the planned records and writes them when an owner or admin presses the button for that record; agents never write DNS (the MCP tools have no DNS write). The only automatic changes are listed below, and each touches a record outside the domain's own records or a record a person turned on earlier.
+
+**Consequences**
+- Every record write through `CfClient` in `src/tenancy/cf-client.ts` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. Members cannot reach any of these routes (the read-only gate in `src/api/router.ts`); delegated API keys are refused on every domain write (`src/access/http-policy.ts`).
+- Written or deleted when a person presses a button (owner or admin):
+  - onboarding Apply, `POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts` (re-reads the plan and refuses a changed one);
+  - the domain page: `POST /api/domains/:id/apply-dmarc` (also writes the report-authorization record, `provisionDomain` in `src/dns/provision.ts`), `PATCH /api/domains/:id/dmarc`, `POST /api/domains/:id/apply-spf`, SPF flattening on and off (`POST` and `DELETE /api/domains/:id/spf-flatten`), and MTA-STS on, change and off (`/api/domains/:id/mta-sts`), all in `src/api/router.ts`;
+  - removing a domain, `DELETE /api/domains/:id`: deletes its hosted records and its report-authorization record (`removeHostedRecords` and `removeAuthRecord` in `src/domains/remove.ts`);
+  - self-host only: `POST /api/setup/email-routing` (`ensureEmailRouting` in `src/setup/email-routing.ts`) and `POST /api/setup/custom-domain`, which also call Cloudflare endpoints that create records on Cloudflare's side without passing the write policy.
+- Written as a side effect, without a button for that record:
+  - a bulk add, `POST /api/domains/bulk-import` (`src/domains/bulk.ts`), writes each new domain's report-authorization record `<domain>._report._dmarc.<reports domain>` on the reports domain (self-host; the hosted service has no reports domain);
+  - taking a domain from another workspace (a stronger proof in this workspace) deletes that workspace's hosted and report-authorization records for it (`src/domains/ownership.ts`);
+  - the daily crons in `src/cron.ts` rewrite records a person turned on: the flattened SPF record (10:00 UTC) and the MTA-STS policy id when the MX hosts change (08:00 UTC). The hosted cron writes only the operator's hosted-records zone (`src/hosted/cron.ts`).
+- `docs/coding-agents.md` tells agents to show records and ask before any DNS change. A new automatic write needs a new ADR.

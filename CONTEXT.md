@@ -1,0 +1,113 @@
+# Ready Set Mail
+
+Ready Set Mail gets a domain's email authentication (SPF, DKIM, DMARC) from "I don't know" to enforced without breaking mail: it checks public DNS, receives DMARC reports, writes records through Cloudflare when a person asks, and sells the fix as a service. One codebase runs as the hosted service and as a self-hosted install.
+
+Each term: what it is, the words to avoid, and its home in the code (`Home`). **Two meanings** marks a word the code or the UI uses for two things today; say which one you mean.
+
+## People and places
+
+**Workspace**:
+The container for domains, reports, members and Cloudflare connections; everything a request reads is scoped to one. Self-host starts with the implicit workspace `ws_default`.
+_Avoid_: account, tenant (in UI copy), project
+Home: `workspaces` in `packages/db/src/schema.ts`; per-request context `src/tenancy/context.ts`; guide `docs/workspaces.md`.
+
+**Member** and **role**:
+A user's membership in one workspace, with the role `owner`, `admin` or `member`. Roles are per workspace. A member is read-only: the router refuses every request other than GET or HEAD from a session that is not owner or admin (`admin required`, 403), except managing one's own API keys and `/api/spf-lookup-count`. Routes the router hands off before that gate check roles themselves (billing is owner-only; onboarding and connections need owner or admin). Agents and API keys are decided by `canAccess` in `src/access/policy.ts` (members never get `domains:manage`), and `src/access/http-policy.ts` keeps delegated keys off every domain write.
+_Avoid_: team member, seat, viewer
+Home: `MembershipRole` in `packages/db/src/schema.ts`; the read-only gate in `src/api/router.ts`; `src/access/policy.ts`.
+
+**Organization** — **two meanings** (three with PR #177):
+(1) the *organizational domain* of DMARC, the registrable name a subdomain belongs to (`organizationalDomain` in `packages/dns-checks/src/org-domain.ts`); (2) a report sender's *organisation* (the DKIM organisation in the known-reporters registry, `src/dmarc/known-reporters.ts`). PR #177 adds (3) the customer's company name asked at sign-up. Say "registrable domain", "reporter" or "company".
+
+**Instance mode**:
+`MODE=saas` is the hosted service; anything else is `selfhost` (the default), someone's own install on their Cloudflare account. `getMode` reads only `MODE`: ownership proof, claims and the counting default switch on it. The hosted-only features (report intake at `INTAKE_DOMAIN`, hosted records, the hosted cron job, billing's daily job) also need `SAAS_ENABLED=1` (`hostedEnabled` in `src/hosted/config.ts`).
+_Avoid_: cloud, SaaS (in UI copy: "hosted")
+Home: `getMode` in `src/tenancy/mode.ts`; `docs/hosted.md`, `docs/self-hosting.md`.
+
+## Domains and proof
+
+**Domain**:
+A hostname a workspace monitors: a row of `domains`. On the hosted service a row is added only after an ownership proof; self-host admits the owner's own domains without one (`selfhost`). A row can still be **unproven**: `verified_via` is `legacy` for a row from before ownership checks and for a row whose zone proof was withdrawn (`withdrawProof` in `src/domains/proof-recheck.ts`, which also sets `proof_lost_at`), and a row admitted through a parent stops counting when the parent leaves. Report connection, billing and the shared-address intake refuse a `legacy` row until it is proven again (the token-address intake refuses only a row whose proof was withdrawn); onboarding's DNS writes refuse only a row whose parent left (`src/onboarding/domains.ts` lets a `legacy` row through). Whether a row counts as proven: `isDomainProven` in `src/domains/ownership.ts`.
+Home: `domains` in `packages/db/src/schema.ts`; adding one: `enrollDomain` in `src/domains/service.ts`.
+
+**Claim**:
+A workspace's pending request for a domain it has not proven yet, waiting for its proof. A claim is not a domain row.
+_Avoid_: pending domain, unverified domain
+Home: `domainClaims` in `packages/db/src/schema.ts`; `src/domains/ownership.ts`.
+
+**Ownership proof**:
+Why a workspace may hold a domain: the TXT record `_readysetmail.<domain>` = `readysetmail-verify=<token>` (the old prefix `inboxangel-verify=` is still accepted), an active zone of a connected Cloudflare account (ADR 0002; on the hosted service refused while another workspace holds a parent or child of the name), or a proven parent domain.
+_Avoid_: verification (alone), validation
+Home: `src/domains/ownership.ts` (`admitDomain`, `cloudflareProof`, `admitByZone`, `provenByTxt`, `verifyClaim`, `isDomainProven`). The proof columns are read in other files too: see "Reads and writes of the proof columns" in `docs/single-sources.md`.
+
+**Connection** and **zone**:
+A connection is the workspace's link to one Cloudflare account (OAuth or a pasted token), with an allow-list of zones; a zone is Cloudflare's container for one domain's DNS. A workspace may hold several connections (ADR 0005).
+_Avoid_: integration, Cloudflare account (for the link itself)
+Home: `src/connections/`; the import is `importZones` in `src/connections/import.ts`; every call the Worker makes to the Cloudflare REST API (`api.cloudflare.com`) goes through `CfClient` in `src/tenancy/cf-client.ts` (the OAuth token exchange and Turnstile use other Cloudflare hosts).
+
+**Apply** and the other DNS writes:
+The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
+Home: ADR 0004; write rules `src/dns/write-policy.ts`.
+
+## Judging a domain
+
+**Check** — **two meanings**:
+(1) a **DNS check**: reading a domain's SPF, DKIM, DMARC, MTA-STS and MX from public DNS (`checkDomain` in `packages/dns-checks/src/report.ts`; the Worker's adapter has a different function with the same name in `src/email/dns-check.ts`); (2) a **real-email check** ("free check"): someone sends a message to a check address and gets the result by reply (`src/email/free-check.ts`, hosted `src/hosted/canary.ts`). Say "DNS check" or "email check".
+
+**Level**:
+A domain's rung on the authentication ladder. **Two ladders today** (three counting the email check's protected / at risk / exposed): the dashboard's three rungs, Delivering / Authenticated / Protected (`assessDomain` in `web/src/lib/levels.ts`, names in `packages/ui/src/components/level-ladder.tsx`), and the agent report's four, Unprotected / Monitoring / Enforced / Hardened (`packages/dns-checks/src/report.ts`). Which one is canonical is an **open owner decision** (`docs/adr/OPEN.md`); do not build on either.
+_Avoid_: grade, score
+
+**Verdict**:
+The one-line judgement of a domain shown to a person (verified, needs attention, unknown…) with its reason.
+Home: `domainVerdict` in `web/src/lib/verdict.ts`; words in `STATUS` in `packages/ui/src/components/status.tsx`.
+
+**Standing**:
+Where a domain stands overall: the verdict plus freshness, hosted state, parent, report window and uncounted reports. Not one module yet; `web/src/lib/verdict.ts` is the closest and other rules remain (`docs/single-sources.md`).
+_Avoid_: health, status (alone)
+
+**Next step**:
+The one action the person should take next for a domain. Several producers today, which can disagree. The DMARC policy step: `dmarcSteps` in `packages/dns-checks/src/dmarc-next-step.ts` (the dashboard and the agent report's `dmarc.next_step`; from `p=quarantine` at `pct=100` it offers `p=reject` once 90% of mail passes, `READY_FOR_REJECT`, below `pct=100` it offers raising `pct`; the record text is `dmarcRecordFor`). The policy wizard's staged rollout: `planNextStep` in `src/dmarc/rollout.ts` (adds `t=y` steps). The agent's proposed fix: `enforcedDmarc` in `packages/report/src/fixes.ts`, which keeps `p=quarantine` at `pct=100` and never proposes reject, so the agent can see two different offers. See `docs/single-sources.md`.
+_Avoid_: recommendation, guidance, to-do
+
+## Reports
+
+**Report** (aggregate):
+A DMARC aggregate (RUA) report a mailbox provider sends about one domain for one day; TLS-RPT reports are separate.
+_Avoid_: digest (that is our weekly email), PDF (that is the export)
+Home: parsing `src/dmarc/`, storing `packages/db`.
+
+**Report address** — **four forms**:
+Where a domain's DMARC record sends reports (`rua=mailto:…`).
+1. **Hosted, shared:** `rua@<INTAKE_DOMAIN>`, the same for every customer, routed by the domain inside the report (ADR 0006). Built by `fixedReportAddress` in `src/hosted/fixed-address.ts`; used by `connectReports` and `reportAddressForWrite` in `src/hosted/report-address.ts`. Only for a proven domain of a workspace that `HOSTED_CONNECT_REPORTS` admits: by default (`owner`) only the operator's own workspaces (the account of `OWNER_EMAIL`). For any other hosted customer the DMARC record is written without our address and reports cannot be connected.
+2. **Hosted, per token:** `rua+<token>@<INTAKE_DOMAIN>` (and `tls-rpt+<token>@…`), built by `intakeAddress` in `src/hosted/tokens.ts`. Used by hosted records (`buildHostedDmarc` in `src/hosted/records.ts`, set up by `enableHosted` and rotated by `rotateHostedToken` in `src/hosted/service.ts`), and still accepted for a domain given one before the shared address existed.
+3. **Self-host:** `rua@<reports domain>`, the install's own reports domain. Built inline in `src/domains/service.ts`, `src/domains/bulk.ts`, `src/api/router.ts`, `src/onboarding/plan.ts` and `src/digest/weekly.ts`.
+4. **Agent and public report:** `dmarc@<domain>`, the domain's own mailbox, never ours. Proposed by `enforcedDmarc` and the fix values in `packages/report/src/fixes.ts`, and by the report catalog and renderer (`packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/render-md.ts`).
+_Avoid_: RUA email, inbox
+
+**Intake**:
+Receiving report mail: authenticating the sender, attributing the report to a workspace, applying caps, storing.
+Home: hosted `src/hosted/intake.ts`; self-host and shared parts `src/email/handler.ts`, `src/dmarc/reporter-auth.ts`.
+
+**Counting mode**:
+Which received reports count toward a domain's numbers: `registry` (known reporters only), `authenticated`, or `all`. Default: `registry` when `MODE=saas`, `all` otherwise; `REPORT_COUNTING` overrides it.
+Home: `reportCounting` in `src/dmarc/counting.ts` (the one place the default is decided); the type `CountingMode` in `packages/db/src/queries/counting.ts`. `packages/db` also falls back to `registry` when a caller passes no mode (no caller relies on it today).
+
+## Accounts
+
+**Sign-up attempt** (pending account):
+Between "Create account" and the right code, nothing exists but one row of `verifications`: `startAttempt` in `src/auth/codes.ts` stores the address, the purpose, the code's MAC, the tries, the password hash typed, the invite and the terms version, keyed by a handle in the browser's pending cookie. It expires after `CODE_SECONDS` (10 minutes) and is deleted when the code is used; the account, its workspace and membership are created only then. No other sign-up field survives on `main`.
+Home: `src/auth/codes.ts`; `verifications` in `packages/db/src/schema.ts`; routes `src/auth/routes.ts`.
+
+## Selling and agents
+
+**Offer** and **order**:
+The offer is the priced service, today one: "Fix one domain" (ADR 0013; the amount always comes from the Stripe price, intended $149). An order is one purchase of it by a workspace.
+An order becomes **paid** only in `applyInvoice` in `src/billing/sync.ts`, after it re-reads the invoice from Stripe and Stripe says paid. Three callers reach it: Stripe's webhook (`src/billing/webhook.ts`: `invoice.paid`, and `invoice.payment_action_required` or `invoice.payment_failed` when the re-read invoice is paid); `failOrder` when an invoice it was about to fail turns out paid (the purchase itself can take this path); and the daily reconcile, `runBillingJob` in `src/billing/reconcile.ts` (the hosted cron at 11:00 UTC, orders pending for over an hour, 25 per run). Pressing Pay never marks an order paid on its own.
+_Avoid_: plan, subscription, package
+Home: `src/billing/offer.ts`, order states `src/billing/orders.ts`; `docs/billing.md`.
+
+**Agent**:
+An AI client acting for a person through the MCP server or the API, with finite grants the person consented to. The MCP tools never write DNS. Two change state: `add_domain` (`addDomain` in `src/mcp/tools/index.ts`: `assertAgentEnrollmentSafe` in `src/domains/service.ts` first, which refuses with 409 when another workspace holds an unproven `legacy` row for the name, because taking it over needs a signed-in person; then `enrollDomain`) and `verify_domain`. Both can, as a side effect of the ownership rule, withdraw another workspace's lapsed zone proof and email that workspace's owners (`sendProofLostNotice`), although the tool descriptions and the consent page say they send no mail.
+_Avoid_: bot, integration
+Home: `src/mcp/`, grants `src/access/`; `docs/agent-operations.md`.
