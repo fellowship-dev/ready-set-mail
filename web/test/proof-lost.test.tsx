@@ -43,11 +43,11 @@ describe('overview', () => {
 		expect(alert.textContent).toContain('Your report history stays');
 		expect(alert.textContent).not.toMatch(/remove it|add it again/i); // no advice to remove first
 		expect(screen.queryByTestId('proof-lost-2')).toBeNull(); // a proven domain says nothing
-		// the workspace answer and the first-answer list do not claim every domain is proven
+		// the workspace answer and the first-day card do not claim every domain is proven
 		expect(screen.getByTestId('am-i-done').textContent).toMatch(/waiting for proof/);
 		expect(text()).not.toContain('Ownership is proven for every domain you added');
 		// step 2 does not promise a record that is not shown: it says to prove again
-		expect(text()).toContain('1 domain lost its proof. Press Prove again on its card.');
+		expect(screen.getByTestId('first-day')).toHaveTextContent(/Prove sold\.com is still yours.*Its proof lapsed/);
 		expect(text()).not.toContain('waiting for the DNS record shown below');
 		await userEvent.click(screen.getByRole('button', { name: 'Prove again' }));
 		await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/prove')).toBe(true));

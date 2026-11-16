@@ -10,11 +10,18 @@ covers:
   - web/src/pages/cloudflare/*
   - web/src/pages/domains/OverviewPage.tsx
   - web/src/pages/domains/DomainDetailPage.tsx
-  - web/src/components/GetStarted.tsx
+  - web/src/pages/setup/*
+  - web/src/components/FirstDay.tsx
+  - web/src/components/HandoffCard.tsx
+  - web/src/lib/first-run.ts
+  - web/src/lib/first-day.ts
   - web/src/components/domain/*
   # Server files that implement the steps: sign-up and the code, the first screen, ownership, adding domains, and the writes.
   - src/auth/routes.ts
   - src/auth/codes.ts
+  - src/auth/profile.ts
+  - src/auth/names.ts
+  - src/auth/mail.ts
   - src/auth/signup-policy.ts
   - src/auth/bot-protection.ts
   - src/auth/turnstile.ts
@@ -32,32 +39,29 @@ context:
   user: new_account
   auth: logged_out
   mode: hosted
-# Baseline measured on main 6a7d775 (2026-11-15), local hosted instance with the repo's fakes; see the walk record.
-# PR #177 rebuilds sign-up: re-walk and re-baseline this flow when it merges.
+# Baseline measured on main 6a7d775 (2026-11-15); rebuilt by PR #177 as S1, S2, S3, S4, Cloudflare's consent, C2 and the first-day dashboard: walk and re-baseline it in that PR.
 steps:
   - action: navigate
     url: /#/signup
-    expect: Create an account - email, password and the bot check
+    expect: Create your account - email and password; the bot check runs unseen on Continue
   - action: click
     selector: "button[type=submit]"
     effect: write
-    expect: Enter the 6-digit code sent by email
+    expect: S2 Tell us about yourself (name, organization, whose email, optional role and where you heard); the code email is already on its way
   - action: click
     selector: "button[type=submit]"
     effect: write
-    expect: First screen at /setup offers Connect Cloudflare or adding records by hand
+    expect: S3 Check your inbox - one input for the 6-digit code that submits at the sixth digit
+  - action: click
+    selector: "text=Continue"
+    effect: write
+    expect: S4 asks which domain you send email from (or shows the checker's domain checked, with Not this domain?)
   - action: click
     selector: "text=Connect Cloudflare"
     effect: write
-    expect: Cloudflare consent, then every active zone imported as a verified domain; nothing written to DNS
+    expect: One line of public DNS, then Cloudflare's own consent (no page in between), then the zone for the domain (every active zone for a company) added as verified domains; nothing written to DNS
   - action: click
     selector: "text=Apply"
     effect: write
-    expect: DMARC record written to the zone (POST /api/domains/:id/apply-dmarc) and read back from public DNS; with the report address only for a workspace HOSTED_CONNECT_REPORTS admits
+    expect: C2 review shows what exists and what will be written, one Apply; the record is written to the zone and the dashboard's first-day card says it is waiting for public DNS, then that the first reports are on their way (the report address only for a workspace HOSTED_CONNECT_REPORTS admits)
     first_value: true
-# Reviewed exceptions to blocker rules, copied into each walk and listed by the gate as OVERRIDDEN known rough edges.
-rule_overrides:
-  - id: FOLD-01
-    reason: "Known rough edge of main, not changed by pull request 178: at 375 px the next action sits about a third of a screen below the first screen on the dashboard after Cloudflare connects and on the DMARC result screen (walk of 2026-11-16: 0.36 and 0.31 viewport heights). It is recorded in the 2026-11-15 baseline; a layout change is a separate design task."
-    by: "Claude (Fable 5.2) for Max F. Findel, PR #178; reviewer to accept"
-    date: 2026-11-16

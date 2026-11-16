@@ -32,7 +32,7 @@ describe('claim proof step', () => {
 		const reason = await screen.findByText(/DNS is hosted at GoDaddy/);
 		const record = screen.getByRole('group', { name: 'DNS record to add' });
 		const verify = screen.getByRole('button', { name: 'Verify' });
-		const expectation = screen.getByText('Usually a minute or two.');
+		const expectation = screen.getByText(/^Usually a minute or two\./);
 		const level = await screen.findByText(/Public DNS today:/);
 		const before = (a: Node, b: Node) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		before(reason, record);

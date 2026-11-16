@@ -15,12 +15,15 @@ import {
 	type CfConnections,
 } from '../../../lib/cloudflare';
 import { tokenLink } from '../../../lib/cloudflare-token-link';
-import { useHosted } from '../../../lib/session';
+import { isAgency } from '../../../lib/first-run';
+import { useHosted, useSession } from '../../../lib/session';
 
 
 /** Step 1: OAuth when the instance offers it, otherwise a pasted API token. A failure is shown inline, never as a toast. */
 export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConnections | undefined; returnError?: string | null; onConnected: (c: CfConnection) => void }) {
 	const hosted = useHosted();
+	const { me } = useSession();
+	const agency = isAgency(me?.whose_email);
 	const start = useStartOAuth();
 	const add = useAddToken();
 	const tokenId = useId();
@@ -64,7 +67,7 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 		return (
 			<StepCard title="Connect Cloudflare">
 				<div className="space-y-4">
-					<p className="max-w-prose text-sm text-ink-2">You approve access at Cloudflare, then come back here. Ready Set Mail only writes in the zones you choose next.</p>
+					<p className="max-w-prose text-sm text-ink-2">{hosted ? `You approve access at Cloudflare, then come back here. ${scopeSentence(agency)}` : 'You approve access at Cloudflare, then come back here. Ready Set Mail only writes in the zones you choose next.'}</p>
 					{returnError ? <Alert variant="danger">{returnError}</Alert> : null}
 					{startError ? <FieldError>{startError}</FieldError> : null}
 					<StepFooter
@@ -86,22 +89,24 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 				<div className="max-w-prose space-y-3 text-sm text-ink-2">
 					<p className="font-medium text-ink-1">1. Create the token</p>
 					<div>
-						<Button asChild>
+						<Button asChild variant="secondary">
 							<a href={tokenLink(hosted)} target="_blank" rel="noopener noreferrer">
 								Create the token in Cloudflare
 							</a>
 						</Button>
 					</div>
-					<p>Cloudflare&apos;s page opens with Zone Read and DNS Edit already chosen. You can narrow it to specific zones there before you create the token.</p>
-					{hosted ? null : (
-						<p>
-							Add these two by hand, Cloudflare&apos;s link cannot pre-fill them: Zone · Email Routing Rules · Edit (for the reports mailbox) and Account · Email Routing
-							Addresses · Edit (for alert emails to you).
-						</p>
-					)}
+					<p>Cloudflare&apos;s page opens with Zone Read and DNS Edit already chosen.</p>
+					{hosted ? <p>{scopeSentence(agency)}</p> : null}
 					<details className="group">
-						<summary className="cursor-pointer text-ink-2 underline underline-offset-4">Create it by hand instead</summary>
+						<summary className="cursor-pointer text-ink-2 underline underline-offset-4">What this token can do, and creating it by hand</summary>
 						<div className="mt-3 space-y-3">
+							<p>You can narrow the token to specific zones on Cloudflare&apos;s page before you create it.</p>
+							{hosted ? null : (
+								<p>
+									Add these two by hand, Cloudflare&apos;s link cannot pre-fill them: Zone · Email Routing Rules · Edit (for the reports mailbox) and Account · Email Routing
+									Addresses · Edit (for alert emails to you).
+								</p>
+							)}
 							<p>
 								In Cloudflare, create a token at <span className="font-mono text-xs">dash.cloudflare.com/profile/api-tokens</span> with these permissions:
 							</p>
@@ -122,13 +127,11 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 								</TableBody>
 							</Table>
 							<p>Zone Resources: the zones you want Ready Set Mail to manage.</p>
+							<p>
+								It writes only the DMARC, report-authorisation and reports-mailbox records you approve{hosted ? '' : ', and only in the zones you choose'}, never SPF or DKIM records without showing you the change first. The token is stored encrypted; remove it here or revoke it at Cloudflare at any time.
+							</p>
 						</div>
 					</details>
-					<p>
-						It writes only the DMARC, report-authorisation and reports-mailbox records you approve on the next screens, and only in the zones you choose. It never touches other
-						records, and never writes SPF or DKIM records without showing you the change first. The token is stored encrypted; remove it here or revoke it at Cloudflare at any
-						time.
-					</p>
 					<p className="font-medium text-ink-1">2. Paste it here</p>
 				</div>
 				<div className="max-w-md space-y-1.5">
@@ -157,6 +160,10 @@ export function ConnectStep({ offer, returnError, onConnected }: { offer: CfConn
 		</StepCard>
 	);
 }
+
+/** What connecting does, true of the hosted import: which zones are added, and that nothing is written before Apply. */
+export const scopeSentence = (agency: boolean): string =>
+	`${agency ? 'Only the zone of the client domain you are setting up is added and watched.' : 'Every active zone in the account is added and watched.'} Nothing is written to DNS until you press Apply on a change you have seen.`;
 
 function PermissionRow({ scope, group, access, note }: { scope: string; group: string; access: string; note?: string }) {
 	return (

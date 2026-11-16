@@ -13,7 +13,7 @@ import type { BoundEnv as Env } from '../index';
 import { authLookups, forWorkspace, globalQueries, workspaceLifecycle, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import { logAudit, type AuditEntry } from '../audit/log';
 import type { TenantContext } from '../tenancy/context';
-import { attemptTag, codeVerified, inviteAccepted, signedIn, signupHooks, signupTag } from '../product-analytics/auth';
+import { attemptTag, codeVerified, inviteAccepted, signedIn, signupHooks, signupProfileSaved, signupTag } from '../product-analytics/auth';
 import { analyticsEnabled } from '../product-analytics/capture';
 import { hashPassword, verifyPassword } from '../api/password';
 import { AUTH_BASE_PATH, createAuth, type Auth } from './index';
@@ -24,17 +24,19 @@ import { verifyBootstrapProof } from './bootstrap';
 import { verifyTurnstile } from './turnstile';
 import { hostedSignupClosed, SIGNUP_CLOSED_MESSAGE, turnstileSecret, turnstileSiteKey } from './bot-protection';
 import { clearSigninFailures, legacyVerifyLinkPage, recordSigninFailure, resetUnprovenNames, signinWait } from './welcome';
-import { cleanName } from './names';
+import { cleanName, firstWorkspaceName } from './names';
+import { applyProfile, checkProfile, type SignupProfile } from './profile';
 import { deviceCookie, knownDevice, rotateDeviceEpoch } from './device';
 import { d1RateLimitStorage } from './rate-limit';
 import {
   CODE_MAX_TRIES, CODE_SECONDS, SIGNIN_ALERT_AT, clearPendingCookie, clearSigninCodeBudgets, codeMailWait, codeProven, compareCode,
   countTry, decoyOf, dropAttempt, dropAttemptsOf, giveBack, markCodeProven, peekAttempt, pendingCookie, pendingHandle, poolFor,
-  reserveWrongCode, signinAlertAllowed, startAttempt, uncountTry, type Attempt, type BudgetKind, type CodePurpose, type MailPool,
+  reserveWrongCode, saveAttemptProfile, signinAlertAllowed, startAttempt, uncountTry, type Attempt, type BudgetKind, type CodePurpose, type MailPool,
 } from './codes';
 import { mailReady, requestedFrom, sendCodeEmail, senderAddress, sendSigninAlert, sendSignupNotice } from './mail';
 import { legal, legalStatus } from './legal';
 import { helpUrl } from '../funnel/config';
+import { handoffOf } from '../team/handoff';
 import { emailCheckAvailable } from '../hosted/config';
 import { hostedServiceUrl } from '../hosted-service';
 
@@ -57,6 +59,9 @@ function auditUser(env: Env, ctx: ExecutionContext, userId: string, entry: Audit
     if (ws) logAudit({ db: env.DB, workspaceId: ws }, entry);
   })().catch(() => {}));
 }
+
+/** Largest body of the sign-up profile form (its fields are bounded to well under this). */
+const MAX_PROFILE_BODY = 4096;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Longest password accepted (PBKDF2 of a huge body is a cheap way to burn CPU). */
@@ -112,13 +117,18 @@ function callAuth(
 
 /** Too many failed sign-ins for one address: the same answer whether or not it has an account. */
 function throttled(seconds: number): Response {
-  const minutes = Math.max(1, Math.ceil(seconds / 60));
-  const out = err(`Too many sign-in attempts for this address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or reset your password to sign in now.`, 429, 'signin_throttled');
+  const out = err(`Too many sign-in attempts for this address. Try again in ${minutesText(seconds)}, or reset your password to sign in now.`, 429, 'signin_throttled');
   out.headers.set('retry-after', String(seconds));
   return out;
 }
 
-const minutesText = (seconds: number) => { const m = Math.max(1, Math.ceil(seconds / 60)); return `${m} minute${m === 1 ? '' : 's'}`; };
+/** A wait in words: whole minutes up to an hour, then whole hours rounded up ("1440 minutes" is "24 hours"). */
+export const minutesText = (seconds: number) => {
+  const m = Math.max(1, Math.ceil(seconds / 60));
+  if (m <= 60) return `${m} minute${m === 1 ? '' : 's'}`;
+  const h = Math.ceil(m / 60);
+  return `${h} hour${h === 1 ? '' : 's'}`;
+};
 
 /** Better Auth's error → our `{ error }` shape, keeping its status. */
 async function authError(res: Response, fallback: string): Promise<Response> {
@@ -241,14 +251,14 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  */
 async function answerWithCode(
   env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
-  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void; analytics?: ReturnType<typeof signupHooks> } = {},
+  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void; analytics?: ReturnType<typeof signupHooks>; /** A new sign-up attempt (S1): codes from an earlier attempt no longer work, so "use the newest one" would not be true. */ freshAttempt?: boolean } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
   // The allowance is spent for every address, account or not, so every request does the same work, and over it the answer can
   // say so plainly: it depends only on how often this address was asked for, which says nothing about who has an account.
   const wait = await codeMailWait(env, attempt.email, opts.pool ?? poolFor(attempt.purpose));
-  if (wait) return mailLimit(wait);
+  if (wait) return mailLimit(wait, opts.freshAttempt);
   const mailing = !!attempt.userId || !!attempt.create;
   const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : decoyOf(attempt));
   await opts.analytics?.started(handle);
@@ -295,8 +305,13 @@ function notSent(): Response {
 const SELF_HOST_SIGNIN_NOT_SENT = "We couldn't email your code. Try again, or ask whoever runs this instance (they can turn codes off with SIGNIN_CODES=off).";
 
 /** Over an address's code mail allowance. Spent the same for every address, so saying so reveals nothing about accounts. */
-function mailLimit(wait: number): Response {
-  const out = err(`Several codes were sent to this address recently. Use the newest one, or try again in ${minutesText(wait)}.`, 429, 'code_mail_limit');
+function mailLimit(wait: number, freshAttempt = false): Response {
+  // A person who pressed "Start over" and typed the same address again: the earlier attempt, and its codes, are gone (reusing a mailed code for a new
+  // attempt would let it confirm someone else's password), so the only true advice is to wait. The same words for every address.
+  const message = freshAttempt
+    ? `We sent several codes to this address recently, so we can't send another yet. Try again in ${minutesText(wait)}.`
+    : `Several codes were sent to this address recently. Use the newest one, or try again in ${minutesText(wait)}.`;
+  const out = err(message, 429, 'code_mail_limit');
   out.headers.set('retry-after', String(wait));
   return out;
 }
@@ -342,7 +357,7 @@ async function passwordSession(env: Env, request: Request, ctx: ExecutionContext
  * account's, in one statement that applies only while the account is still unverified (two attempts at once: one wins).
  * Every other pending attempt of the account is dropped, its sessions end, and names typed before are reset.
  */
-async function proveAddress(env: Env, userId: string, email: string, passwordHash: string, terms: string | undefined): Promise<boolean> {
+async function proveAddress(env: Env, userId: string, email: string, passwordHash: string, terms: string | undefined, profile?: SignupProfile): Promise<boolean> {
   const db = env.DB;
   const now = Math.floor(Date.now() / 1000);
   const [, verified] = await db.batch([
@@ -353,7 +368,9 @@ async function proveAddress(env: Env, userId: string, email: string, passwordHas
   if ((verified?.meta.changes ?? 0) !== 1) return false;
   await dropAttemptsOf(env, userId);
   await globalQueries(db).sessions.revokeAll(userId);
-  await resetUnprovenNames(db, userId, email);
+  // The sign-up's own answers (S2), held with the attempt this code just consumed, are applied here and nowhere else: once.
+  await resetUnprovenNames(db, userId, email, profile?.name, profile ? firstWorkspaceName(profile, profile.name, email) : undefined, profile?.whose_email === 'clients');
+  if (profile) await applyProfile(env, userId, profile);
   await rotateDeviceEpoch(env, userId);
   await clearSigninFailures(env, email);
   return true;
@@ -552,9 +569,69 @@ export async function handleAuthRoute(
     const user = await globalQueries(env.DB).users.byEmail(email);
     const terms = legal(env).termsVersion ?? undefined;
     const analytics = signupHooks(env, ctx, await signupTag(env, pendingHandle(request, secureOrigin(env, request)), body)); // docs/analytics.md
-    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup', analytics });
+    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup', analytics, freshAttempt: true });
     // No account yet, or one still waiting for its code from before codes: the code sets this attempt's password.
-    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms }, { analytics });
+    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms }, { analytics, freshAttempt: true });
+  }
+
+  // ── Hosted sign-up, screen by screen: S1 /signup (above), S2 /signup/profile, S3 the code (/code), and the way back ──
+  // The pending sign-up attempt (codes.ts) is the server's memory of where this browser is: GET /signup/pending says which
+  // screen is next (so a reload or a returning tab never starts again at the form), /signup/profile holds S2's answers on the
+  // attempt, /signup/resend sends a new code for it (the browser no longer holds the password after a reload), and
+  // /signup/cancel is "Wrong address? Start over". None of them creates an account or spends more than sign-up does.
+  if (path === '/api/auth/signup/pending' && method === 'GET') {
+    const handle = pendingHandle(request, secureOrigin(env, request));
+    const pending = handle && isSaas(env) ? await peekAttempt(env, handle) : null;
+    const out = !pending || pending.purpose !== 'signup'
+      ? json({ pending: false })
+      : json({
+        pending: true, email: pending.email, step: pending.profile ? 'code' : 'about',
+        expires_in: Math.max(0, pending.expiresAt - Math.floor(Date.now() / 1000)), lifetime_seconds: CODE_SECONDS,
+        ...(pending.profile ? { profile: pending.profile } : {}),
+      });
+    out.headers.set('cache-control', 'no-store');
+    return out;
+  }
+  if (path === '/api/auth/signup/profile' && method === 'POST') {
+    if (await limited(env, request)) return err('Too many requests — try again later', 429);
+    if (!isSaas(env)) return err('sign-up is closed — ask an owner for an invite', 403);
+    if (await ipLimited(env, request, 'signup-profile', { window: 3600, max: 60 })) return err('Too many requests — try again later', 429);
+    const raw = await request.text();
+    if (raw.length > MAX_PROFILE_BODY) return err('request too large', 413);
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { return err('Invalid JSON body', 400); }
+    const checked = checkProfile(body);
+    if (!checked.ok) return json({ error: checked.message, field: checked.field }, 400);
+    const handle = pendingHandle(request, secureOrigin(env, request));
+    // Held with the attempt, for every address alike (a decoy takes them too, so this answer says nothing about accounts).
+    if (!handle || !(await saveAttemptProfile(env, handle, checked.profile))) return codeRefusal('code_expired');
+    await signupProfileSaved(env, ctx, handle, checked.profile); // docs/analytics.md: the closed answers, and whether "heard about" was filled; never its text
+    return json({ ok: true, step: 'code' });
+  }
+  if (path === '/api/auth/signup/resend' && method === 'POST') {
+    if (await limited(env, request)) return err('Too many requests — try again later', 429);
+    if (!isSaas(env)) return err('sign-up is closed — ask an owner for an invite', 403);
+    if (await hostedSignupClosed(env)) return err(SIGNUP_CLOSED_MESSAGE, 503);
+    if (await ipLimited(env, request, 'signup', { window: 3600, max: 10 })) return err('Too many requests — try again later', 429);
+    const body = await readJson<{ cf_turnstile_token?: string }>(request);
+    { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signup'); if (bot) return bot; }
+    const handle = pendingHandle(request, secureOrigin(env, request));
+    const pending = handle ? await peekAttempt(env, handle) : null;
+    if (!pending || pending.purpose !== 'signup') return codeRefusal('code_expired');
+    // The same attempt again with a new code: what the person typed (password hash, S2 answers) carries over, the old code stops
+    // working, and the mail allowance, the answer and the notice for an address that already has an account are those of sign-up.
+    const { tries: _tries, expiresAt: _expiresAt, ...attempt } = pending;
+    // A resent code keeps the attempt's analytics id and counts as `Signup Code Sent` (resend).
+    return answerWithCode(env, request, ctx, attempt, { notice: 'signup', analytics: signupHooks(env, ctx, await signupTag(env, handle, {})) });
+  }
+  if (path === '/api/auth/signup/cancel' && method === 'POST') {
+    const secure = secureOrigin(env, request);
+    const handle = pendingHandle(request, secure);
+    const pending = handle ? await peekAttempt(env, handle) : null;
+    if (handle && pending?.purpose === 'signup') await dropAttempt(env, handle);
+    const out = json({ ok: true });
+    out.headers.append('set-cookie', clearPendingCookie(secure));
+    return out;
   }
 
   // ── POST /api/auth/login — password; then, when codes are on, the emailed code ──
@@ -641,13 +718,13 @@ export async function handleAuthRoute(
     }
 
     // Sign-up or invite: the password typed in THIS attempt becomes the account's, now that the address is proven.
-    if (!attempt.passwordHash || !(await proveAddress(env, userId, attempt.email, attempt.passwordHash, attempt.terms))) return codeRefusal('code_expired');
+    if (!attempt.passwordHash || !(await proveAddress(env, userId, attempt.email, attempt.passwordHash, attempt.terms, attempt.purpose === 'signup' ? attempt.profile : undefined))) return codeRefusal('code_expired');
     auditUser(env, ctx, userId, {
       actor_id: userId, actor_email: attempt.email, actor_type: 'user',
       action: 'auth.email_verified', resource_type: 'user', resource_id: userId, resource_name: attempt.email,
       meta: { ip, password: 'chosen', code: 'email', ...(attempt.terms ? { terms: attempt.terms } : {}) },
     });
-    let joined: { workspace_id: string; workspace_name: string | null } | null = null;
+    let joined: { workspace_id: string; workspace_name: string | null; handoff_domain?: string } | null = null;
     if (attempt.purpose === 'invite' && attempt.invite) {
       // The code proved the invited address: the invite is accepted now, as the verified account.
       const invite = await authLookups(env.DB).inviteByToken(attempt.invite);
@@ -655,7 +732,8 @@ export async function handleAuthRoute(
         const team = forWorkspace(env.DB, invite.workspace_id).team;
         if (await team.claimInvite(invite.token)) {
           await team.addMember(userId, invite.role === 'admin' ? 'admin' : 'member');
-          joined = { workspace_id: invite.workspace_id, workspace_name: (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null };
+          const carried = await handoffOf(env, invite.token);
+          joined = { workspace_id: invite.workspace_id, workspace_name: (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null, ...(carried ? { handoff_domain: carried.domain } : {}) };
           auditUser(env, ctx, userId, {
             actor_id: userId, actor_email: attempt.email, actor_type: 'user',
             action: 'auth.invite_accepted', resource_type: 'user', resource_id: userId, resource_name: attempt.email,
@@ -807,11 +885,16 @@ export async function handleAuthRoute(
     const workspaceName = (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null;
     // Hosted: an account still waiting for its code is not an existing login; the invitee confirms the address here.
     const hasLogin = !!existingUser && (!isSaas(env) || !!existingUser.email_verified);
+    const handoff = await handoffOf(env, invite.token);
     if (method === 'GET') {
       // Lets the page offer "sign in to accept" instead of a password form. The token holder is the invitee.
       const me = hasLogin ? await currentUser(request, env, ctx).catch(() => null) : null;
       return json({
+        // A hand-off ("finish setting up this domain"): the page says so, in fixed words, and lands on that domain's first screen.
+        ...(handoff ? { handoff: { domain: handoff.domain, inviter_name: handoff.inviterName } } : {}),
         email: invite.email, invited_by: invite.invited_by, role: invite.role,
+        // Who asked, by name when they have one (the page says "<name> invited you as an Admin").
+        inviter_name: cleanName((await globalQueries(env.DB).users.byEmail(invite.invited_by.toLowerCase()))?.name ?? '') || null,
         workspace_id: invite.workspace_id, workspace_name: workspaceName,
         user_exists: hasLogin,
         signed_in_as: me?.email ?? null,
@@ -834,7 +917,7 @@ export async function handleAuthRoute(
         resource_type: 'user', resource_id: me.id, resource_name: me.email,
         after_value: { email: me.email, role: invite.role, invited_by: invite.invited_by, existing_user: true },
       }, invite.workspace_id);
-      return json({ ok: true, workspace_id: invite.workspace_id, workspace_name: workspaceName }, 200);
+      return json({ ok: true, workspace_id: invite.workspace_id, workspace_name: workspaceName, ...(handoff ? { handoff_domain: handoff.domain } : {}) }, 200);
     }
 
     if (await limited(env, request)) return err('Too many requests — try again later', 429);

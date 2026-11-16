@@ -22,11 +22,13 @@ const LINE = /You're adding .* You'll confirm it after you verify your email\./;
 /** The server's own Cloudflare token: connected, so the zone list is asked for. */
 const ENV_TOKEN = { 'GET /api/cloudflare/connections': { connections: [{ id: 'env', label: 'Server', auth_type: 'token', status: 'active', zones: [], scopes: [], implicit: true }], oauth: { available: false, scopes: [], via_relay: false }, token_paste: false, encryption_configured: false } };
 
+const NOTHING_PENDING = { 'GET /api/auth/signup/pending': { pending: false } };
+
 describe('AuthPage initialMode="signup"', () => {
 	it('opens on the create-account form when sign-up is open', async () => {
-		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN });
-		expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Create account' })).toBeInTheDocument();
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN, routes: NOTHING_PENDING });
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
 	});
 
 	it('is the normal sign-in screen when sign-up is closed', async () => {
@@ -40,28 +42,29 @@ describe('AuthPage initialMode="signup"', () => {
 		expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
 	});
 
-	it('says which domain is being added, in mono, in one line', async () => {
+	it('does not show the checker domain on S1 (it is kept for S4)', async () => {
 		rememberSignupDomain('acme.io');
-		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN });
-		const line = await screen.findByText(LINE);
-		expect(line).toHaveTextContent("You're adding acme.io. You'll confirm it after you verify your email.");
-		expect(screen.getByText('acme.io')).toHaveClass('font-mono');
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN, routes: NOTHING_PENDING });
+		await screen.findByRole('heading', { name: 'Create your account' });
+		expect(screen.queryByText(/acme\.io/)).toBeNull();
+		expect(screen.queryByText(LINE)).toBeNull();
+		expect(readSignupDomain()).toBe('acme.io'); // stored silently
 	});
 
-	it('shows no line when nothing is remembered', async () => {
-		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN });
-		await screen.findByRole('heading', { name: 'Create an account' });
-		expect(screen.queryByText(LINE)).toBeNull();
+	it('binds the remembered domain to the address typed on S1', async () => {
+		rememberSignupDomain('acme.io');
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN, routes: { ...NOTHING_PENDING, 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'a@acme.io', expires_in: 600 } } });
+		await userEvent.type(await screen.findByLabelText('Work email'), 'A@Acme.io');
+		await userEvent.type(screen.getByLabelText('Password'), 'long-enough-1');
+		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(JSON.parse(localStorage.getItem(SIGNUP_DOMAIN_KEY)!).email).toBe('a@acme.io'));
 	});
 
 	it('cannot be made to render markup: a script-like value never gets stored, and a tampered entry is dropped on read', async () => {
 		rememberSignupDomain('<img src=x onerror=alert(1)>');
 		expect(localStorage.getItem(SIGNUP_DOMAIN_KEY)).toBeNull();
 		localStorage.setItem(SIGNUP_DOMAIN_KEY, JSON.stringify({ domain: '<img src=x onerror=alert(1)>', expires: Date.now() + 1e6 }));
-		const { container } = renderApp(<AuthPage initialMode="signup" />, { role: null, status: OPEN });
-		await screen.findByRole('heading', { name: 'Create an account' });
-		expect(container.querySelector('img')).toBeNull();
-		expect(screen.queryByText(LINE)).toBeNull();
+		expect(readSignupDomain()).toBeNull();
 		expect(localStorage.getItem(SIGNUP_DOMAIN_KEY)).toBeNull();
 	});
 });
@@ -74,16 +77,21 @@ function boot(route: string, routes: Record<string, unknown>) {
 }
 
 describe('the /signup route', () => {
-	it('anonymous: the create-account screen with the remembered domain', async () => {
+	it('anonymous: the create-account screen; the remembered domain waits for S4', async () => {
 		rememberSignupDomain('acme.io');
-		boot('/signup', { 'GET /api/me': fail(401) });
-		expect(await screen.findByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
-		expect(screen.getByText(LINE)).toHaveTextContent("You're adding acme.io.");
+		boot('/signup', { 'GET /api/me': fail(401), ...NOTHING_PENDING });
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+		expect(screen.queryByText(LINE)).toBeNull();
+	});
+
+	it('anonymous at /signup/about with nothing pending: back to S1; with an attempt waiting: S2', async () => {
+		boot('/signup/about', { 'GET /api/me': fail(401), ...NOTHING_PENDING });
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
 	});
 
 	it('signed in: goes to the app instead (and a domain-less workspace on to setup)', async () => {
 		boot('/signup', { 'GET /api/me': me('owner'), 'GET /api/auth/status': { ...STATUS, ...OPEN, has_domain: false } });
-		await waitFor(() => expect(screen.queryByRole('heading', { name: 'Create an account' })).toBeNull());
+		await waitFor(() => expect(screen.queryByRole('heading', { name: 'Create your account' })).toBeNull());
 		await waitFor(() => expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull());
 	});
 });
@@ -237,7 +245,7 @@ describe('AuthPage on an instance without bot protection', () => {
 		expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
 		expect(screen.queryByText(MESSAGE)).toBeNull();
 		unmount();
-		renderApp(<AuthPage initialMode="signup" />, { role: null, status: { mode: 'saas', signup_open: true, signin_available: true } });
-		expect(await screen.findByRole('button', { name: 'Create account' })).toBeInTheDocument();
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: { mode: 'saas', signup_open: true, signin_available: true }, routes: NOTHING_PENDING });
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
 	});
 });

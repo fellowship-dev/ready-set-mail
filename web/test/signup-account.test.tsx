@@ -88,11 +88,11 @@ describe('the session', () => {
 describe('the sign-up form', () => {
 	it('records the email it was submitted with on the remembered domain', async () => {
 		rememberSignupDomain('acme.io');
-		renderApp(<AuthPage initialMode="signup" />, { role: null, status: { signup_open: true }, routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } } });
-		await userEvent.type(await screen.findByLabelText('Email'), 'New@Example.com');
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: { signup_open: true }, routes: { 'GET /api/auth/signup/pending': { pending: false }, 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } } });
+		await userEvent.type(await screen.findByLabelText('Work email'), 'New@Example.com');
 		await userEvent.type(screen.getByLabelText('Password'), 'long-enough-1');
-		await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
-		await screen.findByText(/Enter the 6-digit code/i);
+		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(stored()?.email).toBe('new@example.com'));
 		expect(stored()).toMatchObject({ domain: 'acme.io', email: 'new@example.com' });
 	});
 });

@@ -31,8 +31,10 @@ describe('reopening setup with a pending hosted domain', () => {
 				status: { mode: 'saas', has_domain: false },
 				routes: { 'GET /api/domains': { domains: [], pending_claims: [claim] }, 'GET /api/cloudflare/connections': conns, 'GET /api/domains/claims/5/preview': fail(502) },
 			});
-			expect(await screen.findByRole('heading', { name: 'Verify you own this domain' })).toBeInTheDocument();
-			expect(screen.getByText('readysetmail-verify=abc')).toBeInTheDocument();
+			// S4: the domain and its result, and the record path (this instance cannot connect Cloudflare, and says nothing about it).
+			expect(await screen.findByRole('heading', { name: "We couldn't tell who hosts DNS for acme.io." })).toBeInTheDocument();
+			expect(await screen.findByText('readysetmail-verify=abc')).toBeInTheDocument();
+			expect(screen.queryByText(/can't be connected/i)).not.toBeInTheDocument();
 			expect(screen.queryByRole('heading', { name: 'Which domain do you send email from?' })).not.toBeInTheDocument();
 		});
 	}
@@ -43,10 +45,10 @@ describe('reopening setup with a pending hosted domain and Cloudflare available'
 		renderApp(<Page />, {
 			route: '/setup',
 			status: { mode: 'saas', has_domain: false },
-			routes: { 'GET /api/domains': { domains: [], pending_claims: [claim] }, 'GET /api/cloudflare/connections': offer(), 'GET /api/domains/claims/5/preview': fail(502) },
+			routes: { 'GET /api/domains': { domains: [], pending_claims: [claim] }, 'GET /api/cloudflare/connections': offer(), 'GET /api/domains/claims/5/preview': fail(502), 'GET /api/domains/dns-host': { provider: { id: 'cloudflare', name: 'Cloudflare' }, nameservers: ['a.ns.cloudflare.com'], status: 'known' } },
 		});
-		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('button', { name: "I'll add DNS records myself" }));
+		expect(await screen.findByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: "I'll add the records myself" }));
 		expect(await screen.findByText('readysetmail-verify=abc')).toBeInTheDocument();
 	});
 });

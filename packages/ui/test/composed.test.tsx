@@ -345,6 +345,18 @@ describe("WorkspaceSwitcher", () => {
 		expect(onCreate).toHaveBeenCalledTimes(1);
 	});
 
+	it("an agency's name heads the menu, each client is a row, and the create entry says \"Add another client\"", async () => {
+		const onCreate = vi.fn();
+		render(<WorkspaceSwitcher current={workspaces[0]!} workspaces={workspaces} onSelect={() => {}} onCreate={onCreate} agencyName="Northside IT" />);
+		await userEvent.click(screen.getByRole("button", { name: /Workspace: Fellowship/ }));
+		const menu = await screen.findByRole("menu");
+		expect(within(menu).getByText("Northside IT")).toBeInTheDocument();
+		expect(within(menu).queryByText("Workspaces")).not.toBeInTheDocument();
+		expect(within(menu).queryByRole("menuitem", { name: "Create workspace" })).not.toBeInTheDocument();
+		await userEvent.click(within(menu).getByRole("menuitem", { name: "Add another client" }));
+		expect(onCreate).toHaveBeenCalledTimes(1);
+	});
+
 	it("choosing the current workspace does nothing; without onCreate there is no create entry; compact keeps the name for assistive tech", async () => {
 		const onSelect = vi.fn();
 		render(<WorkspaceSwitcher compact current={workspaces[0]!} workspaces={workspaces} onSelect={onSelect} />);
