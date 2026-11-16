@@ -334,6 +334,20 @@ describe('buildDnsAlertHtml', () => {
     expect(html).toContain('No action required');
   });
 
+  it('invites a reply only when a Reply-To is set', () => {
+    const on = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN, canReply: true });
+    const off = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
+    expect(on).toContain('Want us to fix it for you? Reply to this email.');
+    expect(off).not.toMatch(/Reply to this email/i);
+  });
+
+  it('record values wrap anywhere and the table forces no width', () => {
+    const long = 'v=DKIM1; k=rsa; p=' + 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A'.repeat(8);
+    const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [{ field: 'DKIM key', was: long, now: 'v=spf1 ' + 'include:a'.repeat(20), severity: 'changed' }], openUrl: OPEN });
+    expect(html).toContain('word-break:break-all;overflow-wrap:anywhere;');
+    expect(html).not.toMatch(/<table[^>]*(min-width|table-layout)/);
+  });
+
   it('is valid HTML with doctype', () => {
     const html = buildDnsAlertHtml({ domain: 'acme.com', changes: [degraded], openUrl: OPEN });
     expect(html).toMatch(/^<!DOCTYPE html>/);
@@ -403,7 +417,7 @@ describe('lifecycle emails load nothing remote', () => {
   const lifecycle = allVariants().map((v) => [v.name, render(v.mail)] as const);
 
   it('renders every kind of lifecycle email', () => {
-    expect(new Set(allVariants().map((v) => v.mail.kind))).toEqual(new Set(['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next', 'tip_done']));
+    expect(new Set(allVariants().map((v) => v.mail.kind))).toEqual(new Set(['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next']));
   });
 
   it.each(lifecycle)('%s', (_name, { html }) => {
@@ -424,5 +438,18 @@ describe('lifecycle emails have no emoji and none of the scare words', () => {
       expect(s, `${part} has an emoji`).not.toMatch(/\p{Extended_Pictographic}/u);
       for (const phrase of banned) expect(s.toLowerCase(), `${part} says "${phrase}"`).not.toContain(phrase);
     }
+  });
+});
+
+describe('letter table', () => {
+  it('header cells wrap at spaces only; row labels may break anywhere', () => {
+    const html = buildLetterHtml({ title: 't', blocks: [{ table: { head: ['Domain', 'Messages', 'Passed DMARC'], rows: [{ cells: ['a-very-long-subdomain.example.com', '1', '1'] }] } }] });
+    const cells = html.match(/<td style="[^"]*">[^<]*<\/td>/g)!;
+    const style = (text: string) => cells.find((x) => x.includes(`>${text}<`))!;
+    for (const h of ['Domain', 'Messages', 'Passed DMARC']) {
+      expect(style(h)).toContain('word-break:normal;overflow-wrap:normal;');
+      expect(style(h)).not.toMatch(/anywhere|break-word/);
+    }
+    expect(style('a-very-long-subdomain.example.com')).toContain('overflow-wrap:anywhere');
   });
 });

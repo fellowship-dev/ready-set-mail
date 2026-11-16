@@ -64,7 +64,7 @@ export async function sendChangeNotification(
   const openUrl = appLink(env, tenant.workspaceId, known ? `/domains/${known.id}` : '/');
   const reply = replyTo(env);
   const body = buildEmailBody(domain, changes, openUrl, !!reply);
-  const html = buildDnsAlertHtml({ domain, changes, openUrl, brand: tenant.brand });
+  const html = buildDnsAlertHtml({ domain, changes, openUrl, canReply: !!reply, brand: tenant.brand });
 
   const mailer = ownerMailer(env);
   const from = await accountSender(env, tenant);

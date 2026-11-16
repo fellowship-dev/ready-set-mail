@@ -70,6 +70,7 @@ describe('sendChangeNotification', () => {
     for (const part of [arg.subject, arg.text, arg.html]) expect(part).not.toMatch(/spoof|exposed|Sign up|sign up|reports\.readysetmail|\p{Extended_Pictographic}/u);
     // No Reply-To configured: no line that tells the reader to reply, and no Reply-To header.
     expect(arg.text).not.toMatch(/Reply to this email/i);
+    expect(arg.html).not.toMatch(/Reply to this email/i);
     expect(arg.replyTo).toBeUndefined();
   });
 
@@ -88,6 +89,7 @@ describe('sendChangeNotification', () => {
     await sendChangeNotification('user@example.com', 'acme.com', [degraded], env);
     const arg = sendEmail.send.mock.calls[0][0];
     expect(arg.text).toContain('Reply to this email');
+    expect(arg.html).toContain('Reply to this email');
     expect(arg.replyTo).toBe('max@example.org');
   });
 

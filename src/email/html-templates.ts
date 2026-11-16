@@ -102,6 +102,10 @@ export type LetterBlock =
   /** Footnote links (text-styled, never a button). */
   | { links: Array<{ label: string; url: string }> };
 
+/** Letter table cells: a row label (a domain name) may break anywhere; a header word never does. */
+export const LETTER_LABEL_WRAP = 'word-break:break-word;overflow-wrap:anywhere;';
+export const LETTER_HEAD_WRAP = 'word-break:normal;overflow-wrap:normal;';
+
 /** A plain, text-first letter in the shared brand layout: paragraphs, headings, lists, small tables, code and one call-to-action button. */
 export function buildLetterHtml(p: { title: string; blocks: LetterBlock[]; brand?: Brand }): string {
   const brand = p.brand ?? defaultBrand();
@@ -111,8 +115,10 @@ export function buildLetterHtml(p: { title: string; blocks: LetterBlock[]; brand
     if ('heading' in b) return `<h2 style="margin:20px 0 8px;font-size:16px;${ink}">${esc(b.heading)}</h2>`;
     if ('list' in b) return `<ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;${ink}">${b.list.map((i) => `<li style="margin-bottom:6px;">${esc(i)}</li>`).join('')}</ul>`;
     if ('table' in b) {
-      const cell = (t: string, i: number, extra = '') => `<td style="padding:6px 2px;${i > 0 ? 'text-align:right;' : 'word-break:break-word;overflow-wrap:anywhere;'}${extra}">${esc(t)}</td>`;
-      const head = `<tr style="background:${c['surface-0']};font-weight:600;">${b.table.head.map((h, i) => cell(h, i)).join('')}</tr>`;
+      const cell = (t: string, i: number, extra = '') => `<td style="padding:6px 2px;${i > 0 ? 'text-align:right;' : LETTER_LABEL_WRAP}${extra}">${esc(t)}</td>`;
+      // Header cells wrap at spaces only, so no header word breaks mid-word; the first column of a row (a domain name) may break anywhere.
+      const headCell = (t: string, i: number) => `<td style="padding:6px 2px;${i > 0 ? 'text-align:right;' : ''}${LETTER_HEAD_WRAP}">${esc(t)}</td>`;
+      const head = `<tr style="background:${c['surface-0']};font-weight:600;">${b.table.head.map((h, i) => headCell(h, i)).join('')}</tr>`;
       const rows = b.table.rows.map((r) => `<tr style="border-bottom:1px solid ${c.line};">${r.cells.map((t, i) => cell(t, i, i === 0 && r.indent ? 'padding-left:16px;' : '')).join('')}</tr>`).join('');
       return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;${ink}">${head}${rows}</table>`;
     }
@@ -398,8 +404,13 @@ export interface DnsAlertHtmlParams {
   changes: DomainChange[];
   /** The dashboard page to open (src/mail/compliance.ts `appLink`); none: no link. */
   openUrl: string | null;
+  /** A Reply-To is set (src/funnel/config.ts `replyTo`): only then does the alert invite a reply. */
+  canReply?: boolean;
   brand?: Brand;
 }
+
+/** Record values (SPF, DKIM keys) have no spaces: they wrap anywhere, so the table never forces the message wider than a phone. */
+export const VALUE_WRAP = 'word-break:break-all;overflow-wrap:anywhere;';
 
 export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
   const hasDegraded = p.changes.some(c => c.severity === 'degraded');
@@ -407,14 +418,14 @@ export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
 
   let body = `<h2 style="margin:0 0 12px;font-size:18px;">Email security configuration changed</h2>
 <p style="margin:0 0 16px;">We detected changes to the email security configuration of <strong>${esc(p.domain)}</strong>.</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;word-break:break-word;overflow-wrap:anywhere;">
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;">
 <tr style="background:${c['surface-0']};font-weight:600;"><td style="padding:6px 4px;">Field</td><td style="padding:6px 4px;">Was</td><td style="padding:6px 4px;">Now</td><td style="padding:6px 4px;">Status</td></tr>`;
 
   for (const ch of p.changes) {
     body += `<tr style="border-top:1px solid ${c.line};">
-<td style="padding:6px 4px;"><strong>${esc(ch.field)}</strong></td>
-<td style="padding:6px 4px;color:${c['ink-2']};">${esc(ch.was || '(not set)')}</td>
-<td style="padding:6px 4px;">${esc(ch.now || '(removed)')}</td>
+<td style="padding:6px 4px;overflow-wrap:break-word;"><strong>${esc(ch.field)}</strong></td>
+<td style="padding:6px 4px;color:${c['ink-2']};${VALUE_WRAP}">${esc(ch.was || '(not set)')}</td>
+<td style="padding:6px 4px;${VALUE_WRAP}">${esc(ch.now || '(removed)')}</td>
 <td style="padding:6px 4px;">${severityBadge(ch.severity)}</td>
 </tr>`;
   }
@@ -424,7 +435,8 @@ export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
   if (hasDegraded) {
     body += `<p style="background:${c['danger-subtle']};border:1px solid ${c.danger};border-radius:4px;padding:12px;margin:0 0 12px;">
 Some of these changes weaken the domain&rsquo;s email security settings.${p.openUrl ? `
-<a href="${esc(p.openUrl)}" style="color:${esc(accent)};">Open ${esc(p.domain)} in Ready Set Mail &rarr;</a>` : ''}
+<a href="${esc(p.openUrl)}" style="color:${esc(accent)};">Open ${esc(p.domain)} in Ready Set Mail &rarr;</a>` : ''}${p.canReply ? `
+<br>Want us to fix it for you? Reply to this email.` : ''}
 </p>`;
   } else {
     body += `<p style="color:${c['ink-2']};font-size:13px;">No action required — these look like improvements or routine updates.</p>`;
