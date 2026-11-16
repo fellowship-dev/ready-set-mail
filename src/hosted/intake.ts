@@ -26,6 +26,7 @@ import { reportStored } from '../product-analytics/steps';
 import { carrierFromHeaders, guardEnvelope } from '../dmarc/reporter-auth';
 import { readAuthHeaders, trustedResults, type AuthHeaders } from '../email/sender-proof';
 import { attributeReport, chargeUnattributed, peekReportDomain, takePeek } from './fixed-address';
+import { attributeTlsReport, peekTlsReportDomain } from './tls-intake';
 import { hostedConfig, hostedEnabled, intakeLimits } from './config';
 import { hashToken, isTokenShaped, parseRecipient } from './tokens';
 import { handleCanaryEmail } from './canary';
@@ -116,9 +117,9 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   const limits = intakeLimits(env);
   if (message.rawSize > limits.maxRawBytes) return refuse('raw_too_large', rawTooLarge(limits.maxRawBytes));
 
-  // The FIXED address (rua@, no token) has no workspace until the report names its domain. Its order of work:
+  // The FIXED addresses (rua@ and tls-rpt@, no token) has no workspace until the report names its domain. Its order of work:
   //   (1) the carrier's authentication result   (2) one peek against the instance-wide per-minute ceiling (deferred past it)
-  //   (3) a capped peek at the report's policy domain (at most the first 64 KiB inflated)   (4) attribution to the verified, connected
+  //   (3) a capped peek at the report's policy domain (at most the first 64 KiB inflated; XML for rua@, JSON for tls-rpt@ in src/hosted/tls-intake.ts)   (4) attribution to the verified, connected
   //   owner; when there is none the mail is charged to the UNATTRIBUTED budget and refused (no workspace's or instance budget is
   //   touched, and mail for a connected domain never pays for mail for unconnected ones)   then, like a token address: (5) the
   //   attributed caps (chargeIntakeCaps) before the full, capped decompression, (6) the tier decision, (7) the atomic store; the full
@@ -127,7 +128,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   let early: { headers: AuthHeaders; carrier: Carrier } | null = null;
   let peeked: string | null = null;
   let target: IntakeTarget | null;
-  if (kind === 'rua' && !rcpt.tag) {
+  if (!rcpt.tag) {
     const [forHeaders, afterHeaders] = raw.tee();
     raw = afterHeaders;
     const headers = await readAuthHeaders(forHeaders);
@@ -141,10 +142,10 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     }
     const [forPeek, afterPeek] = raw.tee();
     raw = afterPeek;
-    const peek = await peekReportDomain(forPeek);
+    const peek = await (kind === 'rua' ? peekReportDomain(forPeek) : peekTlsReportDomain(forPeek));
     if (!peek.ok) return refuse(peek.reason);
     peeked = peek.domain;
-    target = await attributeReport(env, cfg.intakeDomain, peeked);
+    target = await (kind === 'rua' ? attributeReport(env, cfg.intakeDomain, peeked) : attributeTlsReport(env, peeked));
     if (!target) {
       const over = await chargeUnattributed(env, early.carrier, message.from, today());
       if (over) {

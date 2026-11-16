@@ -38,6 +38,7 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  { concept: 'MTA-STS policy host (Cloudflare for SaaS custom hostnames and Worker routes in the operator\'s zone)', signature: /custom_hostnames/, owners: ['src/mta-sts/policy-host.ts'] },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];

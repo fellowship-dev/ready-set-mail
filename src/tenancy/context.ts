@@ -163,6 +163,20 @@ export class TenantContext {
     return null;
   }
 
+  /**
+   * Can the product write this domain's DNS: does a connection (or the self-host token) reach the domain's own zone? The one test behind
+   * `cf_managed` ("Apply via Cloudflare") and MTA-STS's `via`. A broken connection, a zone nobody allowed or no zone at all is "no".
+   */
+  async reachesZone(domain: string): Promise<boolean> {
+    if (!this.hasCloudflare()) return false;
+    try {
+      await (await this.cfFor(domain)).zoneFor(domain);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Like cf(), but throws CfNotConfiguredError when there is no token. */
   requireCf(): CfClient {
     const cf = this.cf();

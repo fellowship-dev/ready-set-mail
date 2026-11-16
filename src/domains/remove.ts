@@ -1,6 +1,7 @@
-// The resource cleanup of taking a domain out of service: its hosted records (and their quota in the shared zone) and its
-// report-authorisation DNS record. Shared by DELETE /api/domains/:id and by the eviction of an unproven holder.
+// The resource cleanup of taking a domain out of service: its hosted records (and their quota in the shared zone), its MTA-STS records and
+// policy host, and its report-authorisation DNS record. Shared by DELETE /api/domains/:id and by the eviction of an unproven holder.
 import { disableHosted } from '../hosted/service';
+import { retireMtaSts } from '../mta-sts/service';
 import { hostedEnabled } from '../hosted/config';
 import { deprovisionDomain } from '../dns/provision';
 import { logAudit } from '../audit/log';
@@ -15,6 +16,19 @@ export async function removeHostedRecords(tenant: TenantContext, domain: DomainR
   if (!(hostedEnabled(tenant.env) && (await tenant.scope.hosted.get(domain.id)))) return false;
   await disableHosted(tenant, domain, {}, actor && { id: actor.id ?? undefined, email: actor.email ?? undefined }, ctx);
   return true;
+}
+
+/**
+ * Best-effort removal of what MTA-STS made for a domain: the customer's records by id (a changed one is kept and returned), the operator's custom
+ * hostname and Worker route by stored id, and the config. Never throws: the daily job removes operator-side leftovers (src/mta-sts/refresh.ts).
+ */
+export async function removeMtaSts(tenant: TenantContext, domain: DomainRow, actor?: Actor, ctx?: ExecutionContext): Promise<KeptRecord[]> {
+  try {
+    return (await retireMtaSts({ tenant, domain, actor: actor ? { id: actor.id, email: actor.email } : undefined, ec: ctx }))?.kept ?? [];
+  } catch (e) {
+    console.warn(`removeMtaSts failed for domain ${domain.id}:`, e instanceof Error ? e.message : e);
+    return [];
+  }
 }
 
 /**

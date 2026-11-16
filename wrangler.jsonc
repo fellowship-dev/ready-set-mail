@@ -88,6 +88,7 @@
 
 	// Hosted service only (MODE=saas + SAAS_ENABLED=1, see docs/hosted.md): INTAKE_DOMAIN, CANARY_DOMAIN,
 	// HOSTED_RECORDS_ZONE, HOSTED_RECORDS_LABEL, and the secret HOSTED_RECORDS_TOKEN. Self-hosters ignore these.
+	// Hosted MTA-STS (docs/hosted.md, ADR 0015): POLICY_HOST_ZONE, POLICY_HOST_TARGET, MAX_POLICY_HOSTS (default 100), and the secret POLICY_HOST_TOKEN.
 	// Hosted plan caps (positive integers, anything else keeps the default; never applied when self-hosting):
 	//   MAX_WORKSPACES_PER_USER    workspaces one person may own (default 5; workspaces they were only invited to do not count)
 	//   MAX_DOMAINS_PER_WORKSPACE  domains one workspace may hold (default 10)

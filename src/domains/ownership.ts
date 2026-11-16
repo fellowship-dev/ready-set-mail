@@ -17,7 +17,7 @@ import { sendEvictionNotice } from '../auth/mail';
 import { cleanName, PLACEHOLDER_NAME_KEY } from '../auth/names';
 import { loadTenant } from '../tenancy/load';
 import { resolverFor } from '../dns/resolver';
-import { removeAuthRecord, removeHostedRecords } from './remove';
+import { removeAuthRecord, removeHostedRecords, removeMtaSts } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
@@ -282,6 +282,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
       cleanup = 'failed';
       console.warn(`[eviction] hosted cleanup failed for domain ${row.id}:`, e instanceof Error ? e.message : e);
     }
+    await removeMtaSts(evicted, row);
     await removeAuthRecord(evicted, row);
     if (row.id !== holderDomainId) await lookups.detach(row.id, Math.floor(Date.now() / 1000)); // the holder's own row went with the insert
     logAudit({ db: tenant.db, workspaceId: holderWorkspaceId }, {

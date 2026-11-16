@@ -18,7 +18,7 @@ import { snapshotDns } from './email/dns-snapshot';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
-import { discoverMxHosts, generatePolicyId, updateMtaStsTxtRecord } from './email/mta-sts';
+import { refreshMtaStsForTenant } from './mta-sts/refresh';
 
 const SPF_REFRESH_CONCURRENCY = 5;
 
@@ -160,46 +160,10 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     }
   }
 
-  // MTA-STS MX refresh — update policy_id in DNS if MX hosts changed
-  if (tenant.hasCloudflare()) {
-    const mtaConfigs = await tenant.scope.mtaSts.allEnabled();
-    for (const cfg of mtaConfigs) {
-      const domain = await tenant.scope.domains.getById(cfg.domain_id);
-      if (!domain) continue;
-      // Hosted MTA-STS records live in the hosted zone: src/hosted/cron.ts refreshes those.
-      if (await tenant.scope.hosted.get(cfg.domain_id)) continue;
-      try {
-        const liveMx = await discoverMxHosts(domain.domain);
-        if (liveMx.length === 0) {
-          // No MX answer: never publish an MTA-STS policy that lists no mx hosts.
-          console.warn(`[mta-sts] ${domain.domain}: no MX records found, leaving policy unchanged`);
-          continue;
-        }
-        const storedMx = cfg.mx_hosts ? cfg.mx_hosts.split(',').filter(Boolean) : [];
-        // Compare as sets: DNS answer order is not stable
-        const sortedLive = [...liveMx].sort();
-        const sortedStored = [...storedMx].sort();
-        const changed = sortedLive.length !== sortedStored.length || sortedLive.some((h, i) => h !== sortedStored[i]);
-        if (changed && cfg.mta_sts_record_id) {
-          const newPolicyId = generatePolicyId();
-          await updateMtaStsTxtRecord(tenant, domain.domain, cfg.mta_sts_record_id, newPolicyId);
-          await tenant.scope.mtaSts.updateMxHosts(cfg.domain_id, liveMx.join(','), newPolicyId);
-          console.log(`[mta-sts] ${domain.domain}: MX changed, policy_id updated`);
-          logAudit(tenant, {
-            actor_type: 'system',
-            action: 'cron.mta_sts_mx',
-            resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
-            before_value: { mx_hosts: storedMx, policy_id: cfg.policy_id },
-            after_value: { mx_hosts: liveMx, policy_id: newPolicyId },
-            meta: { cron: '0 8 * * *' },
-          }, ctx);
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tenant.scope.mtaSts.updateError(cfg.domain_id, msg);
-        console.error(`[mta-sts] ${domain.domain}: MX refresh error — ${msg}`);
-      }
-    }
+  // MTA-STS: look at every enabled row, oldest check first (src/mta-sts/refresh.ts). The hosted service does this once for the whole database
+  // in its own 11:00 job (src/hosted/cron.ts), so it never runs here twice.
+  if (tenant.mode !== 'saas' && tenant.hasCloudflare()) {
+    try { await refreshMtaStsForTenant(tenant, ctx); } catch (e) { console.error('[mta-sts] refresh failed:', e instanceof Error ? e.message : e); }
   }
 
   const subscriptions = await tenant.scope.monitor.active(200);

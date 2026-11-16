@@ -1,0 +1,34 @@
+// Serving the policy (RFC 8461 §3.2, §3.3): `https://mta-sts.<domain>/.well-known/mta-sts.txt`, from this Worker.
+//
+// A policy host answers ONE request: GET (or HEAD) of that path, for a domain that is live, proven (hosted) and has MTA-STS on. Every other request on an
+// `mta-sts.*` hostname is a 404: the dashboard, the API and the assets are not served under a customer's name. The answer is never cached: senders must
+// see a changed policy as soon as the `_mta-sts` id changes (RFC 8461 §8.1), and they may not use HTTP caching themselves (§3.3).
+
+import type { MtaStsRow } from '@ready-set-mail/db';
+import { buildPolicyFile } from '@ready-set-mail/dns-checks';
+import type { Env } from '../index';
+import { scope } from '../db/scope';
+import { resolvePolicyHost } from '../hosted/policy-host';
+import { splitHosts } from './evidence';
+
+const POLICY_PATH = '/.well-known/mta-sts.txt';
+const notFound = (text = 'Not found') => new Response(text, { status: 404, headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
+
+/** The policy file of a stored config: its mode, its MX hosts, and the max_age on the row (one place builds it). */
+export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts' | 'max_age'>): string {
+  return buildPolicyFile(config.mode, splitHosts(config.mx_hosts), config.max_age);
+}
+
+/** Is this an MTA-STS policy hostname (`mta-sts.<something>`)? */
+export const isPolicyHostname = (hostname: string): boolean => hostname.toLowerCase().startsWith('mta-sts.');
+
+/** The response for any request on a policy hostname. `env.DB` must be present. */
+export async function servePolicyHost(request: Request, env: Env & { DB: D1Database }): Promise<Response> {
+  const url = new URL(request.url);
+  const head = request.method === 'HEAD';
+  if (url.pathname !== POLICY_PATH || (request.method !== 'GET' && !head)) return notFound();
+  const host = await resolvePolicyHost(env, url.hostname);
+  const config = host && await scope(env.DB, host.workspaceId).mtaSts.getEnabledByDomain(host.domain);
+  if (!config) return notFound('MTA-STS not configured for this domain');
+  return new Response(head ? null : policyText(config), { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
+}

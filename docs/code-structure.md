@@ -35,7 +35,7 @@ Three handlers are exported:
 Routing priority (evaluated top to bottom):
 
 1. If `env.DB` is missing → return setup page (503 HTML with wrangler setup instructions)
-2. `mta-sts.*` hostname + `/.well-known/mta-sts.txt` path → serve MTA-STS policy file (RFC 8461)
+2. `mta-sts.*` hostname → the MTA-STS policy file at `/.well-known/mta-sts.txt` and a 404 for everything else (RFC 8461; `src/mta-sts/serve.ts`)
 3. MCP/OAuth/discovery and agent-connection routes → installation-owned OAuth adapter with current D1 principal/grant checks
 4. `/health` or `/api/*` → `handleApi()` (dashboard API, DNS provisioning)
 5. Anything else → `env.ASSETS.fetch(request)` (dashboard SPA)
@@ -54,7 +54,7 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 | `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` |
 | `0 10 * * *` | 10am UTC daily | SPF flatten refresh — re-flattens all enabled domains via CF DNS |
 | `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, then retention sweeps (own invocation) |
-| `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS MX refresh |
+| `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS refresh (self-host; the hosted service runs it in its 11:00 job) |
 
 All handlers run `assertSchemaReady(env.DB)` (from `@ready-set-mail/db`) before business logic: the Worker no longer changes the schema, it only checks that `npm run migrate` has been run. Schema, migrations and queries live in `packages/db`.
 
@@ -117,7 +117,8 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 |---------------|------|
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
 | `src/email/spf-flattener.ts` | `collectIps` (throws on incomplete resolution) + Cloudflare DNS PATCH/restore |
-| `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + Cloudflare provisioning |
+| `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + the customer's three records (`createPolicyHostCname`, `createTlsRptRecord`, `createPolicyIdRecord`, `deprovisionMtaSts`) |
+| `src/mta-sts/` | MTA-STS (ADR 0015): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |
 
 Public Suffix List data comes from the `tldts` dependency; update it with `npm update tldts`.

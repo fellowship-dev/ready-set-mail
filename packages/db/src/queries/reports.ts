@@ -133,6 +133,21 @@ export interface UncountedSummary {
 	by_reporter: Array<{ reporter: string; reports: number; unverified?: boolean; claims?: string | null }>;
 }
 
+/** One stored TLS-RPT report, as the MTA-STS page lists it. sts_* are null on reports stored before they were kept (unknown). */
+export interface TlsReportRow {
+  id: number;
+  org_name: string;
+  date_begin: number;
+  date_end: number;
+  total_success: number;
+  total_failure: number;
+  sts_success: number | null;
+  sts_failure: number | null;
+  /** JSON array of the distinct failure result-types of the sts policies, or null. */
+  sts_failure_types: string | null;
+  created_at: number;
+}
+
 type NewReport = Omit<typeof aggregateReports.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
 type NewRecord = Omit<typeof reportRecords.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
 type NewTlsReport = Omit<typeof tlsReports.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
@@ -591,6 +606,9 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 						total_success: sql`excluded.total_success`,
 						total_failure: sql`excluded.total_failure`,
 						failure_details: sql`excluded.failure_details`,
+						sts_success: sql`excluded.sts_success`,
+						sts_failure: sql`excluded.sts_failure`,
+						sts_failure_types: sql`excluded.sts_failure_types`,
 						raw_json: sql`excluded.raw_json`,
 					},
 				})
@@ -616,6 +634,24 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
       });
       return { dmarc: source(dmarc, dmarcSummary, dmarcDates), tls: source(tls, tlsSummary, tlsDates) };
     },
+
+		/** The newest TLS reports of a domain (periods starting at or after `since`), for the MTA-STS page. No raw payloads. */
+		tlsRecent(domainId: number, since: number, limit: number) {
+			return db.all<TlsReportRow>(sql`
+				SELECT id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, created_at
+				FROM tls_reports
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since}
+				ORDER BY date_begin DESC, id DESC LIMIT ${limit}`);
+		},
+
+		/** What the enforce decision reads: the MTA-STS sessions of every report whose period ended at or after `since`. */
+		tlsEvidence(domainId: number, since: number) {
+			return db.all<Pick<TlsReportRow, 'date_begin' | 'date_end' | 'sts_success' | 'sts_failure' | 'sts_failure_types'>>(sql`
+				SELECT date_begin, date_end, sts_success, sts_failure, sts_failure_types
+				FROM tls_reports
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_end >= ${since}
+				ORDER BY date_end DESC LIMIT 500`);
+		},
 
 		async tlsSummary(domainId: number, since: number, until?: number) {
 			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number }>(sql`

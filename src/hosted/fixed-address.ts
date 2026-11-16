@@ -16,6 +16,9 @@ import type { Carrier } from '../dmarc/reporter-auth';
 
 export const fixedReportAddress = (intakeDomain: string): string => `rua@${intakeDomain}`;
 
+/** The fixed hosted address for TLS reports (RFC 8460): `tls-rpt@<INTAKE_DOMAIN>`, the same for every customer; the report names its domain. */
+export const tlsReportAddress = (intakeDomain: string): string => `tls-rpt@${intakeDomain}`;
+
 /** True when `address` is the fixed hosted address of this deployment (any letter case, surrounding space ignored). */
 export const isFixedReportAddress = (address: string | null | undefined, intakeDomain: string): boolean =>
   (address ?? '').trim().toLowerCase() === fixedReportAddress(intakeDomain);

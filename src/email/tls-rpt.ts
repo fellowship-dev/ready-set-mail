@@ -54,6 +54,23 @@ interface TlsRptReport {
   policies: TlsRptPolicy[];
 }
 
+/**
+ * The sessions of the MTA-STS policies of a report (policy-type "sts") and the distinct result-types of their failures. A report also counts DANE
+ * (tlsa) sessions and sessions with no policy; only these say whether senders could use TLS under OUR policy (src/mta-sts/evidence.ts).
+ */
+export function stsStats(policies: readonly TlsRptPolicy[]): { sts_success: number; sts_failure: number; sts_failure_types: string } {
+  let success = 0;
+  let failure = 0;
+  const types = new Set<string>();
+  for (const p of policies) {
+    if (p.policy?.['policy-type'] !== 'sts') continue;
+    success += p.summary?.['total-successful-session-count'] ?? 0;
+    failure += p.summary?.['total-failure-session-count'] ?? 0;
+    for (const d of p['failure-details'] ?? []) if (typeof d?.['result-type'] === 'string') types.add(d['result-type']);
+  }
+  return { sts_success: success, sts_failure: failure, sts_failure_types: JSON.stringify([...types].sort()) };
+}
+
 function parseIsoDate(s: string): number {
   const d = new Date(s);
   return isNaN(d.getTime()) ? Math.floor(Date.now() / 1000) : Math.floor(d.getTime() / 1000);
@@ -100,6 +117,7 @@ async function storeHostedTlsRpt(
       domain_id: domain.id, org_name: orgName, date_begin: dateBegin, date_end: dateEnd,
       total_success: success, total_failure: failure,
       failure_details: details.length ? JSON.stringify(details) : null,
+      ...stsStats(report.policies),
       raw_json: rawJson(tenant, raw),
     });
   } catch (e) {
@@ -194,6 +212,7 @@ export async function handleTlsRptReport(
         total_success: totalSuccess,
         total_failure: totalFailure,
         failure_details: failureDetails,
+        ...stsStats([policy]),
         raw_json: stored === 0 ? rawJson(tenant, raw) : null, // store raw on first policy only
       });
       stored++;

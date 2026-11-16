@@ -56,6 +56,11 @@ export function spfFlattenQueries(db: Db, workspaceId: string) {
 	};
 }
 
+export type MtaStsRow = typeof mtaStsConfig.$inferSelect;
+/** What a caller may change on a config row (the key and the workspace never). */
+export type MtaStsPatch = Partial<Omit<MtaStsRow, 'domain_id' | 'workspace_id' | 'created_at' | 'updated_at'>>;
+export type NewMtaStsConfig = Pick<MtaStsRow, 'domain_id' | 'mode' | 'mx_hosts' | 'policy_id'> & MtaStsPatch;
+
 export function mtaStsQueries(db: Db, workspaceId: string) {
 	const mine = eq(mtaStsConfig.workspace_id, workspaceId);
 	const forDomain = (id: number) => and(mine, eq(mtaStsConfig.domain_id, id));
@@ -66,7 +71,7 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 			return db.select().from(mtaStsConfig).where(forDomain(domainId)).get().then((r) => r ?? null);
 		},
 
-		/** Enabled config for a hostname — used to serve /.well-known/mta-sts.txt. */
+		/** Enabled config for a hostname: used to serve /.well-known/mta-sts.txt. */
 		getEnabledByDomain(domain: string) {
 			return db
 				.select({ m: mtaStsConfig })
@@ -81,16 +86,32 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 			return db.select().from(mtaStsConfig).where(and(mine, eq(mtaStsConfig.enabled, 1))).all();
 		},
 
-		insert(c: { domain_id: number; mode: MtaStsMode; mx_hosts: string; policy_id: string; mta_sts_record_id: string | null; tls_rpt_record_id: string | null; cname_record_id: string | null }) {
+		/** This workspace's enabled configs, never-checked first, then the longest since a check. */
+		dueForRefresh(limit: number) {
+			return db.select().from(mtaStsConfig).where(and(mine, eq(mtaStsConfig.enabled, 1)))
+				.orderBy(sql`${mtaStsConfig.last_checked_at} IS NOT NULL`, mtaStsConfig.last_checked_at).limit(limit).all();
+		},
+
+		insert(c: NewMtaStsConfig) {
 			return db.insert(mtaStsConfig).values({ ...c, workspace_id: workspaceId }).run();
 		},
 
-		updateMode(domainId: number, mode: MtaStsMode, policy_id: string) {
-			return db.update(mtaStsConfig).set({ mode, policy_id, last_error: null, updated_at: touch }).where(forDomain(domainId)).run();
+		/** Change columns of one row. Returns once written. */
+		update(domainId: number, set: MtaStsPatch) {
+			return db.update(mtaStsConfig).set({ ...set, updated_at: touch }).where(forDomain(domainId)).run();
 		},
 
-		updateMxHosts(domainId: number, mx_hosts: string, policy_id: string) {
-			return db.update(mtaStsConfig).set({ mx_hosts, policy_id, updated_at: touch }).where(forDomain(domainId)).run();
+		/** A new mode: its id, when the mode changed, and (leaving enforce) when it left. The policy is as published as the caller says. */
+		updateMode(domainId: number, mode: MtaStsMode, policy_id: string, nowSeconds: number = Math.floor(Date.now() / 1000), opts: { leftEnforce?: boolean; published?: boolean } = {}) {
+			return db.update(mtaStsConfig).set({
+				mode, policy_id, last_error: null, updated_at: touch, mode_changed_at: nowSeconds,
+				...(opts.leftEnforce ? { left_enforce_at: nowSeconds } : {}),
+				...(opts.published ? { policy_published_at: nowSeconds } : {}),
+			}).where(forDomain(domainId)).run();
+		},
+
+		updateMxHosts(domainId: number, mx_hosts: string, policy_id: string, nowSeconds?: number) {
+			return db.update(mtaStsConfig).set({ mx_hosts, policy_id, updated_at: touch, ...(nowSeconds === undefined ? {} : { policy_published_at: nowSeconds }) }).where(forDomain(domainId)).run();
 		},
 
 		updateError(domainId: number, error: string) {

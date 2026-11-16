@@ -85,6 +85,16 @@ Where a domain's DMARC record sends reports (`rua=mailto:…`).
 4. **Agent and public report:** `dmarc@<domain>`, the domain's own mailbox, never ours. Proposed by `enforcedDmarc` and the fix values in `packages/report/src/fixes.ts`, and by the report catalog and renderer (`packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/render-md.ts`).
 _Avoid_: RUA email, inbox
 
+**TLS report**:
+A TLS-RPT (RFC 8460) JSON report a sending mail server sends about one domain: how many sessions used TLS, how many failed and why, per policy type. It is the evidence that MTA-STS works, because the Worker cannot open a connection to a customer's mail server (no outbound port 25). On the hosted service the address is `tls-rpt@<INTAKE_DOMAIN>`, built by `tlsReportAddress` in `src/hosted/fixed-address.ts`, routed by `policies[].policy.policy-domain` to the proven owner whose MTA-STS is on (`peekTlsPolicyDomain` and `attributeTlsReport` in `src/hosted/tls-intake.ts`); self-host: `tls-rpt@<reports domain>`. Each stored report keeps the sessions of MTA-STS policies apart (`stsStats` in `src/email/tls-rpt.ts`).
+_Avoid_: DMARC report (those are the aggregate reports above)
+Home: `handleTlsRptReport` in `src/email/tls-rpt.ts`; the numbers `reports.tlsSummary` and `reports.tlsEvidence` in `packages/db`.
+
+**Policy host**:
+The hostname `mta-sts.<domain>` that serves a domain's MTA-STS policy over HTTPS from this Worker, and how it gets a certificate a sender trusts (RFC 8461 section 3.3): `worker_route` (a proxied CNAME in the same Cloudflare account, plus a Worker route on the operator's own zone) or `saas_hostname` (a DNS-only CNAME, a Cloudflare for SaaS custom hostname and a Worker route in the operator's zone). It answers one request, the policy file; everything else on it is a 404. The word "policy server" in older code comments means this.
+_Avoid_: MTA-STS server, policy endpoint
+Home: `strategyFor` and `OperatorZone` in `src/mta-sts/policy-host.ts`; serving `src/mta-sts/serve.ts`; which workspace owns a name `resolvePolicyHost` in `src/hosted/policy-host.ts`. Decision: ADR 0015.
+
 **Intake**:
 Receiving report mail: authenticating the sender, attributing the report to a workspace, applying caps, storing.
 Home: hosted `src/hosted/intake.ts`; self-host and shared parts `src/email/handler.ts`, `src/dmarc/reporter-auth.ts`.

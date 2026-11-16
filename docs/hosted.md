@@ -12,12 +12,12 @@ Contents: [Overview](#overview) · [Operator setup](#operator-setup) · [Custome
 | Piece | Address / name | Lives in |
 |-------|----------------|----------|
 | DMARC aggregate reports | `rua+<token>@rua.readysetmail.com` | Email Routing → this Worker |
-| TLS-RPT reports | `tls-rpt+<token>@rua.readysetmail.com` | Email Routing → this Worker |
+| TLS-RPT reports | `tls-rpt+<token>@rua.readysetmail.com` (hosted records), or `tls-rpt@rua.readysetmail.com` for MTA-STS (routed by the domain inside the report) | Email Routing → this Worker |
 | Free check ("canary") | `check+<token>@canary.readysetmail.com` | Email Routing → this Worker |
 | Hosted DMARC | `<id>._dmarc.h.readysetmail.com` TXT | the records zone |
 | Hosted SPF (flattened) | `<id>._spf.h.readysetmail.com` TXT | the records zone |
 | Hosted TLS-RPT | `<id>._tlsrpt.h.readysetmail.com` TXT | the records zone |
-| Hosted MTA-STS | `mta-sts.<id>.h.readysetmail.com` TXT (`v=STSv1; id=…`) + proxied AAAA (policy host) | the records zone |
+| MTA-STS policy host | `https://mta-sts.<customer domain>/.well-known/mta-sts.txt`, served by this Worker through a Cloudflare for SaaS custom hostname and a Worker route in `POLICY_HOST_ZONE` ([ADR 0015](adr/0015-mta-sts-customer-zone-records-and-saas-policy-host.md)) | the operator's zone |
 
 `<id>` is 16 random base32 characters, stored per domain and **never derived from the customer's domain**.
 The token is 160 random bits (32 base32 characters), per domain, stored only as a SHA-256, rotatable.
@@ -68,6 +68,8 @@ In `wrangler.jsonc` `vars` (or the dashboard):
 | `INTAKE_KNOWN_REPORTERS_DISABLE` | unset | built-in registry ids to switch off (`yahoo,fastmail`) |
 | `RETENTION_UNCOUNTED_REPORTS_DAYS` | `30` | days a report of tier `unknown` or `unauthenticated` is kept, swept by the one daily `0 4 * * *` cron. Not applied when `REPORT_COUNTING=all` (there those reports are the numbers). The earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` (when it covered only unauthenticated reports) is still honoured when the new one is unset. A reporter an owner promotes later becomes tier `counted` and leaves this sweep (the sweep and the budgets read `reporter_tier`, never the identity) |
 | `RETENTION_INTAKE_COUNTERS_DAYS`, `RETENTION_INTAKE_FAILURES_DAYS` | `8`, `90` | how long the daily counters and the "could not be processed" markers are kept |
+| `POLICY_HOST_ZONE`, `POLICY_HOST_TARGET`, `POLICY_HOST_TOKEN` (secret) | unset | MTA-STS: the operator's Cloudflare for SaaS zone (`readysetmail.com`), the hostname customers point `mta-sts.<domain>` at (`mta-sts-host.readysetmail.com`: a proxied, originless record such as `AAAA 100::` inside that zone, set as the zone's fallback origin), and a token with "SSL and Certificates Write" and "Workers Routes Write" on that one zone only. All three, `INTAKE_DOMAIN` and `MODE`/`SAAS_ENABLED` turn MTA-STS on (`GET /api/hosted/config` says `mta_sts`); without them every request says so. `POLICY_HOST_TOKEN` is separate from `HOSTED_RECORDS_TOKEN` and every tenant credential, and can only create and delete custom hostnames and Worker routes of that zone |
+| `MAX_POLICY_HOSTS` | `100` | instance-wide ceiling of policy hosts (custom hostnames); Cloudflare's plans include 100 and charge $0.10 for each more. Over it a workspace is told so (403, `reason: ceiling`). Raising it is the operator's cost decision |
 | `HOSTED_MAX_DOMAINS_PER_WORKSPACE` | `10` | optional: domains per workspace that may use hosted records (enabling more answers 429) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_LOOKUP_KEY` | unset | optional: in-app purchase of "Fix one domain" (restricted key, webhook signing secret, price lookup key `rsm_fix_one_domain`). Billing is off, with no offer and no routes, unless both secrets are set; see [billing.md](billing.md) |
 
@@ -110,7 +112,7 @@ re-reads a record before changing or deleting it to be sure it sits at the expec
 
 ### 4. The records zone
 
-* `readysetmail.com` on **Cloudflare Pro** (3,500 records; see [limits](#limits-and-quotas)). A free zone created since September 2024 holds only **200** records, which is about 40 domains with MTA-STS (5 records each) or 66 without (3 each) before the zone's existing records are counted, so it is not an option. (Free zones created earlier may still have the old 1,000-record limit; do not rely on it.)
+* `readysetmail.com` on **Cloudflare Pro** (3,500 records; see [limits](#limits-and-quotas)). A free zone created since September 2024 holds only **200** records, which is about 66 domains (3 records each) before the zone's existing records are counted, so it is not an option. (Free zones created earlier may still have the old 1,000-record limit; do not rely on it.)
 * One-time authorisation record so receivers will send reports for *any* customer domain to `rua.readysetmail.com` (RFC 7489 §7.1, external destination verification).
   A wildcard covers every customer:
 
@@ -119,9 +121,7 @@ re-reads a record before changing or deleting it to be sure it sits at the expec
   ```
 
   Put it in the zone for `readysetmail.com` (outside `*.h.`, so the writer never touches it).
-* MTA-STS policy hosts: the Worker serves `https://mta-sts.<id>.h.readysetmail.com/.well-known/mta-sts.txt` and
-  `https://mta-sts.<customer domain>/.well-known/mta-sts.txt`. Add a Worker route `*.h.readysetmail.com/*`, and for the customer-hostname form
-  use Cloudflare for SaaS (custom hostnames with a fallback origin) so `mta-sts.customer.com` gets a certificate.
+* MTA-STS policy hosts: the Worker serves `https://mta-sts.<customer domain>/.well-known/mta-sts.txt` and nothing else on that name. In the zone named by `POLICY_HOST_ZONE`: enable Cloudflare for SaaS, create the originless proxied record `POLICY_HOST_TARGET` and set it as the fallback origin (Custom Hostnames → Fallback Origin) and make sure the zone has no `*/*` Worker route that would send its own traffic here. The product creates a custom hostname (HTTP validation, TLS 1.2) and a Worker route `mta-sts.<domain>/*` for each domain that turns MTA-STS on, and deletes them again; the operator's own zone apex uses a proxied CNAME and a route instead and never a custom hostname. Cloudflare for SaaS includes 100 custom hostnames (`MAX_POLICY_HOSTS`).
 
 ### 5. Crons
 
@@ -130,7 +130,7 @@ The daily hosted job runs inside the existing `0 11 * * *` trigger (after the pe
 1. **Zone reconcile**: lists the whole records zone, stores the record count (quota), warns at 3,200, and diffs it against the database:
    expected records that are missing and records under `*.h.` that no domain owns are **reported, never fixed or deleted**.
    Records outside `*.h.` are only counted and fingerprinted; a change since yesterday is logged (`records outside h.readysetmail.com changed`). The job issues only `GET`s.
-2. **MTA-STS MX refresh** for hosted domains (never publishes a policy with no MX hosts).
+2. **MTA-STS refresh** (`src/mta-sts/refresh.ts`): every enabled row, oldest check first, at most 100 a run, five at a time: moves setup forward (certificate, records), reads the MX hosts (a DNS error changes nothing; no MX never changes the policy; a new list is a new policy id, and a list that grew while enforcing goes back to testing), then removes operator-side custom hostnames and Worker routes this product made that no enabled row owns (at most 20 a run). Self-host runs the same function in the 08:00 per-workspace job.
 3. **SPF refresh**: re-flattens every hosted SPF from its stored source and updates the record if the providers' ranges moved. A source that cannot be fully resolved leaves the current record alone.
 4. **Pointer verification** for every hosted domain.
 5. Forgets expired canary addresses.
@@ -443,8 +443,8 @@ published in the hosted records. Then the customer adds pointers in their own DN
 | CNAME | `_dmarc.customer.com` | `<id>._dmarc.h.readysetmail.com` |
 | TXT (edit the existing SPF) | `customer.com` | add `include:<id>._spf.h.readysetmail.com` |
 | CNAME | `_smtp._tls.customer.com` | `<id>._tlsrpt.h.readysetmail.com` |
-| CNAME *(only if MTA-STS is hosted)* | `_mta-sts.customer.com` | `mta-sts.<id>.h.readysetmail.com` |
-| CNAME *(only if MTA-STS is hosted)* | `mta-sts.customer.com` | `mta-sts.<id>.h.readysetmail.com` |
+
+MTA-STS is not hosted with these records: it has its own three records in the customer's zone (see [MTA-STS](#mta-sts)).
 
 Notes for the customer:
 
@@ -474,7 +474,7 @@ Filing (`src/hosted/fixed-address.ts`, `src/hosted/intake.ts`). Mail to `rua@<IN
 * a failed lookup: `plan: null` and `state: "unknown"`, never "no record".
 
 `state` comes from evidence: `not_connected`; `not_published` (connected, the live record does not list the address); `waiting` (listed, no COUNTED report since connecting); `receiving` (listed AND at least one COUNTED report, `reporter_tier = 'counted'`, stored since `connected_at`; `last_report_at` is the newest of those); or `unknown` (the lookup failed). `counted_since_connect`, `reports_since_connect` and `reports_before_connect` count the rest, and `visibility` carries the uncounted and not-stored reports RECEIVED since connecting (the same fields as `/stats`, windowed on `created_at`: a report covers the previous day, so its period starts before the connection), so a reconnect, an uncounted or a forged report never reads as "received".
-Token addresses (`rua+<token>@…`) keep working: hosted records issue them, and an operator-issued one shows as connected while its token is current. `tls-rpt@` without a token is refused: TLS-RPT still needs a token address.
+Token addresses (`rua+<token>@…`) keep working: hosted records issue them, and an operator-issued one shows as connected while its token is current. `tls-rpt@<INTAKE_DOMAIN>` without a token takes TLS reports (RFC 8460) for a domain with MTA-STS on, by the same rule: the report names its domain (`policies[].policy.policy-domain`, read from at most the first 64 KiB, JSON, one linear scan), the most specific proven owner that has MTA-STS on gets it, every policy must be covered by that domain or the whole report is refused, and mail for a domain nobody owns is charged to the same unattributed budget. See [MTA-STS](#mta-sts).
 A domain with hosted records keeps its address there: these routes report `managed_by: "hosted_records"` and refuse to change it (`409`).
 Receivers outside the customer's organization only send to the address once the [authorisation record](#4-the-records-zone) `*._report._dmarc.<INTAKE_DOMAIN>` exists.
 
@@ -660,7 +660,7 @@ the fixed free-check reply is sent, and the result lands in the global `check_re
 Free-check senders are also enrolled in the onboarding sequence and every non-transactional email carries an unsubscribe link: see [email-funnel.md](email-funnel.md).
 Rate limits (shared `auth_rate_limits` counters, 1-hour windows): 5 per **authenticated** sender domain (a passing DMARC/DKIM/SPF result in the `Authentication-Results` header Cloudflare adds, reduced to its registrable domain), 20 for senders that authenticate as nothing (one shared bucket), and 500 overall. The `From` header is never used as a key, so a spoofed From cannot use up a real domain's allowance; the cost of that is that unauthenticated senders compete for one small bucket.
 
-**MTA-STS host** (`src/hosted/policy-host.ts`): `mta-sts.<id>.h.<zone>` → the tenant whose hosted id is `<id>`; `mta-sts.<customer domain>` → the tenant hosting that domain; anything else 404. Never the implicit workspace in `saas`.
+**MTA-STS host** (`src/hosted/policy-host.ts`): `mta-sts.<customer domain>` → the workspace that owns the domain by the one proven-owner rule (the domain is live and proven, so a lapsed proof stops the policy at once); anything else, and every other path on such a host, 404. Never the implicit workspace in `saas`.
 
 ## API
 
@@ -689,14 +689,28 @@ All under `/api/domains/:id/hosted`, authenticated like every other route and sc
 }
 ```
 
-MTA-STS on a hosted domain: `POST /api/domains/:id/mta-sts` answers `409` (use `mta_sts: true` above); `PATCH` (mode, `refresh_mx`) and `DELETE` act on the hosted records through the hosted writer (`DELETE` removes only the MTA-STS records); the legacy daily MX job skips hosted domains and the hosted daily job refreshes them. `DELETE /api/domains/:id` answers `{ ok: true, kept: [{ type, name, reason }] }`, the DNS records it left in place because they no longer match what Ready Set Mail wrote; it removes the hosted records and quota first; if that DNS cleanup fails the domain is **not** deleted (`502`).
+### MTA-STS
 
-Errors: `409` already enabled · `422` SPF cannot be resolved, no MX for MTA-STS, several SPF records · `502` Cloudflare/DNS failure · `507` records zone full.
+`/api/domains/:id/mta-sts` (src/mta-sts/routes.ts; writes need an owner/admin; members can `GET`; delegated API keys are refused). The three records go into the customer's own zone: `mta-sts.<d>` CNAME to `POLICY_HOST_TARGET` (DNS only) when hosted, `_smtp._tls.<d>` TXT `v=TLSRPTv1; rua=mailto:tls-rpt@<INTAKE_DOMAIN>`, `_mta-sts.<d>` TXT `v=STSv1; id=<time>` last, once the certificate is active. Through the workspace's Cloudflare connection when one reaches the zone (`via: cloudflare`), by hand otherwise (`via: manual`). A domain with hosted records cannot use it (409).
+
+| Method & path | Does |
+|---|---|
+| `GET` | availability (`unavailable_reason`: `none`, `not_configured`, `not_allowed`, `ceiling`, `hosted_records`, `unproven`, `zone_subdomain`, `needs_cloudflare`, `reports_domain_missing`), `via`, `policy_host`, `mx_preview` (an error kept apart from none), the exact `records`, `config`, `policy_host_status`, the last 30 days of TLS `reports` and `summary`, `enforce` (ready, or every reason it is not) and `disable` (allowed, or why not and after when) |
+| `POST` | turn on, always in testing: checks (gate, proven domain, MX found, nothing of ours or anyone's in the way), the policy host (custom hostname and route), the customer's records, then store; all or nothing. `201` |
+| `POST …/verify` | read DNS and the certificate now, move setup forward: `{ state, checks }` |
+| `PATCH { mode }` | `enforce` needs the evidence (422 with `reasons`): 7 days in testing, a report after the current id with successful MTA-STS sessions, none of the blocking failures in 14 days, every MX a matching hostname. `testing` is always allowed. The stored policy changes before the record |
+| `PATCH { refresh_mx: true }` | read the MX hosts now; a new list is a new policy id |
+| `PATCH { dismiss_notice: true }` | clear the notice on the row |
+| `DELETE` | only in testing and only once the last switch from enforce is older than `max_age` (else 409 saying when); removes exactly what was made and says what was kept and why |
+
+The policy file says `max_age: 86400`, read from the row. Errors: `400` no connection reaches the zone (self-host), reports domain missing · `403` gate or not proven · `409` something already at `_mta-sts`, `mta-sts` or `_smtp._tls`, or already on · `422` no MX · `502` DNS or Cloudflare.
+
+Errors: `409` already enabled · `422` SPF cannot be resolved, several SPF records · `502` Cloudflare/DNS failure · `507` records zone full. `mta_sts` in the body is answered `400` (see [MTA-STS](#mta-sts)).
 Enabling is all-or-nothing: if Cloudflare fails part-way, the records already written are removed.
 
 `POST /api/check-sessions` (public) returns `{ token, email, expires_at }` in `saas` (`email` is the `check+…@canary…` address), or `404` when `CANARY_DOMAIN` is not set.
 
-`GET /api/hosted/config` (any signed-in caller) returns `{ enabled, reports, records }`: hosted mode, report addresses (`INTAKE_DOMAIN`), hosted records (`HOSTED_RECORDS_ZONE`).
+`GET /api/hosted/config` (any signed-in caller) returns `{ enabled, reports, records, mta_sts }`: hosted mode, report addresses (`INTAKE_DOMAIN`), hosted records (`HOSTED_RECORDS_ZONE`), MTA-STS (`INTAKE_DOMAIN` and the three `POLICY_HOST_*` settings). No secret.
 
 Connecting reports (see [above](#report-address-without-hosted-records); `404` outside hosted mode; writes need an owner/admin):
 
@@ -714,8 +728,9 @@ The hosted service stores no raw report XML (`RAW_XML_RETENTION_DAYS=0` is the h
 
 | | |
 |-|-|
-| Records per hosted domain | 3 (DMARC, SPF, TLS-RPT), 5 with MTA-STS |
-| Zone limit | 3,500 on Pro, about 700 domains at 5 records each or 1,160 at 3 (counts **every** record in the zone, including the ones that are not hosted); warning logged from 3,200; enabling is refused (`507`) if the records would not fit |
+| Records per hosted domain | 3 (DMARC, SPF, TLS-RPT) |
+| MTA-STS policy hosts | 100 custom hostnames (`MAX_POLICY_HOSTS`); each more costs the operator $0.10 |
+| Zone limit | 3,500 on Pro, about 1,160 domains at 3 records each (counts **every** record in the zone, including the ones that are not hosted); warning logged from 3,200; enabling is refused (`507`) if the records would not fit |
 | Report size | 2 MiB raw, 1 MiB decompressed, 2,000 records (configurable up to Cloudflare's 25 MiB; see [Measured limits](#measured-limits)) |
 | Token rotation grace | 72 h |
 | Canary | 1 hour, one email; 5 per authenticated sender domain, 20 unauthenticated, 500 overall, per hour |
