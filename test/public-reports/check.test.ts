@@ -33,14 +33,14 @@ describe("DMARC", () => {
     installFakeDns({ "_dmarc.example.com/TXT": txt("v=DMARC1; p=quarantine; sp=reject; rua=mailto:r@example.com") });
     const r = await checkDmarc("app.example.com");
     const inherited = r.findings.find((x) => x.code === "dmarc-inherited");
-    expect(inherited?.message).toMatch(/sp=reject \(set explicitly\)/);
+    expect(inherited?.message).toMatch(/sp=reject on example\.com's record applies to it/);
     expect(r.tags?.spExplicit).toBe(true);
   });
 
   it("explains that p= applies to an inherited record without sp=", async () => {
     installFakeDns({ "_dmarc.example.com/TXT": txt("v=DMARC1; p=none; rua=mailto:r@example.com") });
     const r = await checkDmarc("app.example.com");
-    expect(r.findings.find((x) => x.code === "dmarc-inherited")?.message).toMatch(/sp= is not set, so p=none applies/);
+    expect(r.findings.find((x) => x.code === "dmarc-inherited")?.message).toMatch(/p=none on example\.com's record applies to it \(that record has no sp= tag that applies\)/);
   });
 
   it("warns when sp= is weaker than p=", async () => {
@@ -272,9 +272,9 @@ describe("SPF effective all (redirect=)", () => {
     });
   });
 
-  it("keeps the no-record sentence", async () => {
+  it("says no SPF record at the name, and what that does and does not mean", async () => {
     installFakeDns({});
-    expect(msg(await checkSpf("example.com"), "spf-missing")).toBe("No SPF record at this domain. Without one, receivers have no list of servers allowed to send as you.");
+    expect(msg(await checkSpf("example.com"), "spf-missing")).toMatch(/^No SPF record at example\.com\. SPF is checked at the return-path \(MAIL FROM\) domain of each message/);
   });
 
   it("several records is a plain permerror with the count", async () => {

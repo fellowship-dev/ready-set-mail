@@ -76,7 +76,7 @@ export async function dmarcNextStep(
  const reportConnect = deps.reportConnect ? await deps.reportConnect() : real ? await reportConnectFor(real, domain as any) : null;
  // Where nothing was counted, why (dropped, limited, not counted), as the dashboard's summaries carry it.
  const visibility = s.total_messages === 0 ? (deps.visibility ? await deps.visibility(since) : real ? await reportVisibility(real, domain.id, since) : null) : null;
- const evidence = dmarcEvidenceFor({ ruaAddress: domain.rua_address, offeredRua: null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect });
+ const evidence = dmarcEvidenceFor({ ruaAddress: domain.rua_address, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect });
  const steps = dmarcSteps(domain.domain, policy_in_force, evidence);
  return { policy_in_force, next_step: steps[0] ?? null, steps };
 }

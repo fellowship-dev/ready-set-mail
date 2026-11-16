@@ -91,6 +91,8 @@ export function dmarcEvidenceFor(input: {
   reportsRefusal?: ReportsRefusal | null;
   /** The ruaAddress returned in the evidence (offered records): the agent tools never return the address. */
   offeredRua?: string | null;
+  /** false: DNS says the name does not exist (NXDOMAIN), so no record is offered at it. */
+  nameExists?: boolean | null;
   dropText?: DropText;
 }): DmarcEvidence {
   const { reports } = input;
@@ -103,5 +105,6 @@ export function dmarcEvidenceFor(input: {
     alignment: input.alignment ?? null,
     reportsRefusal: input.reportsRefusal !== undefined ? input.reportsRefusal : reportsRefusalOf(input.reportConnect),
     emptyReportsNote,
+    nameExists: input.nameExists ?? null,
   };
 }

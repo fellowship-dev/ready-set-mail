@@ -30,6 +30,8 @@ export const SPF_PROVIDERS: EmailProvider[] = [
 /** DKIM-only providers: no SPF include, but known DKIM selectors. */
 export const DKIM_ONLY_PROVIDERS: EmailProvider[] = [
 	{ include: '', name: 'Fastmail', dkimSelectors: ['fm1', 'fm2', 'fm3'], dkimGuideUrl: 'https://www.fastmail.help/hc/en-us/articles/360060591153' },
+	// Cloudflare Email Service signs with `cf-bounce` at the sending name (`cf-bounce._domainkey.app.example.com`); its envelope domain is `cf-bounce.<sending name>`.
+	{ include: '', name: 'Cloudflare Email Service', dkimSelectors: ['cf-bounce'], dkimGuideUrl: 'https://developers.cloudflare.com/email-service/concepts/email-authentication/' },
 ];
 
 const ALL_DKIM_PROVIDERS: EmailProvider[] = [

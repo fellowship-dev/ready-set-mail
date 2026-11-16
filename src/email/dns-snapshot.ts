@@ -5,6 +5,7 @@
 
 import { createResolver, isSpfRecord, lookupDmarc, parseDmarcRecord, ruaEntries, ruaEntryAddress, type DmarcLookup, type Resolver, type TxtResult } from '@ready-set-mail/dns-checks';
 import { parseDmarcTags } from '@ready-set-mail/dns-checks/dmarc-tags';
+import { effectivePolicy } from '@ready-set-mail/dns-checks/effective-policy';
 import { dmarcBreakOf } from '@ready-set-mail/dns-checks/dmarc-problem';
 import type { DmarcFacts } from '@ready-set-mail/db';
 import { RECORDS_SEPARATOR, lookupSpf } from './dns-check';
@@ -33,7 +34,9 @@ export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
   const broken = l.record ? dmarcBreakOf(l.record.raw) : null;
   if (l.record && broken) return { policy: null, issue: broken.issue, inherited_from, ...governingTags(l.record.raw) };
   if (!l.record?.valid) return { policy: null, issue: 'invalid', inherited_from, ...none };
-  return { policy: l.inherited ? l.record.subdomainPolicy : l.record.policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
+  // The stored facts describe a name that exists (a monitored domain that does not resolve is shown as such before any policy),
+  // so `sp=` applies to an inherited name here, never `np=`; the one rule is `effectivePolicy` (RFC 9989 section 4.10.1).
+  return { policy: effectivePolicy(l, true).policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
 }
 
 /**

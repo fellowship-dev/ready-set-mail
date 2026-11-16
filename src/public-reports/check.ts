@@ -13,8 +13,12 @@ import {
   isSpfRecord,
   normalizeName,
   parseSpfTerms,
+  effectivePolicySentence,
+  noSpfAtName,
+  organizationalDomain,
   type DkimLookup,
   type DmarcRecord,
+  type EffectivePolicy,
   type Resolver,
 } from "@ready-set-mail/dns-checks";
 import { createToolsResolver } from "./resolver";
@@ -30,19 +34,26 @@ const f = (severity: Severity, code: string, message: string): Finding => ({ sev
 
 const STRENGTH: Readonly<Record<string, number>> = { none: 0, quarantine: 1, reject: 2 };
 
-function dmarcFindings(domain: string, record: DmarcRecord, inherited: boolean, recordDomain: string, spExplicit: boolean): Finding[] {
+/** What a policy does to mail that fails DMARC, in one clause. */
+const POLICY_EFFECT: Readonly<Record<string, [string, string]>> = {
+  none: ["warn", "monitoring only. Mail that fails DMARC is still delivered, so spoofers are not blocked."],
+  quarantine: ["pass", "mail that fails DMARC is treated as suspicious (usually sent to spam). Consider p=reject once reports look clean."],
+  reject: ["pass", "mail that fails DMARC is refused. This is the strongest setting."],
+};
+
+function dmarcFindings(domain: string, record: DmarcRecord, eff: EffectivePolicy, recordDomain: string): Finding[] {
   const out: Finding[] = [];
   if (!record.valid) {
     out.push(f("fail", "dmarc-invalid", `The DMARC record is not valid: ${record.issues.map(quoteValues).join("; ")}. Receivers will ignore it.`));
     return out;
   }
-  if (record.policy === "none") {
-    out.push(f("warn", "dmarc-policy-none", "Policy is p=none: monitoring only. Mail that fails DMARC is still delivered, so spoofers are not blocked."));
-  } else if (record.policy === "quarantine") {
-    out.push(f("pass", "dmarc-policy-quarantine", "Policy is p=quarantine: mail that fails DMARC is treated as suspicious (usually sent to spam). Consider p=reject once reports look clean."));
-  } else {
-    out.push(f("pass", "dmarc-policy-reject", "Policy is p=reject: mail that fails DMARC is refused. This is the strongest setting."));
-  }
+  // The policy of THIS name: its own p=, or the organizational domain's sp= / np= / p= (RFC 9989 section 4.10.1).
+  const policy = eff.policy ?? record.policy;
+  const [severity, effect] = POLICY_EFFECT[policy] ?? POLICY_EFFECT.none;
+  const tag = eff.tag ?? "p";
+  const label = tag === "p" ? `p=${policy}` : `${tag}=${policy}`;
+  const lead = tag === "p" ? "Policy is" : `The policy that applies to ${domain} is`;
+  out.push(f(severity as Severity, `dmarc-policy-${policy}`, `${lead} ${label}: ${effect}`));
 
   if (record.rua.length === 0) {
     out.push(f("warn", "dmarc-rua-missing", "No reporting address (rua=): you will not receive DMARC reports, so you cannot see which senders fail."));
@@ -52,18 +63,13 @@ function dmarcFindings(domain: string, record: DmarcRecord, inherited: boolean, 
     out.push(f("pass", "dmarc-rua-ok", "Aggregate reports (rua=) are requested, so you can see who sends mail as your domain."));
   }
 
-  if (inherited) {
-    out.push(
-      f(
-        "info",
-        "dmarc-inherited",
-        `${domain} has no DMARC record of its own, so receivers use the record of ${recordDomain}. For a subdomain, the subdomain policy applies: ${
-          spExplicit ? `sp=${record.subdomainPolicy} (set explicitly)` : `sp= is not set, so p=${record.policy} applies`
-        }.`
-      )
-    );
+  if (eff.source === "organizational") {
+    out.push(f("info", "dmarc-inherited", effectivePolicySentence(domain, eff) ?? `${domain} has no DMARC record of its own, so receivers use the record of ${recordDomain}.`));
   }
-  if (spExplicit && STRENGTH[record.subdomainPolicy] < STRENGTH[record.policy]) {
+  // sp= is read only on the record of an organizational domain; on a subdomain's own record it is ignored (RFC 9989 section 4.7).
+  const spApplies = eff.source === "organizational" || recordDomain === organizationalDomain(domain);
+  const spExplicit = /(^|;)\s*sp\s*=/i.test(record.raw);
+  if (spApplies && spExplicit && STRENGTH[record.subdomainPolicy] < STRENGTH[record.policy]) {
     out.push(f("warn", "dmarc-sp-weaker", `Subdomains use sp=${record.subdomainPolicy}, which is weaker than p=${record.policy}: spoofed mail from subdomains is treated more leniently.`));
   }
   if (/(^|;)\s*pct\s*=/i.test(record.raw)) {
@@ -81,13 +87,13 @@ export async function checkDmarc(domain: string, resolver: Resolver = createTool
 
   if (r.status === "error") {
     return {
-      ...base, state: "lookup-failed", complete: false, source: null, recordDomain: null, inherited: false, record: null, tags: null, grade: "unknown",
+      ...base, state: "lookup-failed", complete: false, source: null, recordDomain: null, inherited: false, record: null, effective: null, tags: null, grade: "unknown",
       reason: r.error ?? "DNS error", findings: [f("warn", "dmarc-lookup-failed", "The DNS lookup failed, so we cannot say whether a DMARC record exists. This is not the same as having no record.")],
     };
   }
   if (r.status === "none") {
     return {
-      ...base, state: "no-record", complete: true, source: null, recordDomain: null, inherited: false, record: null, tags: null, grade: "missing",
+      ...base, state: "no-record", complete: true, source: null, recordDomain: null, inherited: false, record: null, effective: null, tags: null, grade: "missing",
       findings: [f("fail", "dmarc-missing", "No DMARC record at this domain or its parent domain. Gmail and Outlook expect one from bulk senders, and you get no reports about who sends as your domain.")],
     };
   }
@@ -95,19 +101,19 @@ export async function checkDmarc(domain: string, resolver: Resolver = createTool
   const source = r.inherited ? "organizational-domain" : "domain";
   if (r.status === "multiple") {
     return {
-      ...base, state: "ok", complete: true, source, recordDomain, inherited: r.inherited, record: null, rawRecords: r.rawRecords, tags: null, grade: "invalid",
+      ...base, state: "ok", complete: true, source, recordDomain, inherited: r.inherited, record: null, effective: null, rawRecords: r.rawRecords, tags: null, grade: "invalid",
       findings: [f("fail", "dmarc-multiple", `${recordDomain} publishes ${r.rawRecords?.length ?? "several"} DMARC records. With more than one, DMARC does not apply at all (RFC 7489 §6.6.3). Keep exactly one.`)],
     };
   }
   const rec = r.record as DmarcRecord;
   const spExplicit = /(^|;)\s*sp\s*=/i.test(rec.raw);
   return {
-    ...base, state: "ok", complete: true, source, recordDomain, inherited: r.inherited, record: rec.raw, grade: gradeDmarcPolicy(rec),
+    ...base, state: "ok", complete: true, source, recordDomain, inherited: r.inherited, record: rec.raw, effective: r.effective, grade: gradeDmarcPolicy(rec, r.effective.policy),
     tags: {
       p: rec.policy, sp: rec.subdomainPolicy, spExplicit, pct: rec.pct, pctPresent: /(^|;)\s*pct\s*=/i.test(rec.raw),
       rua: rec.rua, ruf: rec.ruf, adkim: rec.adkim, aspf: rec.aspf,
     },
-    findings: dmarcFindings(domain, rec, r.inherited, recordDomain, spExplicit),
+    findings: dmarcFindings(domain, rec, r.effective, recordDomain),
   };
 }
 
@@ -252,7 +258,7 @@ export async function checkSpf(domain: string, rawResolver: Resolver = createToo
   if (a.status === "none") {
     return {
       ...common, state: "no-record", complete: true, record: null, recordLength: 0, verdict: null, usesPtr: false, permError: null,
-      findings: [f("fail", "spf-missing", "No SPF record at this domain. Without one, receivers have no list of servers allowed to send as you.")],
+      findings: [f("fail", "spf-missing", noSpfAtName(domain))],
     };
   }
   if (a.status === "temperror") {
@@ -302,19 +308,6 @@ export async function checkSpf(domain: string, rawResolver: Resolver = createToo
     ...(eff?.resolved && eff.via.length > 0 ? { verdictFrom: eff.from } : {}),
     permError: a.status === "permerror" ? (fatalTexts[0] ?? "SPF permanent error") : null, findings,
   };
-}
-
-// ── Existence ────────────────────────────────────────────────
-
-/**
- * Whether the checked name itself exists in public DNS. `false` only on a clear NXDOMAIN (DoH status 3) for an A query on
- * the name; a name with only TXT records answers NODATA, which is "exists". A failed lookup is `null`: unknown, never "does not exist".
- */
-export async function domainExists(domain: string, resolver: Resolver = createToolsResolver()): Promise<boolean | null> {
-  const r = await resolver.resolve(domain, "A");
-  // A name that is a CNAME to a missing target also answers NXDOMAIN, but the name itself has a record: it exists.
-  if (r.status === "nxdomain") return r.hasCname ? true : false;
-  return r.status === "error" ? null : true;
 }
 
 // ── DKIM ─────────────────────────────────────────────────────

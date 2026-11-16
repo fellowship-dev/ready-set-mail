@@ -151,6 +151,11 @@ export interface DmarcEvidence {
    */
   suffixParent?: string | null;
   /**
+   * The name does not exist in DNS (`false`: NXDOMAIN, RFC 9989 section 3.2.13). No record can be published at a name that does
+   * not exist, so no record is offered there: the step says what applies to it instead. Absent or true: it exists.
+   */
+  nameExists?: boolean | null;
+  /**
    * The alignment modes (`adkim=`/`aspf=`) of the record that governs an inherited name, when it was read. A record of the
    * name's own replaces it, so it carries them; absent: not read (the relaxed default is assumed).
    */
@@ -231,6 +236,13 @@ const shownRate = (r: { total: number; passed: number; days: number }) =>
  * it first). Empty only while the report totals are still loading and the step depends on them.
  */
 export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): DmarcStep[] {
+  if (ev.nameExists === false) {
+    const governing = f.kind === 'inherited' || f.kind === 'partial-read' || f.kind === 'broken' ? f.at : null;
+    const applies = governing
+      ? `Receivers apply the np= tag of the record at _dmarc.${governing} to mail claiming to be from it (else its sp=, else its p=; RFC 9989 section 4.7). Change that record to change what applies.`
+      : 'No DMARC record covers it, so receivers apply no DMARC policy to mail claiming to be from it.';
+    return [{ key: 'name-missing', status: 'note', do: 'Nothing to publish at this name', who: 'nobody', where: 'none', why: `${name} does not exist in DNS (NXDOMAIN), so no record can be published at it. ${applies}` }];
+  }
   if (f.kind === 'unread' || f.kind === 'partial-read') {
     const what = f.kind === 'unread' ? 'DMARC has not been read from public DNS yet' : `public DNS showed p=${f.policy}${f.inherited ? ` from ${f.at}` : ''}, but how much of it is enforced (pct=, sp=) and whether it sends reports here have not been read yet`;
     return [{ key: 'dmarc-read', status: 'unknown', do: 'Check the DMARC record again', why: `For ${name}, ${what}, so it is not called enforced and nothing is suggested until it is.`, who: 'you', where: 'recheck' }];

@@ -4,6 +4,8 @@
 import { normalizeName, type Resolver } from './doh';
 import { organizationalDomain } from './org-domain';
 import { parseDmarcTags } from './dmarc-tags';
+import { effectivePolicy, existenceMatters, type EffectivePolicy } from './effective-policy';
+import { nameExists } from './name-exists';
 
 export { parseDmarcTags, readDmarcTag } from './dmarc-tags';
 
@@ -100,6 +102,8 @@ export interface DmarcLookup {
   /** true when the record came from the organizational domain, not the queried domain */
   inherited: boolean;
   organizationalDomain: string | null;
+  /** The policy in force for `domain`, and the tag and record it comes from (RFC 9989 section 4.10.1). Use this, never `record.policy`, to judge the name. */
+  effective: EffectivePolicy;
   /** the competing records when status is 'multiple' */
   rawRecords?: string[];
   error?: string;
@@ -112,9 +116,16 @@ export interface DmarcLookup {
  * falls back to `example.co.uk`, never `co.uk`.
  */
 export async function lookupDmarc(resolver: Resolver, domain: string): Promise<DmarcLookup> {
+  const found = await discoverDmarc(resolver, domain);
+  // Existence changes the answer only for an inherited record with np= (RFC 9989 section 4.10.1): ask DNS only then.
+  const exists = existenceMatters(found) ? await nameExists(resolver, found.domain) : null;
+  return { ...found, effective: effectivePolicy(found, exists) };
+}
+
+async function discoverDmarc(resolver: Resolver, domain: string): Promise<Omit<DmarcLookup, 'effective'>> {
   const name = normalizeName(domain);
   const org = organizationalDomain(name);
-  const base: DmarcLookup = { status: 'none', domain: name, record: null, foundAt: null, inherited: false, organizationalDomain: org };
+  const base: Omit<DmarcLookup, 'effective'> = { status: 'none', domain: name, record: null, foundAt: null, inherited: false, organizationalDomain: org };
 
   const names = [name];
   if (org && org !== name) names.push(org);
@@ -146,9 +157,13 @@ export type DmarcGrade =
   /** reject at 100% */
   | 'strict';
 
-export function gradeDmarcPolicy(record: DmarcRecord | null): DmarcGrade {
-  if (!record || !record.valid) return 'missing';
-  if (record.policy === 'none') return 'monitoring';
+/**
+ * The grade of the policy in force. `policy` is the EFFECTIVE policy of the name being judged (`DmarcLookup.effective.policy`):
+ * a record's own `p=` is not the policy of a subdomain that takes its `sp=` or `np=`. Without it the record's `p=` is graded.
+ */
+export function gradeDmarcPolicy(record: DmarcRecord | null, policy: DmarcPolicy | null = record?.policy ?? null): DmarcGrade {
+  if (!record || !record.valid || !policy) return 'missing';
+  if (policy === 'none') return 'monitoring';
   if (record.pct < 100) return 'partial';
-  return record.policy === 'reject' ? 'strict' : 'enforced';
+  return policy === 'reject' ? 'strict' : 'enforced';
 }

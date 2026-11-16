@@ -9,7 +9,7 @@
 // assumed. Every number derived from this is an ESTIMATE and is labelled so: only the reports' own pass/fail
 // totals (trend, pass rate) are exact, and only those may block a rollout step.
 
-import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
+import { aligned, RELAXED, type AlignMode, type AlignModes } from '@ready-set-mail/dns-checks/alignment';
 import { identifySender, type SenderProvider } from '@ready-set-mail/dns-checks/sender-providers';
 import type { SenderRow } from '@ready-set-mail/db';
 
@@ -45,19 +45,8 @@ export interface Sender {
 
 export const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
-export type AlignMode = 'r' | 's';
-export interface AlignModes { spf: AlignMode; dkim: AlignMode }
-export const RELAXED = { spf: 'r', dkim: 'r' } as const;
-
-const norm = (d: string) => d.trim().toLowerCase().replace(/\.$/, '');
-
-/** Do the two domains align? Relaxed: same organizational domain. Strict: the same domain. */
-export function aligned(a: string | null, b: string | null, mode: AlignMode = 'r'): boolean {
-  if (!a || !b) return false;
-  if (mode === 's') return norm(a) === norm(b);
-  const x = organizationalDomain(a);
-  return x !== null && x === organizationalDomain(b);
-}
+// Alignment itself (relaxed and strict) is packages/dns-checks/src/alignment.ts.
+export { aligned, RELAXED, type AlignMode, type AlignModes };
 
 /** Relaxed DMARC alignment of one record against the From domain it was sent as. */
 export function recordAlignment(r: Pick<SenderRow, 'header_from' | 'domain' | 'spf_domain' | 'spf_result' | 'dkim_domain' | 'dkim_result'>, modes: AlignModes = RELAXED): { spf: boolean; dkim: boolean } {
