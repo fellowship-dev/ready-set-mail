@@ -4,6 +4,7 @@
 // its own try/catch, so one workspace's failure (a revoked Cloudflare token answering 403, a broken
 // row) is logged and skipped instead of stopping the workspaces after it.
 
+import { resolverFor } from './dns/resolver';
 import type { BoundEnv } from './index';
 import { loadTenant } from './tenancy/load';
 import type { TenantContext } from './tenancy/context';
@@ -100,7 +101,7 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
   const allDomains = await tenant.scope.domains.listForDnsRefresh();
   // Awaited (a floating promise can be cut off when the invocation ends), a few at a time.
   await mapLimit(allDomains, DNS_REFRESH_CONCURRENCY, async d => {
-    const found = await snapshotDns(d.domain); // one lookup after the other, so the pool stays at DNS_REFRESH_CONCURRENCY requests
+    const found = await snapshotDns(d.domain, resolverFor(tenant.env)); // one lookup after the other, so the pool stays at DNS_REFRESH_CONCURRENCY requests
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
       await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });

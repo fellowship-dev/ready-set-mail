@@ -1,3 +1,4 @@
+import { resolverFor } from '../dns/resolver';
 import { PlanLimitError, ProofIncompleteError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
@@ -186,7 +187,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   // Background SPF lookup — fire-and-forget, doesn't block response
   else if (ctx) {
     ctx.waitUntil(
-      lookupSpf(domain)
+      lookupSpf(domain, resolverFor(tenant.env))
         .then(spf => {
           if (spf?.lookup_count !== undefined) {
             return tenant.scope.domains.updateSpfLookupCount(domainId, spf.lookup_count);

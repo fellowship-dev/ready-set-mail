@@ -1306,6 +1306,16 @@ async function _handleApi(
       }
 
       const spfFlatConfig = await tenant.scope.spf.get(domain.id);
+      // The lookups the record needs: stored by the daily check and when a domain is added, and counted here, with this request's resolver, when nothing is stored
+      // yet or the record changed since (a self-hosted instance reads DNS through its own resolver; the count must not depend on which path stored it first).
+      let spfLookupCount = domain.spf_lookup_count ?? null;
+      if (resolved.spf_record && (spfLookupCount === null || resolved.spf_record !== domain.spf_record)) {
+        const s = await lookupSpf(domain.domain, dnsResolver).catch(() => null);
+        if (s?.lookup_count !== undefined) {
+          spfLookupCount = s.lookup_count;
+          await tenant.scope.domains.updateSpfLookupCount(domain.id, spfLookupCount).catch(() => {});
+        }
+      }
       // Hosted, reports not connected yet but connectable, and Apply via Cloudflare is there: the address that write would carry, so the record shown is
       // the record written. It is NOT the domain's report address: `rua_address` stays what is stored (empty until the reports are connected), because
       // a record pasted by hand with that address would be refused at intake, the domain never having been connected. Only the apply connects it.
@@ -1324,7 +1334,7 @@ async function _handleApi(
         dmarc: { ...dmarcData, auth_record: authRecordData, effective: resolved.dmarc ? { policy: resolved.dmarc.policy, inherited_from: resolved.dmarc.inherited_from, issue: resolved.dmarc.issue, record: inheritedRecord } : null },
         // DNS said the name itself does not exist.
         nxdomain: resolved.nxdomain === true,
-        spf: { record: spfLiveData ?? domain.spf_record ?? null, lookup_count: domain.spf_lookup_count ?? null, flattening_active: spfIsOn(spfFlatConfig) },
+        spf: { record: spfLiveData ?? domain.spf_record ?? null, lookup_count: spfLookupCount, flattening_active: spfIsOn(spfFlatConfig) },
         dkim: dkimData,
         routing: { ...routingData, reports_domain: rd ?? null, null_sender_spf: nullSenderData.spf, null_sender_dmarc: nullSenderData.dmarc },
         // Checks whose DNS lookup failed; their values above are "unknown", not "absent".
