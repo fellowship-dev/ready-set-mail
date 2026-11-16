@@ -84,8 +84,9 @@ test('Connect reports in the first screen, review the change, Apply: the record 
   const panel = page.getByTestId('connect-reports');
   await panel.getByRole('button', { name: 'Connect reports' }).click();
   await expect(panel.getByText(`Review the change to _dmarc.${DOMAIN}`)).toBeVisible();
-  await expect(panel.getByText('v=DMARC1; p=reject;', { exact: true })).toBeVisible(); // now
-  await expect(panel.getByText(`v=DMARC1; p=reject; rua=mailto:${ADDRESS}`, { exact: true })).toBeVisible(); // after
+  const change = panel.getByTestId('change-dmarc');
+  await expect(change).toContainText('Now: v=DMARC1; p=reject;');
+  await expect(change).toContainText(`After Apply: v=DMARC1; p=reject; rua=mailto:${ADDRESS}`);
   await expect(panel.getByText(/Only rua= changes: the policy and every other tag stay as they are/)).toBeVisible();
   expect(await liveRecords(inst)).toEqual(['v=DMARC1; p=reject;']); // the review writes nothing
 
