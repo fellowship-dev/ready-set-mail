@@ -66,7 +66,7 @@ describe('agents', () => {
     const env = w.env as never;
     const state = await loadPlanState(env, w.env.DB, w.owner.workspaceId);
     expect(planRequiredBody(env, state, { domain: 'two.example.org', session: false }).error).toBe('Your free plan covers one domain and all its subdomains. Adding more domains needs the workspace owner: sign in to the dashboard and choose Add domain.');
-    expect(planRequiredBody(env, state, { domain: 'two.example.org', session: true }).error).toBe('Your free plan covers one domain and all its subdomains. The workspace owner can add more domains with pay as you go.');
+    expect(planRequiredBody(env, state, { domain: 'two.example.org', session: true }).error).toBe('Your free plan covers one domain and all its subdomains. The workspace owner can add more domains with pay as you go: Add domain, then enter it.');
   });
 });
 

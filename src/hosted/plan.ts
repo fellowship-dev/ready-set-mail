@@ -209,7 +209,7 @@ export function planRequiredBody(env: BoundEnv, state: PlanState, opts: { domain
     ? 'Your free plan covers one domain and all its subdomains.'
     : 'This workspace does not include a free domain.';
   const next = !paid ? ' For more domains, talk to us.'
-    : opts.session ? ' The workspace owner can add more domains with pay as you go.'
+    : opts.session ? ' The workspace owner can add more domains with pay as you go: Add domain, then enter it.'
     : ' Adding more domains needs the workspace owner: sign in to the dashboard and choose Add domain.';
   return {
     error: base + next, code: 'plan_required', paid_available: paid, help_url: planHelpUrl(env), ...(opts.domain ? { domain: opts.domain } : {}),

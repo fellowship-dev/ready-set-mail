@@ -13,7 +13,7 @@
 import { billingLookups, forWorkspace, planLookups, type SubscriptionRow } from '@ready-set-mail/db';
 import { logAudit } from '../audit/log';
 import { DomainServiceError, enrollDomain, commitVerifiedDomain, requireDomainName } from '../domains/service';
-import { verifyClaim } from '../domains/ownership';
+import { claimView, verifyClaim } from '../domains/ownership';
 import { planHelpUrl } from '../hosted/plan-limits';
 import {
   PlanBusyError, billableAfter, loadPlanState, paidPathAvailable, planEnforced, subscriptionState, unitOf, withPlanLock,
@@ -616,6 +616,21 @@ export interface PaidAddPreview {
   can_confirm: boolean;
   grandfather: { units: number; billable_now: number; billable_after: number } | null;
   reason: 'free' | 'paid' | 'start' | 'active' | 'payment_pending' | 'payment_problem' | 'no_paid_path';
+  /** For a domain with a claim waiting on its TXT record: whether the record holds now. `none`: no claim (a Cloudflare zone proves it on the spot, or it is already a domain). */
+  proof: { state: 'none' | 'verified' | 'unverified'; domain: string | null; claim_id: number | null; txt_name: string | null; txt_value: string | null; reason: string | null };
+}
+
+/** The TXT proof of the one domain a confirm is for, read now (it is the same check the paid add makes): the record to publish, and whether it holds. */
+async function proofOf(tenant: TenantContext | undefined, names: string[]): Promise<PaidAddPreview['proof']> {
+  const none = { state: 'none' as const, domain: null, claim_id: null, txt_name: null, txt_value: null, reason: null };
+  if (!tenant || names.length !== 1) return none;
+  const domain = names[0]!;
+  const claim = await tenant.scope.claims.get(domain);
+  if (!claim || claim.status !== 'pending' || claim.settled_at !== null || (await tenant.scope.domains.getByName(domain))) return none;
+  const view = claimView(claim);
+  const outcome = await verifyClaim(tenant, claim);
+  if (outcome.kind === 'verified') return { state: 'verified', domain, claim_id: claim.id, txt_name: view.txt_name, txt_value: view.txt_value, reason: null };
+  return { state: 'unverified', domain, claim_id: claim.id, txt_name: view.txt_name, txt_value: view.txt_value, reason: outcome.kind === 'unproven' ? outcome.reason : null };
 }
 
 /** Stripe's own numbers for a subscription that does not exist yet: the first invoice (charged now) and the date its period ends. Null when Stripe cannot say. */
@@ -634,13 +649,14 @@ async function newSubscriptionPreview(d: BillingDeps, st: PlanState, quantity: n
  * What a paid add of these domains would be, for the confirm step. Every amount is Stripe's: with a subscription its preview of the next invoice; without
  * one its preview of the first invoice (charged now). Nothing is computed here but the unit price times a quantity. No domains: the explicit "Start pay as you go".
  */
-export async function previewPaidAdd(d: BillingDeps, ws: Ws, domains: string[], interval: PlanInterval = 'month'): Promise<PaidAddPreview> {
+export async function previewPaidAdd(d: BillingDeps, ws: Ws, domains: string[], interval: PlanInterval = 'month', tenant?: TenantContext): Promise<PaidAddPreview> {
   const names = [...new Set(domains.map((x) => requireDomainName(x)))];
   const st = await loadPlanState(d.env, d.db, ws.id);
   const have = new Set(st.rows.map((r) => r.org));
   const fresh = new Set(names.map(unitOf).filter((u) => !have.has(u)));
   const target = billableAfter(st, fresh.size);
-  const base = { domains: names, new_units: fresh.size, grandfather: st.grandfathered ? { units: st.units, billable_now: st.billable, billable_after: target } : null, no_charge: false, preview_failed: false, then: null, next_invoice: null, plan_starts: false, charge_now: 0 as number | null, can_confirm: true };
+  const proof = await proofOf(tenant, names);
+  const base = { proof, domains: names, new_units: fresh.size, grandfather: st.grandfathered ? { units: st.units, billable_now: st.billable, billable_after: target } : null, no_charge: false, preview_failed: false, then: null, next_invoice: null, plan_starts: false, charge_now: 0 as number | null, can_confirm: true };
   const none = (reason: PaidAddPreview['reason'], unit_price: MoneyView | null = null): PaidAddPreview => ({ ...base, needs_confirm: false, unit_price, can_confirm: false, reason });
   if (!paidPathAvailable(d.env) || st.exempt) return none('no_paid_path');
   const price = await planPrice(d, interval);

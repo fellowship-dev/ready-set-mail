@@ -167,7 +167,7 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const names = url.searchParams.getAll('domain').slice(0, 10);
     // No domain: the explicit "Start pay as you go" (what it would charge now, which is nothing for most workspaces).
     if (names.length === 0 && url.searchParams.get('start') !== '1') return fail(400, 'invalid_domains', 'domain is required.');
-    return json(await previewPaidAdd(d, me.ws, names, url.searchParams.get('interval') === 'year' ? 'year' : 'month'));
+    return json(await previewPaidAdd(d, me.ws, names, url.searchParams.get('interval') === 'year' ? 'year' : 'month', names.length === 1 ? await loadTenant(env, { workspaceId: me.ws.id }) : undefined));
   }
 
   if (path === '/api/billing/orders' && method === 'GET') {
