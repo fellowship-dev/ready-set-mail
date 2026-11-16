@@ -123,7 +123,12 @@ export const useFailingSources = (id: number) =>
 export const useDnsCheck = (id: number) => useQuery({ queryKey: domainKeys.dnsCheck(id), queryFn: () => api<DnsCheck>(`/api/domains/${id}/dns-check`) });
 export const useOnboardingStatus = (id: number) =>
 	useQuery({ queryKey: domainKeys.onboarding(id), queryFn: () => api<OnboardingResult>(`/api/domains/${id}/onboarding-status`) });
-export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`) });
+/**
+ * Two screens read this (the domain page's Rollout section exists only while it is enforcing or errored). An errored query
+ * that refetched on mount goes back to pending, which unmounts that section, which errors again, which mounts it: a request
+ * every few milliseconds for as long as the read keeps failing. A failed read is retried by its Retry button.
+ */
+export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`), retryOnMount: false });
 export const useSpfFlatten = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`), enabled });
 export const useMtaSts = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`), enabled });
 export const useMonitorSubs = (id: number) =>
