@@ -86,7 +86,7 @@ All properties are optional and dropped when not in the list. Buckets: `COUNT` =
 | `Fix Order Failed` | failed or canceled | `offer`, `reason` (`failed` `canceled`) |
 | `Fix Order Refunded` | fully refunded | `offer` |
 | `Fix Order Delivered` (**finish line**) | the operator marked it done | `offer`, `since_paid` (`LONG_WAIT`) |
-| `Lifecycle Email Sent` | a lifecycle email (`src/lifecycle/email/`) was handed to the mail provider | `kind` (`records_live` `first_report` `no_reports` `summary` `tip_fix` `tip_next` `tip_done`). Never an address, a domain or a count |
+| `Lifecycle Email Sent` | a lifecycle email (`src/lifecycle/email/`) was handed to the mail provider | `kind` (`records_live` `first_report` `no_reports` `summary` `tip_fix` `tip_next`). Never an address, a domain or a count |
 
 ## Funnels
 
