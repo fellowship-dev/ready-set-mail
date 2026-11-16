@@ -1,0 +1,71 @@
+# Single sources
+
+There is exactly one of each concept below. Extend it; never add a second. `test/agent-memory/single-sources.test.ts` enforces every row from the lists in `test/agent-memory/single-sources.lists.ts`: a new site fails the build. Terms are defined in `CONTEXT.md`.
+
+## One module each
+
+| Concept | Module | Entry points | Who may call | Guard |
+|---|---|---|---|---|
+| Ownership proof by TXT record | `src/domains/ownership.ts` | `admitDomain`, `cloudflareProof`, `admitByZone`, `verifyClaim`, `provenByTxt`, `isDomainProven` | domain service, Cloudflare import, claim routes, report and billing checks | single (the TXT prefix); the proof columns: must-not-grow below |
+| Adding a domain (single add, agent tool, Cloudflare import) | `src/domains/service.ts` | `enrollDomain`, `commitVerifiedDomain`; agents first `assertAgentEnrollmentSafe` | routes, `src/mcp/tools/index.ts`, `src/connections/import.ts` | must-not-grow (bulk add and the setup wizard still insert on their own) |
+| Cloudflare API calls (Worker: CfClient; plus the installer and the operator scripts) | `src/tenancy/cf-client.ts` | `CfClient`, via `TenantContext.cfFor` | anything in `src/` that needs the Cloudflare REST API | single; `test/tenancy/guards.test.ts` |
+| DNS write rules | `src/dns/write-policy.ts` | `assertDnsWriteAllowed`, `assertHostedDnsWrite` | `CfClient`, hosted records | `test/tenancy/guards.test.ts`; every write path is listed in ADR 0004 |
+| Cloudflare zone import | `src/connections/import.ts` | `importZones` | `src/connections/routes.ts` | — |
+| Stripe API calls | `src/billing/` | `src/billing/stripe-client.ts`; orders `src/billing/orders.ts`; paid only through `applyInvoice` in `src/billing/sync.ts` | billing routes, the webhook, the daily reconcile | single (host, SDKs, client and its constants) |
+| PostHog sends (none on main; PR #178 adds the module) | none on `main` | — | — | single (PostHog hosts, SDKs, capture path, a read of the host setting); already allows the module PR #178 adds |
+| Public Suffix List (registrable domain) | `packages/dns-checks/src/org-domain.ts` | `organizationalDomain` | everyone | single |
+| DNS lookups for checks (DNS-over-HTTPS) | `packages/dns-checks/src/doh.ts` | `createResolver` | everyone | must-not-grow |
+| Hosted shared report address | `src/hosted/fixed-address.ts` | `fixedReportAddress`, `attributeReport` | intake, `src/hosted/report-address.ts` | must-not-grow (report address construction) |
+| Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, Get Started | must-not-grow (standing rules) |
+| Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
+| Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE` | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
+| Sign-up attempt (fields kept until the account exists) | `src/auth/codes.ts` | `startAttempt`, `checkCode` | `src/auth/routes.ts` | — |
+
+## Known duplicates: to be consolidated
+
+Each row is guarded in "must not grow" form: the test lists exactly today's files, so a new one fails and a removed one must come off the list. Sites are production files (counted on this branch, `main` 6a7d775 plus these docs) found by the construct in the guard's signature, not by name. The order is the recommended consolidation order; each is one pull request with an independent review. Do not do these refactors as a side effect of other work.
+
+| # | Concept | Sites | Authoritative today | What differs |
+|---|---|---|---|---|
+| 1 | DMARC record builders | 12 | `dmarcRecordFor` in `packages/dns-checks/src/dmarc-next-step.ts` | the agent fix (`enforcedDmarc` in `packages/report/src/fixes.ts`) keeps quarantine and adds `dmarc@<domain>`; `src/dmarc/dns-record.ts` twins the dashboard builder; hosted records, onboarding, readiness, the reports-domain setup and the report catalog build their own; two dashboard and agent-report messages spell a record out |
+| 1 | DMARC next-policy ladder | 2 | `dmarcSteps` in `packages/dns-checks/src/dmarc-next-step.ts` | `src/dmarc/rollout.ts` adds `t=y` steps and a 90% gate (readiness adds 98%, 100 messages, 7 days); the domain page shows both; the agent fix never offers reject |
+| 1 | DMARC record validation | 2 | `dmarcRecordProblem` in `packages/dns-checks/src/dmarc-problem.ts` | the Worker copy adds a length cap and strict tags |
+| 1 | Exported SPF/DKIM/DMARC record parsers and judges | 11 | `packages/dns-checks/src/` | the dashboard (`web/src/lib/dmarc-record.ts`, `web/src/lib/dkim.ts`) and the Worker (`src/dmarc/rollout.ts`, `src/dmarc/dns-record.ts`, `src/dmarc/parse-email.ts`) parse again. Not guarded: DMARC tags are also split inline in `packages/report/src/fixes.ts`, `src/hosted/records.ts`, `src/email/dns-snapshot.ts` and `web/src/components/domain/PublicDnsLive.tsx` |
+| 2 | Domain enrollment inserts | 5 | `src/domains/service.ts` | `packages/db` holds the two insert implementations; bulk add (`src/domains/bulk.ts`) skips restore, product authorization and the agent safety check; the setup wizard's base-domain step (`POST /api/settings/base-domain` in `src/api/router.ts`) inserts through `baseDomain.apply` |
+| 3 | Untrusted Authentication-Results reads (sender trust) | 3 | `src/email/sender-proof.ts` and `src/dmarc/reporter-auth.ts` | the hosted email check (`src/hosted/canary.ts`) and the free-check reply read the untrusted header |
+| 4 | Reads and writes of the proof columns (the "proven" rule restated) | 18 | `src/domains/ownership.ts` | any file that uses `verified_via`, `proof_lost_at` or `cf_name_servers`. Ten restate the rule: `packages/db/src/queries/claims.ts` (`unprovenRow`), `packages/db/src/queries/intake.ts`, `packages/db/src/queries/plan-limit.ts`, `src/api/router.ts`, `src/billing/service.ts` (adds `proof_lost_at`), `src/domains/service.ts`, `src/email/dmarc-report.ts`, `src/hosted/report-address.ts`, `src/onboarding/domains.ts` (treats `legacy` as proven) and `web/src/components/domain/ProofLost.tsx`; SQL and UI copies disagree on a Cloudflare proof without name servers. The rest write or declare the columns. PR #177 adds an 11th rule site and a 19th file (its new dashboard first-day module) |
+| 5 | Domain standing ("needs attention") rules | 4 | `web/src/lib/verdict.ts` | `web/src/lib/actions.ts` repeats verdict sentences; the PDF (`web/src/lib/pdf/recommendations.ts`) keeps its own SPF/DKIM pass-rate rule (below 0.9, where the DMARC steps use 95%); the DMARC steps in `packages/dns-checks/src/dmarc-next-step.ts` judge "needs attention" for DMARC |
+| 5 | Verdict labels | 6 | `packages/ui/src/components/status.tsx` | the email-check labels (protected / at risk / exposed) are repeated in the dashboard, the leads page and the email HTML; the wizard badge and the routing step reuse "Needs attention" and "Protected" for other states |
+| 6 | Level ladder (computing or naming rungs) | 4 | none: owner to choose (`docs/adr/OPEN.md`) | dashboard 0–2, agent report 0–3, email check per message |
+| 7 | Report address construction | 13 | hosted: `fixedReportAddress` in `src/hosted/fixed-address.ts` | four forms (`CONTEXT.md`, "Report address"): hosted shared, hosted token (`src/hosted/tokens.ts`), self-host built inline in five files, and the agent report's `dmarc@<domain>` in four `packages/report` files; a seed script and a dashboard hint spell one out |
+| 8 | Counting mode default | 3 | `reportCounting` in `src/dmarc/counting.ts` | `packages/db` defaults to the hosted `registry` in three places (no caller relies on it today) |
+| 9 | DNS-over-HTTPS endpoints | 4 | `packages/dns-checks/src/doh.ts` | `src/dmarc/ip-info.ts` raw PTR fetch; public reports' own endpoints; `tools/audit-fleet` has its own client |
+| 9 | Registrable domain by "last two labels" | 5 | `organizationalDomain` in `packages/dns-checks/src/org-domain.ts` | wrong for `co.uk`-style names |
+| — | Fix-offer scope promising reject (contradicts ADR 0013) | 2 | `src/billing/offer.ts` | `src/funnel/copy.ts` describes the older 90-day Fix it; both need the owner-approved C1 wording |
+
+**First: the DMARC record module (row 1).** It is the code that writes customers' DNS, it has the most copies (12 builders, 2 ladders, 2 validators), and the copies already disagree on what record to offer. It needs no owner decision. Rows 2 to 4 follow because they are authorization and forgery gaps; row 6 waits for the ladder decision.
+
+### Sites, by concept
+
+- **DMARC record builders** (12): `packages/dns-checks/src/dmarc-next-step.ts`, `packages/dns-checks/src/dmarc-rua.ts`, `packages/dns-checks/src/report.ts`, `packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/fixes.ts`, `src/analytics/readiness.ts`, `src/dmarc/dns-record.ts`, `src/hosted/records.ts`, `src/onboarding/dmarc-plan.ts`, `src/setup/email-routing.ts`, `web/src/lib/dmarc-record.ts`, `web/src/lib/reports.ts`
+- **DMARC next-policy ladder** (2): `packages/dns-checks/src/dmarc-next-step.ts`, `src/dmarc/rollout.ts`
+- **DMARC record validation** (2): `packages/dns-checks/src/dmarc-problem.ts`, `src/dmarc/dns-record.ts`
+- **Exported SPF/DKIM/DMARC record parsers and judges** (11): `packages/dns-checks/src/dkim.ts`, `packages/dns-checks/src/dmarc-problem.ts`, `packages/dns-checks/src/dmarc-tags.ts`, `packages/dns-checks/src/dmarc.ts`, `packages/dns-checks/src/spf-terms.ts`, `packages/dns-checks/src/spf.ts`, `src/dmarc/dns-record.ts`, `src/dmarc/parse-email.ts`, `src/dmarc/rollout.ts`, `web/src/lib/dkim.ts`, `web/src/lib/dmarc-record.ts`
+- **Domain enrollment inserts** (5): `packages/db/src/queries/base-domain.ts`, `packages/db/src/queries/domains.ts`, `src/api/router.ts`, `src/domains/bulk.ts`, `src/domains/service.ts`
+- **Untrusted Authentication-Results reads (sender trust)** (3): `src/email/free-check.ts`, `src/email/parse-headers.ts`, `src/hosted/canary.ts`
+- **Reads and writes of the proof columns (the "proven" rule restated)** (18): `packages/db/src/queries/base-domain.ts`, `packages/db/src/queries/claims.ts`, `packages/db/src/queries/domains.ts`, `packages/db/src/queries/export.ts`, `packages/db/src/queries/intake.ts`, `packages/db/src/queries/plan-limit.ts`, `packages/db/src/schema.ts`, `src/api/router.ts`, `src/billing/service.ts`, `src/domains/bulk.ts`, `src/domains/ownership.ts`, `src/domains/proof-recheck.ts`, `src/domains/service.ts`, `src/email/dmarc-report.ts`, `src/hosted/report-address.ts`, `src/onboarding/domains.ts`, `web/src/components/domain/ProofLost.tsx`, `web/src/lib/types.ts`
+- **Domain standing ("needs attention") rules** (4): `packages/dns-checks/src/dmarc-next-step.ts`, `web/src/lib/actions.ts`, `web/src/lib/pdf/recommendations.ts`, `web/src/lib/verdict.ts`
+- **Verdict labels** (6): `packages/ui/src/components/status.tsx`, `src/email/html-templates.ts`, `web/src/components/wizard/SeverityBadge.tsx`, `web/src/lib/reports.ts`, `web/src/pages/leads/LeadsPage.tsx`, `web/src/pages/wizards/setup/RoutingStep.tsx`
+- **Level ladder (computing or naming rungs)** (4): `packages/dns-checks/src/report.ts`, `packages/ui/src/components/level-ladder.tsx`, `src/email/report-formatter.ts`, `web/src/lib/levels.ts`
+- **Report address construction** (13): `packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/fixes.ts`, `packages/report/src/render-md.ts`, `scripts/seed-demo.ts`, `src/api/router.ts`, `src/digest/weekly.ts`, `src/domains/bulk.ts`, `src/domains/service.ts`, `src/hosted/fixed-address.ts`, `src/hosted/tokens.ts`, `src/onboarding/plan.ts`, `web/src/lib/reports.ts`
+- **Counting mode default** (3): `packages/db/src/queries/analytics.ts`, `packages/db/src/queries/index.ts`, `packages/db/src/queries/reports.ts`
+- **DNS-over-HTTPS endpoints** (4): `packages/dns-checks/src/doh.ts`, `src/dmarc/ip-info.ts`, `src/public-reports/resolver.ts`, `tools/audit-fleet/lib/doh.ts`
+- **Registrable domain by "last two labels"** (5): `scripts/setup-email-routing.mts`, `scripts/setup-email-routing.ts`, `src/dmarc/ip-info.ts`, `src/dmarc/parse-aggregate.ts`, `tools/audit-fleet/lib/checker.ts`
+- **Fix-offer scope promising reject (contradicts ADR 0013)** (2): `src/billing/offer.ts`, `src/funnel/copy.ts`
+
+## How the guards work
+
+- **What is scanned.** Production code only: `src`, `web/src`, `packages/db/src`, `packages/dns-checks/src`, `packages/report/src`, `packages/ui/src`, `scripts`, `tools` and `plugins`, without comments. Not scanned: test files (`*.test.*`, `*.spec.*`, `*.stories.*`, `*.fixture.*`, `*.d.ts`) and folders named `test`, `tests`, `__tests__`, `__fixtures__`, `fixtures`, `__mocks__` or `e2e`. So a fixture cannot trip a guard, a separate test checks that production code never imports from those folders, and the UI gallery (`packages/ui/gallery`) is a showcase, not product.
+- **Signatures are constructs.** Each guard matches the shape of the thing (a column, a host, an SDK import, the client and its constants, a DMARC record with a policy in any of its spellings, an address built as a template, a literal or a concatenation), not one textual form. They still cannot catch every spelling; the pull request review is the second check.
+- **When a guard fails** it names the new file and line, the module to extend instead, and the exact place to change: the list in `test/agent-memory/single-sources.lists.ts` and the row and "Sites, by concept" line here. A renamed or moved site fails too (lists are keyed by path); the message says which old path to replace with the new one.
+- **Escape hatch.** A reviewed exception is an `ALLOW` entry in `test/agent-memory/single-sources.lists.ts`: `{ concept, file, reason, by, date }`, with a reason of at least four words, who agreed and the date, added in the same pull request as the site so the reviewer sees it. There is no skip flag. An entry for a file that no longer matches, or that is already an owner or a listed site, fails until it is deleted. The protected-flow check has its own reviewed exception, the "not affected" record (`AGENTS.md`).
