@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class {} }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { handleApi } from '../../src/api/router';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';

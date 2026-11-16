@@ -67,6 +67,10 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string;    // secret: whsec_… signing secret of the webhook endpoint (POST /api/stripe/webhook)
   STRIPE_PRICE_LOOKUP_KEY?: string;  // lookup key of the one-time "Fix one domain" price (default rsm_fix_one_domain)
   STRIPE_API_BASE?: string;          // testing only: a local fake Stripe, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
+  // Hosted product analytics (MODE=saas only, docs/analytics.md). Off unless BOTH are set; a self-hosted installation never sends anything.
+  POSTHOG_KEY?: string;              // the PUBLIC PostHog project key (phc_…): it can only send events. Not a personal API key
+  POSTHOG_HOST?: string;             // PostHog's own ingestion origin: exactly https://us.i.posthog.com or https://eu.i.posthog.com (anything else, a proxy included, leaves analytics off)
+  POSTHOG_API_BASE?: string;         // testing only: a local fake PostHog, http://127.0.0.1:<port> or http://localhost:<port> (anything else turns analytics off, never falls back to the real host)
   // Worker config (vars in wrangler.jsonc)
   WORKER_NAME?: string;          // defaults to "ready-set-mail-worker"
   MODE?: string;                 // "selfhost" (default) | "saas"
@@ -211,7 +215,7 @@ export const coreWorker = Object.freeze({
     }
     const bound = env as BoundEnv;
     // Hosted: the token in the recipient picks the workspace (or the anonymous check); there is no default workspace.
-    if (getMode(bound) === 'saas') return handleHostedEmail(message, bound);
+    if (getMode(bound) === 'saas') return handleHostedEmail(message, bound, ctx);
     const tenant = await loadTenant(bound, { workspaceId: await resolveInboundWorkspace(bound, message.to) });
     await handleEmail(message, tenant, ctx);
   },

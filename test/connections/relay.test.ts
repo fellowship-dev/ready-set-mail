@@ -9,7 +9,6 @@ import { AUTH, MockAuthServer } from './mock-oauth';
 import { KEY } from './world';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const SECRET = 'relay-signing-secret-for-tests';
 const RELAY = 'https://connect.mock.test';

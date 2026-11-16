@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { COMMON_DKIM_SELECTORS } from '@ready-set-mail/dns-checks';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { handleApi } from '../../src/api/router';
 import { PUBLIC_REPORT_LIMITS } from '../../src/public-reports/routes';

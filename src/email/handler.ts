@@ -4,7 +4,6 @@ import { handleDmarcReport, StorageFailure, type ReportResult } from './dmarc-re
 import { logIntake, type IntakeKind } from '../hosted/intake-log';
 import type { ReasonCode } from '../hosted/reasons';
 import { handleTlsRptReport } from './tls-rpt';
-import { track } from '../telemetry';
 import { globalQueries } from '@ready-set-mail/db';
 import { hashToken, isTokenShaped, parseRecipient } from '../hosted/tokens';
 
@@ -35,7 +34,6 @@ export async function handleEmail(
       throw e; // the sender retries
     }
     line(r.outcome, r.reason, r);
-    if (r.outcome === 'accepted' || r.outcome === 'duplicate') track(tenant, kind === 'rua' ? { event: 'report.received', failure_count: r.failure_count } : { event: 'tls-rpt.received', failure_count: r.failure_count }); // fire-and-forget
   } else {
     const rcpt = parseRecipient(to);
     const token = rcpt?.base === 'check' && rcpt.tag && isTokenShaped(rcpt.tag) ? rcpt.tag : null;
@@ -45,7 +43,6 @@ export async function handleEmail(
       message.setReject('Unknown recipient');
       return;
     }
-    const { result } = await handleFreeCheck(message, tenant, token);
-    track(tenant, { event: 'check.received', result }); // fire-and-forget
+    await handleFreeCheck(message, tenant, token);
   }
 }

@@ -14,7 +14,7 @@ export const STATUS: AuthStatus = {
 	signin_available: true,
 	oauth_providers: [],
 	prefill: { name: '', email: '' },
-	telemetry_default: false,
+	product_analytics: false,
 	turnstile_site_key: null,
 	custom_domain: null,
 	base_domain: 'example.com',

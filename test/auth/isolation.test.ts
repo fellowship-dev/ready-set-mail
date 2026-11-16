@@ -15,7 +15,6 @@ import { HOSTED_ENV } from '../hosted/world';
 import { AUTH } from '../connections/mock-oauth';
 import { KEY, Z } from '../connections/world';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 afterEach(() => vi.unstubAllGlobals());
 
 /** Strings that exist only in B's data: none may ever appear in a response to A. */

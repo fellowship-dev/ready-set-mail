@@ -48,3 +48,13 @@ steps:
     effect: write
     expect: Wizard SPF, DKIM, DMARC, Reports; DMARC published at the DNS host (with the report address only for a workspace HOSTED_CONNECT_REPORTS admits)
     first_value: true
+# Reviewed exceptions to blocker rules, copied into each walk and listed by the gate as OVERRIDDEN known rough edges.
+rule_overrides:
+  - id: FOLD-01
+    reason: "Known rough edge of main, not changed by pull request 178: the Connect Cloudflare card and the stepper push the domain field and several next actions below the first screen (walk of 2026-11-16: 0.09 to 0.71 viewport heights at 375 px, up to 0.19 at 1440 px). It is recorded in the 2026-11-15 baseline; a layout change is a separate design task."
+    by: "Claude (Fable 5.2) for Max F. Findel, PR #178; reviewer to accept"
+    date: 2026-11-16
+  - id: WORD-05
+    reason: "Pre-existing on main, not changed by pull request 178: in the setup wizard Check again refreshes only the reports panel, so the DMARC policy panel above it keeps saying No DMARC record found and Reports not connected yet while the panel below says Published and connected. The wizard files are unchanged since main; fixing it is a separate change."
+    by: "Claude (Fable 5.2) for Max F. Findel, PR #178; reviewer to accept"
+    date: 2026-11-16

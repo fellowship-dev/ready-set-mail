@@ -10,7 +10,6 @@ import { snapshotDns } from '../../src/email/dns-snapshot';
 import { assessDomain } from '../../web/src/lib/levels';
 import { previewAssessment } from '../../web/src/lib/claim-preview';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 
 const SNAPSHOT_TABLES = ['domains', 'check_results', 'domain_claims', 'audit_log', 'settings', 'monitor_subscriptions'];

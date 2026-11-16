@@ -6,7 +6,7 @@ Architecture and module responsibilities for Ready Set Mail (repo `fellowship-de
 
 ## core
 
-The core layer is the Worker entrypoint plus two cross-cutting pieces: the per-request tenant context and telemetry.
+The core layer is the Worker entrypoint plus two cross-cutting pieces: the per-request tenant context and the hosted service's product analytics.
 
 ### `src/index.ts` — Worker Entrypoint
 
@@ -50,7 +50,7 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 
 | Cron | Time | Task |
 |------|------|------|
-| `0 11 * * *` | 11am UTC daily | `instance.heartbeat` telemetry event |
+| `0 11 * * *` | 11am UTC daily | Hosted product analytics' daily step ("No Report After 3 Days"); a no-op unless PostHog is configured ([analytics.md](analytics.md)) |
 | `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` |
 | `0 10 * * *` | 10am UTC daily | SPF flatten refresh — re-flattens all enabled domains via CF DNS |
 | `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, then retention sweeps (own invocation) |
@@ -99,34 +99,9 @@ Only active with `MODE=saas` + `SAAS_ENABLED=1`; see [hosted.md](hosted.md). `in
 
 ---
 
-### `src/telemetry.ts` — Anonymous Telemetry
+### `src/product-analytics/` — Hosted product analytics (PostHog)
 
-Optional, opt-in telemetry. Disabled by default. Users opt in through the dashboard settings page, which writes `telemetry_opted_in = "true"` to the D1 settings table.
-
-**Privacy guarantees**
-- Anonymous ID: `SHA-256(cloudflare_account_id + worker_name)[:16]` (saas also mixes in the tenant's workspace id) — a one-way hash, cannot be reversed
-- Collected: event type, typed properties (counts, statuses), worker version, anonymous ID, unix timestamp
-- Never collected: domain names, email addresses, IP addresses, report contents
-
-**`track(tenant, props)`**
-
-Fire-and-forget. Never throws. Silently no-ops if telemetry is disabled or if the fetch fails.
-
-**`TelemetryProps`** — typed union of all valid events:
-
-| Event | When fired |
-|-------|-----------|
-| `instance.born` | First setup completion |
-| `instance.heartbeat` | Daily cron — includes domain/report counts and instance age |
-| `domain.add` / `domain.remove` | Domain management |
-| `domain.dns_verified` | DNS verification passed |
-| `domain.dmarc_mode_change` | DMARC policy changed (from/to recorded) |
-| `spf_flatten.enable` / `.disable` | SPF flatten toggle |
-| `mta_sts.enable` / `.disable` / `.mode_change` | MTA-STS toggle or mode change |
-| `check.created` / `check.received` | Free one-shot email check |
-| `report.received` / `tls-rpt.received` | DMARC or TLS report ingested |
-
-The opt-in state is read once per `TenantContext` (not cached at module level, so it can't leak between workspaces).
+Server-side only, off unless the hosted service sets `POSTHOG_KEY` and `POSTHOG_HOST` (never on a self-hosted installation). `events.ts` is the allow-list (every event, its properties and their closed values), `capture.ts` the one sender (`ctx.waitUntil`, timeout, at most one retry, never throws), `identity.ts` the random per-workspace analytics id, and `auth.ts` / `steps.ts` the one-line hooks the routes call. Events, funnels and privacy rules: [analytics.md](analytics.md). It replaced the opt-in self-host telemetry (`src/telemetry.ts`, removed: its endpoint never resolved).
 
 ---
 

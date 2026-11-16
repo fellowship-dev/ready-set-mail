@@ -7,7 +7,6 @@ import { HOSTED_ENV } from '../hosted/world';
 import { OPEN_FAILS_PER_DAY, SIGNIN_ALERT_AT, SIGNIN_FAILS_PER_DAY, SIGNIN_FAILS_PER_HOUR } from '../../src/auth/codes';
 import { SIGNIN_ALERT_SUBJECT, SIGNUP_NOTICE_SUBJECT } from '../../src/auth/mail';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});

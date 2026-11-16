@@ -4,7 +4,6 @@ import { delegatedKey } from '../auth/grant-fixture';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, makeEnv, setupOwner, inviteAndAccept } from '../auth/helpers';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const rows = (db: any, sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
 const json = async (res: Response) => (await res.json()) as any;

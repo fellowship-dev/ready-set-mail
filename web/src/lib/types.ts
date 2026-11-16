@@ -393,7 +393,8 @@ export interface AuthStatus {
   signup_unavailable_reason?: 'bot_protection_not_configured';
   oauth_providers: string[];
   prefill: { name: string; email: string };
-  telemetry_default: boolean;
+  /** Hosted with PostHog configured: the dashboard counts a few steps (docs/analytics.md). */
+  product_analytics?: boolean;
   turnstile_site_key: string | null;
   custom_domain: string | null;
   base_domain: string | null;

@@ -8,7 +8,6 @@ import { resolve } from 'node:path';
 import { forWorkspace, resetSchemaReadyCache } from '@ready-set-mail/db';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import worker from '../../src/index';
 import { generateToken, hashToken } from '../../src/hosted/tokens';

@@ -14,7 +14,6 @@ import { removalQueries } from './removals';
 import { domainQueries } from './domains';
 export type { DomainRow, DmarcFacts } from './domains';
 import { mtaStsQueries, spfFlattenQueries } from './domain-config';
-import { heartbeatStats } from './heartbeat';
 import { hostedQueries, intakeQueries } from './intake';
 import { monitorQueries } from './monitor';
 import { reportQueries } from './reports';
@@ -36,7 +35,6 @@ export { authLookups } from './auth';
 export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns } from './plan-limit';
 export { workspaceLifecycle, type WorkspaceSummary } from './workspaces';
 export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow, TOKEN_ROTATION_GRACE_SECONDS, type QuotaLimits, type QuotaResult, type QuotaScope, type FailureRow, type IntakeTarget, type HostedDomainRow, type PointerStatus } from './intake';
-export * from './heartbeat';
 export type { MtaStsMode } from './domain-config';
 export { globalQueries, type IpInfoRow } from './global';
 export { publicReportQueries, type NewPublicReport, type PublicReportBudget, type PublicReportUsage } from './public-reports';
@@ -83,7 +81,6 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
 		billing: billingQueries(d, workspaceId),
-		heartbeat: () => heartbeatStats(d, workspaceId),
 	};
 }
 

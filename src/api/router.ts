@@ -128,7 +128,8 @@ import { namesSeen } from '../domains/names';
 import { reportsAddressVia, withReportsVia } from '../hosted/report-address';
 import { resolverFor } from '../dns/resolver';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
-import { track } from '../telemetry';
+import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
+import { analyticsEnabled } from '../product-analytics/capture';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
@@ -251,6 +252,7 @@ async function addDomain(request: Request, tenant: TenantContext, userEmail?: st
   }
 
   const result = await enrollDomain(tenant, body.domain, userEmail, ctx, actorId);
+  enrollmentAdded(tenant, ctx, 'typed', 'pending' in result ? result.claim.domain : result.domain.domain, result);
   return json(result, 'pending' in result ? 202 : result.resumed ? 200 : 201);
 }
 
@@ -589,6 +591,7 @@ async function _handleApi(
     // Hosted: an expiring, single-use check+<token>@canary address that belongs to no workspace.
     if (hostedEnabled(env) && hostedConfig(env).canaryDomain) {
       const canary = await issueCanary(env);
+      emailCheckStartedLater(env, ctx, tenantFor);
       return json(canary, 201);
     }
     // Hosted without a canary domain: no address can receive the test email, so say so instead of a 500.
@@ -598,7 +601,6 @@ async function _handleApi(
     const rd = tenant.settings.reportsDomain;
     if (!rd) return err('Reports domain not configured — complete the setup wizard first', 500);
     const session = await issueCanary(env, undefined, rd);
-    track(tenant, { event: 'check.created' }); // fire-and-forget
     return json(session, 201);
   }
 
@@ -607,6 +609,7 @@ async function _handleApi(
   if (sessionMatch && method === 'GET') {
     const result = await globals(env.DB).checkResults.byToken(sessionMatch[1]);
     if (!result) return json({ status: 'pending' }, 202);
+    emailCheckDoneLater(env, ctx, tenantFor, sessionMatch[1], result.overall_status);
     return json({ status: 'done', result });
   }
 
@@ -715,6 +718,7 @@ async function _handleApi(
   // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
   tenant.operatorView = instanceOwner;
   if (path === '/api/me' && method === 'GET') {
+    if ((workspace as AuthedWorkspace).kind === 'session') dashboardViewed(tenant, ctx, workspace.role);
     return json({
       instance_owner: instanceOwner,
       user: userBySession,
@@ -757,7 +761,10 @@ async function _handleApi(
       const admission = await admitDomain(tenant, domain);
       if (admission.kind === 'taken') return err('this domain is already registered in another workspace', 409);
       if (admission.kind === 'limit') return err('too many unverified domains — verify or remove some first', 429);
-      if (admission.kind === 'pending') return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
+      if (admission.kind === 'pending') {
+        domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: true, domain, claimId: admission.claim.id }); // once per claim (docs/analytics.md)
+        return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
+      }
 
       // Persist base domain + derived values to D1.
       // Hosted: nothing is derived. Report intake is not connected, so there is no reports.<domain>, no rua@ address and
@@ -796,6 +803,8 @@ async function _handleApi(
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
       }
+      // A claim already counted as Domain Added (typed, then proven): only Ownership Verified follows, as for POST /api/domains.
+      const claimed = created !== null && analyticsEnabled(env) ? !!(await tenant.scope.claims.get(domain).catch(() => null)) : false;
       if (created !== null) await settleClaims(tenant, domain);
       // Hosted, proven through a parent domain or a Cloudflare zone: store the first DNS read, so the overview shows the real level.
       if (created !== null && isClaimProof(admission.via)) await recordFirstDnsCheck(tenant, created, domain);
@@ -806,7 +815,8 @@ async function _handleApi(
       // The first domain configured becomes the infrastructure hub.
       if (created !== null) {
         domainId = created;
-        track(tenant, { event: 'domain.add' });
+        if (!claimed) domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: false, domain });
+        ownershipVerified(tenant, ctx, domain, admission.via);
         logAudit(tenant, {
           actor_id: userBySession?.id ?? null, actor_email: userBySession?.email ?? null, actor_type: 'user',
           action: 'domain.add',
@@ -1005,7 +1015,7 @@ async function _handleApi(
         const current_record = records[0] ?? null;
         // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
         const cf_managed = await zoneReachable(tenant, domain.domain);
-        if (found) track(tenant, { event: 'domain.dns_verified' }); // fire-and-forget
+        if (has_rua) recordsSeenLive(tenant, ctx, domain, 'domain_page'); // docs/analytics.md: records added by hand are seen live here
         return json({ found, has_rua, current_record, cf_managed });
       } catch {
         return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
@@ -1068,7 +1078,6 @@ async function _handleApi(
         before_value: { policy: prevPolicy, record: before },
         after_value: { policy, record: newRecord, dns_record: written?.id ?? null },
       }, ctx);
-      track(tenant, { event: 'domain.dmarc_mode_change', from: prevPolicy, to: policy });
 
       return json({ ok: true, policy, record: newRecord, previous_record: before, created: live.kind === 'none' });
     }
@@ -1224,6 +1233,7 @@ async function _handleApi(
       // Same store as the daily cron, from lookups this request already made (no extra DNS). A write failure must not fail the read.
       try {
         await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000), reports_address: await reportsAddressVia(tenant, domain) });
+        dnsChecked(tenant, ctx, domain, resolved.dmarc, 'setup');
       } catch (e) {
         console.warn(`[onboarding-status] storing DNS check failed for ${domain.domain}:`, e);
       }
@@ -1315,6 +1325,7 @@ async function _handleApi(
       let reportPlan = await reportAddressForWrite(tenant, domain);
       let reportMerge: ReportMerge | null = null;
 
+      applyClicked(tenant, ctx, 'dmarc_record', 1);
       // The write goes to the zone this domain lives in, through the connection it is linked to.
       let written;
       let existing;
@@ -1342,6 +1353,7 @@ async function _handleApi(
         if (dmarcRecordProblem(record) || withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) return err(`Not a valid DMARC record: with the report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
         written = await writeDmarcRecord(cf, zoneId, domain.domain, existing?.record ?? null, record);
       } catch (e) {
+        applyDone(tenant, ctx, { step: 'dmarc_record', changes: 1, failed: 1, reports: 'none', domainIds: [] });
         return cfFailure(e);
       }
       const existingId = existing?.record.id;
@@ -1381,6 +1393,7 @@ async function _handleApi(
           ? { state: 'limit', address: reportPlan.address, reason: 'The record already lists two report addresses, so ours was not added. Choose which to replace under DMARC reports on the domain page.' }
           : { state: 'connected', address: reportPlan.address };
       }
+      applyDone(tenant, ctx, { step: 'dmarc_record', changes: 1, failed: 0, reports: reports.state, domainIds: [id] });
       return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id, reports });
     }
 
@@ -1779,6 +1792,7 @@ async function _handleApi(
         resource_type: 'user', resource_name: inviteEmail,
         after_value: { email: inviteEmail, role: inviteRole, invited_by: actor.email },
       }, ctx);
+      inviteSent(tenant, ctx, inviteRole);
       return json({ token }, 201);
     }
 
@@ -1917,7 +1931,6 @@ async function _handleApi(
           }, ctx);
         }
 
-        track(tenant, { event: 'spf_flatten.enable' }); // fire-and-forget
         const config = await tenant.scope.spf.get(id);
         return json({ ok: true, config }, 201);
       }
@@ -1943,7 +1956,6 @@ async function _handleApi(
           before_value: { spf_record: config.flattened_record ?? config.canonical_record },
           after_value: { spf_record: config.canonical_record },
         }, ctx);
-        track(tenant, { event: 'spf_flatten.disable' }); // fire-and-forget
         await tenant.scope.spf.delete(id);
         return new Response(null, { status: 204 });
       }
@@ -2027,7 +2039,6 @@ async function _handleApi(
           logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.mta_sts_record_id, resource_name: `_mta-sts.${domain.domain}`, after_value: { type: 'TXT', name: `_mta-sts.${domain.domain}`, content: `v=STSv1; id=${result.policy_id}` } }, ctx);
           logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.tls_rpt_record_id, resource_name: `_smtp._tls.${domain.domain}`, after_value: { type: 'TXT', name: `_smtp._tls.${domain.domain}`, content: `v=TLSRPTv1; rua=mailto:tls-rpt@${rd}` } }, ctx);
           logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.cname_record_id, resource_name: `mta-sts.${domain.domain}`, after_value: { type: 'CNAME', name: `mta-sts.${domain.domain}`, proxied: true } }, ctx);
-          track(tenant, { event: 'mta_sts.enable' }); // fire-and-forget
           return json({ ok: true, mode: result.mode, mx_hosts: result.mx_hosts });
         } catch (e: any) {
           return err(e.message ?? 'provisioning failed', 500);
@@ -2056,7 +2067,6 @@ async function _handleApi(
           if (config.mta_sts_record_id) {
             logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.update', resource_type: 'dns_record', resource_id: config.mta_sts_record_id, resource_name: `_mta-sts.${domain.domain}`, before_value: { content: `v=STSv1; id=${config.policy_id}` }, after_value: { content: `v=STSv1; id=${newPolicyId}` } }, ctx);
           }
-          track(tenant, { event: 'mta_sts.mode_change', from: config.mode, to: body.mode }); // fire-and-forget
           return json({ ok: true, mode: body.mode, policy_id: newPolicyId });
         }
 
@@ -2130,7 +2140,6 @@ async function _handleApi(
             ...(r.removal.state === 'kept' ? { after_value: { kept: true, reason: r.removal.reason } } : {}),
           }, ctx);
         }
-        track(tenant, { event: 'mta_sts.disable' }); // fire-and-forget
         // The row goes even when a record was kept: it drives the policy file and the cron, and a disabled feature serves
         // neither. The kept record is not forgotten: it is in this response and in its dns.kept audit entry (it is the
         // customer's record now; re-enabling would need them to remove or fix it first).
@@ -2185,6 +2194,8 @@ async function _handleApi(
         { actorId: userBySession?.id, actorEmail: userBySession?.email, ctx },
       );
       const imported = results.filter(r => r.status === 'imported').length;
+      const pending = results.filter(r => r.status === 'pending').length;
+      domainAdded(tenant, ctx, { source: 'bulk', added: imported + pending, needsProof: pending > 0 });
       return json({ imported, total: results.length, results }, imported > 0 ? 201 : 200);
     }
 
