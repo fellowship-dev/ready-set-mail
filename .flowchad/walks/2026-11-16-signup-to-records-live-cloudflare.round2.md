@@ -2,9 +2,9 @@
 
 - **Flow:** New hosted user signs up and gets DMARC with the report address live through Cloudflare
 - **Value moment:** Records live - ownership proven and DMARC seen in public DNS, carrying the shared report address when the server admits the workspace to reports
-- **Walked:** 2026-11-16T17:40:50.791Z
+- **Walked:** 2026-11-16T17:46:48.935Z
 - **Target:** http://127.0.0.1:8933 (local-copy)
-- **Commit:** 75b712e3cd1c8576c54415c1118a83659ddd967e
+- **Commit:** 7d03993f647e0179923a808a468d98a586a008f6
 - **Kind:** screens
 - **Gate:** PASS
 - **Rules:** 0.5.0
@@ -33,7 +33,7 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 | `longest_wait_ms` | — | 15000 |  |
 | `dead_ends` | — | 0 |  |
 | `loops` | — | 0 |  |
-| `time_to_value_ms` | — | 77323 |  |
+| `time_to_value_ms` | — | 77314 |  |
 
 ### Notes
 
