@@ -154,6 +154,12 @@ export class TenantContext {
     throw new CfNotConfiguredError(`${domain} is not linked to a Cloudflare connection`);
   }
 
+  /** Reach `domain` through this connection although no domain row links it (a policy being retired after its domain was removed: src/mta-sts/retire.ts). */
+  async useConnectionFor(domain: string, connectionId: string): Promise<void> {
+    await this.#connectionFor(domain);
+    (await this.#links!).set(domain.toLowerCase(), connectionId);
+  }
+
   async #connectionFor(domain: string): Promise<string | null> {
     this.#links ??= this.scope.domains.list().then(rows => new Map(rows.map(r => [r.domain.toLowerCase(), r.cf_connection_id ?? null] as const)));
     const links = await this.#links;

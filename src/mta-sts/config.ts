@@ -30,6 +30,9 @@ export const maxAgeFor = (mode: 'testing' | 'enforce' | 'none'): number => (mode
 export const DEFAULT_MAX_POLICY_HOSTS = 100;
 /** Enforce is offered after this long in testing (CHANGELOG 1.2.0), and only with evidence (src/mta-sts/evidence.ts). */
 export const ENFORCE_AFTER_SECONDS = 7 * 86400;
+/** A setup that is not finished this long after it was turned on is stopped: Cloudflare deletes a custom hostname that was not validated within 7 days anyway. */
+export const SETUP_EXPIRES_AFTER_SECONDS = 7 * 86400;
+export const SETUP_EXPIRED_NOTICE = 'Setup was not finished within 7 days, so it was stopped. Turn it on again to restart.';
 /** How far back TLS failures weigh on the enforce decision. */
 export const EVIDENCE_WINDOW_SECONDS = 14 * 86400;
 /** Configs the daily job visits per run, oldest check first (about ten subrequests each; the default ceiling is the same number). */

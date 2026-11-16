@@ -1,6 +1,6 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { domains, mtaStsConfig, spfFlattenConfig } from '../schema';
+import { domains, mtaStsConfig, mtaStsRetiring, spfFlattenConfig } from '../schema';
 
 export type MtaStsMode = 'testing' | 'enforce';
 
@@ -121,6 +121,34 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 
 		delete(domainId: number) {
 			return db.delete(mtaStsConfig).where(forDomain(domainId)).run();
+		},
+	};
+}
+
+export type MtaStsRetiringRow = typeof mtaStsRetiring.$inferSelect;
+export type NewMtaStsRetiring = Omit<typeof mtaStsRetiring.$inferInsert, 'workspace_id' | 'created_at'>;
+
+/** The policies of this workspace that are being taken down (see `mtaStsRetiring` in schema.ts): by name, because the domain may be gone. */
+export function mtaStsRetiringQueries(db: Db, workspaceId: string) {
+	const mine = eq(mtaStsRetiring.workspace_id, workspaceId);
+	return {
+		get(domain: string) {
+			return db.select().from(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).get().then((r) => r ?? null);
+		},
+		/** One per name: starting again replaces what was there (a name that is retired twice has one policy to wait out, the later one). */
+		async put(r: NewMtaStsRetiring) {
+			await db.delete(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, r.domain.toLowerCase()))).run();
+			return db.insert(mtaStsRetiring).values({ ...r, domain: r.domain.toLowerCase(), workspace_id: workspaceId }).run();
+		},
+		update(domain: string, set: Partial<Omit<MtaStsRetiringRow, 'workspace_id' | 'domain' | 'created_at'>>) {
+			return db.update(mtaStsRetiring).set(set).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).run();
+		},
+		delete(domain: string) {
+			return db.delete(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).run();
+		},
+		/** This workspace's entries whose time is up (self-host runs this per workspace). */
+		due(nowSeconds: number, limit: number) {
+			return db.select().from(mtaStsRetiring).where(and(mine, lte(mtaStsRetiring.retire_after, nowSeconds))).orderBy(mtaStsRetiring.retire_after).limit(limit).all();
 		},
 	};
 }

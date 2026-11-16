@@ -157,10 +157,10 @@ export async function withdrawProof(env: BoundEnv, holder: ZoneHolder, why: Laps
   if (!(await claimLookups(env.DB).markProofLost(holder.id, Math.floor(Date.now() / 1000)))) return false;
   const tenant = await loadTenant(env, { workspaceId: holder.workspace_id });
   const demoted = await demoteOrphanedSubdomains(tenant);
-  // Serving stops at once (an unproven domain is not an owner); the policy host and the records go too, best effort.
+  // An unproven domain is not an owner, so its policy is retired (src/mta-sts/retire.ts): it serves `none` until what senders hold has expired, then the policy host and the records go.
   for (const id of [holder.id, ...demoted]) {
     const row = await tenant.scope.domains.getById(id);
-    if (row) await removeMtaSts(tenant, row);
+    if (row) await removeMtaSts(tenant, row, undefined, undefined, 'lost_proof');
   }
   logAudit(tenant, {
     actor_type: 'system', action: 'domain.proof_lost', resource_type: 'domain', resource_id: String(holder.id), resource_name: holder.domain,

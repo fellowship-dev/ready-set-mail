@@ -15,8 +15,10 @@
 --   notice, notice_at     one state notice for the person (MX list changed, switched back to testing...), dismissed by an owner or admin.
 --   fetch_checked_at, fetch_ok, fetch_reason   the last FETCH of https://mta-sts.<domain>/.well-known/mta-sts.txt by the reconcile (status 200, text/plain, the exact
 --                         policy text, over a valid certificate): when, whether it passed (1/0, NULL = never fetched) and one reason code. The page's "served" comes only from here.
---   retire_after, retire_reason   a policy being taken down the RFC 8461 section 8.3 way: state 'retiring' serves mode none until retire_after (the last
---                         served policy's max_age after the change), then the hostname and records go. Reason: lost_proof, removed or evicted.
+-- mta_sts_retiring      a policy being taken down the RFC 8461 section 8.3 way (a lost proof, a removed or an evicted domain): it serves mode none (one day) until
+--                         retire_after (the last served policy's max_age after the change; a week after an enforce policy), then its custom hostname and records go.
+--                         Not a reference to domains: a removed domain is gone and an evicted one renamed, while senders may still hold the policy. Serving it needs
+--                         no proof of the domain.
 -- tls_reports
 --   sts_success, sts_failure, sts_failure_types   the sessions of policies of type "sts" only (a report also counts tlsa and no-policy-found sessions
 --                         in the existing totals), and the distinct failure result-types of those policies as a JSON array. NULL on old rows = unknown.
@@ -41,8 +43,6 @@ ALTER TABLE mta_sts_config ADD COLUMN notice_at INTEGER;
 ALTER TABLE mta_sts_config ADD COLUMN fetch_checked_at INTEGER;
 ALTER TABLE mta_sts_config ADD COLUMN fetch_ok INTEGER;
 ALTER TABLE mta_sts_config ADD COLUMN fetch_reason TEXT;
-ALTER TABLE mta_sts_config ADD COLUMN retire_after INTEGER;
-ALTER TABLE mta_sts_config ADD COLUMN retire_reason TEXT;
 UPDATE mta_sts_config SET policy_published_at = updated_at, mode_changed_at = updated_at WHERE policy_published_at IS NULL;
 CREATE INDEX idx_mta_sts_checked ON mta_sts_config (enabled, last_checked_at);
 
@@ -54,3 +54,25 @@ ALTER TABLE tls_reports ADD COLUMN reporter_tier TEXT;
 ALTER TABLE tls_reports ADD COLUMN reporter_identity TEXT;
 ALTER TABLE tls_reports ADD COLUMN report_id TEXT;
 CREATE UNIQUE INDEX idx_tls_reports_dedup ON tls_reports (domain_id, reporter_identity, report_id) WHERE report_id IS NOT NULL;
+
+CREATE TABLE mta_sts_retiring (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  mode_before TEXT NOT NULL,
+  mx_hosts TEXT NOT NULL,
+  policy_id TEXT NOT NULL,
+  via TEXT,
+  policy_host TEXT NOT NULL DEFAULT 'worker_route',
+  ch_id TEXT,
+  mta_sts_record_id TEXT,
+  tls_rpt_record_id TEXT,
+  cname_record_id TEXT,
+  cf_connection_id TEXT,
+  retire_after INTEGER NOT NULL,
+  last_error TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (workspace_id, domain)
+);
+CREATE INDEX idx_mta_sts_retiring_after ON mta_sts_retiring (retire_after);
+CREATE INDEX idx_mta_sts_retiring_domain ON mta_sts_retiring (domain);

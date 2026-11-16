@@ -282,7 +282,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
       cleanup = 'failed';
       console.warn(`[eviction] hosted cleanup failed for domain ${row.id}:`, e instanceof Error ? e.message : e);
     }
-    await removeMtaSts(evicted, row);
+    await removeMtaSts(evicted, row, undefined, undefined, 'evicted');
     await removeAuthRecord(evicted, row);
     if (row.id !== holderDomainId) await lookups.detach(row.id, Math.floor(Date.now() / 1000)); // the holder's own row went with the insert
     logAudit({ db: tenant.db, workspaceId: holderWorkspaceId }, {

@@ -60,6 +60,21 @@ describe('self-host', () => {
     expect((await worker.fetch(new Request('https://mta-sts.acme.com/api/domains'), w.env, ctx)).status).toBe(404);
   });
 
+  it('removing the domain retires the policy: none is served (by name, no proof) for a day, then the 08:00 job takes the records away', async () => {
+    const w = await selfHost();
+    await w.mta('POST');
+    const res = await call(w.env, 'DELETE', '/api/domains/1', { key: w.key });
+    expect(await res.json()).toMatchObject({ ok: true, mta_sts: { retiring: true, enforced: false, reason: 'removed' } });
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    const served = await worker.fetch(new Request('https://mta-sts.acme.com/.well-known/mta-sts.txt'), w.env, ctx);
+    expect(await served.text()).toBe('version: STSv1\nmode: none\nmx: mx.acme.com\nmax_age: 86400\n');
+    w.db.sqlite.prepare('UPDATE mta_sts_retiring SET retire_after = ?').run(Math.floor(Date.now() / 1000) - 1);
+    await refreshMtaStsForTenant(await loadTenant(w.env, { workspaceId: 'ws_default' }));
+    expect(w.rows('SELECT * FROM mta_sts_retiring')).toEqual([]);
+    expect(w.cf.records.get('zone-acme')).toEqual([]);
+    expect((await worker.fetch(new Request('https://mta-sts.acme.com/.well-known/mta-sts.txt'), w.env, ctx)).status).toBe(404);
+  });
+
   it('no Cloudflare connection reaching the zone: unavailable, one true sentence (manual is not possible without a certificate path)', async () => {
     const w = await selfHost({ token: '' });
     expect(await (await w.mta('GET')).json()).toMatchObject({ available: false, unavailable_reason: 'needs_cloudflare', via: null });

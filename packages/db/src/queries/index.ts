@@ -13,7 +13,7 @@ import { connectionQueries } from './connections';
 import { removalQueries } from './removals';
 import { domainQueries } from './domains';
 export type { DomainRow, DmarcFacts } from './domains';
-import { mtaStsQueries, spfFlattenQueries } from './domain-config';
+import { mtaStsQueries, mtaStsRetiringQueries, spfFlattenQueries } from './domain-config';
 import { hostedQueries, intakeQueries } from './intake';
 import { monitorQueries } from './monitor';
 import { reportQueries } from './reports';
@@ -35,7 +35,7 @@ export { authLookups } from './auth';
 export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns } from './plan-limit';
 export { workspaceLifecycle, type WorkspaceSummary } from './workspaces';
 export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow, TOKEN_ROTATION_GRACE_SECONDS, type QuotaLimits, type QuotaResult, type QuotaScope, type FailureRow, type IntakeTarget, type HostedDomainRow, type PointerStatus } from './intake';
-export type { MtaStsMode, MtaStsRow, MtaStsPatch, NewMtaStsConfig } from './domain-config';
+export type { MtaStsMode, MtaStsRow, MtaStsPatch, NewMtaStsConfig, MtaStsRetiringRow, NewMtaStsRetiring } from './domain-config';
 export { globalQueries, type IpInfoRow } from './global';
 export { publicReportQueries, type NewPublicReport, type PublicReportBudget, type PublicReportUsage } from './public-reports';
 export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_BYTES, type RecordTuple, type StoreReportInput } from './report-store';
@@ -73,6 +73,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		baseDomain: baseDomainQueries(d, workspaceId),
 		spf: spfFlattenQueries(d, workspaceId),
 		mtaSts: mtaStsQueries(d, workspaceId),
+		mtaStsRetiring: mtaStsRetiringQueries(d, workspaceId),
 		audit: auditQueries(d, workspaceId),
 		team: teamQueries(d, workspaceId),
 		apiKeys: apiKeyQueries(d, workspaceId),

@@ -332,9 +332,6 @@ export const mtaStsConfig = sqliteTable(
 		fetch_checked_at: integer('fetch_checked_at'),
 		fetch_ok: integer('fetch_ok'),
 		fetch_reason: text('fetch_reason'),
-		/** Retiring (RFC 8461 section 8.3): serving mode none until this time, then the hostname and records go. Why: lost_proof | removed | evicted. */
-		retire_after: integer('retire_after'),
-		retire_reason: text('retire_reason', { enum: ['lost_proof', 'removed', 'evicted'] }),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		workspace_id: workspaceId(),
@@ -799,6 +796,37 @@ export const removedDomains = sqliteTable(
 );
 
 /**
+ * An MTA-STS policy being taken down the RFC 8461 section 8.3 way: it serves `mode: none` (one day) until `retire_after` (the last served policy's max_age after the
+ * change), then its custom hostname and records go. It is NOT a reference to `domains`: a removed domain is gone, and an evicted one is renamed, but senders may still
+ * hold the policy, so the name and the ids to remove live here. Serving it needs no proof of the domain (a `none` policy can only stop senders from refusing).
+ */
+export const mtaStsRetiring = sqliteTable(
+	'mta_sts_retiring',
+	{
+		workspace_id: text('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+		/** The name as published (lowercase). */
+		domain: text('domain').notNull(),
+		reason: text('reason', { enum: ['lost_proof', 'removed', 'evicted'] }).notNull(),
+		/** What it was before: senders may hold an enforce policy for a week, a testing one for a day. */
+		mode_before: text('mode_before', { enum: ['testing', 'enforce'] }).notNull(),
+		mx_hosts: text('mx_hosts').notNull(),
+		policy_id: text('policy_id').notNull(),
+		via: text('via', { enum: ['cloudflare', 'manual'] }),
+		policy_host: text('policy_host', { enum: ['worker_route', 'saas_hostname'] }).notNull().default('worker_route'),
+		ch_id: text('ch_id'),
+		mta_sts_record_id: text('mta_sts_record_id'),
+		tls_rpt_record_id: text('tls_rpt_record_id'),
+		cname_record_id: text('cname_record_id'),
+		/** The Cloudflare connection that reached the domain's zone: the records are removed through it at the end, when no domain row links it any more. */
+		cf_connection_id: text('cf_connection_id'),
+		retire_after: integer('retire_after').notNull(),
+		last_error: text('last_error'),
+		created_at: integer('created_at').notNull().default(now),
+	},
+	(t) => [primaryKey({ columns: [t.workspace_id, t.domain] }), index('idx_mta_sts_retiring_after').on(t.retire_after), index('idx_mta_sts_retiring_domain').on(t.domain)],
+);
+
+/**
  * Zones that sit below an allowed zone but are NOT on the allow-list, as seen when the list was saved.
  * A child zone is delegated, so a record written for a name inside it in the parent zone is shadowed and
  * has no effect: such names are refused (with the blocking zone named) instead of written to the parent.
@@ -855,6 +883,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'tls_reports',
 	'spf_flatten_config',
 	'mta_sts_config',
+	'mta_sts_retiring',
 	'monitor_subscriptions',
 	'settings',
 	'invites',

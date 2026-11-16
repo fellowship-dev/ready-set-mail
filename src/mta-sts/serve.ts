@@ -4,7 +4,7 @@
 // `mta-sts.*` hostname is a 404: the dashboard, the API and the assets are not served under a customer's name. The answer is never cached: senders must
 // see a changed policy as soon as the `_mta-sts` id changes (RFC 8461 §8.1), and they may not use HTTP caching themselves (§3.3).
 
-import { assertSchemaReady, SchemaNotReadyError, type MtaStsRow } from '@ready-set-mail/db';
+import { assertSchemaReady, intakeLookups, SchemaNotReadyError, type MtaStsRow } from '@ready-set-mail/db';
 import { buildPolicyFile } from '@ready-set-mail/dns-checks';
 import type { Env } from '../index';
 import { scope } from '../db/scope';
@@ -23,6 +23,9 @@ export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts'>): string
   const mode = servedMode(config);
   return buildPolicyFile(mode, splitHosts(config.mx_hosts), maxAgeFor(mode));
 }
+
+/** The policy of a domain being retired (src/mta-sts/retire.ts): `none`, with its MX hosts, for a day (RFC 8461 section 8.3). */
+export const retiringPolicyText = (e: { mx_hosts: string }): string => buildPolicyFile('none', splitHosts(e.mx_hosts), maxAgeFor('none'));
 
 /** Is this an MTA-STS policy hostname (`mta-sts.<something>`)? */
 export const isPolicyHostname = (hostname: string): boolean => hostname.toLowerCase().startsWith('mta-sts.');
@@ -46,6 +49,13 @@ export function withPolicyHostFirst<T extends { fetch(request: Request, env: any
   } };
 }
 
+/** The `none` policy of a name whose MTA-STS is being retired, whoever's it was and whether or not the domain still exists or is proven; null when nothing retires there. */
+async function retiringText(env: Env & { DB: D1Database }, hostname: string): Promise<string | null> {
+  const name = hostname.toLowerCase().replace(/^mta-sts\./, '');
+  const entry = await intakeLookups(env.DB).retiringPolicy(name);
+  return entry ? retiringPolicyText(entry) : null;
+}
+
 /** The response for any request on a policy hostname. `env.DB` must be present. */
 export async function servePolicyHost(request: Request, env: Env & { DB: D1Database }): Promise<Response> {
   const url = new URL(request.url);
@@ -53,6 +63,7 @@ export async function servePolicyHost(request: Request, env: Env & { DB: D1Datab
   if (url.pathname !== POLICY_PATH || (request.method !== 'GET' && !head)) return notFound();
   const host = await resolvePolicyHost(env, url.hostname);
   const config = host && await scope(env.DB, host.workspaceId).mtaSts.getEnabledByDomain(host.domain);
-  if (!config) return notFound('MTA-STS not configured for this domain');
-  return new Response(head ? null : policyText(config), { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
+  const text = config ? policyText(config) : await retiringText(env, url.hostname);
+  if (text === null) return notFound('MTA-STS not configured for this domain');
+  return new Response(head ? null : text, { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' } });
 }

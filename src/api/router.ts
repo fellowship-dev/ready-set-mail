@@ -340,8 +340,8 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
     throw e;
   }
 
-  // MTA-STS first: its config row (and the ids of what it made) goes with the domain.
-  const mtaKept = await removeMtaSts(tenant, domain, actor, ctx);
+  // MTA-STS first (RFC 8461 section 8.3): a policy senders may hold is retired, not dropped, and what it needs to finish does not depend on this domain row.
+  const mta = await removeMtaSts(tenant, domain, actor, ctx, 'removed');
 
   await tenant.scope.domains.delete(id);
   // Cloudflare auto-import does not add a removed name back; it is offered as a suggestion instead (src/connections/import.ts).
@@ -360,7 +360,8 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   // A record the customer changed is not deleted: the removal still succeeds and says which records were kept and why.
   const kept = await removeAuthRecord(tenant, domain, actor, ctx);
 
-  return json({ ok: true, kept: [...mtaKept, ...kept] });
+  // `mta_sts` only when a policy senders may hold is being retired (src/mta-sts/retire.ts): what they may still do meanwhile, for the dialog's one sentence.
+  return json({ ok: true, kept: [...mta.kept, ...kept], ...(mta.retiring ? { mta_sts: mta.retiring } : {}) });
 }
 
 /** A stored report as the API shows it: whether it counts toward the numbers, and without the storing attempt's internal id. */

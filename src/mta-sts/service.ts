@@ -32,6 +32,7 @@ import { disableRule, enforceReadiness, EVIDENCE_RULE, NO_REPORTS_NOTE, maxAgeWo
 import { authservConfigured } from '../dmarc/reporter-auth';
 import { policyText, servedMode } from './serve';
 import { OperatorZone, policyHostname, strategyFor, type PolicyHostStrategy } from './policy-host';
+import { retiringView } from './retire';
 import { fetchPolicyProof, policyUrl, reconcileMtaSts, servedMessage, type FetchReason, type ReconcileShared } from './reconcile';
 
 export interface Result { status: number; body: Record<string, unknown> }
@@ -201,7 +202,11 @@ const reportView = (r: { id: number; org_name: string; date_begin: number; date_
 
 /** Everything the MTA-STS page needs, in one read. Live DNS: the MX hosts only (and the records are read by `verify`). */
 export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Promise<Result> {
-  const row = await tenant.scope.mtaSts.get(domain.id);
+  // A stopped setup is a row that is off, kept only for its one notice; a policy being retired is an entry of its own (src/mta-sts/retire.ts).
+  const stored = await tenant.scope.mtaSts.get(domain.id);
+  const row = stored?.enabled ? stored : null;
+  const stopped = stored && !stored.enabled ? stored : null;
+  const retiringEntry = row ? null : await tenant.scope.mtaStsRetiring.get(domain.domain);
   const av = await availability(tenant, domain);
   const mx = await readMx(domain.domain, resolverFor(tenant.env));
   const now = nowSeconds();
@@ -250,6 +255,8 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       }),
       records_problem: target.problem,
       config: row ? configView(row) : null,
+      setup_expired: stopped?.notice ? { notice: stopped.notice, at: stopped.notice_at } : null,
+      retiring: retiringEntry ? retiringView(retiringEntry) : null,
       policy_host_status: row ? { kind: row.policy_host, hostname: policyHostname(domain.domain), certificate: certificateOf(row), route: !!row.route_id } : null,
       // "Served" is the last FETCH of the policy URL (src/mta-sts/reconcile.ts) and nothing else: not the certificate, not the route, not a record.
       served: row ? servedStatus(row, domain.domain) : null,
@@ -372,7 +379,8 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
     return fail(f.status, e instanceof Error && !(f.status === 502 && f.body.error === e.message) ? f.body.error : `DNS lookup failed: ${f.body.error}`, f.body.code ? { code: f.body.code } : {});
   }
   if (way.clash) return fail(409, way.clash, { code: 'mta_sts_record_in_the_way' });
-  if (existing) await tenant.scope.mtaSts.delete(domain.id); // a leftover row that is not enabled
+  if (existing) await tenant.scope.mtaSts.delete(domain.id); // a leftover row that is not enabled (a stopped setup: this starts it again)
+  await intakeLookups(tenant.db).dropRetiring(domain.domain); // turning it on again while it retires takes the policy host back
 
   const undo: Undo[] = [];
   const written = { mta_sts_record_id: null as string | null, tls_rpt_record_id: null as string | null, cname_record_id: null as string | null }; // only what THIS call created
@@ -570,10 +578,10 @@ export async function verifyMtaSts(c: Ctx): Promise<Result> {
 
 // ── Changing it ──────────────────────────────────────────────
 
-const REASON_WORDS: Record<FetchReason, string> = {
+const REASON_WORDS: Readonly<Record<FetchReason, string>> = Object.freeze({
   not_found: 'it answers 404', unexpected_status: 'it answers with an error', redirect: 'it redirects', wrong_content_type: 'it is not plain text', wrong_body: 'it is not the policy we publish',
   certificate: 'its certificate is not valid yet', unreachable: 'nothing answers', timeout: 'it does not answer in time',
-};
+});
 
 /** The policy cannot be fetched, so an id that points senders at it is not published (and the person is not asked to publish one). */
 export class PolicyUnreachable extends Error {
@@ -705,8 +713,9 @@ export async function refreshMx(c: Ctx): Promise<Result> {
 
 export async function dismissNotice(c: Ctx): Promise<Result> {
   const row = await c.tenant.scope.mtaSts.get(c.domain.id);
-  if (!row?.enabled) return fail(404, 'MTA-STS not enabled for this domain');
-  await c.tenant.scope.mtaSts.update(c.domain.id, { notice: null, notice_at: null });
+  if (!row) return fail(404, 'MTA-STS not enabled for this domain');
+  if (!row.enabled) await c.tenant.scope.mtaSts.delete(c.domain.id); // a stopped setup keeps its row only for the notice
+  else await c.tenant.scope.mtaSts.update(c.domain.id, { notice: null, notice_at: null });
   return { status: 200, body: { ok: true } };
 }
 
@@ -714,57 +723,79 @@ export async function dismissNotice(c: Ctx): Promise<Result> {
 
 export interface Teardown { kept: KeptRecord[]; operator: 'none' | 'removed' | 'pending' }
 
+/** What Ready Set Mail made for one policy, by id: the customer's three records and the operator's custom hostname (and, from an earlier build, a route of its own). */
+export interface MtaStsResources {
+  mta_sts_record_id: string | null; tls_rpt_record_id: string | null; cname_record_id: string | null;
+  ch_id: string | null; route_id: string | null;
+}
+
 /**
- * Remove exactly what Ready Set Mail made for this domain: the customer's records by id (a record the customer changed is kept, and said so), the
- * operator's custom hostname and Worker route by stored id (re-read first), and the row. Best effort and never throws: what could not be removed
- * is reported, and the daily job removes operator-side leftovers that no enabled row owns.
+ * Remove exactly those resources of `d`: the customer's records by id (a record the customer changed is kept, and said so), the operator's custom hostname (re-read
+ * first; the shared declared route is never touched) and a route of an earlier build. Best effort, never throws; each record's outcome is audited. `policyId` is
+ * only the content shown in the audit entry of the `_mta-sts` record.
  */
-export async function teardownMtaSts(c: Ctx, row: MtaStsRow): Promise<Teardown> {
-  const { tenant, domain } = c;
-  const ids = { mta_sts_record_id: row.mta_sts_record_id ?? null, tls_rpt_record_id: row.tls_rpt_record_id ?? null, cname_record_id: row.cname_record_id ?? null };
-  const d = domain.domain;
+export async function removeMtaStsResources(tenant: TenantContext, d: string, ids: MtaStsResources, policyId: string, actor: ReturnType<typeof who>, ec?: ExecutionContext): Promise<Teardown> {
   let removals: MtaStsRemoval[] = [];
-  if (ids.mta_sts_record_id || ids.tls_rpt_record_id || ids.cname_record_id) {
+  const records = { mta_sts_record_id: ids.mta_sts_record_id, tls_rpt_record_id: ids.tls_rpt_record_id, cname_record_id: ids.cname_record_id };
+  if (records.mta_sts_record_id || records.tls_rpt_record_id || records.cname_record_id) {
     if (tenant.hasCloudflare()) {
-      removals = await deprovisionMtaSts(tenant, d, ids).catch((e) => { console.warn(`[mta-sts] removing records of ${d}:`, e instanceof Error ? e.message : e); return []; });
+      removals = await deprovisionMtaSts(tenant, d, records).catch((e) => { console.warn(`[mta-sts] removing records of ${d}:`, e instanceof Error ? e.message : e); return []; });
     } else {
       const none: DnsRemoval = { state: 'kept', reason: 'no Cloudflare connection is available to delete it' };
-      if (ids.mta_sts_record_id) removals.push({ id: ids.mta_sts_record_id, type: 'TXT', name: `_mta-sts.${d}`, removal: none });
-      if (ids.tls_rpt_record_id) removals.push({ id: ids.tls_rpt_record_id, type: 'TXT', name: `_smtp._tls.${d}`, removal: none });
-      if (ids.cname_record_id) removals.push({ id: ids.cname_record_id, type: 'CNAME', name: `mta-sts.${d}`, removal: none });
+      if (records.mta_sts_record_id) removals.push({ id: records.mta_sts_record_id, type: 'TXT', name: `_mta-sts.${d}`, removal: none });
+      if (records.tls_rpt_record_id) removals.push({ id: records.tls_rpt_record_id, type: 'TXT', name: `_smtp._tls.${d}`, removal: none });
+      if (records.cname_record_id) removals.push({ id: records.cname_record_id, type: 'CNAME', name: `mta-sts.${d}`, removal: none });
     }
   }
   const kept: KeptRecord[] = removals.flatMap((r) => (r.removal.state === 'kept' ? [{ type: r.type, name: r.name, reason: r.removal.reason }] : []));
 
   let operator: Teardown['operator'] = 'none';
-  if (row.ch_id || row.route_id) {
+  if (ids.ch_id || ids.route_id) {
     operator = 'removed';
     try {
       const zone = await OperatorZone.open(tenant.env);
-      if (row.route_id) await zone.deleteRoute(row.route_id, d);
-      if (row.ch_id) await zone.deleteHostname(row.ch_id, d);
+      if (ids.route_id) await zone.deleteRoute(ids.route_id, d); // only a route an earlier build made for this name; the declared one is never deleted
+      if (ids.ch_id) await zone.deleteHostname(ids.ch_id, d);
     } catch (e) {
       operator = 'pending';
       console.warn(`[mta-sts] removing the policy host of ${d}:`, e instanceof Error ? e.message : e);
     }
   }
-
-  const base = who(c);
-  logAudit(tenant, {
-    ...base, action: 'mta_sts.disable', resource_type: 'domain', resource_id: String(domain.id), resource_name: d,
-    before_value: { mode: row.mode, mx_hosts: splitHosts(row.mx_hosts), policy_id: row.policy_id, policy_host: row.policy_host },
-    ...(kept.length || operator === 'pending' ? { after_value: { kept, operator } } : {}),
-  }, c.ec);
   const beforeOf = (r: MtaStsRemoval) => (r.type === 'CNAME' ? { type: 'CNAME', name: r.name } : r.name.startsWith('_mta-sts.')
-    ? { type: 'TXT', name: r.name, content: policyIdRecordValue(row.policy_id) } : { type: 'TXT', name: r.name });
+    ? { type: 'TXT', name: r.name, content: policyIdRecordValue(policyId) } : { type: 'TXT', name: r.name });
   for (const r of removals) {
-    logAudit(tenant, { ...base, action: removalAction(r.removal), resource_type: 'dns_record', resource_id: r.id, resource_name: r.name, before_value: beforeOf(r),
-      ...(r.removal.state === 'kept' ? { after_value: { kept: true, reason: r.removal.reason } } : {}) }, c.ec);
+    logAudit(tenant, { ...actor, action: removalAction(r.removal), resource_type: 'dns_record', resource_id: r.id, resource_name: r.name, before_value: beforeOf(r),
+      ...(r.removal.state === 'kept' ? { after_value: { kept: true, reason: r.removal.reason } } : {}) }, ec);
   }
-  // The row goes even when a record was kept: it drives the policy file and the daily job, and a disabled feature serves neither. A kept record is the
-  // customer's now; it is in the response and in its dns.kept audit entry.
-  await tenant.scope.mtaSts.delete(domain.id);
   return { kept, operator };
+}
+
+/**
+ * Take this domain's MTA-STS down NOW: its resources (above), then the row. Used where nothing is left to wait for: a turn-off the rule allows (testing, and a week after
+ * leaving enforce), a crashed enable, a setup that was never published. A policy that senders may hold goes through `retireMtaSts` (src/mta-sts/retire.ts) instead.
+ * `stopped`: keep the row, off, with this notice (a setup nobody finished).
+ */
+export async function teardownMtaSts(c: Ctx, row: MtaStsRow, opts: { stopped?: string } = {}): Promise<Teardown> {
+  const { tenant, domain } = c;
+  const d = domain.domain;
+  const t = await removeMtaStsResources(tenant, d, row, row.policy_id, who(c), c.ec);
+  logAudit(tenant, {
+    ...who(c), action: opts.stopped ? 'mta_sts.setup_expired' : 'mta_sts.disable', resource_type: 'domain', resource_id: String(domain.id), resource_name: d,
+    before_value: { mode: row.mode, mx_hosts: splitHosts(row.mx_hosts), policy_id: row.policy_id, policy_host: row.policy_host },
+    ...(t.kept.length || t.operator === 'pending' ? { after_value: { kept: t.kept, operator: t.operator } } : {}),
+  }, c.ec);
+  if (opts.stopped) {
+    // Off, with the one sentence; the ids it held are gone (or kept by the customer), so the next enable starts clean.
+    await tenant.scope.mtaSts.update(domain.id, {
+      enabled: 0, state: 'waiting_records', notice: opts.stopped, notice_at: nowSeconds(), ch_id: null, ch_status: null, ch_ssl_status: null, route_id: null,
+      mta_sts_record_id: null, tls_rpt_record_id: null, cname_record_id: null, fetch_checked_at: null, fetch_ok: null, fetch_reason: null, last_error: null, policy_published_at: null,
+    });
+  } else {
+    // The row goes even when a record was kept: it drives the policy file and the daily job, and a disabled feature serves neither. A kept record is the
+    // customer's now; it is in the response and in its dns.kept audit entry.
+    await tenant.scope.mtaSts.delete(domain.id);
+  }
+  return t;
 }
 
 /** DELETE: only in testing, and only once senders that fetched an enforce policy no longer hold it. */
@@ -775,10 +806,4 @@ export async function disableMtaSts(c: Ctx): Promise<Result> {
   if (!rule.allowed) return fail(409, rule.reason!, { code: 'mta_sts_disable_blocked', after: rule.after });
   const t = await teardownMtaSts(c, row);
   return { status: 200, body: { ok: true, kept: t.kept, operator: t.operator, message: `Senders that already fetched the policy may keep it for up to ${maxAgeWords(maxAgeFor(servedMode(row)))}.` } };
-}
-
-/** The records of a removed or evicted domain, torn down without asking (the domain left: delete, eviction, a lapsed proof). Best effort. */
-export async function retireMtaSts(c: Ctx): Promise<Teardown | null> {
-  const row = await c.tenant.scope.mtaSts.get(c.domain.id);
-  return row ? teardownMtaSts(c, row) : null;
 }

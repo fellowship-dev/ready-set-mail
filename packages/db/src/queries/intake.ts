@@ -4,10 +4,10 @@
  * it turns a token (from an inbound address) or a hosted id (from a policy hostname) into the
  * workspace and domain it belongs to, and returns nothing else.
  */
-import { and, count, eq, inArray, isNull, ne, gt, lt, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, ne, gt, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { batchStatements, getDb, type DbLike } from '../client';
-import { aggregateReports, domains, hostedDomains, intakeTokens, intakeUsage, mtaStsConfig } from '../schema';
+import { aggregateReports, domains, hostedDomains, intakeTokens, intakeUsage, mtaStsConfig, mtaStsRetiring } from '../schema';
 
 /** How long the previous token keeps working after a rotation (receivers cache the rua address). */
 export const TOKEN_ROTATION_GRACE_SECONDS = 72 * 3600;
@@ -428,11 +428,32 @@ export function intakeLookups(dbLike: DbLike) {
 			return owner && owner.domain === domain ? { workspace_id: owner.workspace_id, domain_id: owner.domain_id, domain: owner.domain } : null;
 		},
 
-		/** Custom hostnames the hosted service holds at Cloudflare right now (enabled saas_hostname configs, every workspace): the ceiling's count. */
+		/** Custom hostnames the hosted service holds at Cloudflare right now (enabled saas_hostname configs, and those of policies still retiring; every workspace): the ceiling's count. */
 		async saasHostnameCount(): Promise<number> {
 			const r = await db.select({ n: count() }).from(mtaStsConfig)
 				.where(/* workspace-scope-exempt: an instance-wide count of enabled policy hosts */ and(eq(mtaStsConfig.policy_host, 'saas_hostname'), eq(mtaStsConfig.enabled, 1))).get();
-			return r?.n ?? 0;
+			const t = await db.select({ n: count() }).from(mtaStsRetiring)
+				.where(/* workspace-scope-exempt: an instance-wide count of policy hosts still retiring */ and(eq(mtaStsRetiring.policy_host, 'saas_hostname'), isNotNull(mtaStsRetiring.ch_id))).get();
+			return (r?.n ?? 0) + (t?.n ?? 0);
+		},
+
+		/**
+		 * The policy being retired for exactly `domain`, whoever's it was, or null: a retiring policy is served by name and needs no proof (a `none` policy can only stop senders
+		 * from refusing). The latest entry wins when two workspaces retired the same name in turn.
+		 */
+		async retiringPolicy(domain: string): Promise<{ workspace_id: string; domain: string; mx_hosts: string } | null> {
+			const r = await db.select({ workspace_id: mtaStsRetiring.workspace_id, domain: mtaStsRetiring.domain, mx_hosts: mtaStsRetiring.mx_hosts }).from(mtaStsRetiring)
+				.where(/* workspace-scope-exempt: served by name for any workspace; a none policy needs no proof */ eq(mtaStsRetiring.domain, domain.toLowerCase())).orderBy(desc(mtaStsRetiring.created_at)).limit(1).get();
+			return r ?? null;
+		},
+
+		/** Retiring policies whose time is up, every workspace, oldest first: the daily job finishes them. */
+		dueRetiring: (nowSeconds: number, limit: number) =>
+			db.select().from(mtaStsRetiring).where(/* workspace-scope-exempt: the daily job finishes every workspace's retired policies */ lte(mtaStsRetiring.retire_after, nowSeconds)).orderBy(mtaStsRetiring.retire_after).limit(limit).all(),
+
+		/** Another workspace (or this one) turns MTA-STS on for `domain` while a policy of that name retires: the new owner takes the policy host over, so the entries go without touching it. */
+		async dropRetiring(domain: string): Promise<void> {
+			await db.delete(mtaStsRetiring).where(/* workspace-scope-exempt: a new owner of the name takes the policy host over */ eq(mtaStsRetiring.domain, domain.toLowerCase())).run();
 		},
 
 		/** Workspaces with MTA-STS rows due for the daily refresh, never-checked first then the longest since a check, at most `limit` rows. */
@@ -442,11 +463,13 @@ export function intakeLookups(dbLike: DbLike) {
 				.orderBy(sql`${mtaStsConfig.last_checked_at} IS NOT NULL`, mtaStsConfig.last_checked_at).limit(limit).all(),
 
 		/** Names that have MTA-STS enabled on any workspace (as hostnames `mta-sts.<name>`): what the operator-side reconcile keeps. */
-		async mtaStsDomainNames(): Promise<Set<string>> {
+		async mtaStsDomainNames(opts: { retiring?: boolean } = {}): Promise<Set<string>> {
 			const rows = await db.select({ domain: domains.domain }).from(mtaStsConfig)
 				.innerJoin(domains, eq(domains.id, mtaStsConfig.domain_id))
 				.where(/* workspace-scope-exempt: names are global; the reconcile keeps every enabled one */ and(eq(mtaStsConfig.enabled, 1), isNull(domains.evicted_at))).all();
-			return new Set(rows.map((r) => r.domain.toLowerCase()));
+			if (opts.retiring === false) return new Set(rows.map((r) => r.domain.toLowerCase()));
+			const retiring = await db.select({ domain: mtaStsRetiring.domain }).from(mtaStsRetiring).where(/* workspace-scope-exempt: names are global; the reconcile keeps every retiring one until its time is up */ sql`1 = 1`).all();
+			return new Set([...rows.map((r) => r.domain.toLowerCase()), ...retiring.map((r) => r.domain)]);
 		},
 
 		/** Every hosted domain, for the daily zone diff (operator-wide, not tenant-facing). */

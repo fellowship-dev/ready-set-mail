@@ -164,32 +164,42 @@ describe('reconcileOperatorZone', () => {
   });
 });
 
-describe('taking a domain out of service tears MTA-STS down', () => {
-  it('DELETE /api/domains/:id removes the records, the hostname, the route and the row, and reports a kept record', async () => {
+describe('taking a domain out of service retires MTA-STS (test/mta-sts/retire.test.ts has the whole story)', () => {
+  /** The retirement is over: its time is up and the daily job has run. */
+  const finish = async (w: MtaWorld) => { w.db.sqlite.prepare('UPDATE mta_sts_retiring SET retire_after = ?').run(now() - 1); await refreshMtaStsHosted(w.env); };
+
+  it('DELETE /api/domains/:id: the row goes with the domain, the policy keeps serving none; at the end the records, the hostname and the entry go, and a record the customer changed is kept and said so', async () => {
     const w = await mtaWorld();
     await active(w);
     w.cf.records.get(w.Z.a1)!.find((r) => r.name === '_smtp._tls.a-corp.com')!.content = 'something the customer wrote';
     const res = await w.api(w.A.token, 'DELETE', '/api/domains/1');
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, kept: [{ type: 'TXT', name: '_smtp._tls.a-corp.com' }] });
+    expect(await res.json()).toMatchObject({ ok: true, kept: [], mta_sts: { retiring: true, enforced: false } });
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    await finish(w);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
     expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
     expect(w.cf.records.get(w.Z.a1)!.map((r) => r.name)).toEqual(['_smtp._tls.a-corp.com']);
-    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    expect(w.rows('SELECT * FROM mta_sts_retiring')).toEqual([]);
+    expect(w.rows("SELECT resource_name FROM audit_log WHERE action = 'dns.kept'").map((r) => r.resource_name)).toEqual(['_smtp._tls.a-corp.com']);
   });
 
-  it('a lapsed proof stops the policy at once and removes the policy host (and its subdomains\' too)', async () => {
+  it('a lapsed proof (and its subdomains\' too) retires the policy; the policy host and the records go when it has expired', async () => {
     const w = await mtaWorld();
     await active(w);
     w.db.sqlite.prepare("UPDATE domains SET verified_via = 'cloudflare', cf_name_servers = '[\"a.ns.cloudflare.com\"]', cf_zone_name = 'a-corp.com' WHERE id = 1").run();
     expect(await withdrawProof(w.env, { id: 1, workspace_id: w.A.ws, domain: 'a-corp.com', cf_zone_id: w.Z.a1, cf_zone_name: 'a-corp.com', cf_name_servers: '["a.ns.cloudflare.com"]', cf_account_id: 'cf-1', cf_connection_id: w.connection, proof_checked_at: null, proof_suspected_at: null }, 'cloudflare')).toBe(true);
     expect(w.rows('SELECT verified_via, proof_lost_at FROM domains WHERE id = 1')[0]).toMatchObject({ verified_via: 'legacy' });
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    expect(w.rows('SELECT domain, reason FROM mta_sts_retiring')).toEqual([{ domain: 'a-corp.com', reason: 'lost_proof' }]);
+    await finish(w);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
     expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
+    expect(w.cf.records.get(w.Z.a1)).toEqual([]);
   });
 
-  it('an eviction (another workspace proves the name this workspace held unproven) removes the policy host and the records first', async () => {
+  it('an eviction (another workspace proves the name this workspace held unproven) retires the old holder\'s policy first; its records go at the end through the connection that wrote them', async () => {
     const w = await mtaWorld();
     await active(w);
     w.db.sqlite.prepare("UPDATE domains SET verified_via = 'legacy' WHERE id = 1").run(); // proof gone, nobody noticed yet
@@ -201,25 +211,33 @@ describe('taking a domain out of service tears MTA-STS down', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(w.rows("SELECT workspace_id FROM domains WHERE domain = 'a-corp.com'")).toEqual([{ workspace_id: w.B.ws }]);
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    expect(w.rows('SELECT domain, reason, workspace_id FROM mta_sts_retiring')).toEqual([{ domain: 'a-corp.com', reason: 'evicted', workspace_id: w.A.ws }]);
+    await finish(w);
     expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
     expect(onlyDeclaredRoute(w)).toEqual([POLICY_ROUTE_PATTERN]);
-    // The evicted workspace's row is detached by the new owner's insert, so its connection no longer reaches the name: the records in DNS are
-    // left (best effort, as for the report-authorisation record) and each is said to be kept in the evicted workspace's audit log.
-    expect(w.cf.records.get(w.Z.a1)!.map((r) => r.name).sort()).toEqual(['_smtp._tls.a-corp.com', 'mta-sts.a-corp.com', '_mta-sts.a-corp.com'].sort());
-    expect(w.rows("SELECT resource_name FROM audit_log WHERE workspace_id = ? AND action = 'dns.kept' ORDER BY resource_name", w.A.ws).map((r) => r.resource_name)).toEqual(['_mta-sts.a-corp.com', '_smtp._tls.a-corp.com', 'mta-sts.a-corp.com']);
+    // The new owner's insert detached the old holder's domain row, so nothing links its connection to the name any more: the retired policy remembers the connection
+    // that wrote the records (by id, so only what we wrote is touched) and removes them through it.
+    expect(w.cf.records.get(w.Z.a1)).toEqual([]);
+    expect(w.rows("SELECT resource_name FROM audit_log WHERE workspace_id = ? AND action = 'dns.delete' ORDER BY resource_name", w.A.ws).map((r) => r.resource_name)).toEqual(['_mta-sts.a-corp.com', '_smtp._tls.a-corp.com', 'mta-sts.a-corp.com']);
   });
 
-  it('removeMtaSts never throws: a Cloudflare outage still removes the row, and what is left is the daily job\'s', async () => {
+  it('removeMtaSts never throws: a Cloudflare outage still starts the retirement, and what is left at the end is kept for the daily job to try again', async () => {
     const w = await mtaWorld();
     await active(w);
     const inner = w.cf.fetch;
     vi.stubGlobal('fetch', async (input: any, init: any) => (init?.method === 'DELETE' ? new Response(JSON.stringify({ success: false, errors: [{ message: 'cf down' }] }), { status: 500 }) : inner(input, init)));
     const tenant = await loadTenant(w.env, { workspaceId: w.A.ws });
     const domain = (await tenant.scope.domains.getById(1))!;
-    const kept = await removeMtaSts(tenant, domain);
-    expect(kept.length).toBeGreaterThan(0);
+    expect((await removeMtaSts(tenant, domain)).retiring).toMatchObject({ retiring: true });
     expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
-    expect(w.cf.routes[OP_ZONE]).toHaveLength(1);
-    expect(await removeMtaSts(tenant, domain)).toEqual([]); // nothing to remove the second time
+    expect(await removeMtaSts(tenant, domain)).toEqual({ kept: [], retiring: null }); // nothing to remove the second time
+    await finish(w); // the hostname cannot be deleted now: the entry stays for tomorrow
+    expect(w.rows('SELECT last_error FROM mta_sts_retiring')).toEqual([{ last_error: expect.stringMatching(/tried again tomorrow/) }]);
+    expect(w.cf.customHostnames[OP_ZONE]).toHaveLength(1);
+    vi.unstubAllGlobals();
+    vi.stubGlobal('fetch', inner);
+    await refreshMtaStsHosted(w.env);
+    expect(w.rows('SELECT * FROM mta_sts_retiring')).toEqual([]);
+    expect(w.cf.customHostnames[OP_ZONE]).toEqual([]);
   });
 });
