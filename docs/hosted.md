@@ -71,7 +71,6 @@ In `wrangler.jsonc` `vars` (or the dashboard):
 | `HOSTED_MAX_DOMAINS_PER_WORKSPACE` | `10` | optional: domains per workspace that may use hosted records (enabling more answers 429) |
 | `LIFECYCLE_EMAILS_OFF` | empty | kill switch of the [lifecycle emails](#lifecycle-emails) and of the two monitor emails: a comma list of `records_live`, `first_report`, `no_reports`, `summary`, `tips`, `change_alerts`, `connection_alerts`, or `all`. Empty: everything on, except the change alerts (next row). It always wins over `LIFECYCLE_EMAILS_ON` |
 | `LIFECYCLE_EMAILS_ON` | empty | hosted only: kinds that are off until named here: `change_alerts` and `tips`. Without the first, the daily monitor job (`0 8 * * *`) can run for the DNS refresh and the MTA-STS update without sending a change alert; without the second no tip is sent, whatever anybody chose in Settings (and Settings does not offer them). Self-host: ignored, the change alerts are on |
-| `ONBOARDING_SEQUENCE_ENABLED` | unset (off) | `1` turns the free-check onboarding sequence on; see [email-funnel.md](email-funnel.md) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_LOOKUP_KEY` | unset | optional: in-app purchase of "Fix one domain" (restricted key, webhook signing secret, price lookup key `rsm_fix_one_domain`). Billing is off, with no offer and no routes, unless both secrets are set; see [billing.md](billing.md) |
 
 A report's `policy_published` domain must be the token's domain or a subdomain of it; it is filed under the token's domain, or under the subdomain's own row if the same workspace has that subdomain as a verified domain. Each stored report also records whether its
@@ -157,7 +156,7 @@ Hosted account holders get a few emails that follow what happened to their domai
 
 **Sender and links: one path.** Every email to an account holder (first report, records live, no reports yet, weekly summary, tips, change alerts, connection broken, proof lost, and the sign-in emails) is sent from the platform sender (`accountSender` in `src/mail/compliance.ts`, which is `senderAddress` of `src/auth/mail.ts`: `noreply@app.readysetmail.com` on the live instance) through the Worker's `send_email` binding. On self-host the workspace's own `fromEmail` takes precedence; on hosted a workspace has none. Every link in them is `<PUBLIC_BASE_URL, else BETTER_AUTH_URL>/#/w/<workspace>/...` (`appLink`), never a workers.dev host and never the reports or intake domain. `MAIL_REPLY_TO` is the Reply-To when set; with none, an email never tells the reader to reply (the change alert's "Reply to this email" line only appears when it is set).
 
-**Switching it off.** `LIFECYCLE_EMAILS_OFF=all` (or a list of kinds). The free-check onboarding sequence is a separate thing and is off on hosted unless `ONBOARDING_SEQUENCE_ENABLED=1`.
+**Switching it off.** `LIFECYCLE_EMAILS_OFF=all` (or a list of kinds). The free-check follow-up sequence no longer exists (ADR 0015).
 
 #### Which cron sends what
 
@@ -699,7 +698,7 @@ Self-host has one tenant and a private address (`rua@reports.<base>`), no tokens
 
 **Canary:** `POST /api/check-sessions` issues `check+<token>@canary.readysetmail.com`, valid for 1 hour and one email (hash stored). The email resolves to an anonymous session (`__anonymous__`, no workspace, no rows),
 the fixed free-check reply is sent, and the result lands in the global `check_results` where the browser polls it by the same token (`GET /api/check-sessions/:token`).
-Free-check senders are also enrolled in the onboarding sequence and every non-transactional email carries an unsubscribe link: see [email-funnel.md](email-funnel.md).
+Free-check senders get the report and nothing else; every non-transactional email carries an unsubscribe link: see [email-funnel.md](email-funnel.md).
 Rate limits (shared `auth_rate_limits` counters, 1-hour windows): 5 per **authenticated** sender domain (a passing DMARC/DKIM/SPF result in the `Authentication-Results` header Cloudflare adds, reduced to its registrable domain), 20 for senders that authenticate as nothing (one shared bucket), and 500 overall. The `From` header is never used as a key, so a spoofed From cannot use up a real domain's allowance; the cost of that is that unauthenticated senders compete for one small bucket.
 
 **MTA-STS host** (`src/hosted/policy-host.ts`): `mta-sts.<id>.h.<zone>` → the tenant whose hosted id is `<id>`; `mta-sts.<customer domain>` → the tenant hosting that domain; anything else 404. Never the implicit workspace in `saas`.
