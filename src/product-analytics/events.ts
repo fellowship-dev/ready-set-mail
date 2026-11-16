@@ -29,11 +29,15 @@ export type Entry = (typeof ENTRIES)[number];
 export const SIGNUP_METHODS = ['email_code', 'oauth_google', 'oauth_github'] as const;
 export type SignupMethod = (typeof SIGNUP_METHODS)[number];
 /**
- * Which way a domain's setup went: `cloudflare` (connected, proven by its zone, records written by Apply) or `manual` (proven by a TXT
- * record, records added by hand at any DNS host). Each setup event says which, so each path has a funnel it can finish.
+ * Which way a domain's setup went, decided by how its OWNERSHIP WAS PROVEN: `cloudflare` (proven by its zone in a connected account)
+ * or `manual` (proven by a TXT record, a parent or self-host; records added at any DNS host). Not by how the domain was entered
+ * (`Domain Added` has `source` and no path) and not by who wrote the records (`records_by`). Ownership Verified, Records Live and First
+ * Report Received say which path, so each path has a funnel it can finish; the Cloudflare steps (Connect, Apply) are always `cloudflare`.
  */
 export const PATHS = ['cloudflare', 'manual'] as const;
 export type SetupPath = (typeof PATHS)[number];
+/** Who wrote a domain's records: our Apply through Cloudflare (`applied:<id>` marker), or the person by hand. */
+export const RECORDS_BY = ['apply', 'hand'] as const;
 /** What observed the records live: a setup screen's read, the domain page's DNS check, or the daily job. */
 export const SEEN_BY = ['setup', 'domain_page', 'daily'] as const;
 export const ROLES = ['owner', 'admin', 'member'] as const;
@@ -63,7 +67,7 @@ export const EVENTS = {
   'Invite Sent': { role: ['admin', 'member'] },
   'Invite Accepted': { role: ['admin', 'member'], wait: SHORT_WAIT },
   // ── Domains and ownership ──
-  'Domain Added': { path: PATHS, source: ['typed', 'bulk', 'cloudflare_import', 'agent'], needs_proof: BOOL, added: COUNT, domains: COUNT, dns_provider: DNS_PROVIDERS, verdict_issues: ISSUES },
+  'Domain Added': { source: ['typed', 'bulk', 'cloudflare_import', 'agent'], needs_proof: BOOL, added: COUNT, domains: COUNT, dns_provider: DNS_PROVIDERS, verdict_issues: ISSUES },
   'Ownership Verified': { path: PATHS, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost'], wait: SHORT_WAIT },
   // ── Cloudflare ──
   'Cloudflare Connect Started': { path: PATHS, method: ['oauth', 'token'] },
@@ -71,8 +75,8 @@ export const EVENTS = {
   // ── Records ──
   'Apply Clicked': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], changes: COUNT },
   'Apply Done': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], result: ['applied', 'partial', 'failed', 'nothing_to_do'], changes: COUNT, reports: ['connected', 'refused', 'limit', 'unavailable', 'none'] },
-  'Records Live': { path: PATHS, seen_by: SEEN_BY, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
-  'First Report Received': { path: PATHS, since_live: LONG_WAIT },
+  'Records Live': { path: PATHS, records_by: RECORDS_BY, seen_by: SEEN_BY, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
+  'First Report Received': { path: PATHS, records_by: RECORDS_BY, since_live: LONG_WAIT },
   'No Report After 3 Days': { domains_waiting: COUNT },
   // ── Free email check from the dashboard ──
   'Email Check Started': {},

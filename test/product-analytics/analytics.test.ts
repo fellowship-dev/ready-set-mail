@@ -544,8 +544,14 @@ describe('the fixture walk, Cloudflare OAuth path: sign-up → records live → 
     expect(mine.find((e) => e.event === 'Code Verified')!.properties).toMatchObject({ purpose: 'signup', from_checker: true, entry: 'checker', resends: '1', attempts: '1', account_created: true });
     expect(mine.find((e) => e.event === 'Cloudflare Connect Started')!.properties).toMatchObject({ path: 'cloudflare', method: 'oauth' });
     expect(mine.find((e) => e.event === 'Ownership Verified')!.properties).toMatchObject({ path: 'cloudflare', method: 'cloudflare_zone' });
-    expect(mine.find((e) => e.event === 'Records Live')!.properties).toMatchObject({ path: 'cloudflare', seen_by: 'setup', method: 'cloudflare_zone', since_apply: 'under_1m', domains_live: '1' });
-    expect(mine.find((e) => e.event === 'First Report Received')!.properties).toMatchObject({ path: 'cloudflare' });
+    expect(mine.find((e) => e.event === 'Records Live')!.properties).toMatchObject({ path: 'cloudflare', records_by: 'apply', seen_by: 'setup', method: 'cloudflare_zone', since_apply: 'under_1m', domains_live: '1' });
+    expect(mine.find((e) => e.event === 'First Report Received')!.properties).toMatchObject({ path: 'cloudflare', records_by: 'apply' });
+    // `path` is how the ownership was proven: a domain typed on its own (no path on Domain Added) and proven by its zone is the Cloudflare path.
+    const typed = mine.find((e) => e.event === 'Domain Added')!;
+    expect(typed.properties).toMatchObject({ source: 'typed', needs_proof: true });
+    expect(typed.properties).not.toHaveProperty('path');
+    expect(reaches(mine, [['Domain Added', { source: 'typed' }], ['Ownership Verified', { path: 'cloudflare' }], 'Apply Clicked', 'Apply Done', ['Records Live', { path: 'cloudflare', records_by: 'apply' }]])).toBeNull();
+    expect(reaches(mine, [['Ownership Verified', { path: 'manual' }]])).not.toBeNull();
     expect(w.events.find((e) => e.event === 'Fix Order Paid')!.properties).toMatchObject({ offer: 'fix_one_domain', price_tier: 'list' });
 
     // Events of one request keep their causal order, at whole seconds.
@@ -570,7 +576,9 @@ describe('the other paths: a pasted token, records added by hand, a sign-up with
     expect(batch.map((e: any) => [e.event, e.properties.method])).toEqual([['Cloudflare Connect Started', 'token'], ['Cloudflare Connect Returned', 'token']]);
     expect(batch[0].timestamp <= batch[1].timestamp).toBe(true);
     expect(mine.find((e) => e.event === 'Signup Started')!.properties).toMatchObject({ entry: 'pricing', from_checker: false });
-    expect(mine.find((e) => e.event === 'Domain Added')!.properties).toMatchObject({ path: 'cloudflare', source: 'cloudflare_import' });
+    expect(mine.find((e) => e.event === 'Domain Added')!.properties).toMatchObject({ source: 'cloudflare_import' });
+    expect(mine.find((e) => e.event === 'Domain Added')!.properties).not.toHaveProperty('path');
+    expect(mine.find((e) => e.event === 'Records Live')!.properties).toMatchObject({ path: 'cloudflare', records_by: 'apply' });
     clean(w, new Set([w.analyticsId]));
   }, 60_000);
 
@@ -583,13 +591,28 @@ describe('the other paths: a pasted token, records added by hand, a sign-up with
     const mine = w.events.filter((e) => e.distinct_id === w.analyticsId);
     expect(mine.filter((e) => e.event.startsWith('Apply'))).toEqual([]);
     expect(onboarding(mine, 'First Report Received')).toBeNull();
-    expect(reaches(mine, [['Domain Added', { path: 'manual' }], ['Ownership Verified', { path: 'manual' }], ['Records Live', { path: 'manual' }]])).toBeNull();
+    expect(reaches(mine, [['Domain Added', { source: 'typed' }], ['Ownership Verified', { path: 'manual' }], ['Records Live', { path: 'manual', records_by: 'hand' }]])).toBeNull();
     const live = mine.filter((e) => e.event === 'Records Live');
     expect(live).toHaveLength(1); // the page checked twice, and the daily job read it again
     expect(live[0]!.properties).toMatchObject({ path: 'manual', seen_by: 'domain_page', method: 'txt', since_apply: 'none' });
     expect(mine.find((e) => e.event === 'Ownership Verified')!.properties).toMatchObject({ path: 'manual', method: 'txt' });
-    expect(mine.find((e) => e.event === 'First Report Received')!.properties).toMatchObject({ path: 'manual' });
+    expect(mine.find((e) => e.event === 'First Report Received')!.properties).toMatchObject({ path: 'manual', records_by: 'hand' });
+    expect(mine.find((e) => e.event === 'Domain Added')!.properties).not.toHaveProperty('path');
     expect(mine.find((e) => e.event === 'Signup Started')!.properties).toMatchObject({ entry: 'cold', from_checker: false });
+    clean(w, new Set([w.analyticsId]));
+  }, 60_000);
+
+  it('proven by a TXT record, records written by our Apply through Cloudflare: path manual (how it was proven), records_by apply (who wrote them)', async () => {
+    const { runTxtThenCloudflareWalk } = await import('./walk');
+    const w = await runTxtThenCloudflareWalk();
+    keep('txt_then_cloudflare_apply', w.events);
+    const mine = w.events.filter((e) => e.distinct_id === w.analyticsId);
+    expect(mine.find((e) => e.event === 'Ownership Verified')!.properties).toMatchObject({ path: 'manual', method: 'txt' });
+    expect(mine.filter((e) => e.event.startsWith('Apply')).map((e) => e.properties.path)).toEqual(['cloudflare', 'cloudflare']);
+    expect(mine.find((e) => e.event === 'Records Live')!.properties).toMatchObject({ path: 'manual', records_by: 'apply', method: 'txt' });
+    expect(mine.find((e) => e.event === 'First Report Received')!.properties).toMatchObject({ path: 'manual', records_by: 'apply' });
+    expect(reaches(mine, [['Domain Added', { source: 'typed' }], ['Ownership Verified', { path: 'manual' }], ['Records Live', { path: 'manual' }]])).toBeNull();
+    expect(reaches(mine, [['Ownership Verified', { path: 'cloudflare' }]])).not.toBeNull(); // not in the Cloudflare funnel
     clean(w, new Set([w.analyticsId]));
   }, 60_000);
 

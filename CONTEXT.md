@@ -38,7 +38,7 @@ Home: `domainClaims` in `packages/db/src/schema.ts`; `src/domains/ownership.ts`.
 **Ownership proof**:
 Why a workspace may hold a domain: the TXT record `_readysetmail.<domain>` = `readysetmail-verify=<token>` (the old prefix `inboxangel-verify=` is still accepted), an active zone of a connected Cloudflare account (ADR 0002; on the hosted service refused while another workspace holds a parent or child of the name), or a proven parent domain.
 _Avoid_: verification (alone), validation
-Home: `src/domains/ownership.ts` (`admitDomain`, `cloudflareProof`, `admitByZone`, `provenByTxt`, `verifyClaim`, `isDomainProven`). The proof columns are read in other files too: see "Reads and writes of the proof columns" in `docs/single-sources.md`.
+Home: `src/domains/ownership.ts` (`admitDomain`, `cloudflareProof`, `admitByZone`, `provenByTxt`, `verifyClaim`, `isDomainProven`; the kind of proof as a category: `proofMethodOf`, `proofMethodOfVia`, `proofPathOf`). The proof columns are read in other files too: see "Reads and writes of the proof columns" in `docs/single-sources.md`.
 
 **Connection** and **zone**:
 A connection is the workspace's link to one Cloudflare account (OAuth or a pasted token), with an allow-list of zones; a zone is Cloudflare's container for one domain's DNS. A workspace may hold several connections (ADR 0005).

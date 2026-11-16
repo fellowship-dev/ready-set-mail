@@ -6,7 +6,7 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 
 | Concept | Module | Entry points | Who may call | Guard |
 |---|---|---|---|---|
-| Ownership proof by TXT record | `src/domains/ownership.ts` | `admitDomain`, `cloudflareProof`, `admitByZone`, `verifyClaim`, `provenByTxt`, `isDomainProven` | domain service, Cloudflare import, claim routes, report and billing checks | single (the TXT prefix); the proof columns: must-not-grow below |
+| Ownership proof by TXT record | `src/domains/ownership.ts` | `admitDomain`, `cloudflareProof`, `admitByZone`, `verifyClaim`, `provenByTxt`, `isDomainProven`; the kind of proof as a category (analytics and other readers that must not name the columns): `proofMethodOf`, `proofMethodOfVia`, `proofPathOf`, with the types `ProofMethod`, `ProofPath`, `ProofSource` | domain service, Cloudflare import, claim routes, report and billing checks | single (the TXT prefix); the proof columns: must-not-grow below |
 | Adding a domain (single add, agent tool, Cloudflare import) | `src/domains/service.ts` | `enrollDomain`, `commitVerifiedDomain`; agents first `assertAgentEnrollmentSafe` | routes, `src/mcp/tools/index.ts`, `src/connections/import.ts` | must-not-grow (bulk add and the setup wizard still insert on their own) |
 | Cloudflare API calls (Worker: CfClient; plus the installer and the operator scripts) | `src/tenancy/cf-client.ts` | `CfClient`, via `TenantContext.cfFor` | anything in `src/` that needs the Cloudflare REST API | single; `test/tenancy/guards.test.ts` |
 | DNS write rules | `src/dns/write-policy.ts` | `assertDnsWriteAllowed`, `assertHostedDnsWrite` | `CfClient`, hosted records | `test/tenancy/guards.test.ts`; every write path is listed in ADR 0004 |

@@ -31,6 +31,7 @@ export const SUFFIX = ' (rsm-setup)';
 
 const ev = (event, properties) => ({ kind: 'EventsNode', event, name: event, ...(properties ? { properties } : {}) });
 const where = (key, value) => [{ key, value: [value], operator: 'exact', type: 'event' }];
+const whereNot = (key, value) => [{ key, value: [value], operator: 'is_not', type: 'event' }];
 const act = (name) => ({ action: name });
 const funnel = (steps, days, extra = {}) => ({ kind: 'FunnelsQuery', series: steps, dateRange: { date_from: '-30d' }, funnelsFilter: { funnelOrderType: 'ordered', funnelWindowInterval: days, funnelWindowIntervalUnit: 'day', ...extra } });
 const trends = (series, opts = {}) => ({ kind: 'TrendsQuery', series: series.map((s) => (typeof s === 'string' ? { ...ev(s), math: 'total' } : s)), interval: opts.interval ?? 'week', dateRange: { date_from: opts.from ?? '-90d' }, ...(opts.breakdown ? { breakdownFilter: { breakdown: opts.breakdown, breakdown_type: 'event' } } : {}) });
@@ -61,13 +62,14 @@ export const DASHBOARDS = [
     name: 'RSM: Domain configuration',
     description: 'From the first move on a domain to its records live in public DNS, one funnel per setup path (docs/analytics.md, funnels 3 and 4).',
     insights: [
-      { name: 'RSM Cloudflare path funnel (7 days)', description: 'Cloudflare connected (OAuth or token), ownership proven, Apply pressed and finished, records live by our Apply.', query: funnel([ev('Cloudflare Connect Started'), ev('Cloudflare Connect Returned', where('result', 'connected')), ev('Ownership Verified'), ev('Apply Clicked'), ev('Apply Done'), ev('Records Live', where('path', 'cloudflare'))], 7) },
-      { name: 'RSM manual path funnel (7 days)', description: 'A domain added by hand, proven by a TXT record, records added at its DNS host and seen live.', query: funnel([ev('Domain Added', where('path', 'manual')), ev('Ownership Verified', where('path', 'manual')), ev('Records Live', where('path', 'manual'))], 7) },
-      { name: 'RSM records live by path', description: 'Records Live by setup path (cloudflare, manual).', query: trends(['Records Live'], { breakdown: 'path' }) },
+      { name: 'RSM Cloudflare path funnel (7 days)', description: 'Cloudflare connected (OAuth or token), ownership proven by the Cloudflare zone, Apply pressed and finished, records live on that path. `path` means how the ownership was proven.', query: funnel([ev('Cloudflare Connect Started'), ev('Cloudflare Connect Returned', where('result', 'connected')), ev('Ownership Verified', where('path', 'cloudflare')), ev('Apply Clicked'), ev('Apply Done'), ev('Records Live', where('path', 'cloudflare'))], 7) },
+      { name: 'RSM manual path funnel (7 days)', description: 'A domain added by hand (any way except a Cloudflare import), ownership proven by TXT, a parent or self-host, records live on that path (added at its DNS host, or written by our Apply: see records_by).', query: funnel([ev('Domain Added', whereNot('source', 'cloudflare_import')), ev('Ownership Verified', where('path', 'manual')), ev('Records Live', where('path', 'manual'))], 7) },
+      { name: 'RSM records live by path', description: 'Records Live by setup path: how the ownership was proven (cloudflare, manual).', query: trends(['Records Live'], { breakdown: 'path' }) },
+      { name: 'RSM records live: who wrote them', description: 'Records Live by who wrote the records: our Apply or the person by hand, whichever way the ownership was proven.', query: trends(['Records Live'], { breakdown: 'records_by' }) },
       { name: 'RSM records live: who saw it', description: 'Records Live by what observed it (setup screen, domain page, daily job): the daily job means up to a day late.', query: trends(['Records Live'], { breakdown: 'seen_by' }) },
       { name: 'RSM Cloudflare connect results', description: 'Connect returns by result.', query: trends(['Cloudflare Connect Returned'], { breakdown: 'result' }) },
       { name: 'RSM domains added by DNS host', description: 'Domain Added by DNS provider category.', query: trends(['Domain Added'], { breakdown: 'dns_provider' }) },
-      { name: 'RSM ownership proofs by method', description: 'Ownership Verified by method (Cloudflare zone, TXT, parent).', query: trends(['Ownership Verified'], { breakdown: 'method' }) },
+      { name: 'RSM ownership proofs by method', description: 'Ownership Verified by method (Cloudflare zone, TXT, parent, self-host).', query: trends(['Ownership Verified'], { breakdown: 'method' }) },
       { name: 'RSM Apply results', description: 'Apply Done by result.', query: trends(['Apply Done'], { breakdown: 'result' }) },
       { name: 'RSM Apply to public DNS', description: 'Records Live by time since the last Apply.', query: trends(['Records Live'], { breakdown: 'since_apply' }) },
     ],

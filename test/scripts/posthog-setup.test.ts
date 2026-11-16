@@ -167,4 +167,48 @@ describe('posthog-setup', () => {
     expect(steps('RSM manual path funnel (7 days)')).toEqual(['Domain Added', 'Ownership Verified', 'Records Live']);
     expect(steps('RSM Cloudflare path funnel (7 days)')).toEqual(['Cloudflare Connect Started', 'Cloudflare Connect Returned', 'Ownership Verified', 'Apply Clicked', 'Apply Done', 'Records Live']);
   });
+
+  it('`path` means how ownership was proven: no funnel filters Domain Added on path; the path funnels key off Ownership Verified and Records Live', () => {
+    const insights = DASHBOARDS.flatMap((d) => d.insights);
+    const filters = (name: string) => insights.find((i) => i.name === name)!.query.series.map((s: any) => [s.event ?? s.action, (s.properties ?? []).map((p: any) => `${p.key} ${p.operator} ${p.value.join(',')}`)]);
+    for (const i of insights) for (const s of i.query.series as any[]) {
+      if (s.event === 'Domain Added') expect((s.properties ?? []).map((p: any) => p.key), i.name).not.toContain('path');
+    }
+    expect(filters('RSM Cloudflare path funnel (7 days)')).toEqual([
+      ['Cloudflare Connect Started', []], ['Cloudflare Connect Returned', ['result exact connected']], ['Ownership Verified', ['path exact cloudflare']],
+      ['Apply Clicked', []], ['Apply Done', []], ['Records Live', ['path exact cloudflare']],
+    ]);
+    expect(filters('RSM manual path funnel (7 days)')).toEqual([
+      ['Domain Added', ['source is_not cloudflare_import']], ['Ownership Verified', ['path exact manual']], ['Records Live', ['path exact manual']],
+    ]);
+    expect(filters('RSM onboarding funnel (14 days)').filter(([e]: [string, string[]]) => e === 'RSM Setup Started' || e === 'Ownership Verified')).toEqual([['RSM Setup Started', []], ['Ownership Verified', []]]);
+    expect(insights.find((i) => i.name === 'RSM records live: who wrote them')!.query.breakdownFilter.breakdown).toBe('records_by');
+  });
+
+  it('objects it made with the earlier path definition (Domain Added filtered on path) are updated to the new one, nothing else is touched', async () => {
+    const f = fakePostHog();
+    await run({ env: ENV, project: PROJECT, fetchImpl: f.fetchImpl as never, log: () => {} });
+    const mine = (name: string) => f.store.insights.find((x) => x.name === name)!;
+    for (const name of ['RSM manual path funnel (7 days)', 'RSM Cloudflare path funnel (7 days)']) {
+      const old = mine(name);
+      old.description = old.description.replace(/def:[0-9a-f]{12}/, 'def:0123456789ab');
+      const earlier = (x: any): void => { // the earlier definition: Domain Added and Ownership Verified filtered on `path`
+        if (x && typeof x === 'object' && (x.event === 'Domain Added' || x.event === 'Ownership Verified')) x.properties = [{ key: 'path', value: ['manual'], operator: 'exact', type: 'event' }];
+        for (const v of Object.values(x ?? {})) if (v && typeof v === 'object') earlier(v);
+      };
+      earlier(old.query);
+    }
+    f.calls.length = 0;
+    const plan = await run({ env: ENV, project: PROJECT, fetchImpl: f.fetchImpl as never, log: () => {} });
+    expect(plan.filter((p) => p.verb !== 'unchanged').map((p) => `${p.verb} ${p.name}`).sort()).toEqual(['update RSM Cloudflare path funnel (7 days)', 'update RSM manual path funnel (7 days)']);
+    expect(f.calls.filter((c) => c.method !== 'GET').map((c) => c.method)).toEqual(['PATCH', 'PATCH']);
+    const found: any[] = [];
+    const collect = (x: any): void => { if (x?.event === 'Domain Added') found.push(x); for (const v of Object.values(x ?? {})) if (v && typeof v === 'object') collect(v); };
+    collect(mine('RSM manual path funnel (7 days)').query);
+    const domainAdded = found[0];
+    expect(domainAdded.properties).toEqual([{ key: 'source', value: ['cloudflare_import'], operator: 'is_not', type: 'event' }]);
+    f.calls.length = 0;
+    expect((await run({ env: ENV, project: PROJECT, fetchImpl: f.fetchImpl as never, log: () => {} })).every((p) => p.verb === 'unchanged')).toBe(true);
+    expect(f.calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
 });

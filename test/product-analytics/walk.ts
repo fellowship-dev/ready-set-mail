@@ -3,6 +3,7 @@
 // server, the fake Stripe, a fake GitHub for OAuth sign-up). One walk per path:
 //   runWalk         — email-code sign-up from the website's checker, Cloudflare by OAuth, Apply, records live, first report, a paid fix
 //   runTokenWalk    — email-code sign-up, Cloudflare by a pasted token, import, Apply, records live
+//   runTxtThenCloudflareWalk — a domain typed and proven by TXT, then Cloudflare connected and its DMARC step applied through it
 //   runManualWalk   — email-code sign-up, a domain typed, proven by TXT, records added by hand, seen live on the domain page, first report
 //   runOAuthSignup  — sign-up with GitHub, then a later GitHub sign-in
 // Every request the Worker makes to PostHog is kept, as sent.
@@ -29,7 +30,7 @@ const GITHUB = { GITHUB_CLIENT_ID: 'gh-walk-id', GITHUB_CLIENT_SECRET: 'gh-walk-
 
 /** Everything the walks typed or were given that must never reach PostHog. */
 export const SECRETS = {
-  emails: ['founder@acme-walk.com', 'mate@acme-walk.com', 'operator@example.com', 'tok@token-walk.io', 'hand@plain-walk.net', 'octo@gh-walk.dev'],
+  emails: ['founder@acme-walk.com', 'mate@acme-walk.com', 'operator@example.com', 'tok@token-walk.io', 'hand@plain-walk.net', 'octo@gh-walk.dev', 'hybrid@side-walk.org'],
   domains: ['acme-walk.com', 'side-walk.org', 'token-walk.io', 'plain-walk.net', 'gh-walk.dev'],
   password: 'correct-horse-battery',
 };
@@ -201,6 +202,44 @@ export async function runTokenWalk() {
   w.cf.doh[`_dmarc.${domain}`] = [written];
   w.cf.doh[domain] = ['v=spf1 -all'];
   await w.api(token, 'POST', '/api/onboarding/first-check', { domain_ids: [domainId] });
+  await settle();
+  return { ...w, events: w.events(), workspaceId, domainId, analyticsId: w.analyticsIdOf(workspaceId)! };
+}
+
+/**
+ * A domain proven by its TXT record in a workspace that connects Cloudflare afterwards, and whose records our Apply then writes:
+ * the proof is by hand (`path` manual) although the records were written by Apply (`records_by` apply).
+ */
+export async function runTxtThenCloudflareWalk() {
+  const w = world();
+  const email = SECRETS.emails[6]!;
+  const domain = 'side-walk.org';
+  const token = await w.signUp(email);
+  const workspaceId = w.workspaceOf(email);
+  const added = await w.json(await w.api(token, 'POST', '/api/domains', { domain }));
+  if (!added.claim) throw new Error(`expected a pending claim: ${JSON.stringify(added).slice(0, 200)}`);
+  w.cf.doh[added.claim.txt_name] = [added.claim.txt_value];
+  const verified = await w.api(token, 'POST', `/api/domains/claims/${added.claim.id}/verify`);
+  if (!verified.ok) throw new Error(`verify ${verified.status} ${await verified.text()}`);
+  const domainId = w.rows('SELECT id FROM domains WHERE workspace_id = ? AND domain = ?', workspaceId, domain)[0]?.id as number;
+  if (!domainId) throw new Error('domain not verified');
+  const c = await w.api(token, 'POST', '/api/cloudflare/connections', { token: 'walk-pasted-token-0000000000000000' });
+  if (c.status !== 201) throw new Error(`token connect ${c.status} ${await c.text()}`);
+  // The TXT-proven row is not linked to the connection by its proof: the person links it (domain page), then Apply can write through it.
+  const connectionId = (await w.json(c)).connection.id as string;
+  const zones = (await w.json(await w.api(token, 'GET', `/api/cloudflare/connections/${connectionId}/zones`))).zones as { id: string; name: string }[];
+  await w.api(token, 'PUT', `/api/cloudflare/connections/${connectionId}/zones`, { zone_ids: zones.filter((z) => z.name === domain).map((z) => z.id) });
+  const linked = await w.api(token, 'PUT', `/api/domains/${domainId}/connection`, { connection_id: connectionId });
+  if (!linked.ok) throw new Error(`link ${linked.status} ${await linked.text()}`);
+  const plan = await w.json(await w.api(token, 'POST', '/api/onboarding/dns-plan', { domain_ids: [domainId] }));
+  await w.api(token, 'POST', '/api/onboarding/dns-apply', { domain_ids: [domainId], step: 'dmarc', plan_id: plan.plan_id });
+  const written = w.cf.records.get(zid(domain))?.find((r) => r.name === `_dmarc.${domain}`)?.content;
+  if (!written) throw new Error(`no DMARC record written (plan ${JSON.stringify(plan).slice(0, 300)})`);
+  w.cf.doh[`_dmarc.${domain}`] = [written];
+  w.cf.doh[domain] = ['v=spf1 -all'];
+  await w.api(token, 'POST', '/api/onboarding/first-check', { domain_ids: [domainId] });
+  await settle();
+  await w.firstReport(workspaceId, domainId, domain, 'txt-cf-1');
   await settle();
   return { ...w, events: w.events(), workspaceId, domainId, analyticsId: w.analyticsIdOf(workspaceId)! };
 }

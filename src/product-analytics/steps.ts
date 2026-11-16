@@ -9,19 +9,15 @@ import type { DmarcFacts, DomainRow, OrderRow } from '@ready-set-mail/db';
 import type { TenantContext } from '../tenancy/context';
 import type { BillingAuditAction } from '../billing/notify';
 import { detectDnsHostFor } from '../domains/dns-host';
+import { proofMethodOf, proofMethodOfVia, proofPathOf, type ProofSource, type VerifiedVia } from '../domains/ownership';
 import { resolverFor } from '../dns/resolver';
 import { capture, captureLater, captureMany, ev, type AnalyticsEnv, type Captured } from './capture';
-import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait, type SetupPath } from './events';
+import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait } from './events';
 import { claimMarker, markerAt, markerCount, setMarker } from './identity';
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
 const nowS = () => Math.floor(Date.now() / 1000);
 const ws = (tenant: TenantContext) => ({ workspaceId: tenant.workspaceId });
-
-/** How a domain's ownership was proven, as an analytics category. */
-export function proofMethod(via: string | null | undefined): 'cloudflare_zone' | 'txt' | 'parent' | 'selfhost' | 'other' {
-  return via === 'cloudflare' ? 'cloudflare_zone' : via === 'txt' || via === 'parent' || via === 'selfhost' ? via : 'other';
-}
 
 /**
  * What the stored DNS read says needs fixing, 0 to 2: no SPF record; no DMARC record or one that only monitors (p=none). Null when the
@@ -52,7 +48,7 @@ export function domainAdded(tenant: TenantContext, ctx: Ctx, p: { source: 'typed
     const row = p.domain ? await tenant.scope.domains.getByName(p.domain) : null;
     const provider = p.source === 'cloudflare_import' ? 'cloudflare' : p.domain ? await dnsProvider(tenant, p.domain).catch(() => 'unknown' as const) : 'unknown';
     return { subject: ws(tenant), events: [ev('Domain Added', {
-      path: p.source === 'cloudflare_import' ? 'cloudflare' : 'manual', source: p.source, needs_proof: p.needsProof, added: countBucket(p.added), domains: countBucket(await liveDomains(tenant)),
+      source: p.source, needs_proof: p.needsProof, added: countBucket(p.added), domains: countBucket(await liveDomains(tenant)),
       dns_provider: provider, verdict_issues: issuesBucket(p.added === 1 ? verdictIssues(row) : null),
     })] };
   });
@@ -64,12 +60,16 @@ export function enrollmentAdded(tenant: TenantContext, ctx: Ctx, source: 'typed'
   domainAdded(tenant, ctx, { source, added: 1, needsProof: !!result.pending, domain });
 }
 
-/** A domain row was inserted with its ownership established (src/domains/service.ts commitVerifiedDomain, the wizard's base domain). */
-export function ownershipVerified(tenant: TenantContext, ctx: Ctx, domain: string, via: string): void {
+/**
+ * A domain row was inserted with its ownership established (src/domains/service.ts commitVerifiedDomain, the wizard's base domain).
+ * This is where `path` is decided for the setup funnels: how the ownership was proven (the Cloudflare zone, or by hand), whatever way
+ * the domain was entered.
+ */
+export function ownershipVerified(tenant: TenantContext, ctx: Ctx, domain: string, via: VerifiedVia | string): void {
   captureLater(tenant.env, ctx, async () => {
     const claim = await tenant.db.prepare('SELECT created_at FROM domain_claims WHERE workspace_id = ?1 AND domain = ?2 ORDER BY id DESC LIMIT 1').bind(tenant.workspaceId, domain).first<{ created_at: number }>();
-    const method = proofMethod(via);
-    return { subject: ws(tenant), events: [ev('Ownership Verified', { path: method === 'cloudflare_zone' ? 'cloudflare' : 'manual', ...(method !== 'other' ? { method } : {}), wait: shortWait(claim ? nowS() - claim.created_at : null) })] };
+    const method = proofMethodOfVia(via);
+    return { subject: ws(tenant), events: [ev('Ownership Verified', { path: proofPathOf(method), ...(method !== 'other' ? { method } : {}), wait: shortWait(claim ? nowS() - claim.created_at : null) })] };
   });
 }
 
@@ -98,22 +98,23 @@ export function sendsReportsHere(ruaAddress: string | null | undefined, dmarc: P
   return (dmarc.rua ?? []).some((a) => a.trim().toLowerCase() === ours);
 }
 
-/** The path a domain's records went live by: written by our Apply through Cloudflare, or added by hand. */
-const pathOf = (applied: number | null): SetupPath => (applied === null ? 'manual' : 'cloudflare');
+/** Who wrote the records of a domain: our Apply (its `applied:<id>` marker exists) or the person, by hand. Not the setup path. */
+const recordsBy = (applied: number | null): 'apply' | 'hand' => (applied === null ? 'hand' : 'apply');
 
 /**
  * The records of a domain were observed live (its DMARC record sends reports to its report address): counted once per domain, by
  * whichever read sees it first. Costs one statement (the marker) per call; the event's own reads run only the first time.
  */
-export function recordsSeenLive(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id' | 'verified_via'>, seenBy: 'setup' | 'domain_page' | 'daily'): void {
+export function recordsSeenLive(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id'> & ProofSource, seenBy: 'setup' | 'domain_page' | 'daily'): void {
   captureLater(tenant.env, ctx, async () => {
     if (!(await claimMarker(tenant.db, tenant.workspaceId, `live:${domain.id}`))) return null;
     const [workspace, applied, live] = await Promise.all([
       workspaceLifecycle(tenant.db).get(tenant.workspaceId), markerAt(tenant.db, tenant.workspaceId, `applied:${domain.id}`), markerCount(tenant.db, tenant.workspaceId, 'live:'),
     ]);
     const now = nowS();
+    const method = proofMethodOf(domain);
     return { subject: ws(tenant), events: [ev('Records Live', {
-      path: pathOf(applied), seen_by: seenBy, method: proofMethod(domain.verified_via), since_signup: longWait(workspace ? now - workspace.created_at : null),
+      path: proofPathOf(method), records_by: recordsBy(applied), seen_by: seenBy, method, since_signup: longWait(workspace ? now - workspace.created_at : null),
       since_apply: shortWait(applied === null ? null : now - applied), domains_live: countBucket(live),
     })] };
   });
@@ -123,7 +124,7 @@ export function recordsSeenLive(tenant: TenantContext, ctx: Ctx, domain: Pick<Do
  * A DNS read of a domain was stored (domains.recordDnsCheck), by a caller that has the domain's row and the read: no query at all
  * unless the read shows the records live, then recordsSeenLive. The daily job passes the row it already loaded.
  */
-export function dnsChecked(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id' | 'verified_via' | 'rua_address'>, dmarc: Pick<DmarcFacts, 'p' | 'rua'> | undefined, seenBy: 'setup' | 'daily'): void {
+export function dnsChecked(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id' | 'rua_address'> & ProofSource, dmarc: Pick<DmarcFacts, 'p' | 'rua'> | undefined, seenBy: 'setup' | 'daily'): void {
   try {
     if (sendsReportsHere(domain.rua_address, dmarc)) recordsSeenLive(tenant, ctx, domain, seenBy);
   } catch { /* never affects the read */ }
@@ -144,8 +145,8 @@ export function dnsCheckedById(tenant: TenantContext, ctx: Ctx, domainId: number
 export function reportStored(tenant: TenantContext, ctx: Ctx, domainId: number): void {
   captureLater(tenant.env, ctx, async () => {
     if (!(await claimMarker(tenant.db, tenant.workspaceId, `first_report:${domainId}`))) return null;
-    const [live, applied] = await Promise.all([markerAt(tenant.db, tenant.workspaceId, `live:${domainId}`), markerAt(tenant.db, tenant.workspaceId, `applied:${domainId}`)]);
-    return { subject: ws(tenant), events: [ev('First Report Received', { path: pathOf(applied), since_live: longWait(live === null ? null : nowS() - live) })] };
+    const [live, applied, row] = await Promise.all([markerAt(tenant.db, tenant.workspaceId, `live:${domainId}`), markerAt(tenant.db, tenant.workspaceId, `applied:${domainId}`), tenant.scope.domains.getById(domainId)]);
+    return { subject: ws(tenant), events: [ev('First Report Received', { ...(row ? { path: proofPathOf(proofMethodOf(row)) } : {}), records_by: recordsBy(applied), since_live: longWait(live === null ? null : nowS() - live) })] };
   });
 }
 
