@@ -270,10 +270,11 @@ async function inviteId(token: string): Promise<string> {
  * Hand setup to a teammate (spec H1): the ordinary admin invite plus the hand-off row, then the fixed invitation email when mayEmailHandoff allows it (else the link is returned, `emailed: false`). The caller has
  * already checked who may invite an admin. Hosted only (the invitee has no account to be told by anything else), the domain must be this
  * workspace's own (a domain or a claim waiting for proof), and the number open and sent per day is bounded. A refused send leaves nothing behind
- * and is never answered as sent.
+ * and is never answered as sent. `replaces` is the token of the hand-off a resend supersedes: it stays valid (and its card stays) until
+ * the new invitation was issued and, when we email it, sent; a limit or a failed send leaves the old link working.
  */
 async function sendHandoff(
-  env: Env, tenant: TenantContext, request: Request, actor: { id: string; email: string; name: string }, email: string, domainInput: unknown, ctx: ExecutionContext,
+  env: Env, tenant: TenantContext, request: Request, actor: { id: string; email: string; name: string }, email: string, domainInput: unknown, ctx: ExecutionContext, replaces?: string,
 ): Promise<Response> {
   if (getMode(env) !== 'saas') return err('handing setup to a teammate is only available on the hosted service', 400);
   const named = typeof domainInput === 'string' ? normalizeDomainName(domainInput) : null;
@@ -282,6 +283,7 @@ async function sendHandoff(
   if (!(await tenant.scope.domains.getByName(domain)) && !(await tenant.scope.claims.get(domain))) return err('that domain is not in this workspace', 404);
   let open = 0;
   for (const h of await handoffsOf(env, tenant.workspaceId)) {
+    if (h.token === replaces) continue; // the one being replaced is not a second waiting hand-off
     const inv = await tenant.scope.team.getInvite(h.token);
     if (inv && !inv.used_at && inv.expires_at > Math.floor(Date.now() / 1000)) open++;
   }
@@ -307,6 +309,10 @@ async function sendHandoff(
     await tenant.scope.team.revokeInvite(token);
     await deleteHandoff(env, token);
     return Response.json({ error: "We couldn't send the invitation just now. Try again in a minute.", code: 'handoff_not_sent' }, { status: 503 });
+  }
+  if (replaces) {
+    await tenant.scope.team.revokeInvite(replaces);
+    await deleteHandoff(env, replaces);
   }
   setupPathChosen(env, ctx, tenant.workspaceId, 'teammate'); // docs/analytics.md: the S4 choice "hand setup to a teammate"
   logAudit(tenant, {
@@ -1848,7 +1854,7 @@ async function _handleApi(
       }));
       return json({ handoffs: out.filter((h) => !h.revoked) });
     }
-    // POST /api/team/handoffs/:id/resend — a new link for a hand-off nobody has accepted; the old link stops working. Owner only (it invites an admin).
+    // POST /api/team/handoffs/:id/resend — a new link for a hand-off nobody has accepted; the old link stops working once the new one is issued (and sent, when we email it). Owner only (it invites an admin).
     const handoffResend = path.match(/^\/api\/team\/handoffs\/([^/]+)\/resend$/);
     if (handoffResend && method === 'POST') {
       if (!isAdmin) return err('admin required', 403);
@@ -1860,9 +1866,7 @@ async function _handleApi(
       const inv = found ? await tenant.scope.team.getInvite(found.token) : null;
       if (!found || !inv) return err('hand-off not found', 404);
       if (inv.used_at) return err('this person has already joined', 409);
-      await tenant.scope.team.revokeInvite(found.token);
-      await deleteHandoff(env, found.token);
-      return sendHandoff(env, tenant, request, actor, found.email, found.domain, ctx);
+      return sendHandoff(env, tenant, request, actor, found.email, found.domain, ctx, found.token);
     }
 
     // GET /api/team/invites — pending invites (owner and admin). The token itself is not listed: `id` identifies one for revoking.

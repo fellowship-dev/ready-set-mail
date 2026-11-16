@@ -117,13 +117,18 @@ function callAuth(
 
 /** Too many failed sign-ins for one address: the same answer whether or not it has an account. */
 function throttled(seconds: number): Response {
-  const minutes = Math.max(1, Math.ceil(seconds / 60));
-  const out = err(`Too many sign-in attempts for this address. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}, or reset your password to sign in now.`, 429, 'signin_throttled');
+  const out = err(`Too many sign-in attempts for this address. Try again in ${minutesText(seconds)}, or reset your password to sign in now.`, 429, 'signin_throttled');
   out.headers.set('retry-after', String(seconds));
   return out;
 }
 
-const minutesText = (seconds: number) => { const m = Math.max(1, Math.ceil(seconds / 60)); return `${m} minute${m === 1 ? '' : 's'}`; };
+/** A wait in words: whole minutes up to an hour, then whole hours rounded up ("1440 minutes" is "24 hours"). */
+export const minutesText = (seconds: number) => {
+  const m = Math.max(1, Math.ceil(seconds / 60));
+  if (m <= 60) return `${m} minute${m === 1 ? '' : 's'}`;
+  const h = Math.ceil(m / 60);
+  return `${h} hour${h === 1 ? '' : 's'}`;
+};
 
 /** Better Auth's error → our `{ error }` shape, keeping its status. */
 async function authError(res: Response, fallback: string): Promise<Response> {

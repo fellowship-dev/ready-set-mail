@@ -112,12 +112,14 @@ export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purp
 /** The hand-off invitation's fixed words (spec H1). Names are cleaned; nothing else the inviter typed can reach it. */
 export function handoffEmail(p: { inviterName: string; inviterEmail: string; workspaceName: string; domain: string | null; url: string }, footer = ''): { subject: string; text: string; html: string } {
   // The sender is named by their VERIFIED address. The name they typed is free text: it appears only in the body, once, as what they call
-  // themselves, cut short. The domain and the workspace name appear only when the domain is proven in that workspace (the caller passes null).
+  // themselves, cut short. The domain and the workspace name appear only when the domain is proven in that workspace (the caller passes null);
+  // the workspace name gets the same framing and the same cut as the display name, never the main sentence.
   const calls = cleanName(p.inviterName, 40);
   const callsLine = calls && calls.toLowerCase() !== p.inviterEmail.toLowerCase() ? ` They call themselves "${calls}".` : '';
   const what = p.domain ? `for ${p.domain}` : 'for a domain';
-  const workspace = p.domain ? cleanName(p.workspaceName, 80) || 'a workspace' : 'a workspace';
-  const paragraph = `${p.inviterEmail} invited you to ${workspace} on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC ${what}.${callsLine}`;
+  const workspace = p.domain ? cleanName(p.workspaceName, 40) : '';
+  const workspaceLine = workspace ? ` They call the workspace "${workspace}".` : '';
+  const paragraph = `${p.inviterEmail} invited you to a workspace on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC ${what}.${callsLine}${workspaceLine}`;
   const validity = 'The link works for 7 days. If you do not know them, ignore this email.';
   return {
     subject: `${p.inviterEmail} asked you to finish setting up email ${what}`,

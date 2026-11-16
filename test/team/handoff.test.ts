@@ -5,6 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, enterCode, flushBackground, lastCodeFor, makeEnv, pendingCookieOf, signupVerified, inviteAndAccept } from '../auth/helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { handoffEmail } from '../../src/auth/mail';
+import { d1RateLimitStorage } from '../../src/auth/rate-limit';
 import { MAX_OPEN_HANDOFFS, mayEmailHandoff } from '../../src/team/handoff';
 import { dohFetch } from '../../packages/dns-checks/test/helpers';
 
@@ -217,11 +218,52 @@ describe('where it stands (H2) and resend', () => {
   });
 });
 
+describe('a resend never costs the working link', () => {
+  async function sentOne() {
+    const w = world();
+    const key = await owner(w);
+    const first = await json(await handoff(w, key));
+    const [{ id }] = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    return { w, key, first, id };
+  }
+  const stillWorks = async (w: W, key: string, token: string) => {
+    expect((await call(w.env, 'GET', `/api/invites/${token}`)).status).toBe(200);
+    const list = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    expect(list).toHaveLength(1);
+    expect(w.rows('SELECT 1 FROM verifications WHERE identifier = ?', `invite-handoff:${token}`)).toHaveLength(1);
+  };
+  it('at the daily cap: 429, the old link still works and its card remains', async () => {
+    const { w, key, first, id } = await sentOne();
+    const ws = w.rows('SELECT workspace_id FROM invites')[0].workspace_id as string;
+    for (let i = 0; i < 20; i++) await d1RateLimitStorage(w.db as any).consume(`handoff:${ws}`, { window: 86400, max: 10 });
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(429);
+    expect((await json(res)).code).toBe('handoff_limit');
+    await stillWorks(w, key, first.token);
+  });
+  it('when the email cannot be sent: 503, the old link still works and its card remains', async () => {
+    const { w, key, first, id } = await sentOne();
+    w.send.mockRejectedValueOnce(new Error('provider down'));
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(503);
+    expect((await json(res)).code).toBe('handoff_not_sent');
+    await stillWorks(w, key, first.token);
+    expect(w.rows('SELECT 1 FROM invites')).toHaveLength(1);
+  });
+  it('with the most hand-offs waiting, a resend still replaces its own (it is not a sixth)', async () => {
+    const { w, key, first, id } = await sentOne();
+    for (let i = 1; i < MAX_OPEN_HANDOFFS; i++) expect((await handoff(w, key, { email: `p${i}@brightwave-mail.com` })).status).toBe(201);
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(201);
+    expect((await call(w.env, 'GET', `/api/invites/${first.token}`)).status).toBe(404);
+  });
+});
+
 describe('the invitation email', () => {
   const m = handoffEmail({ inviterName: 'Dana Whitfield', inviterEmail: 'dana@brightwave-mail.com', workspaceName: 'Brightwave Studio', domain: 'brightwave-mail.com', url: 'https://app.example/#/invite/t' });
   it('has the spec\'s fixed wording', () => {
     expect(m.subject).toBe('dana@brightwave-mail.com asked you to finish setting up email for brightwave-mail.com');
-    expect(m.text).toBe('dana@brightwave-mail.com invited you to Brightwave Studio on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for brightwave-mail.com. They call themselves "Dana Whitfield".\n\nhttps://app.example/#/invite/t\n\nThe link works for 7 days. If you do not know them, ignore this email.');
+    expect(m.text).toBe('dana@brightwave-mail.com invited you to a workspace on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for brightwave-mail.com. They call themselves "Dana Whitfield". They call the workspace "Brightwave Studio".\n\nhttps://app.example/#/invite/t\n\nThe link works for 7 days. If you do not know them, ignore this email.');
     expect(m.html).toContain('Open Ready Set Mail');
   });
   it('lets no typed text change its shape: names are cleaned, markup is escaped', () => {
@@ -229,6 +271,20 @@ describe('the invitation email', () => {
     expect(x.subject).not.toMatch(/[\r\n‮]/);
     expect(x.html).not.toContain('<b>Acme</b>');
     expect(x.html).toContain('&lt;b&gt;Acme&lt;/b&gt;');
+  });
+  it('the workspace name is framed like the display name, cut at 40 characters, and never in the main sentence', () => {
+    const long = 'Acme '.repeat(30);
+    const x = handoffEmail({ inviterName: 'Dana', inviterEmail: 'd@x.example', workspaceName: long, domain: 'x.com', url: 'https://app.example/#/invite/t' });
+    const line = x.text.match(/They call the workspace "([^"]*)"\./);
+    expect(line?.[1]).toBe(long.trim().slice(0, 40).trim());
+    expect([...line![1]].length).toBeLessThanOrEqual(40);
+    expect(x.text.split('\n')[0]).toMatch(/^d@x\.example invited you to a workspace on Ready Set Mail as an admin, /);
+    expect(x.text.split('Acme')[0]).toContain('They call the workspace');
+  });
+  it('an unproven domain names no workspace at all', () => {
+    const x = handoffEmail({ inviterName: 'Dana', inviterEmail: 'd@x.example', workspaceName: 'Secret Co', domain: null, url: 'https://app.example/#/invite/t' });
+    expect(x.text).not.toContain('Secret Co');
+    expect(x.text).not.toContain('the workspace');
   });
 });
 

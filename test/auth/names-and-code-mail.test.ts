@@ -1,7 +1,7 @@
 // Workspace naming from the sign-up answers (src/auth/names.ts) and the code email's two parts (src/auth/mail.ts).
 import { describe, it, expect, vi } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
-import { defaultWorkspaceName, firstWorkspaceName, NEW_CLIENT_WORKSPACE } from '../../src/auth/names';
+import { defaultWorkspaceName, firstWorkspaceName, isFreeMailDomain, NEW_CLIENT_WORKSPACE } from '../../src/auth/names';
 import { codeEmailHtml, codeEmailText, codeSubject, sendCodeEmail } from '../../src/auth/mail';
 import { makeEnv } from './helpers';
 import type { AuthEnv } from '../../src/auth/config';
@@ -22,6 +22,18 @@ describe('firstWorkspaceName', () => {
   it('without answers it is today\'s rule (the email\'s domain, "My workspace" for free mail)', () => {
     expect(firstWorkspaceName(null, '', 'dana@brightwave-mail.com')).toBe(defaultWorkspaceName('', 'dana@brightwave-mail.com'));
     expect(firstWorkspaceName(null, '', 'dana@gmail.com')).toBe('My workspace');
+  });
+});
+
+describe('isFreeMailDomain', () => {
+  it.each(['gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.co.uk', 'hotmail.es', 'hotmail.fr', 'outlook.com', 'outlook.es', 'outlook.fr', 'live.com', 'live.cl', 'live.com.mx',
+    'yahoo.com', 'yahoo.co.uk', 'yahoo.es', 'yahoo.fr', 'yahoo.co.jp', 'mail.ru', 'rocketmail.com', 'gmx.at', 'gmx.de', 'gmx.net', 'protonmail.ch', 'protonmail.com', 'proton.me', 'icloud.com', 'HOTMAIL.ES'])(
+    'knows %s', (d) => expect(isFreeMailDomain(d)).toBe(true));
+  it.each(['outlookdesign.com', 'mail.company.com', 'hotmail.company.com', 'live.example-corp.com', 'yahoo.company.co.uk', 'gmail.company.com', 'mymail.ru', 'brightwave-mail.com', 'gmxx.com', 'livemail.com', ''])(
+    'does not take %s for free mail', (d) => expect(isFreeMailDomain(d)).toBe(false));
+  it('a variant gets the same default workspace name as its family', () => {
+    expect(defaultWorkspaceName('', 'x@hotmail.es')).toBe('My workspace');
+    expect(defaultWorkspaceName('', 'x@live.example-corp.com')).toBe('live.example-corp.com workspace');
   });
 });
 

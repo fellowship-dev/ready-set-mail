@@ -4,7 +4,7 @@
 // the workspace, the domain's name, who asked, and where it was sent. The row outlives the invite so the inviter's dashboard can say
 // where the hand-off stands; it is never read for anything but wording and routing, and grants nothing.
 import type { AuthEnv } from '../auth/config';
-import { FREE_MAIL_DOMAINS, cleanName } from '../auth/names';
+import { cleanName, isFreeMailDomain } from '../auth/names';
 
 const PREFIX = 'invite-handoff:';
 /** The row is kept 30 days: the invite lasts 7, and the inviter's dashboard shows the rest until the records are live. */
@@ -76,5 +76,5 @@ const domainOf = (email: string) => email.toLowerCase().trim().split('@')[1] ?? 
 export function mayEmailHandoff(p: { senderEmail: string; recipientEmail: string; workspaceProven: boolean }): boolean {
   if (p.workspaceProven) return true;
   const sender = domainOf(p.senderEmail);
-  return sender !== '' && sender === domainOf(p.recipientEmail) && !FREE_MAIL_DOMAINS.has(sender);
+  return sender !== '' && sender === domainOf(p.recipientEmail) && !isFreeMailDomain(sender);
 }

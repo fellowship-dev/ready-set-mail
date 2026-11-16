@@ -389,7 +389,7 @@ check, claim and accept paths); what it carries beyond that is one `verification
 was sent; kept 30 days so the inviter's dashboard can say where it stands). The domain must be this workspace's own (a domain or a claim waiting for proof), at most
 5 hand-offs wait at once and 10 are sent a day per workspace (and per account), the invite is revoked and nothing is kept when an email we tried to send is refused (the answer is then 503, never "sent"),
 and it is hosted only. **Whether we email it is one rule, `mayEmailHandoff` in `src/team/handoff.ts`:** the teammate is at the sender's own email domain and that is not a free-mail domain
-(`FREE_MAIL_DOMAINS`, `src/auth/names.ts`; gmail to gmail is two strangers), or a domain in the workspace is proven. Any other case is not refused: the invite and the hand-off row are created as usual and
+(`isFreeMailDomain`, `src/auth/names.ts`, which also knows country variants such as hotmail.co.uk; gmail to gmail is two strangers), or a domain in the workspace is proven. Any other case is not refused: the invite and the hand-off row are created as usual and
 the answer is `{ token, url, emailed: false }`, so the owner copies the link and sends it themselves (H1 shows it in a read-only field with "Copy link"; H2 says "Link made for <email>" and offers "Get a new link").
 A developer at another company, or a person at the same free-mail provider, therefore costs us no email to a stranger; the emailed case answers `emailed: true`. The invitation is fixed wording with the inviter's cleaned name and address, the workspace and domain: subject "<name> asked you to finish setting up
 email for <domain>", HTML and text in the code email's wordmark layout, one button, Reply-To `MAIL_REPLY_TO` when set.

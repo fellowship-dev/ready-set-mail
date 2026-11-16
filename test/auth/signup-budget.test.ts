@@ -6,6 +6,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, enterCode, lastCodeFor, makeEnv, pendingCookieOf } from './helpers';
 import { HOSTED_ENV } from '../hosted/world';
 import { CODE_MAIL_CAPS } from '../../src/auth/codes';
+import { minutesText } from '../../src/auth/routes';
 import { PLACEHOLDER_NAME_KEY } from '../../src/auth/names';
 import { dohFetch } from '../../packages/dns-checks/test/helpers';
 
@@ -95,6 +96,30 @@ describe('one honest sign-up against the limits', () => {
     // The same words for an address that already has an account (anti-enumeration)
     const known = hosted();
     for (let i = 0; i < 6; i++) { const r = await post(known, '/api/auth/signup', { email: 'x@brightwave-mail.com', password: 'password-123' }); if (r.status === 429) expect((await json(r)).error).toMatch(/^We sent several codes/); }
+  });
+});
+
+describe('a wait of more than an hour is said in hours', () => {
+  it('the day cap says "in 22 hours", for a new sign-up and for "Send a new code", never "1320 minutes"', async () => {
+    const w = hosted();
+    const t0 = Date.now();
+    let n = 0; // a different address each time: the per-IP sign-up limit is not what this test is about
+    const at = (path: string, body: object, cookie?: string) => call(w.env, 'POST', path, { body, headers: cookie ? { cookie } : {}, ip: `198.51.100.${++n}` });
+    let cookie = '';
+    for (const [batch, count] of [4, 4, 2].entries()) { // 10 mails over 3 hours: the hour cap (5) is never reached, the day cap (10) is
+      vi.spyOn(Date, 'now').mockReturnValue(t0 + batch * 61 * 60_000);
+      for (let i = 0; i < count; i++) cookie = pendingCookieOf(await at('/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' }));
+    }
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 2 * 61 * 60_000 + 60_000);
+    const again = await at('/api/auth/signup', { email: 'dana@brightwave-mail.com', password: 'password-123' });
+    expect(again.status).toBe(429);
+    expect((await json(again)).error).toBe("We sent several codes to this address recently, so we can't send another yet. Try again in 22 hours.");
+    const resend = await at('/api/auth/signup/resend', { cf_turnstile_token: 'ok' }, cookie);
+    expect(resend.status).toBe(429);
+    expect((await json(resend)).error).toBe('Several codes were sent to this address recently. Use the newest one, or try again in 22 hours.');
+  });
+  it('minutes up to an hour, then whole hours rounded up', () => {
+    expect([30, 60, 61, 3600, 3601, 86400].map((s) => minutesText(s))).toEqual(['1 minute', '1 minute', '2 minutes', '60 minutes', '2 hours', '24 hours']);
   });
 });
 
