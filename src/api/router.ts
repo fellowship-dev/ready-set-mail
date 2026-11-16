@@ -143,6 +143,7 @@ import { disableSpf, enableSpf, previewSpf, refreshSpf, spfIsOn, spfView } from 
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
+import { resolverFor } from '../dns/resolver';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -1064,7 +1065,7 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
 
       try {
-        const txt = await createResolver().txt(`_dmarc.${domain.domain}`);
+        const txt = await resolverFor(env).txt(`_dmarc.${domain.domain}`);
         // SERVFAIL / timeout / HTTP error / malformed answer: we don't know, so don't say "not found"
         if (txt.status === 'error') {
           return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
@@ -1157,7 +1158,7 @@ async function _handleApi(
 
       // Live DNS goes through the shared resolver: a DNS *error* is reported as such
       // (`dns_errors`), never as "record not found".
-      const dnsResolver = createResolver();
+      const dnsResolver = resolverFor(env);
       const dns_errors: string[] = [];
       // What this read resolved, stored below. A key stays unset when its lookup failed (unknown is never stored as absent).
       const resolved: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean } = {};

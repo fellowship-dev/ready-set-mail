@@ -140,20 +140,12 @@ function SpfFlattenWizard() {
 					) : (
 						<StepCard title={state.kind === 'turning_off_failed' ? 'Turning off did not finish' : 'SPF flattening is on'}>
 							{state.kind === 'turning_off_failed' ? (
-								<>
-									<Alert variant="warning">{state.message} It is below: copy it into Cloudflare, or try again.</Alert>
-									<TxtRecord title="Your original record" value={c.original_record} />
-								</>
+								<Alert variant="warning">{state.message} It is below: copy it into Cloudflare, or try again.</Alert>
 							) : (
 								<>
 									<p className="text-sm text-ink-2">{onSentence(c)}</p>
 									{state.kind === 'problem' ? <Alert variant="warning">{state.problem.message}</Alert> : null}
 									{state.kind === 'on' && state.stale ? <p className="text-sm text-ink-2">{staleSentence(c)}</p> : null}
-									<RecordPair>
-										<TxtRecord title="Your original record" value={c.original_record} badge={c.lookups_before !== null ? <LookupBadge count={c.lookups_before} /> : undefined} />
-										{c.flattened_record ? <TxtRecord title="Published record" value={c.flattened_record} badge={c.lookups_after !== null ? <LookupBadge count={c.lookups_after} /> : undefined} /> : null}
-									</RecordPair>
-									{c.previous_record !== null ? <TxtRecord title="Before the last change" value={c.previous_record} copyable={false} /> : null}
 								</>
 							)}
 							{turnOff.isError && !confirm ? <Alert variant="danger" title="That did not work">{errorMessage(turnOff.error)}</Alert> : null}
@@ -181,6 +173,18 @@ function SpfFlattenWizard() {
 									</Button>
 								}
 							/>
+
+							{state.kind === 'turning_off_failed' ? (
+								<TxtRecord title="Your original record" value={c.original_record} />
+							) : (
+								<>
+									<RecordPair>
+										<TxtRecord title="Your original record" value={c.original_record} badge={c.lookups_before !== null ? <LookupBadge count={c.lookups_before} /> : undefined} />
+										{c.flattened_record ? <TxtRecord title="Published record" value={c.flattened_record} badge={c.lookups_after !== null ? <LookupBadge count={c.lookups_after} /> : undefined} /> : null}
+									</RecordPair>
+									{c.previous_record !== null ? <TxtRecord title="Before the last change" value={c.previous_record} copyable={false} /> : null}
+								</>
+							)}
 						</StepCard>
 					)}
 					<ConfirmDialog
@@ -219,6 +223,32 @@ function SpfFlattenWizard() {
 			const original = preview?.original ?? null;
 			const lookups = f?.lookups_before ?? flat.lookup_count ?? null;
 			const readFailed = previewFailed || (!original && !!preview?.problem);
+			const footer0 = (
+			<StepFooter
+				start={
+					within && original ? (
+						<Button
+							variant="ghost"
+							onClick={() => {
+								setAnyway(true);
+								setStep(1);
+							}}
+						>
+							Flatten anyway
+						</Button>
+					) : undefined
+				}
+				end={
+					!readFailed && original && !within && f ? (
+						<Button onClick={() => setStep(1)}>Continue</Button>
+					) : (
+						<Button asChild variant={readFailed ? 'secondary' : 'primary'}>
+							<Link to={back}>Back to domain</Link>
+						</Button>
+					)
+				}
+			/>
+			);
 			body = (
 				<>
 					<WizardProgress label="Flattening progress" current={step} steps={STEPS.map((label, i) => ({ label, state: i < step ? 'complete' : 'pending' }))} />
@@ -247,6 +277,7 @@ function SpfFlattenWizard() {
 											Your SPF record needs {lookups} lookups. Receivers stop at {SPF_LOOKUP_ALLOWED} (RFC 7208, section 4.6.4) and then treat SPF as an error, so your mail may stop passing SPF.
 										</p>
 									) : null}
+									{footer0}
 									<RecordPair>
 										<TxtRecord title="Your record" value={original} badge={lookups !== null ? <LookupBadge count={lookups} /> : undefined} />
 										{f ? (
@@ -278,30 +309,7 @@ function SpfFlattenWizard() {
 									) : null}
 								</>
 							)}
-							<StepFooter
-								start={
-									within && original ? (
-										<Button
-											variant="ghost"
-											onClick={() => {
-												setAnyway(true);
-												setStep(1);
-											}}
-										>
-											Flatten anyway
-										</Button>
-									) : undefined
-								}
-								end={
-									!readFailed && original && !within && f ? (
-										<Button onClick={() => setStep(1)}>Continue</Button>
-									) : (
-										<Button asChild variant={readFailed ? 'secondary' : 'primary'}>
-											<Link to={back}>Back to domain</Link>
-										</Button>
-									)
-								}
-							/>
+							{readFailed || !original || within ? footer0 : null}
 						</StepCard>
 					) : null}
 
@@ -313,8 +321,6 @@ function SpfFlattenWizard() {
 							<p className="text-sm text-ink-2">
 								Every day around {SPF_CHECK_AT} we read your includes again. If your providers changed their addresses we update the record. If we cannot read them we leave the record as it is and show it here.
 							</p>
-							{original ? <TxtRecord title="Record to flatten" value={original} /> : null}
-							{anyway && within && f ? <TxtRecord title="Flattened" value={f.record} copyable={false} /> : null}
 							{!toolsApi ? (
 								<Alert variant="warning" title="Not available here">
 									SPF flattening writes to Cloudflare DNS, and no Cloudflare connection is configured.
@@ -338,6 +344,8 @@ function SpfFlattenWizard() {
 									</WriteButton>
 								}
 							/>
+							{original ? <TxtRecord title="Record to flatten" value={original} /> : null}
+							{anyway && within && f ? <TxtRecord title="Flattened" value={f.record} copyable={false} /> : null}
 						</StepCard>
 					) : null}
 				</>
