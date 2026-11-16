@@ -96,8 +96,20 @@ Home: `reportCounting` in `src/dmarc/counting.ts` (the one place the default is 
 ## Accounts
 
 **Sign-up attempt** (pending account):
-Between "Create account" and the right code, nothing exists but one row of `verifications`: `startAttempt` in `src/auth/codes.ts` stores the address, the purpose, the code's MAC, the tries, the password hash typed, the invite and the terms version, keyed by a handle in the browser's pending cookie. It expires after `CODE_SECONDS` (10 minutes) and is deleted when the code is used; the account, its workspace and membership are created only then. No other sign-up field survives on `main`.
+Between "Create account" and the right code, nothing exists but one row of `verifications`: `startAttempt` in `src/auth/codes.ts` stores the address, the purpose, the code's MAC, the tries, the password hash typed, the invite and the terms version, keyed by a handle in the browser's pending cookie. When product analytics is on it also holds a small tag (`$.an`: the analytics id minted for this attempt, the resend count, the time of the first code, the sign-up source and whether it came from the checker), written by `src/product-analytics/auth.ts`. It expires after `CODE_SECONDS` (10 minutes) and is deleted when the code is used; the account, its workspace and membership are created only then. No other sign-up field survives.
 Home: `src/auth/codes.ts`; `verifications` in `packages/db/src/schema.ts`; routes `src/auth/routes.ts`.
+
+## Product analytics
+
+**Product analytics**:
+The hosted service's own counts of the steps people take from sign-up to a paid fix (an event such as `Records Live`), sent server-side from the Worker to PostHog after the response. Off unless `MODE=saas` and `POSTHOG_KEY` and `POSTHOG_HOST` are set; a self-hosted installation never sends. No browser script, cookie or storage; events carry only categories and buckets from a closed allow-list, never an address, a domain or an id of a customer (ADR 0008). `path` on a setup event means how the domain's ownership was proven (`cloudflare` or `manual`), `records_by` who wrote the records (`apply` or `hand`).
+_Avoid_: telemetry (the opt-in self-host telemetry was removed; its endpoint never resolved), tracking, usage stats, the website's browser analytics (Plausible, a different thing)
+Home: `src/product-analytics/` (`capture.ts` the one sender, `events.ts` the allow-list, `steps.ts` and `auth.ts` the hooks the server actions call, `identity.ts` the analytics id and the once-only markers); `scripts/posthog-setup.mjs` for the funnels; `docs/analytics.md`; ADR 0008.
+
+**Analytics id**:
+`settings.analytics_id`: one random UUID per workspace, made by the Worker (`crypto.randomUUID()`, never derived from an email, a domain, a user or a workspace id and never chosen by a link), used as the `distinct_id` of every event about the workspace. A sign-up by email code mints it with the pending attempt and the new workspace adopts it. The once-only markers (`analytics:live:<domain id>`, `analytics:applied:<domain id>`) are rows in the same `settings` table.
+_Avoid_: visitor id, user id, person id (events are personless)
+Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`, `claimMarker`).
 
 ## Selling and agents
 

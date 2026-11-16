@@ -28,7 +28,7 @@ export const SINGLE: Single[] = [
     owners: ['src/billing/'],
   },
   {
-    concept: 'PostHog sends (none on main; PR #178 adds the module)',
+    concept: 'PostHog sends',
     // PostHog's hosts, its SDKs, its capture path and a read of an endpoint setting (host, app host, test-only API base); never a bare `/batch/` (Cloudflare has one too)
     signature: /posthog\.com|\.POSTHOG_(?:HOST|APP_HOST|API_BASE)\b|['"]posthog-(?:js|node)['"]|\/i\/v0\/e\b/i,
     owners: ['src/product-analytics/', 'scripts/posthog-setup.mjs'],
