@@ -73,6 +73,7 @@ export function toTuple(rec: ParserRecord): RecordTuple {
  * @param rawXml      Original XML string to store for reprocessing (nullable)
  * @param notifyFirstReport  send the first-report notification email when this is the domain's first counted report
  * @param reporter what the intake decided about the sender: tier, authenticated domain, known organisation
+ * @param ctx      the request's execution context: the first-report email is sent inside ctx.waitUntil, so it is not cut off when the delivery ends
  * @throws when D1 fails: nothing of the report is stored then (the caller decides what the sender is told)
  */
 export async function storeReport(
@@ -117,24 +118,14 @@ export async function storeReport(
   });
   if (!res.stored) return { stored: false };
 
-  // Fire first-report notification if this is the very first report that counts for this domain
-  if (notifyFirstReport) {
+  // The very first report that counts for this domain: tell the people it concerns (src/notifications/first-report.ts).
+  if (notifyFirstReport && res.reportId !== undefined) {
     const reportCount = await q.reports.countForDomain(domainId);
 
     if (reportCount === 1) {
-      const domainRow = await q.domains.getById(domainId);
-
-      if (domainRow) {
-        const uniqueSources = new Set(report.records.map(r => r.source.ip));
-        // Kept alive past the email handler's return when the caller has a ctx.
-        const sent = sendFirstReportNotification(tenant, domainRow.domain, {
-          totalMessages: total,
-          passMessages: pass,
-          failMessages: fail,
-          sourceCount: uniqueSources.size,
-        }, domainId)?.catch(() => {});
-        if (ctx && sent) ctx.waitUntil(sent);
-      }
+      const send = sendFirstReportNotification(tenant, ctx, domainId, res.reportId);
+      if (ctx) ctx.waitUntil(send);
+      else void send;
     }
   }
 

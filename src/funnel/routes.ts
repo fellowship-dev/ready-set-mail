@@ -1,7 +1,8 @@
 // HTTP routes of the email funnel.
 //
 // Public (no login; the signed token is the credential):
-//   GET|POST /api/unsubscribe?t=<token>     unsubscribe the address (GET: the link in the email body; POST: RFC 8058 one-click)
+//   GET  /api/unsubscribe?t=<token>         a confirm page with a button (changes nothing: link scanners open links)
+//   POST /api/unsubscribe?t=<token>         unsubscribe the address (the button; RFC 8058 one-click, with or without its body)
 //   GET|POST /api/monitor/confirm?t=<token> confirm a change-alert subscription (double opt-in; GET shows a button, POST confirms)
 // Instance owner only:
 //   GET  /api/leads                         leads, counts, and whether the sequence can send
@@ -18,17 +19,8 @@ import { MANUAL_STOPS, stopLead, unsubscribeEmail, type ManualStop } from './enr
 import { confirmMonitorSubscription } from './monitor-optin';
 import { readiness } from './sequence';
 import { SEQUENCE_DAYS } from './copy';
-import { lightColors as c } from '../../packages/ui/src/tokens/tokens';
-
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-function page(title: string, message: string, status = 200, extraHtml = ''): Response {
-  return new Response(
-    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${esc(title)}</title></head>` +
-      `<body style="font-family:Arial,sans-serif;max-width:480px;margin:80px auto;padding:0 24px;color:${c['ink-1']};"><h1 style="font-size:20px;">${esc(title)}</h1><p style="line-height:1.6;">${esc(message)}</p>${extraHtml}</body></html>`,
-    { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
-  );
-}
+import { page } from './page';
+import { handleEmailPreferenceOff } from '../lifecycle/email/routes';
 
 /** Is the caller the person who runs this instance? OWNER_EMAIL if set; else (self-host only) the owner of the one workspace. */
 export function isInstanceOwner(env: Pick<BoundEnv, 'MODE' | 'OWNER_EMAIL'>, who: { kind?: string; email?: string | null; role?: string; workspaceId: string }): boolean {
@@ -42,11 +34,21 @@ export async function handlePublicFunnelRoute(request: Request, env: BoundEnv): 
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
 
+  // Turn off one lifecycle email (hosted): the token names one person, one workspace and one preference (src/lifecycle/email/routes.ts).
+  const preference = await handleEmailPreferenceOff(request, env);
+  if (preference) return preference;
+
   if (url.pathname === '/api/unsubscribe' && (method === 'GET' || method === 'POST')) {
     const p = await verifyToken(env, url.searchParams.get('t') ?? '');
     if (!p || p.p !== 'unsub') return method === 'POST' ? new Response('invalid token', { status: 400 }) : page('This link is not valid', 'The unsubscribe link is incomplete or has been altered. Reply to the email you received and we will remove you by hand.', 400);
+    // A GET only shows a button. Mail security scanners open links in emails; they must not be able to unsubscribe someone. The POST (the button, or
+    // the RFC 8058 one-click with or without its `List-Unsubscribe=One-Click` body) is what unsubscribes.
+    if (method === 'GET') {
+      const t = encodeURIComponent(url.searchParams.get('t') ?? '');
+      return page('Unsubscribe?', 'Nothing changes until you press the button. You will not get any more emails of this kind from Ready Set Mail, and any follow-up series and change alerts for this address are removed.', 200, `<form method="post" action="/api/unsubscribe?t=${t}"><button type="submit" style="padding:10px 18px;font-size:15px;cursor:pointer;">Unsubscribe</button></form>`);
+    }
     await unsubscribeEmail(env, p.e);
-    return method === 'POST' ? new Response('unsubscribed', { status: 200 }) : page('You are unsubscribed', 'You will not get any more emails of this kind from Ready Set Mail. Any follow-up series and change alerts for this address have been removed.');
+    return new Response('unsubscribed', { status: 200 });
   }
 
   if (url.pathname === '/api/monitor/confirm' && (method === 'GET' || method === 'POST')) {

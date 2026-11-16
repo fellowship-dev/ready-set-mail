@@ -1,7 +1,6 @@
 // Configuration of the email funnel, all from the environment.
 
 import type { Env } from '../index';
-import { hostedEnabled } from '../hosted/config';
 
 export type FunnelEnv = Pick<
   Env,
@@ -9,9 +8,13 @@ export type FunnelEnv = Pick<
   | 'SERVICE_PRICES' | 'MAIL_FROM' | 'MAIL_FROM_NAME' | 'MAIL_REPLY_TO' | 'CANARY_DOMAIN' | 'SITE_ORIGINS' | 'SITE_URL'
 >;
 
-/** Hosted: on unless ONBOARDING_SEQUENCE_ENABLED=0. Self-host: off unless ONBOARDING_SEQUENCE_ENABLED=1. */
+/**
+ * Off unless ONBOARDING_SEQUENCE_ENABLED=1, hosted or self-host. (Hosted used to be on unless =0: the owner has not decided whether the
+ * sequence stays, goes or becomes opt-in, docs/adr/OPEN.md, so the default is off and the lifecycle emails of src/lifecycle/email/ are what
+ * account holders get.)
+ */
 export function sequenceEnabled(env: FunnelEnv): boolean {
-  return hostedEnabled(env) ? env.ONBOARDING_SEQUENCE_ENABLED !== '0' : env.ONBOARDING_SEQUENCE_ENABLED === '1';
+  return env.ONBOARDING_SEQUENCE_ENABLED === '1';
 }
 
 /** Public origin for links in email, no trailing slash. Null when none is configured. */

@@ -24,7 +24,7 @@ Copy for the sequence is in **one file**, `src/funnel/copy.ts` (a draft for revi
 
 `AUTHSERV_ID` is the text before the first `;` (after `i=1;` for ARC). Then craft a message with your own extra `Authentication-Results` and `ARC-Authentication-Results` lines and check that Cloudflare's line sits above them. Until both are set, the sequence enrols nobody.
 
-**Switch.** Hosted: on unless `ONBOARDING_SEQUENCE_ENABLED=0`. Self-host: off unless `ONBOARDING_SEQUENCE_ENABLED=1`.
+**Switch.** Off unless `ONBOARDING_SEQUENCE_ENABLED=1`, hosted and self-host. (Hosted used to be on unless `=0`. The owner has not decided whether the sequence is deleted, stays off or becomes opt-in, `docs/adr/OPEN.md`; only the default changed, and nothing was deleted. Hosted account holders get the lifecycle emails of `src/lifecycle/email/` instead, `docs/hosted.md`.)
 
 **Never twice.** A run marks the step as sent (compare-and-set on `step` and the due time) **before** it sends, so overlapping runs, retries and a crash right after the provider took the mail cannot send a step twice. The cost is deliberate: a crash or an ambiguous failure (a timeout) can lose that one email. Anything that is not provably the recipient's fault (bad key or `from`, unverified domain, quota, an unrecognised error, an internal error) puts the step back and stops the run, so one fault cannot burn a whole batch; only an outcome that may have been delivered (network error, 5xx) keeps the step marked and stops the run after that one lead. A lead that is behind gets one email per run, about a day apart (23 hours, so a cron tick that fires a few seconds early still finds it due). Leads waiting for `BOOKING_URL` are pushed a day out so they cannot fill the batch.
 
@@ -73,7 +73,7 @@ Resend: `POST https://api.resend.com/emails`, `Authorization: Bearer`, fields `f
 Sequence, change alerts and weekly digests go through `sendNonTransactional` (`src/mail/compliance.ts`):
 
 - **Suppression check before every send.** `suppression` stores a SHA-256 of the lower-cased address, never the address.
-- **One-click unsubscribe:** a signed link in the body and the headers `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. `GET` (the link) and `POST` (RFC 8058) on `/api/unsubscribe?t=<token>` need no login. Unsubscribing suppresses the address, deletes its lead **at once** and its change-alert subscriptions in every workspace. The link acts on `GET`, so a mail scanner that prefetches links can unsubscribe someone; that fails safe.
+- **One-click unsubscribe:** a signed link in the body and the headers `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. `GET` (the link) shows a confirm page with a button and changes nothing; `POST` (the button, or RFC 8058 one-click, with or without its `List-Unsubscribe=One-Click` body) unsubscribes. Neither needs a login. Unsubscribing suppresses the address, deletes its lead **at once** and its change-alert subscriptions in every workspace. Because `GET` changes nothing, a mail scanner that prefetches links cannot unsubscribe anyone.
 - **Token.** The payload (which holds the address) is AES-256-GCM encrypted and the token is HMAC-authenticated (`base64url(iv‖ciphertext).base64url(mac)`), both keys derived from the auth secret with purpose labels. The address is therefore not readable in the URL, request logs or a forwarded email; tampering, another purpose or another secret is rejected. Unsubscribe tokens do not expire; confirmation tokens last 7 days.
 - **Links are HTTPS only** (`PUBLIC_BASE_URL`; `http://localhost` is allowed for development): providers reject a plain-HTTP `List-Unsubscribe`.
 - **Postal address footer** from `POSTAL_ADDRESS`.
@@ -97,7 +97,7 @@ The request stores an **unconfirmed** subscription (`confirmed_at` null) and ema
 
 | Variable | Purpose |
 |---|---|
-| `ONBOARDING_SEQUENCE_ENABLED` | `1` to turn on (self-host); hosted is on unless `0` |
+| `ONBOARDING_SEQUENCE_ENABLED` | `1` to turn on (hosted and self-host); off otherwise |
 | `RESEND_API_KEY` | Resend, for the sequence (and the confirmation when there is no binding) |
 | `AUTHSERV_ID` | **required for enrolment**: the receiver's authserv-id, see the ops step above |
 | `AUTHSERV_HEADER` | **required for enrolment**: `ar` or `arc`, the one header kind the receiver adds |

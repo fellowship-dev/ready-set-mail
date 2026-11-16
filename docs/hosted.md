@@ -69,6 +69,10 @@ In `wrangler.jsonc` `vars` (or the dashboard):
 | `RETENTION_UNCOUNTED_REPORTS_DAYS` | `30` | days a report of tier `unknown` or `unauthenticated` is kept, swept by the one daily `0 4 * * *` cron. Not applied when `REPORT_COUNTING=all` (there those reports are the numbers). The earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` (when it covered only unauthenticated reports) is still honoured when the new one is unset. A reporter an owner promotes later becomes tier `counted` and leaves this sweep (the sweep and the budgets read `reporter_tier`, never the identity) |
 | `RETENTION_INTAKE_COUNTERS_DAYS`, `RETENTION_INTAKE_FAILURES_DAYS` | `8`, `90` | how long the daily counters and the "could not be processed" markers are kept |
 | `HOSTED_MAX_DOMAINS_PER_WORKSPACE` | `10` | optional: domains per workspace that may use hosted records (enabling more answers 429) |
+| `LIFECYCLE_EMAILS_OFF` | empty | kill switch of the [lifecycle emails](#lifecycle-emails) and of the two monitor emails: a comma list of `records_live`, `first_report`, `no_reports`, `summary`, `tips`, `change_alerts`, `connection_alerts`, or `all`. Empty: everything on, except the change alerts (next row). It always wins over `LIFECYCLE_EMAILS_ON` |
+| `LIFECYCLE_EMAILS_ON` | empty | hosted only: kinds that are off until named here. Today one: `change_alerts`. Without it the daily monitor job (`0 8 * * *`) can run for the DNS refresh and the MTA-STS update without sending a change alert. Self-host: ignored, the change alerts are on |
+| `LIFECYCLE_TIPS_DEFAULT` | `on` | `on` or `off`: whether an owner who never chose gets the tips email. An explicit choice in Settings always wins; admins never get tips unless they turn them on |
+| `ONBOARDING_SEQUENCE_ENABLED` | unset (off) | `1` turns the free-check onboarding sequence on; see [email-funnel.md](email-funnel.md) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_LOOKUP_KEY` | unset | optional: in-app purchase of "Fix one domain" (restricted key, webhook signing secret, price lookup key `rsm_fix_one_domain`). Billing is off, with no offer and no routes, unless both secrets are set; see [billing.md](billing.md) |
 
 A report's `policy_published` domain must be the token's domain or a subdomain of it; it is filed under the token's domain, or under the subdomain's own row if the same workspace has that subdomain as a verified domain. Each stored report also records whether its
@@ -134,6 +138,45 @@ The daily hosted job runs inside the existing `0 11 * * *` trigger (after the pe
 3. **SPF refresh**: re-flattens every hosted SPF from its stored source and updates the record if the providers' ranges moved. A source that cannot be fully resolved leaves the current record alone.
 4. **Pointer verification** for every hosted domain.
 5. Forgets expired canary addresses.
+6. **Lifecycle emails** (every workspace, once per run; [below](#lifecycle-emails)): the records-live watch, the first-report catch-up and no reports yet. The weekly summary and the tips run in the Monday trigger, `0 9 * * 1` (where the self-host digest runs; the digest returns at once on the hosted service, its address, sender and link being the self-host forms). Nothing here depends on `0 8` or `0 10`, which the hosted operator may hold; the [table below](#which-cron-sends-what) says which expression each email needs.
+
+### Lifecycle emails
+
+Hosted account holders get a few emails that follow what happened to their domains. Code: `src/lifecycle/email/` (state, analysis, copy, send, routes). Each is sent because a stored fact became true, or verifiably did not happen by a deadline measured from a stored fact; never on a bare timer.
+
+| Email | Sent when | To | Cron |
+|---|---|---|---|
+| Records live (`records_live`) | the `0 11` job is the first to see a connected domain's DMARC record name its report address (`domain_milestones.live_seen_by = 'job'`). If a person's own read (setup screens, domain page) saw it first (`'app'`), nothing is sent. Only while no report has arrived and the sighting is under 7 days old | owners, plus the admin who added the domain when the audit log recorded who | `0 11 * * *` |
+| First report (`first_report`) | the first COUNTED report of a domain is stored (real time, inside `ctx.waitUntil`); the `0 11` job catches it up when its claim is missing and the report is under 3 days old. One module for both modes (`src/notifications/first-report.ts`) | as above (self-host: owners; no verified-address rule there) | real time, caught up by `0 11 * * *` |
+| No reports yet (`no_reports`) | the records have been live for 3 days (`NO_REPORT_AFTER_SECONDS`), no counted or uncounted report was stored since, after one live DNS read of the record. Once per domain | as above | `0 11 * * *` |
+| Weekly summary (`summary`) | on the Monday `0 9 * * 1` run, for the complete ISO week (Mon 00:00 to Sun 24:00 UTC) that ended at 00:00 that day, keyed by that week (`2026-W46`: a re-run sends nothing twice), when the workspace has a proven, connected domain and the week had counted messages or something changed (a new source, a source that started failing, a domain that stopped getting reports). Otherwise nothing is sent and nothing is claimed | owners (on until turned off); admins who turned it on; members never | `0 9 * * 1` |
+| Tips (`tip_fix`, `tip_next`, `tip_done`) | only when true and only for the last complete week(s): a source that passed DKIM/SPF for another domain but failed for this one (10+ messages, most of its mail); two clean weeks and the rule module (`dmarcSteps`) proposes a stricter record, after a live read of the policy; `p=reject` at 100% and two clean weeks. One per person per rolling 7 days, once per source / policy state | as the summary (the tips preference; an owner's default is `LIFECYCLE_TIPS_DEFAULT`) | `0 9 * * 1` |
+
+**Never twice.** Every email is claimed first (`lifecycle_sends`, `INSERT OR IGNORE` on workspace, person, domain, kind and period) and only the run whose insert changed a row sends. A claim that sent nothing for a reason that may pass (no provider, a configuration error, a suppressed address) is deleted again so a later run can try; one whose outcome is unknown (`transient`) or that the provider refused is marked `failed` and never retried. Limits: 3 emails per person per run, `MAX_LIFECYCLE_SENDS_PER_RUN` (100) per invocation over every workspace, at most 25 DNS reads for domains waiting to be seen live and 25 for no-report checks, 25 for the live read before a tip.
+
+**Consent.** Summary and tips are non-transactional: suppression list, one-click `List-Unsubscribe` (+ `List-Unsubscribe-Post`) and a visible link in the footer, all of them pointing at `/api/email-preferences/off?t=<token>`, which turns off exactly that one preference for that one person in that one workspace (a `GET` only shows a confirm button; link scanners must not unsubscribe). Records live, first report and no reports are transactional (account notices): no unsubscribe header, a footer line that says why, and a link to Settings. The only commercial content is the offer paragraph of the fix tip, and only with billing on, a cached price, `POSTAL_ADDRESS` set and no order on the domain. People change their choices in Settings, Email (`GET`/`PUT /api/email-preferences`).
+
+**Sender and links: one path.** Every email to an account holder (first report, records live, no reports yet, weekly summary, tips, change alerts, connection broken, proof lost, and the sign-in emails) is sent from the platform sender (`accountSender` in `src/mail/compliance.ts`, which is `senderAddress` of `src/auth/mail.ts`: `noreply@app.readysetmail.com` on the live instance) through the Worker's `send_email` binding. On self-host the workspace's own `fromEmail` takes precedence; on hosted a workspace has none. Every link in them is `<PUBLIC_BASE_URL, else BETTER_AUTH_URL>/#/w/<workspace>/...` (`appLink`), never a workers.dev host and never the reports or intake domain. `MAIL_REPLY_TO` is the Reply-To when set; with none, an email never tells the reader to reply (the change alert's "Reply to this email" line only appears when it is set).
+
+**Switching it off.** `LIFECYCLE_EMAILS_OFF=all` (or a list of kinds). The free-check onboarding sequence is a separate thing and is off on hosted unless `ONBOARDING_SEQUENCE_ENABLED=1`.
+
+#### Which cron sends what
+
+An email is only sent when the cron expression it runs under is on. Holding an expression holds exactly the emails in its row.
+
+| Email | Cron expression that must be ON | Setting that turns it off |
+|---|---|---|
+| First report (`first_report`) | none for the real-time send at intake; `0 11 * * *` for the catch-up | `LIFECYCLE_EMAILS_OFF=first_report` |
+| Records live (`records_live`) | `0 11 * * *` | `LIFECYCLE_EMAILS_OFF=records_live` |
+| No reports yet (`no_reports`) | `0 11 * * *` | `LIFECYCLE_EMAILS_OFF=no_reports` |
+| Weekly summary (`summary`) | `0 9 * * 1` | `LIFECYCLE_EMAILS_OFF=summary`; each person in Settings, Email |
+| Tips (`tip_fix`, `tip_next`, `tip_done`) | `0 9 * * 1` | `LIFECYCLE_EMAILS_OFF=tips`; each person in Settings, Email; `LIFECYCLE_TIPS_DEFAULT=off` for owners who never chose |
+| Change alerts (`change_alerts`) | `0 8 * * *` | **off on hosted** until `LIFECYCLE_EMAILS_ON=change_alerts`; `LIFECYCLE_EMAILS_OFF=change_alerts` stops them anywhere |
+| Connection broken (`connection_alerts`) | none: sent when a Cloudflare call is refused, inside whatever request or job made it | `LIFECYCLE_EMAILS_OFF=connection_alerts` |
+| Proof lost | `0 11 * * *` (the hosted job's proof recheck), or whenever a person's own check finds it | none (it is a notice about a domain's ownership) |
+| Sign-in and invite codes, billing notices | none: sent when the person acts | none |
+
+The operator of the live instance has `0 4 * * *` and `0 11 * * *` on and `0 8`, `0 10` and `0 9 * * 1` held: with the Monday trigger held there is no weekly summary or tip, and nothing else is affected. The summary counts what is stored at 09:00 UTC on Monday; a provider that sends its report for Sunday later that morning is not in that email's numbers.
 
 ### 6. Plan, DNS preview limiter and caps
 

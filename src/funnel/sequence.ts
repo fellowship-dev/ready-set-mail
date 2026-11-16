@@ -34,7 +34,7 @@ export function readiness(env: BoundEnv): Readiness {
   const enabled = sequenceEnabled(env);
   // The free-check report uses the same Reply-To whether or not the sequence runs, so this is checked first.
   if (!replyTo(env)) warnings.push('MAIL_REPLY_TO is not set: replies to the free-check report and funnel mail have nowhere to go (no Reply-To is sent)');
-  if (!enabled) return { enabled, blockers: ['The sequence is off (self-host: set ONBOARDING_SEQUENCE_ENABLED=1)'], warnings };
+  if (!enabled) return { enabled, blockers: ['The sequence is off (set ONBOARDING_SEQUENCE_ENABLED=1 to turn it on)'], warnings };
   const provider = providerProblem(env);
   if (provider) blockers.push(provider);
   if (!funnelSender(env)) blockers.push('No sender address: set MAIL_FROM');

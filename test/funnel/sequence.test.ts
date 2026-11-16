@@ -316,7 +316,7 @@ describe('provider and configuration', () => {
   });
 
   it('self-host: off unless ONBOARDING_SEQUENCE_ENABLED=1', async () => {
-    const off = funnelWorld({ MODE: undefined, SAAS_ENABLED: undefined });
+    const off = funnelWorld({ MODE: undefined, SAAS_ENABLED: undefined, ONBOARDING_SEQUENCE_ENABLED: undefined });
     expect(await off.enroll('a@acme.com')).toBe('disabled');
     expect(readiness(off.env).enabled).toBe(false);
     const on = funnelWorld({ MODE: undefined, SAAS_ENABLED: undefined, ONBOARDING_SEQUENCE_ENABLED: '1' });

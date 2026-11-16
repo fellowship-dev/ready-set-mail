@@ -13,6 +13,7 @@ import { sendChangeNotification } from './monitor/notify';
 import { sendWeeklyDigests } from './digest/weekly';
 import { logAudit } from './audit/log';
 import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
+import { newBudget, runLifecycleForWorkspace, type Budget } from './lifecycle/email/run';
 import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
 import { runRetention } from './lifecycle/retention';
@@ -47,10 +48,11 @@ export async function runCronForWorkspaces(
   const load = opts.load ?? loadTenant;
   const workspaces = opts.workspaces ?? await listCronWorkspaces(env);
   await runFunnelCron(event, env);
+  const lifecycle = newBudget(); // one budget for the whole invocation: the cap on lifecycle emails is per run, not per workspace
   for (const workspaceId of workspaces) {
     try {
       const tenant = await load(env, { workspaceId });
-      await runCron(event, tenant, ctx);
+      await runCron(event, tenant, ctx, lifecycle);
     } catch (e) {
       console.error(`[cron ${event.cron}] workspace ${workspaceId} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
     }
@@ -67,16 +69,20 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 }
 
 /** One cron tick for one workspace. */
-async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext): Promise<void> {
-  // Daily product analytics — every day 11am UTC: hosted with PostHog configured only (docs/analytics.md); a no-op everywhere else.
+async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, lifecycle: Budget): Promise<void> {
+  // Every day 11am UTC. Product analytics: hosted with PostHog configured only (docs/analytics.md). Lifecycle emails: hosted only
+  // (src/lifecycle/email/run.ts): records live, first-report catch-up, no reports yet. Both are no-ops elsewhere.
   if (event.cron === '0 11 * * *') {
     dailyAnalytics(tenant, ctx);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle, {}, 'daily');
     return;
   }
 
-  // Weekly digest — every Monday 9am UTC
+  // Every Monday 9am UTC: the weekly digest on self-host (sendWeeklyDigests returns at once on hosted), and on hosted the weekly summary and the
+  // tips (src/lifecycle/email/run.ts), for the ISO week that ended at 00:00 UTC that day. Its period key makes a re-run send nothing twice.
   if (event.cron === '0 9 * * 1') {
     await sendWeeklyDigests(tenant);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle, {}, 'weekly');
     return;
   }
 

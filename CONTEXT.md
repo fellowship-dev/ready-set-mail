@@ -74,7 +74,7 @@ _Avoid_: recommendation, guidance, to-do
 
 **Report** (aggregate):
 A DMARC aggregate (RUA) report a mailbox provider sends about one domain for one day; TLS-RPT reports are separate.
-_Avoid_: digest (that is our weekly email), PDF (that is the export)
+_Avoid_: digest (the self-host Monday email; the hosted service sends the weekly summary instead), PDF (that is the export)
 Home: parsing `src/dmarc/`, storing `packages/db`.
 
 **Report address** — **four forms**:
@@ -110,6 +110,13 @@ Home: `src/product-analytics/` (`capture.ts` the one sender, `events.ts` the all
 `settings.analytics_id`: one random UUID per workspace, made by the Worker (`crypto.randomUUID()`, never derived from an email, a domain, a user or a workspace id and never chosen by a link), used as the `distinct_id` of every event about the workspace. A sign-up by email code mints it with the pending attempt and the new workspace adopts it. The once-only markers (`analytics:live:<domain id>`, `analytics:applied:<domain id>`) are rows in the same `settings` table.
 _Avoid_: visitor id, user id, person id (events are personless)
 Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`, `claimMarker`).
+
+## Email
+
+**Lifecycle email**:
+An email the hosted service sends an account holder because a stored fact about their domain became true (or verifiably did not happen by a deadline measured from one): records live, first report, no reports yet, the weekly summary and tips. Never on a bare timer. Each is claimed in `lifecycle_sends` before it is sent, so a second run sends nothing. Records live, first report and no reports yet are account notices (no unsubscribe); the weekly summary and the tips are optional (one-click off, per person and workspace, in Settings). The first-report email is the one that also exists on self-host.
+_Avoid_: drip, campaign, newsletter, the onboarding sequence (that is the free-check leads' emails, `src/funnel/`, off unless `ONBOARDING_SEQUENCE_ENABLED=1`), digest
+Home: `src/lifecycle/email/run.ts` (the job), `src/lifecycle/email/copy.ts` (the words), `src/lifecycle/email/analysis.ts` (what a week says), `src/lifecycle/email/preferences.ts` (who gets what), `src/lifecycle/email/routes.ts` (the off link and the Settings API); `src/notifications/first-report.ts`; `docs/hosted.md#lifecycle-emails`.
 
 ## Selling and agents
 

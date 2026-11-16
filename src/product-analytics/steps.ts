@@ -14,6 +14,7 @@ import { resolverFor } from '../dns/resolver';
 import { capture, captureLater, captureMany, ev, type AnalyticsEnv, type Captured } from './capture';
 import { AGENT_TOOLS, DNS_PROVIDERS, countBucket, daysBucket, issuesBucket, longWait, shortWait } from './events';
 import { claimMarker, markerAt, markerCount, setMarker } from './identity';
+import { noteRecordsLive } from '../lifecycle/email/milestones';
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -108,6 +109,7 @@ const recordsBy = (applied: number | null): 'apply' | 'hand' => (applied === nul
  * whichever read sees it first. Costs one statement (the marker) per call; the event's own reads run only the first time.
  */
 export function recordsSeenLive(tenant: TenantContext, ctx: Ctx, domain: Pick<DomainRow, 'id'> & ProofSource, seenBy: 'setup' | 'domain_page' | 'daily'): void {
+  noteRecordsLive(tenant, ctx, domain.id, seenBy); // the lifecycle emails' own record of the first sight, whether or not PostHog is on (src/lifecycle/email/milestones.ts)
   captureLater(tenant.env, ctx, async () => {
     if (!(await claimMarker(tenant.db, tenant.workspaceId, `live:${domain.id}`))) return null;
     const [workspace, applied, live] = await Promise.all([

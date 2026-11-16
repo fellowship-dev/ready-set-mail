@@ -14,6 +14,7 @@ export const DAY = 86400;
 export const FUNNEL_ENV = {
   ...HOSTED_ENV,
   BETTER_AUTH_SECRET: 'test-secret-for-funnel',
+  ONBOARDING_SEQUENCE_ENABLED: '1', // hosted is off unless set (src/funnel/config.ts)
   AUTHSERV_ID: 'mx.cloudflare.net',
   AUTHSERV_HEADER: 'ar',
   RESEND_API_KEY: 're_test',
