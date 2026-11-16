@@ -98,14 +98,13 @@ describe('Members', () => {
 		expect((await screen.findByText('p@example.com')).parentElement!.className).toMatch(/basis-56/);
 	});
 
-	it('the invite sentence is true per mode: self-host sends nothing; hosted says the hand-off is emailed', async () => {
-		const self = renderApp(<MembersPage />, { role: 'owner', status: { mode: 'self-host' }, routes: { 'GET /api/team': team('o1') } });
-		expect(await screen.findByText('We do not send email from here: you get a one-time link to pass on. It expires in 7 days.')).toBeInTheDocument();
-		expect(document.body.textContent).not.toMatch(/Handing a domain/);
-		self.unmount();
-		renderApp(<MembersPage />, { role: 'owner', status: { mode: 'saas' }, routes: { 'GET /api/team': team('o1') } });
-		expect(await screen.findByText(/This form does not send email: you get a one-time link to pass on, and it expires in 7 days\. Handing a domain's setup to a teammate is different: we email them when we can\./)).toBeInTheDocument();
-		expect(document.body.textContent).not.toMatch(/We do not send email: you get/);
+	it('the invite sentence says what this form does about email, on both modes: nothing is sent', async () => {
+		for (const mode of ['self-host', 'saas'] as const) {
+			const r = renderApp(<MembersPage />, { role: 'owner', status: { mode }, routes: { 'GET /api/team': team('o1') } });
+			expect(await screen.findByText('This invite is not emailed: you get a one-time link to pass on. It expires in 7 days.')).toBeInTheDocument();
+			expect(document.body.textContent).not.toMatch(/We do not send email/);
+			r.unmount();
+		}
 	});
 
 	it('inviting an address that already has an open invite says the earlier link stopped working', async () => {

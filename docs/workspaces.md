@@ -6,7 +6,7 @@ A **workspace** holds domains, reports, members, Cloudflare connections and (lat
 
 * The **switcher** at the top of the sidebar shows the workspace you are in, lists every workspace you belong to with your role, and has *Create workspace*. Whoever creates a workspace is its owner.
 * The workspace is in the URL: `#/w/<workspaceId>/domains/1`. Links are shareable and a reload keeps your place. After signing in you land in the last one you used (remembered in the browser); a link to a workspace you cannot use shows a notice and opens one you can.
-* **Members** (sidebar, owners and admins only: the server refuses the list to a member, so a member is not offered it) is the member list of the open workspace. Owners and admins invite people there; an invite is a one-time link (7 days). Nothing is emailed from that form on either mode; on the hosted service, handing a domain's setup to a teammate is a separate invite that is emailed when `mayEmailHandoff` allows it. The owner changes a member's role there (member or admin) from the row's role menu.
+* **Members** (sidebar, owners and admins only: the server refuses the list to a member, so a member is not offered it) is the member list of the open workspace. Owners and admins invite people there; an invite is a one-time link (7 days). Nothing is emailed from that form on either mode (it says "This invite is not emailed"); on the hosted service, handing a domain's setup to a teammate is a separate invite, with its own screen, that is emailed when `mayEmailHandoff` allows it. The owner changes a member's role there (member or admin) from the row's role menu.
 * **Settings → Workspace**: rename (owner), leave, delete (owner).
 
 ### Invites

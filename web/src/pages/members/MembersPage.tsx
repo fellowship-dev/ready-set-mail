@@ -25,7 +25,7 @@ import { useState, type FormEvent } from 'react';
 import { ListSkeleton, LoadError, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
-import { useHosted, useSession } from '../../lib/session';
+import { useSession } from '../../lib/session';
 import { useWorkspaces } from '../../lib/workspaces';
 import type { Role } from '../../lib/types';
 import { Field } from '../auth/AuthLayout';
@@ -217,14 +217,10 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 	);
 }
 
-/** What the invite form does about email, true for what the product sends: nothing from here; on the hosted service, a hand-off to a teammate is emailed. */
-export const inviteEmailNote = (hosted: boolean): string =>
-	hosted
-		? "This form does not send email: you get a one-time link to pass on, and it expires in 7 days. Handing a domain's setup to a teammate is different: we email them when we can."
-		: 'We do not send email from here: you get a one-time link to pass on. It expires in 7 days.';
+/** What this form does about email, true on both modes: it sends nothing. (Handing a domain's setup to a teammate, hosted, is another invite with its own screen, and is emailed.) */
+export const INVITE_NOT_EMAILED = 'This invite is not emailed: you get a one-time link to pass on. It expires in 7 days.';
 
 function InviteSection({ isOwner }: { isOwner: boolean }) {
-	const hosted = useHosted();
 	const [email, setEmail] = useState('');
 	const [inviteRole, setInviteRole] = useState<'member' | 'admin'>('member');
 	const role = isOwner ? inviteRole : 'member';
@@ -250,7 +246,7 @@ function InviteSection({ isOwner }: { isOwner: boolean }) {
 	}
 
 	return (
-		<Section title="Invite a member" description={inviteEmailNote(hosted)}>
+		<Section title="Invite a member" description={INVITE_NOT_EMAILED}>
 			<form onSubmit={submit} className="grid gap-4 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
 				<Field id="invite-email" label="Email">
 					<Input id="invite-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@yourcompany.com" />
