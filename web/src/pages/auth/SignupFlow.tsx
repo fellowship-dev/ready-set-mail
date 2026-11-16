@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
-import { bindSignupDomainToEmail } from '../../lib/signup-intent';
+import { bindSignupDomainToEmail, readSignupDomain } from '../../lib/signup-intent';
 import { signupAnalytics } from '../../lib/signup-source';
 import { useSession } from '../../lib/session';
 import { EMAIL_PATTERN, readSignupEmail, rememberSignupEmail, screenFor, setPendingSignup, SIGNUP_PATH, stepOfPath, usePendingSignup, type PendingSignup } from '../../lib/signup';
@@ -46,6 +46,9 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 	const qc = useQueryClient();
 	// A sign-up that ended (its code expired while S2 was open, or the tab came back later): S1 says so and keeps the address.
 	const [expiredFor] = useState(() => readSignupEmail());
+	// The domain the website's link carried (`?domain=`, kept by signup-intent): S1 names it, so a person who came from the checker
+	// sees the sign-up is for that domain; S4 then opens on it. Never asked for again.
+	const [forDomain] = useState(() => readSignupDomain());
 	const [email, setEmail] = useState(expiredFor ?? '');
 	const [password, setPassword] = useState('');
 	const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
@@ -86,7 +89,10 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 	}
 
 	return (
-		<AuthLayout title="Create your account" description="Check and fix your domain's SPF, DKIM and DMARC.">
+		<AuthLayout
+			title="Create your account"
+			description={forDomain ? <>You're setting up <span className="font-mono [overflow-wrap:anywhere]">{forDomain}</span>.</> : "Check and fix your domain's SPF, DKIM and DMARC."}
+		>
 			<form onSubmit={submit} className="space-y-4" noValidate>
 				{expiredFor ? (
 					<Alert variant="warning" data-testid="signup-expired">
