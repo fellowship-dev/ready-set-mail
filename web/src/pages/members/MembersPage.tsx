@@ -168,7 +168,7 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 			) : (
 				<Badge variant={member.role === 'member' ? 'neutral' : 'brand'}>{member.role}</Badge>
 			)}
-			<p className="min-w-0 flex-1 basis-32 text-xs text-ink-2 sm:flex-none sm:text-sm">{member.last_login_at ? `Signed in ${formatDate(member.last_login_at)}` : 'Never signed in'}</p>
+			<p className="min-w-0 flex-1 basis-24 text-xs text-ink-2 sm:flex-none sm:text-sm">{member.last_login_at ? `Signed in ${formatDate(member.last_login_at)}` : 'Never signed in'}</p>
 			<div className="ml-auto flex items-center gap-2">
 				{myRole === 'owner' && !isSelf && member.role !== 'owner' ? (
 					<Button variant="secondary" size="sm" onClick={() => setHanding(true)} aria-label={`Make ${member.email} the owner`}>
