@@ -89,14 +89,15 @@ describe('a client ID metadata document client, with registration off', () => {
   const page = await app.fetch('/oauth/authorize?' + query, { headers: { cookie: app.cookie } });
   const html = await page.text();
   expect(page.status, html.slice(0, 300)).toBe(200);
-  expect(visible(html)).toContain('Allow Document assistant to work with your domains?');
+  expect(visible(html)).toContain('Allow cimd.example to work with your domains?');
   expect(visible(html)).toContain('Published by cimd.example');
+  expect(visible(html)).toContain('It calls itself \u201cDocument assistant\u201d. That is its own description.');
   expect(visible(html)).not.toContain('Not verified');
   const tokens = await app.connect(CIMD, { redirect: 'https://cimd.example/callback' });
   const list = await app.mcp(tokens.access_token);
   expect(list.status, await list.clone().text()).toBe(200);
   const c = (await app.connections())[0];
-  expect(c).toMatchObject({ name: 'Document assistant', verified: true, verifiedHost: 'cimd.example', clientId: CIMD });
+  expect(c).toMatchObject({ name: 'cimd.example', calledItself: 'Document assistant', verified: true, verifiedHost: 'cimd.example', clientId: CIMD });
   expect(fetched.every(u => u === CIMD)).toBe(true);
  }, 30000);
  it('accepts a loopback redirect listed in the document, on any port', async () => {

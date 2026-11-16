@@ -36,9 +36,10 @@ export interface Env {
   BOOTSTRAP_SECRET?: string;     // installer-held random one-use capability (at least 32 characters)
   OAUTH_KV?: KVNamespace;        // instance-owned agent OAuth storage
   MCP_DCR_ENABLED?: string;     // "1" lets apps register themselves (dynamic client registration); off by default. docs/agent-operations.md
-  MCP_DCR_DAILY_LIMIT?: string;  // registrations accepted per 24 hours, whole instance: default 200
-  MCP_DCR_MAX_CLIENTS?: string;  // registered apps kept at once: default 1000
-  MCP_DCR_UNUSED_DAYS?: string;  // days before a registered app nobody ever approved is deleted: default 7
+  MCP_DCR_DAILY_LIMIT?: string;  // registrations accepted per 24 hours, whole instance: default 2000
+  MCP_DCR_ADDRESS_DAILY_LIMIT?: string;  // registrations accepted per 24 hours from one address: default 20
+  MCP_DCR_MAX_CLIENTS?: string;  // registered apps kept at once, waiting and approved: default 5000
+  MCP_DCR_UNUSED_HOURS?: string;  // hours before a registered app nobody approved is deleted: default 24
   OWNER_EMAIL?: string;          // optional owner email restriction; never an ownership proof
   BETTER_AUTH_SECRET?: string;   // session signing secret; generated and kept in D1 if unset
   TURNSTILE_SECRET_KEY?: string; // hosted (MODE=saas): Cloudflare Turnstile secret. REQUIRED for sign-up: without it sign-up fails closed (503)

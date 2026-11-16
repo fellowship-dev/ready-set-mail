@@ -8,7 +8,12 @@ import { resolveApiKey } from './api-keys';
 import { invalidTokenResponse, mcpInstallation, mcpResourceMetadataUrl, PROTECTED_RESOURCE_ROOT_PATH } from '../mcp/discovery';
 import { CONNECTION_PREFIX, handleRegistration, sweepUnusedClients } from '../mcp/registration';
 import { handleMcpConnections } from '../mcp/connections';
+import { refuseClientDocumentRedirects } from '../mcp/client-document-fetch';
+import { refuseRefreshReplay } from '../mcp/refresh-replay';
 import { limitAnonymousAgentRequest, limitBrowserRequest, limitMcpRequest } from '../mcp/rate-limit';
+
+// The OAuth library fetches client documents with the default (follow redirects); the draft forbids it (src/mcp/client-document-fetch.ts).
+refuseClientDocumentRedirects();
 
 export interface McpIdentity { principalId: string; issuer: string; resource: string; credentialId?: string }
 export type McpHandler = { fetch(request: Request, env: BoundEnv, ctx: ExecutionContext & { props: McpIdentity }): Promise<Response> | Response };
@@ -99,18 +104,11 @@ export async function createMcpProvider(env: BoundEnv, origin: string, handler: 
  return new OAuthProvider(await mcpProviderOptions(env, origin, handler, fallback));
 }
 
-/** The library's admin helpers for jobs with no request (the daily sweep). They never call a handler, so none is given. */
-export async function mcpOAuthHelpers(env: BoundEnv) {
- const { getOAuthApi } = await import('@cloudflare/workers-oauth-provider');
- const none = { fetch: () => new Response(null, { status: 404 }) };
- return getOAuthApi(await mcpProviderOptions(env, mcpInstallation(env).issuer, none, none), env);
-}
-
-/** Daily: delete the registered apps nobody ever approved (src/mcp/registration.ts). Nothing to do without agent storage. */
+/** Daily: delete the registered apps nobody approved in time (src/mcp/registration.ts). Nothing to do without agent storage. */
 export async function sweepAgentClients(env: BoundEnv) {
  if (!env.OAUTH_KV) return null;
  try { mcpInstallation(env); } catch { return null; }
- return sweepUnusedClients(env, await mcpOAuthHelpers(env));
+ return sweepUnusedClients(env);
 }
 
 /** Route only protocol/connection endpoints through OAuth; other Worker behavior remains intact. */
@@ -139,6 +137,12 @@ export function withMcpAuthorization<T extends DefaultHandler>(worker: T, handle
    const provider = await createMcpProvider(env, new URL(request.url).origin, handler, worker);
    // RFC 9728: a client that does not read the 401 challenge tries the root address. It gets the same document as the /mcp one.
    if (path === PROTECTED_RESOURCE_ROOT_PATH) request = new Request(mcpResourceMetadataUrl(env), request);
+   // A refresh token that was already replaced is a leak: refuse it and end the connection (src/mcp/refresh-replay.ts).
+   if (path === '/oauth/token' && env.OAUTH_KV) {
+    const { getOAuthApi } = await import('@cloudflare/workers-oauth-provider');
+    const replay = await refuseRefreshReplay(request, env, ctx, getOAuthApi(await mcpProviderOptions(env, new URL(request.url).origin, handler, worker), env));
+    if (replay) return replay;
+   }
    // Open registration (MCP_DCR_ENABLED=1) is vetted, counted and audited before the library stores anything.
    if (path === '/oauth/register' && request.method === 'POST' && env.MCP_DCR_ENABLED === '1') return await handleRegistration(request, env, ctx, forwarded => provider.fetch(forwarded, env, ctx));
    return await provider.fetch(request, env, ctx);

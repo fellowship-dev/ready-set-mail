@@ -24,8 +24,11 @@ export const EXPIRY_CHOICES = [1, 7, 14, 30] as const;
 const DEFAULT_EXPIRY = 7;
 
 export interface ConsentModel {
- /** `publisher` is set only for a client whose identity is verified (a Client ID Metadata Document on its own HTTPS domain). */
- client: { name: string; publisher?: string; redirectHost: string; loopback: boolean };
+ /**
+  * `lead` is what the person is told first, and it is verifiable: the publisher's host, or the address the app sends them back to (never a name the app chose).
+  * `calledItself` is the name the app gave, shown as its own words. `publisher` is set only for a client whose identity is verified (a Client ID Metadata Document on its own HTTPS domain).
+  */
+ client: { lead: string; calledItself: string | null; publisher?: string; redirectHost: string; loopback: boolean };
  /** Email of the signed-in person approving. */
  account: string;
  /** Opaque consent handle from the OAuth provider. */
@@ -77,6 +80,7 @@ select,input[type=text]{display:block;width:100%;height:40px;margin-top:6px;padd
 .hint{font-size:.8125rem;color:var(--ink-2);margin-top:4px}
 @media (pointer:coarse){select,input[type=text]{height:44px}}
 .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+.bar{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;gap:12px;margin:24px -24px -24px;padding:12px 24px;background:var(--surface-1);border-top:1px solid var(--line);border-radius:0 0 14px 14px}
 .button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 20px;border-radius:10px;font:inherit;font-size:.875rem;font-weight:600;cursor:pointer;text-decoration:none}
 .primary{background:var(--brand);color:var(--brand-fg);border:1px solid var(--brand)}
 .primary:hover{background:var(--brand-hover)}
@@ -86,7 +90,7 @@ a{color:var(--brand-ink);text-underline-offset:4px}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .option:focus-within{outline:2px solid var(--focus);outline-offset:2px}
 .option input:focus-visible{outline:none}
-@media (max-width:480px){.wrap{padding-top:24px}.card{padding:20px}.actions .button{flex:1 1 100%}}
+@media (max-width:480px){.wrap{padding-top:24px}.card{padding:20px}.actions .button{flex:1 1 100%}.bar{margin:24px -20px -20px;padding:12px 20px;flex-wrap:nowrap}.bar .button{flex:1 1 0;padding:0 12px}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}`;
 })();
 
@@ -118,16 +122,18 @@ export function agentPage(title: string, body: string): string {
 const expiryDate = (now: number, days: number) => new Date((now + days * 86400) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 export function renderConsentPage(m: ConsentModel): string {
- const client = escape(m.client.name);
- // Only a verified client is named in the heading and gets anything pre-ticked; a self-registered name is a claim.
+ const lead = escape(m.client.lead);
+ // Only a verified client gets anything pre-ticked; a self-registered app is a claim.
  const verified = !!m.client.publisher;
  const total = m.workspaces.reduce((n, w) => n + w.choices.length, 0);
+ const calls = m.client.calledItself ? escape(m.client.calledItself) : null;
  const identity = [
   verified
    ? `<li><strong>Published by</strong> <span class="mono">${escape(m.client.publisher)}</span></li>`
-   : m.client.name === UNNAMED_APP
-    ? `<li><strong>Name it gives</strong> none. <strong>Not verified:</strong> nobody has checked who this app is.</li>`
-    : `<li><strong>Name it gives</strong> "${client}". <strong>Not verified:</strong> the app chose this name itself, so it may not be who it says.</li>`,
+   : `<li><strong>Not verified:</strong> nobody has checked who this app is.</li>`,
+  calls
+   ? `<li><strong>It calls itself</strong> \u201c${calls}\u201d. ${verified ? 'That is its own description.' : 'The app chose that name, so it may not be who it says.'}</li>`
+   : verified ? '' : `<li><strong>It gave no name.</strong></li>`,
   `<li><strong>Access goes to</strong> <span class="mono">${escape(m.client.redirectHost)}</span>${verified ? '' : '. Allow only if that is the app you are using right now.'}</li>`,
   `<li><strong>You are signed in as</strong> ${escape(m.account)}</li>`,
  ].join('');
@@ -138,8 +144,8 @@ export function renderConsentPage(m: ConsentModel): string {
  const actions = (Object.keys(ACTION_COPY) as Array<keyof typeof ACTION_COPY>).map(a => `<label class="option"><input type="checkbox" name="actions" value="${a}"${verified && DEFAULT_ACTIONS.includes(a) ? ' checked' : ''}><span><span>${escape(ACTION_COPY[a].label)}</span><span class="detail">${escape(ACTION_COPY[a].detail)}</span><span class="scope">${a}</span></span></label>`).join('');
  const expiry = EXPIRY_CHOICES.map(d => `<option value="${d}"${d === DEFAULT_EXPIRY ? ' selected' : ''}>${d === 1 ? '1 day' : `${d} days`}, until ${expiryDate(m.now, d)}</option>`).join('');
  const workspaceOptions = m.workspaces.map(w => `<option value="${escape(w.id)}">${escape(w.name)}</option>`).join('');
- const heading = verified ? `Allow ${client} to work with your domains?` : 'An app is asking to work with your domains';
- return agentPage(verified ? `Allow ${client}?` : 'An app is asking for access', `<h1>${heading}</h1>
+ const heading = verified ? `Allow ${lead} to work with your domains?` : m.client.loopback ? 'Allow an app on this computer to work with your domains?' : `Allow the app at ${lead} to work with your domains?`;
+ return agentPage(verified ? `Allow ${lead}?` : 'An app is asking for access', `<h1>${heading}</h1>
 <p class="muted">Choose exactly what it may see and do. It gets nothing else, and access ends on the date you pick.</p>
 <ul class="facts">${identity}</ul>${loopback}
 <form method="post">
@@ -152,16 +158,28 @@ export function renderConsentPage(m: ConsentModel): string {
 <fieldset><legend>What it may do</legend>${actions}</fieldset>
 <fieldset><legend>When access ends</legend><label class="field">Access ends<select name="days">${expiry}</select></label><p class="hint">Dates are in UTC. You can revoke access sooner in Settings, under Agents.</p></fieldset>
 <div class="never"><h2>It can never do these</h2><ul><li>Change your DNS records</li><li>Tighten your DMARC policy</li><li>Send email or invite people</li><li>Give itself more access</li></ul><p class="muted last">You make those changes yourself, in the dashboard or at your DNS provider.</p></div>
-<div class="actions"><button class="button primary" type="submit" name="decision" value="allow">Allow access</button><button class="button secondary" type="submit" name="decision" value="deny" formnovalidate>Don't allow</button></div>
+<div class="bar"><button class="button primary" type="submit" name="decision" value="allow">Allow access</button><button class="button secondary" type="submit" name="decision" value="deny" formnovalidate>Don't allow</button></div>
 </form>`);
 }
 
-/** Shown on /oauth/authorize when nobody (or an unverified hosted account) is signed in. */
-export function renderSignedOutPage(reason: 'signed_out' | 'unverified'): string {
+/**
+ * The most of an authorization request's address that is carried through sign-in. Longer is left out: the person starts the connection again from the app.
+ * Only this endpoint's own path and query are ever carried (see `resumePath`), so the dashboard can send the person back to it and to nothing else.
+ */
+export const MAX_RESUME_LENGTH = 4000;
+/** The path and query of an authorization request, when it may be carried through sign-in; null when it may not. */
+export function resumePath(url: URL): string | null {
+ const path = `${url.pathname}${url.search}`;
+ return url.pathname === '/oauth/authorize' && url.search.length > 1 && path.length <= MAX_RESUME_LENGTH ? path : null;
+}
+
+/** Shown on /oauth/authorize when nobody (or an unverified hosted account) is signed in. `resume` is the request to come back to after signing in. */
+export function renderSignedOutPage(reason: 'signed_out' | 'unverified', resume?: string | null): string {
  const body = reason === 'unverified'
   ? `<h1>Confirm your email first</h1><p>An app asked to connect to your Ready Set Mail account. Open the confirmation link we emailed you, then start the connection again from the app.</p>`
-  : `<h1>Sign in to continue</h1><p>An app asked to connect to your Ready Set Mail account. Sign in to the dashboard in this browser, then come back to this tab and reload it. You will see exactly what the app is asking for before anything is shared.</p>`;
- return agentPage(reason === 'unverified' ? 'Confirm your email' : 'Sign in', `${body}<div class="actions"><a class="button primary" href="/">Open the dashboard</a></div>`);
+  : `<h1>Sign in to continue</h1><p>An app asked to connect to your Ready Set Mail account. Sign in, and you come straight back here to see exactly what the app is asking for before anything is shared.</p>`;
+ const href = reason === 'signed_out' && resume ? `/?continue=${encodeURIComponent(resume)}#/` : '/';
+ return agentPage(reason === 'unverified' ? 'Confirm your email' : 'Sign in', `${body}<div class="actions"><a class="button primary" href="${escape(href)}">${reason === 'signed_out' && resume ? 'Sign in and continue' : 'Open the dashboard'}</a></div>`);
 }
 
 /** Why an authorization request could not be shown or accepted. The library's wording is never shown: it names parameters, not what to do. */

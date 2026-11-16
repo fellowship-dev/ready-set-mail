@@ -131,7 +131,7 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
   }
   if (env.MCP_DCR_ENABLED === '1') {
     const limits = registrationLimits(env);
-    items.push({ id: 'client_registration', severity: 'note', setting: 'MCP_DCR_ENABLED', message: `Apps can register themselves: this is how Cursor and some older assistants connect. Anyone can add an app to the list, but an app gets no access until a signed-in person approves it on a page that shows it as not verified. Registrations are limited per address, to ${limits.dailyLimit} a day and ${limits.maxClients} stored; an app nobody approves is deleted after ${limits.unusedDays} days; each one is written to the audit log. Remove MCP_DCR_ENABLED if none of your assistants needs it.` });
+    items.push({ id: 'client_registration', severity: 'note', setting: 'MCP_DCR_ENABLED', message: `Apps can register themselves: this is how Cursor and some older assistants connect. Anyone can add an app to the list, but an app gets no access until a signed-in person approves it on a page that shows it as not verified. Registrations are limited to ${limits.addressDailyLimit} a day for one address and ${limits.dailyLimit} a day for the whole instance, with ${limits.maxClients} apps stored at most; an app nobody approves is deleted after ${limits.unusedHours} hours; each one is written to the audit log. Remove MCP_DCR_ENABLED if none of your assistants needs it.` });
   }
 
   // Mail sender: password reset everywhere, and sign-up confirmation on the hosted service.

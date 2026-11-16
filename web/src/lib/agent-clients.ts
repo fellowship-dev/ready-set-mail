@@ -1,7 +1,7 @@
 // The assistants a person may connect, and how: ONE list, read by the Agents page. `needs` is what the assistant relies on to introduce itself to
 // this instance: `cimd` a published client ID metadata document, `dcr` registering itself (the instance owner turns that on), `either` both work and it
 // uses the first it finds. The page asks the server what this instance supports (GET /api/agents/status) and shows each entry as working or not.
-// The steps follow each assistant's own documentation (ADR 0018); the wording is checked against the real assistants in a follow-up.
+// The steps follow each assistant's own documentation (ADR 0015); the wording is checked against the real assistants in a follow-up.
 export type RegistrationNeed = 'dcr' | 'cimd' | 'either';
 
 export interface AgentClient {

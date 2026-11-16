@@ -29,7 +29,7 @@ export async function startRuntime(opts: { bindings?: Record<string, unknown>; r
   const runtime = new Miniflare({
     modules: [{ type: 'ESModule', path: 'worker.mjs', contents: await bundled() }],
     compatibilityDate: '2026-05-22', compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
-    kvNamespaces: ['OAUTH_KV'], d1Databases: ['DB'], bindings: { BETTER_AUTH_URL: ORIGIN, BOOTSTRAP_SECRET: PROOF, ...opts.bindings },
+    kvNamespaces: ['OAUTH_KV'], d1Databases: ['DB'], bindings: { BETTER_AUTH_URL: ORIGIN, BOOTSTRAP_SECRET: PROOF, MCP_DCR_ADDRESS_DAILY_LIMIT: '1000', ...opts.bindings },
     ...(opts.ratelimits ? { ratelimits: opts.ratelimits } : {}), ...(opts.outboundService ? { outboundService: opts.outboundService } : {}),
   });
   const db = await runtime.getD1Database('DB');

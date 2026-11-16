@@ -1,5 +1,5 @@
 // What an agent and its person meet, end to end in workerd: discovery, the 401 challenge, registration (vetted), consent, the token, /mcp, the list
-// of approved agents, last use, revoke. ADR 0018. The real clients differ from these only in who sends the requests.
+// of approved agents, last use, revoke. ADR 0015. The real clients differ from these only in who sends the requests.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GOOD, ORIGIN, startRuntime, type Installation } from './runtime';
 
@@ -48,7 +48,7 @@ describe('the 401 challenge', () => {
   const clientId = await app.registerOk({ ...GOOD, client_name: 'Challenge client' });
   const tokens = await app.connect(clientId);
   expect((await app.mcp(tokens.access_token)).status).toBe(200);
-  const record = (await app.connections()).find(c => c.name === 'Challenge client')!;
+  const record = (await app.connections()).find(c => c.calledItself === 'Challenge client')!;
   await app.db.prepare('UPDATE access_principals SET disabled_at = 1 WHERE id = ?').bind(record.principalId).run();
   const r = await app.mcp(tokens.access_token);
   expect(r.status).toBe(401);
@@ -86,14 +86,15 @@ describe('registration is vetted before the library stores anything', () => {
   await refused({ ...GOOD, redirect_uris: Array.from({ length: 6 }, (_, i) => `https://client.example/cb${i}`) }, 'invalid_redirect_uri', /between 1 and 5/);
   expect((await accepted(Array.from({ length: 5 }, (_, i) => `https://client.example/cb${i}`))).status).toBe(201);
  });
- it('refuses a name that is markup, a web address or too long, and stores a missing one as "Unnamed app"', async () => {
-  for (const name of ['<img src=x onerror=alert(1)>', 'a & b', 'https://evil.example/login', 'visit www.evil.example', 'x'.repeat(81), 'two\nlines', 'bidi \u202Eevil', 42]) {
+ it('refuses a name that is markup, a web address, too long, mixed-alphabet or claims to be verified, and stores a missing or famous one as none', async () => {
+  for (const name of ['<img src=x onerror=alert(1)>', 'a & b', 'https://evil.example/login', 'visit www.evil.example', 'x'.repeat(81), 'two\nlines', 'bidi \u202Eevil', 42, '\u0421laude', 'Claude (official) \u2713 Verified by Anthropic', 'Verified assistant', 'Trusted \u2705']) {
    await refused({ ...GOOD, client_name: name }, 'invalid_client_metadata');
   }
-  for (const [given, stored] of [[undefined, 'Unnamed app'], ['   ', 'Unnamed app'], ['  Claude   Code  ', 'Claude Code'], ['Cursor (laptop)', 'Cursor (laptop)']] as const) {
+  // A missing or blank name is stored as none; a name that is, or contains, a famous one is accepted but withheld (ADR 0015); any other is kept, tidied.
+  for (const [given, stored] of [[undefined, undefined], ['   ', undefined], ['  Claude   Code  ', undefined], ['Cursor (laptop)', undefined], ['Claude', undefined], ['  My   agent ', 'My agent']] as const) {
    const r = await app.register({ ...GOOD, client_name: given });
    expect(r.status).toBe(201);
-   expect((await r.json() as { client_name: string }).client_name).toBe(stored);
+   expect((await r.json() as { client_name?: string }).client_name).toBe(stored);
   }
  });
  it('takes public clients only, with the two grants and the code response', async () => {
@@ -130,9 +131,9 @@ describe('a connection, from registration to revoke', () => {
   expect(tools.size).toBe(10);
   const who = await app.mcp(tokens.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'whoami', arguments: {} } });
   expect(who.status, await who.clone().text()).toBe(200);
-  const waited = async () => { for (let i = 0; i < 20; i++) { const c = (await app.connections()).find(x => x.name === 'Flow assistant'); if (c?.lastUsedAt) return c; await new Promise(r => setTimeout(r, 100)); } };
+  const waited = async () => { for (let i = 0; i < 20; i++) { const c = (await app.connections()).find(x => x.calledItself === 'Flow assistant'); if (c?.lastUsedAt) return c; await new Promise(r => setTimeout(r, 100)); } };
   const c = await waited();
-  expect(c).toMatchObject({ name: 'Flow assistant', verified: false, revoked: false, workspaceName: 'Default', access: { workspaces: ['Default'], domains: ['agents.example.com'], products: [], actions: ['resources:read', 'reports:read', 'diagnostics:run'] } });
+  expect(c).toMatchObject({ name: 'client.example', calledItself: 'Flow assistant', verified: false, revoked: false, workspaceName: 'Default', access: { workspaces: ['Default'], domains: ['agents.example.com'], products: [], actions: ['resources:read', 'reports:read', 'diagnostics:run'] } });
   expect(c.lastUsedAt).toBeGreaterThan(c.createdAt - 1);
   expect(c.expiresAt - c.createdAt).toBe(7 * 86400);
   // revoke: through the browser's own endpoint, with its origin
@@ -147,7 +148,7 @@ describe('a connection, from registration to revoke', () => {
   const clientId = await app.registerOk({ ...GOOD, client_name: 'Busy agent' });
   const tokens = await app.connect(clientId);
   for (let i = 0; i < 4; i++) { await (await app.mcp(tokens.access_token)).text(); await new Promise(r => setTimeout(r, 150)); }
-  const find = async () => (await app.connections()).find(x => x.name === 'Busy agent')!;
+  const find = async () => (await app.connections()).find(x => x.calledItself === 'Busy agent')!;
   const first = await find();
   expect(first.lastUsedAt).toBeTruthy();
   const key = 'mcp_connection:' + first.principalId;

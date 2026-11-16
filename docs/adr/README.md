@@ -18,9 +18,6 @@ Short records of decisions already made, with who made them. A change that contr
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
-| 0015 | reserved for open PR #180 (the hosted plan) | reserved |
-| 0016 | reserved for open PR #180 (the hosted plan) | reserved |
-| 0017 | reserved for open PR #180 (the hosted plan) | reserved |
-| 0018 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0018-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted, owner to confirm |
+| 0015 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0015-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

@@ -12,9 +12,12 @@ export const RATE_LIMIT_ROW_TTL_MS = 2 * 86_400_000;
 export const SWEEP_BATCH = 200;
 const SWEEP_CHANCE = 1 / 16;
 
-/** Delete at most SWEEP_BATCH expired rows. Returns how many went. */
+/**
+ * Delete at most SWEEP_BATCH expired rows. Returns how many went. Not the rows of apps waiting for approval (`agent-client:` keys,
+ * globalQueries.agentClients): their time is the registration time, and only src/mcp/registration.ts deletes them, together with the app.
+ */
 export async function sweepExpiredRateLimits(db: D1Database, now = Date.now()): Promise<number> {
-  const r = await db.prepare('DELETE FROM auth_rate_limits WHERE id IN (SELECT id FROM auth_rate_limits WHERE last_request < ?1 LIMIT ?2)').bind(now - RATE_LIMIT_ROW_TTL_MS, SWEEP_BATCH).run();
+  const r = await db.prepare("DELETE FROM auth_rate_limits WHERE id IN (SELECT id FROM auth_rate_limits WHERE last_request < ?1 AND key NOT LIKE 'agent-client:%' LIMIT ?2)").bind(now - RATE_LIMIT_ROW_TTL_MS, SWEEP_BATCH).run();
   return r.meta.changes ?? 0;
 }
 

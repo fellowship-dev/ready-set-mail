@@ -19,6 +19,8 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, the first-day card | must-not-grow (standing rules) |
 | Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
 | Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE` | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
+| Assistants a person may connect (names and connect steps) | `web/src/lib/agent-clients.ts` | `AGENT_CLIENTS`, `canConnect` | the Agents page; the server tells it what the instance supports (`GET /api/agents/status`) | single |
+| Names a self-registered app may not claim | `src/mcp/client-names.ts` | `RESERVED_APP_NAMES`, `vetClientName`, `isReservedName` | registration (`src/mcp/registration.ts`); the pages show a name only through `clientIdentity` | single |
 | Sign-up attempt (fields kept until the account exists) | `src/auth/codes.ts` | `startAttempt`, `checkCode` | `src/auth/routes.ts` | — |
 
 ## Known duplicates: to be consolidated

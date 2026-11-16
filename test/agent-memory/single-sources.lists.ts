@@ -38,6 +38,18 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  {
+    concept: 'Assistants a person may connect (names and connect steps)',
+    // the steps' own words, and the list's name: a second list of assistants would drift from the one the Agents page and the instance status read
+    signature: /Add custom connector|MCP: Add Server|\bAGENT_CLIENTS\s*(?::|=)/,
+    owners: ['web/src/lib/agent-clients.ts'],
+  },
+  {
+    concept: 'Names a self-registered app may not claim',
+    // the list's name and the names it exists for; the pages never keep their own copy (src/mcp/client-names.ts)
+    signature: /\bRESERVED_APP_NAMES\b|['"]Visual Studio Code['"]|['"]Anthropic['"]/,
+    owners: ['src/mcp/client-names.ts'],
+  },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];

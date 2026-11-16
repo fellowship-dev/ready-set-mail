@@ -90,9 +90,10 @@ describe('instance preflight', () => {
   const on = (await instancePreflight(env({ OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN, MCP_DCR_ENABLED: '1' }), ORIGIN)).items.find(i => i.id === 'client_registration')!;
   expect(on).toMatchObject({ severity: 'note', setting: 'MCP_DCR_ENABLED' });
   expect(on.message).toContain('no access until a signed-in person approves it');
-  expect(on.message).toContain('200 a day and 1000 stored');
-  expect(on.message).toContain('deleted after 7 days');
-  const tuned = (await instancePreflight(env({ OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN, MCP_DCR_ENABLED: '1', MCP_DCR_DAILY_LIMIT: '25', MCP_DCR_UNUSED_DAYS: '2' }), ORIGIN)).items.find(i => i.id === 'client_registration')!;
-  expect(tuned.message).toContain('25 a day'); expect(tuned.message).toContain('deleted after 2 days');
+  expect(on.message).toContain('20 a day for one address and 2000 a day for the whole instance');
+  expect(on.message).toContain('5000 apps stored at most');
+  expect(on.message).toContain('deleted after 24 hours');
+  const tuned = (await instancePreflight(env({ OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN, MCP_DCR_ENABLED: '1', MCP_DCR_DAILY_LIMIT: '25', MCP_DCR_UNUSED_HOURS: '2' }), ORIGIN)).items.find(i => i.id === 'client_registration')!;
+  expect(tuned.message).toContain('25 a day for the whole instance'); expect(tuned.message).toContain('deleted after 2 hours');
  });
 });

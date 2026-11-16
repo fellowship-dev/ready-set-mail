@@ -4,7 +4,7 @@ import { ACCESS_ACTIONS } from '../../src/access/grant';
 
 const attack = '"><img src=x onerror=alert(1)><script>alert(1)</script>';
 const model = (over: Partial<ConsentModel> = {}): ConsentModel => ({
- client: { name: 'Claude', publisher: 'claude.ai', redirectHost: 'claude.ai', loopback: false },
+ client: { lead: 'claude.ai', calledItself: 'Claude', publisher: 'claude.ai', redirectHost: 'claude.ai', loopback: false },
  account: 'owner@example.com',
  handle: 'handle-123',
  workspaces: [{ id: 'ws_default', name: 'Acme Agency', choices: [
@@ -20,7 +20,7 @@ const visible = (html: string) => html.replace(/<style>[\s\S]*?<\/style>/, '').r
 describe('consent page', () => {
  it('escapes client, workspace, domain, product and account values everywhere they appear', () => {
   const html = renderConsentPage(model({
-   client: { name: attack, publisher: attack, redirectHost: attack, loopback: true },
+   client: { lead: attack, calledItself: attack, publisher: attack, redirectHost: attack, loopback: true },
    account: attack,
    handle: attack,
    workspaces: [{ id: attack, name: attack, choices: [{ value: JSON.stringify({ workspaceId: attack, domain: attack }), domain: attack, product: attack }] }],
@@ -41,8 +41,9 @@ describe('consent page', () => {
   expect(text).toContain('Only for Receipts');
   expect(text).not.toContain('ws_default');
   expect(text).not.toContain('prod_1');
-  expect(text).toContain('Allow Claude to work with your domains?');
+  expect(text).toContain('Allow claude.ai to work with your domains?');
   expect(text).toContain('Published by claude.ai');
+  expect(text).toContain('It calls itself \u201cClaude\u201d. That is its own description.');
   expect(text).toContain('Access goes to claude.ai');
   expect(text).toContain('You are signed in as owner@example.com');
  });
@@ -79,23 +80,36 @@ describe('consent page', () => {
  });
 
  it('warns about unverified self-registered clients and local redirects', () => {
-  const text = visible(renderConsentPage(model({ client: { name: 'Totally Claude', redirectHost: '127.0.0.1', loopback: true } })));
+  const text = visible(renderConsentPage(model({ client: { lead: 'An app on this computer', calledItself: 'Totally Claude', redirectHost: '127.0.0.1', loopback: true } })));
   expect(text).toContain('Not verified:');
   expect(text).toContain('This sends access to an app on your own computer.');
  });
 
- it('never states a self-registered name as fact: generic heading, the claimed name below as unverified, nothing pre-ticked', () => {
+ it('never leads with a self-registered name: the address first, the name as what it calls itself, nothing pre-ticked', () => {
   const html = renderConsentPage(model({
-   client: { name: 'Claude', redirectHost: 'evil.example', loopback: false },
+   client: { lead: 'evil.example', calledItself: 'Claude', redirectHost: 'evil.example', loopback: false },
    workspaces: [{ id: 'w', name: 'Solo', choices: [{ value: '{"workspaceId":"w","domain":"solo.example"}', domain: 'solo.example' }] }],
   }));
-  expect(html).toContain('<h1>An app is asking to work with your domains</h1>');
+  expect(html).toContain('<h1>Allow the app at evil.example to work with your domains?</h1>');
   expect(html).toContain('<title>An app is asking for access · Ready Set Mail</title>');
   expect(html).not.toMatch(/<h1>[^<]*Claude/);
   const text = visible(html);
-  expect(text).toContain('Name it gives "Claude". Not verified: the app chose this name itself');
+  expect(text).toContain('Not verified: nobody has checked who this app is.');
+  expect(text).toContain('It calls itself \u201cClaude\u201d. The app chose that name, so it may not be who it says.');
   expect(text).toContain('Access goes to evil.example . Allow only if that is the app you are using right now.');
-  expect(html).not.toContain(' checked');
+  expect(html).not.toMatch(/<input[^>]* checked/);
+ });
+
+ it('an app on this computer is called that, not by an address', () => {
+  const html = renderConsentPage(model({ client: { lead: 'An app on this computer', calledItself: null, redirectHost: '127.0.0.1', loopback: true } }));
+  expect(html).toContain('<h1>Allow an app on this computer to work with your domains?</h1>');
+  expect(visible(html)).toContain('It gave no name.');
+ });
+
+ it('the buttons sit in a bar that stays at the bottom of the screen, so Allow access is always in reach', () => {
+  const html = renderConsentPage(model());
+  expect(html).toMatch(/\.bar\{position:sticky;bottom:0/);
+  expect(html).toMatch(/<div class="bar"><button class="button primary" type="submit" name="decision" value="allow">Allow access<\/button>/);
  });
 
  it('says changes are made in the dashboard or at the DNS provider, and makes form controls 44px on touch screens', () => {
@@ -132,6 +146,9 @@ describe('consent page', () => {
 
  it('signed-out and problem pages are plain and escape the message', () => {
   expect(visible(renderSignedOutPage('signed_out'))).toContain('Sign in to continue');
+  // The request is carried through sign-in as a query value, escaped: a person is sent back to the approval page.
+  const resumed = renderSignedOutPage('signed_out', '/oauth/authorize?client_id=x&state="><b>');
+  expect(resumed).toContain('href="/?continue=%2Foauth%2Fauthorize%3Fclient_id%3Dx%26state%3D%22%3E%3Cb%3E#/">Sign in and continue</a>');
   expect(visible(renderSignedOutPage('unverified'))).toContain('Confirm your email first');
   const problem = renderConsentProblem(attack);
   expect(problem).not.toMatch(/<script|<img/i);
@@ -146,10 +163,11 @@ describe('consent page wording that names the product', () => {
   expect(text).not.toContain('Agents and product access');
  });
  it('an app that gave no name is shown as having given none, not as a name it chose', () => {
-  const text = visible(renderConsentPage(model({ client: { name: 'Unnamed app', redirectHost: 'client.example', loopback: false } })));
-  expect(text).toContain('Name it gives none. Not verified: nobody has checked who this app is.');
-  expect(text).not.toContain('the app chose this name itself');
-  expect(visible(renderConsentPage(model({ client: { name: 'Cursor', redirectHost: 'cursor.com', loopback: false } })))).toContain('the app chose this name itself');
+  const text = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, redirectHost: 'client.example', loopback: false } })));
+  expect(text).toContain('It gave no name.');
+  expect(text).toContain('Not verified: nobody has checked who this app is.');
+  expect(text).not.toContain('the app chose that name');
+  expect(visible(renderConsentPage(model({ client: { lead: 'cursor.com', calledItself: 'Cursor', redirectHost: 'cursor.com', loopback: false } })))).toContain('The app chose that name');
  });
 });
 

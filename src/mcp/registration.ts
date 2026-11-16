@@ -1,40 +1,55 @@
 // Open app registration (RFC 7591), the part this product adds around the OAuth library. It is off unless MCP_DCR_ENABLED=1
-// (ADR 0018). Everything that makes it safe to switch on lives here, in one place:
+// (ADR 0015); the hosted service turns it on. Everything that makes it safe to switch on lives here, in one place:
 //   - what a registration may say (name, redirect addresses, public clients only), checked BEFORE the library stores anything;
-//   - how many may arrive: the per-address budget (src/mcp/rate-limit.ts), a whole-instance daily count, a ceiling on stored apps;
-//   - the daily sweep that deletes an app nobody ever approved;
+//   - how many may arrive: a per-address budget per minute (src/mcp/rate-limit.ts), a per-address budget per day, a whole-instance budget per day
+//     that one address cannot use up, and a ceiling on stored apps that evicts the oldest unapproved app instead of refusing;
+//   - how long an app nobody approved is kept (hours, not days): a registry of unapproved apps (globalQueries.agentClients), emptied by an
+//     opportunistic clean-up on every registration and by the daily job, both scanning by age, so the store cannot fill and stay full;
 //   - an audit entry for each registration, refusal and deletion.
 // The library still validates and stores; this module only narrows what reaches it.
-import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { accessLookups, globalQueries, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import type { BoundEnv } from '../index';
 import { logAudit } from '../audit/log';
 import { UNNAMED_APP } from './consent';
-import { tooManyRequests } from './rate-limit';
+import { vetClientName, MAX_NAME_LENGTH } from './client-names';
+import { addressKey, tooManyRequests } from './rate-limit';
 
-export const REGISTRATION_DEFAULTS = { dailyLimit: 200, maxClients: 1000, unusedDays: 7 } as const;
+/**
+ * Limits, with their basis:
+ * - addressDailyLimit 20 a day: a person registers an assistant once per install, so one address (an office, a home, a shared network exit)
+ *   rarely needs more than a handful; 20 leaves room for a team behind one address and is far below the instance budget.
+ * - dailyLimit 2,000 a day, whole instance: 100 addresses at their own limit. It is a backstop against many addresses at once, sized so
+ *   that no single address can use more than 1% of it. Unapproved apps live 24 hours, so at most about this many wait at any time.
+ * - maxClients 5,000 stored apps (waiting and approved): about 5 MB of KV records. At it, the oldest waiting app is evicted to make room.
+ * - unusedHours 24: long enough to sign in and approve the same or the next day; an app nobody approved by then is gone.
+ */
+export const REGISTRATION_DEFAULTS = { dailyLimit: 2000, addressDailyLimit: 20, maxClients: 5000, unusedHours: 24 } as const;
+/** Opportunistic clean-up on each registration: how many expired apps to delete first. */
+const CLEANUP_PER_REGISTRATION = 10;
+/** The daily job: apps deleted per run (each is one KV delete, and a Worker invocation has a subrequest budget), and the time it may take. */
+const SWEEP_BATCH = 100, SWEEP_MAX_DELETIONS = 800, SWEEP_BUDGET_MS = 25_000;
 export const MAX_REDIRECT_URIS = 5;
-export const MAX_NAME_LENGTH = 80;
+export { MAX_NAME_LENGTH };
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_URI_LENGTH = 2048;
 const DAY_MS = 86_400_000;
 const DAILY_KEY = 'oauth-register:day';
+const ADDRESS_DAILY_PREFIX = 'oauth-register:day:';
+const HOUR_MS = 3_600_000;
 /** One app lists this private-use address next to its https ones; the library never sends a code to it, so listing it is harmless. */
 const LISTED_ONLY_REDIRECTS: readonly string[] = ['cursor://anysphere.cursor-mcp/oauth/callback'];
-const isLoopbackHost = (host: string) => host === '127.0.0.1' || host === '[::1]' || host === 'localhost';
+export const isLoopbackHost = (host: string) => host === '127.0.0.1' || host === '[::1]' || host === 'localhost';
 /** The key prefix of an approved connection's record (src/mcp/connections.ts). */
 export const CONNECTION_PREFIX = 'mcp_connection:';
-/** Sweep bounds per daily run: apps looked at, apps deleted. Deleting one scans the stored grants, so deletions are few. */
-const SWEEP_MAX_PAGES = 5, SWEEP_PAGE = 100, SWEEP_MAX_DELETIONS = 50;
-
-type RegistrationEnv = Pick<BoundEnv, 'DB' | 'OAUTH_KV' | 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS' | 'MCP_DCR_UNUSED_DAYS'>;
+type RegistrationEnv = Pick<BoundEnv, 'DB' | 'OAUTH_KV' | 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_ADDRESS_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS' | 'MCP_DCR_UNUSED_HOURS'>;
 
 const positive = (value: string | undefined, fallback: number) => { const n = Number(value); return Number.isInteger(n) && n >= 1 ? n : fallback; };
-export function registrationLimits(env: Pick<RegistrationEnv, 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS' | 'MCP_DCR_UNUSED_DAYS'>) {
+export function registrationLimits(env: Pick<RegistrationEnv, 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_ADDRESS_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS' | 'MCP_DCR_UNUSED_HOURS'>) {
   return {
     dailyLimit: positive(env.MCP_DCR_DAILY_LIMIT, REGISTRATION_DEFAULTS.dailyLimit),
+    addressDailyLimit: positive(env.MCP_DCR_ADDRESS_DAILY_LIMIT, REGISTRATION_DEFAULTS.addressDailyLimit),
     maxClients: positive(env.MCP_DCR_MAX_CLIENTS, REGISTRATION_DEFAULTS.maxClients),
-    unusedDays: positive(env.MCP_DCR_UNUSED_DAYS, REGISTRATION_DEFAULTS.unusedDays),
+    unusedHours: positive(env.MCP_DCR_UNUSED_HOURS, REGISTRATION_DEFAULTS.unusedHours),
   };
 }
 
@@ -47,26 +62,18 @@ export function redirectProblem(uri: unknown): string | null {
   if (uri.includes('*')) return 'A redirect address cannot contain a wildcard.';
   let url: URL;
   try { url = new URL(uri); } catch { return 'A redirect address must be a full URL.'; }
-  if (url.username || url.password) return 'A redirect address cannot contain a user name or password.';
+  if (url.username || url.password || /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(uri)) return 'A redirect address cannot contain a user name or password.';
   if (uri.includes('#')) return 'A redirect address cannot contain a fragment.';
   if (url.protocol === 'https:') return url.hostname ? null : 'A redirect address needs a host name.';
   if (url.protocol === 'http:') return isLoopbackHost(url.hostname) ? null : 'A redirect address must use https, or http on localhost, 127.0.0.1 or [::1].';
   return 'A redirect address must use https, or http on localhost, 127.0.0.1 or [::1].';
 }
 
-/** An app's own name: plain text only, so what the consent page and the list show cannot carry a link or markup. */
-export function nameProblem(name: string): string | null {
-  if (name.length > MAX_NAME_LENGTH) return `client_name must be at most ${MAX_NAME_LENGTH} characters.`;
-  if (/[\p{C}\p{Zl}\p{Zp}<>&]/u.test(name)) return 'client_name must be plain text, without control characters, < > or &.';
-  if (/[a-z][a-z0-9+.-]*:\/\/|\bwww\./i.test(name)) return 'client_name must be a name, not a web address.';
-  return null;
-}
-
 const GRANTS: readonly string[] = Object.freeze(['authorization_code', 'refresh_token']);
 const OPTIONAL_URIS: readonly string[] = Object.freeze(['client_uri', 'logo_uri', 'policy_uri', 'tos_uri']);
 
 /** Check a registration and return the body the library will see: only the fields it needs, public client, the two grants, one response type. */
-export function vetRegistration(raw: unknown): { ok: true; body: Record<string, unknown>; name: string } | ({ ok: false } & Refusal) {
+export function vetRegistration(raw: unknown): { ok: true; body: Record<string, unknown>; name: string; withheld?: 'reserved' } | ({ ok: false } & Refusal) {
   const refuse = (code: Refusal['code'], description: string, reason: string) => ({ ok: false as const, code, description, reason });
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return refuse('invalid_client_metadata', 'The request body must be a JSON object.', 'not_an_object');
   const m = raw as Record<string, unknown>;
@@ -76,13 +83,13 @@ export function vetRegistration(raw: unknown): { ok: true; body: Record<string, 
     const problem = redirectProblem(uri);
     if (problem) return refuse('invalid_redirect_uri', problem, 'redirect_uri_rejected');
   }
-  let name = UNNAMED_APP;
+  let name: string | null = null, withheld: 'reserved' | undefined;
   if (m.client_name !== undefined && m.client_name !== null) {
     if (typeof m.client_name !== 'string') return refuse('invalid_client_metadata', 'client_name must be text.', 'name_rejected');
-    const trimmed = m.client_name.trim();
-    const problem = nameProblem(trimmed);
-    if (problem) return refuse('invalid_client_metadata', problem, 'name_rejected');
-    if (trimmed) name = trimmed.replace(/ {2,}/g, ' ');
+    const verdict = vetClientName(m.client_name);
+    if (!verdict.ok) return refuse('invalid_client_metadata', verdict.reason, 'name_rejected');
+    name = verdict.name;
+    withheld = verdict.withheld;
   }
   const method = m.token_endpoint_auth_method;
   if (method !== undefined && method !== 'none') return refuse('invalid_client_metadata', 'Only public clients can register here: set token_endpoint_auth_method to "none".', 'confidential_client');
@@ -90,26 +97,16 @@ export function vetRegistration(raw: unknown): { ok: true; body: Record<string, 
   if (!Array.isArray(grants) || !grants.length || !grants.includes('authorization_code') || grants.some(g => !GRANTS.includes(g as string))) return refuse('invalid_client_metadata', 'grant_types may only be authorization_code and refresh_token, and must include authorization_code.', 'grant_types');
   const responses = m.response_types === undefined ? ['code'] : m.response_types;
   if (!Array.isArray(responses) || responses.length !== 1 || responses[0] !== 'code') return refuse('invalid_client_metadata', 'response_types may only be ["code"].', 'response_types');
-  const body: Record<string, unknown> = { client_name: name, redirect_uris: uris, grant_types: grants, response_types: ['code'], token_endpoint_auth_method: 'none' };
+  // A withheld or empty name is not sent on: the app is shown by its address (src/mcp/connections.ts, clientIdentity).
+  const body: Record<string, unknown> = { ...(name ? { client_name: name } : {}), redirect_uris: uris, grant_types: grants, response_types: ['code'], token_endpoint_auth_method: 'none' };
   for (const key of OPTIONAL_URIS) {
     const value = m[key];
     if (typeof value === 'string' && value.length <= MAX_URI_LENGTH && /^https?:\/\//i.test(value)) body[key] = value;
   }
-  return { ok: true, body, name };
+  return { ok: true, body, name: name ?? UNNAMED_APP, ...(withheld ? { withheld } : {}) };
 }
 
 const hostsOf = (uris: unknown) => [...new Set((Array.isArray(uris) ? uris : []).map(u => { try { return new URL(String(u)).origin; } catch { return 'invalid'; } }))].slice(0, MAX_REDIRECT_URIS);
-
-/** Registered apps stored now, counted up to `limit` (key names only, so a count costs one list call per thousand). */
-export async function countRegisteredClients(env: Pick<BoundEnv, 'OAUTH_KV'>, limit: number): Promise<number> {
-  let count = 0, cursor: string | undefined;
-  do {
-    const page = await env.OAUTH_KV!.list({ prefix: 'client:', limit: Math.min(1000, limit - count + 1), cursor });
-    count += page.keys.length;
-    cursor = page.list_complete ? undefined : page.cursor;
-  } while (cursor && count <= limit);
-  return count;
-}
 
 function refusal(status: number, code: string, description: string, retryAfter?: number): Response {
   return Response.json({ error: code, error_description: description }, { status, headers: { 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', ...(retryAfter ? { 'Retry-After': String(retryAfter) } : {}) } });
@@ -121,7 +118,32 @@ function audit(env: Pick<BoundEnv, 'DB'>, ctx: ExecutionContext | undefined, act
 }
 
 /**
- * POST /oauth/register with MCP_DCR_ENABLED=1: vet, count, then hand the narrowed body to the library. Returns the library's answer
+ * Delete up to `max` apps that registered more than `unusedHours` ago and that nobody approved. A registry row is removed when an app is approved
+ * (`forgetApprovedClient`), so every row is an unapproved app; the connection records are still asked, so a row that outlived an approval is healed
+ * rather than deleted with a live app. The app's record is deleted straight from storage: an app that was never approved has no grants to revoke.
+ */
+export async function expireUnapprovedClients(env: Pick<RegistrationEnv, 'DB' | 'OAUTH_KV' | 'MCP_DCR_UNUSED_HOURS' | 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_ADDRESS_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS'>, ctx: ExecutionContext | undefined, max: number, now = Date.now(), why: 'expired' | 'evicted' = 'expired'): Promise<number> {
+  const q = globalQueries(env.DB).agentClients;
+  const cutoff = why === 'expired' ? now - registrationLimits(env).unusedHours * HOUR_MS : undefined;
+  const due = await q.oldest(max, cutoff);
+  if (!due.length) return 0;
+  const used = await accessLookups(env.DB).connectedClientIds(CONNECTION_PREFIX, due.map(d => d.clientId));
+  const gone: string[] = [], healed: string[] = [];
+  for (const app of due) {
+    if (used.has(app.clientId)) { healed.push(app.clientId); continue; }
+    await env.OAUTH_KV!.delete(`client:${app.clientId}`);
+    gone.push(app.clientId);
+    audit(env, ctx, why === 'expired' ? 'agent.client_expired' : 'agent.client_evicted', { id: app.clientId, meta: { registered_at: Math.floor(app.registeredAt / 1000), unused_hours: registrationLimits(env).unusedHours } });
+  }
+  await q.remove([...gone, ...healed]);
+  return gone.length;
+}
+
+/** An app was approved: it stays, whatever its age (its refresh tokens need it), so it is no longer a candidate for expiry. */
+export const forgetApprovedClient = (env: Pick<BoundEnv, 'DB'>, clientId: string) => globalQueries(env.DB).agentClients.remove([clientId]);
+
+/**
+ * POST /oauth/register with MCP_DCR_ENABLED=1: vet, clean up a little, count, then hand the narrowed body to the library. Returns the library's answer
  * (201 with the new client id) or a refusal with an RFC 7591 error body. `forward` is the OAuth provider.
  */
 export async function handleRegistration(request: Request, env: RegistrationEnv, ctx: ExecutionContext | undefined, forward: (request: Request) => Promise<Response>, now = Date.now()): Promise<Response> {
@@ -135,59 +157,64 @@ export async function handleRegistration(request: Request, env: RegistrationEnv,
   const vetted = vetRegistration(raw);
   if (!vetted.ok) return refused(refusal(400, vetted.code, vetted.description), vetted.reason, { redirect_hosts: hostsOf((raw as { redirect_uris?: unknown } | null)?.redirect_uris) });
   const hosts = hostsOf(vetted.body.redirect_uris);
-  if (await countRegisteredClients(env, limits.maxClients) >= limits.maxClients) {
-    return refused(refusal(503, 'temporarily_unavailable', 'This server has reached its limit of registered apps. Try again later, or ask the person who runs it.', 3600), 'client_cap', { name: vetted.name, redirect_hosts: hosts });
-  }
+  const meta = { name: vetted.name, redirect_hosts: hosts, ...(vetted.withheld ? { name_withheld: vetted.withheld } : {}) };
+  const agents = globalQueries(env.DB).agentClients;
+  // Clean up first, a few at a time, so the store drains at least as fast as it fills (the daily job takes the rest).
+  await expireUnapprovedClients(env, ctx, CLEANUP_PER_REGISTRATION, now).catch(() => 0);
   const q = globalQueries(env.DB).rateLimit;
+  // This address's day first: a refused address spends nothing of the instance's budget, so one address cannot use the others' up.
+  const address = `${ADDRESS_DAILY_PREFIX}${addressKey(request)}`;
+  const mine = await q.hitUnder(address, now, DAY_MS, limits.addressDailyLimit);
+  if (!mine) {
+    const row = await q.peek(address, now, DAY_MS);
+    return refused(tooManyRequests(row ? Math.max(1, Math.ceil((row.lastRequest + DAY_MS - now) / 1000)) : 3600, 'This address has registered as many apps as it may today. Try again tomorrow.'), 'address_daily_limit', meta);
+  }
   const counted = await q.hitUnder(DAILY_KEY, now, DAY_MS, limits.dailyLimit);
   if (!counted) {
+    await q.giveBack(address, mine.lastRequest);
     const row = await q.peek(DAILY_KEY, now, DAY_MS);
-    const after = row ? Math.max(1, Math.ceil((row.lastRequest + DAY_MS - now) / 1000)) : 3600;
-    return refused(tooManyRequests(after, 'This server has accepted as many new app registrations as it allows for today. Try again later.'), 'daily_limit', { name: vetted.name, redirect_hosts: hosts });
+    return refused(tooManyRequests(row ? Math.max(1, Math.ceil((row.lastRequest + DAY_MS - now) / 1000)) : 3600, 'This server has accepted as many new app registrations as it allows for today. Try again later.'), 'daily_limit', meta);
+  }
+  const giveBack = () => Promise.all([q.giveBack(DAILY_KEY, counted.lastRequest), q.giveBack(address, mine.lastRequest)]);
+  // The ceiling counts every stored app. At it, the oldest app nobody approved makes room; only when every stored app is approved is the registration refused.
+  const stored = await agents.count() + await accessLookups(env.DB).connectedClientCount(CONNECTION_PREFIX);
+  if (stored >= limits.maxClients && await expireUnapprovedClients(env, ctx, Math.min(CLEANUP_PER_REGISTRATION, stored - limits.maxClients + 1), now, 'evicted') === 0) {
+    await giveBack();
+    return refused(refusal(503, 'temporarily_unavailable', 'This server has reached its limit of registered apps, and every one of them is in use. Try again later, or ask the person who runs it.', 3600), 'client_cap', meta);
   }
   const response = await forward(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(vetted.body) }));
   if (response.status === 201) {
     const clientId = ((await response.clone().json().catch(() => null)) as { client_id?: string } | null)?.client_id;
-    audit(env, ctx, 'agent.client_registered', { id: clientId, name: vetted.name, meta: { redirect_hosts: hosts } });
+    if (clientId) await agents.add(clientId, now);
+    audit(env, ctx, 'agent.client_registered', { id: clientId, name: vetted.name, meta: { redirect_hosts: hosts, ...(vetted.withheld ? { name_withheld: vetted.withheld } : {}) } });
   } else {
-    await q.giveBack(DAILY_KEY, counted.lastRequest);
+    await giveBack();
     audit(env, ctx, 'agent.client_registration_refused', { name: vetted.name, meta: { reason: 'library_refused', status: response.status, redirect_hosts: hosts } });
   }
   return response;
 }
 
-export interface SweepResult { looked: number; deleted: number; truncated: boolean }
+export interface SweepResult { deleted: number; truncated: boolean; remaining: number }
 
 /**
- * The daily clean-up: delete a registered app that is older than MCP_DCR_UNUSED_DAYS and that no one ever approved (no connection record names it).
- * An app someone approved stays, whatever its age: its refresh tokens need it. Bounded per run; what is left waits for tomorrow.
+ * The daily clean-up: delete every app that registered more than MCP_DCR_UNUSED_HOURS ago and that nobody approved, oldest first, in batches until none are
+ * left, the run has deleted as many as one invocation's subrequest budget allows, or its time is up. An approved app stays, whatever its age.
  */
-export async function sweepUnusedClients(env: RegistrationEnv, api: Pick<OAuthHelpers, 'listClients' | 'deleteClient'>, now = Math.floor(Date.now() / 1000)): Promise<SweepResult> {
+export async function sweepUnusedClients(env: RegistrationEnv, now = Date.now(), clock: () => number = Date.now): Promise<SweepResult> {
   // A scheduled run has no request to wait on: collect the audit writes and wait for them before it ends.
   const pending: Promise<unknown>[] = [];
   const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as ExecutionContext;
-  try { return await sweep(env, api, ctx, now); } finally { await Promise.allSettled(pending); }
-}
-
-async function sweep(env: RegistrationEnv, api: Pick<OAuthHelpers, 'listClients' | 'deleteClient'>, ctx: ExecutionContext, now: number): Promise<SweepResult> {
-  const cutoff = now - registrationLimits(env).unusedDays * 86400;
-  const result: SweepResult = { looked: 0, deleted: 0, truncated: false };
-  let cursor: string | undefined;
-  for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-    const listed = await api.listClients({ limit: SWEEP_PAGE, cursor });
-    result.looked += listed.items.length;
-    const old = listed.items.filter(c => c.registrationDate !== undefined && c.registrationDate <= cutoff);
-    const used = await accessLookups(env.DB).connectedClientIds(CONNECTION_PREFIX, old.map(c => c.clientId));
-    for (const client of old) {
-      if (used.has(client.clientId)) continue;
-      if (result.deleted >= SWEEP_MAX_DELETIONS) { result.truncated = true; return result; }
-      await api.deleteClient(client.clientId);
-      result.deleted++;
-      audit(env, ctx, 'agent.client_expired', { id: client.clientId, name: client.clientName ?? UNNAMED_APP, meta: { registered_at: client.registrationDate, unused_days: registrationLimits(env).unusedDays } });
+  const started = clock();
+  let deleted = 0, truncated = false;
+  try {
+    for (;;) {
+      if (deleted >= SWEEP_MAX_DELETIONS || clock() - started > SWEEP_BUDGET_MS) { truncated = true; break; }
+      const n = await expireUnapprovedClients(env, ctx, Math.min(SWEEP_BATCH, SWEEP_MAX_DELETIONS - deleted), now);
+      deleted += n;
+      if (n === 0) break;
     }
-    cursor = listed.cursor;
-    if (!cursor) return result;
-  }
-  result.truncated = true;
-  return result;
+    const cutoff = now - registrationLimits(env).unusedHours * HOUR_MS;
+    const remaining = truncated ? (await globalQueries(env.DB).agentClients.oldest(1, cutoff)).length : 0;
+    return { deleted, truncated: truncated && remaining > 0, remaining };
+  } finally { await Promise.allSettled(pending); }
 }

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { operatorCredentials, signIn } from './support/session';
+import { mailedCodes, nextMailedCode, operatorCredentials, signIn } from './support/session';
 
 // Run only on an isolated local installation. Secrets come from a private file,
 // never arguments, reporter output, screenshots, storageState, or traces.
@@ -80,8 +80,8 @@ test('operator enrollment, finite product access, revocation and responsive repo
   const { client_id } = await registered.json();
   const query = new URLSearchParams({ response_type: 'code', client_id, redirect_uri: 'https://client.example/callback', scope: 'ready-set-mail', resource: origin + '/mcp', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256' });
   await page.goto('/oauth/authorize?' + query);
-  // A self-registered client is unverified: its claimed name is not the heading.
-  await expect(page.getByRole('heading', { name: 'An app is asking to work with your domains' })).toBeVisible();
+  // A self-registered client is unverified: the heading leads with the address it sends you back to, never the name it chose.
+  await expect(page.getByRole('heading', { name: 'Allow the app at client.example to work with your domains?' })).toBeVisible();
   // Plain-words permission, raw scope as secondary text; read-only statistics start unticked.
   const permission = page.getByRole('checkbox', { name: /Read email statistics.*metrics:read/ });
   await permission.focus();
@@ -94,7 +94,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
   }
 });
 
-// ── An assistant connects end to end (ADR 0018). The real clients differ from this only in who sends the requests. ──
+// ── An assistant connects end to end (ADR 0015). The real clients differ from this only in who sends the requests. ──
 const SHOTS = process.env.E2E_SHOTS_DIR;
 async function shot(page: import('@playwright/test').Page, name: string) {
   if (!SHOTS) return;
@@ -141,7 +141,7 @@ test('an assistant connects: discovery from the 401, registration, consent, toke
   await page.route('http://127.0.0.1:33418/**', route => route.abort());
   const query = new URLSearchParams({ response_type: 'code', client_id, redirect_uri: callback, scope: 'ready-set-mail', resource: `${origin}/mcp`, state: 'e2e-state', code_challenge: challengeOf(verifier), code_challenge_method: 'S256' });
   await page.goto('/oauth/authorize?' + query);
-  await expect(page.getByRole('heading', { name: 'An app is asking to work with your domains' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Allow an app on this computer to work with your domains?' })).toBeVisible();
   await expect(page.getByText('Not verified')).toBeVisible();
   for (const width of [375, 1440]) { await page.setViewportSize({ width, height: 900 }); await shot(page, `consent-registered-app-${width}`); }
   await page.getByRole('checkbox', { name: new RegExp(`^${domain.replace(/\./g, '\\.')}`) }).check();
@@ -172,6 +172,8 @@ test('an assistant connects: discovery from the 401, registration, consent, toke
     await page.goto('/#/settings');
     const row = page.getByRole('listitem').filter({ hasText: 'E2E assistant' });
     await expect(row).toBeVisible({ timeout: 3_000 });
+    await expect(row.getByText('An app on this computer')).toBeVisible();
+    await expect(row.getByText('Calls itself')).toBeVisible();
     await expect(row.getByText('Not verified')).toBeVisible();
     await expect(row.getByText(domain)).toBeVisible();
     await expect(row.getByText('Read email health reports')).toBeVisible();
@@ -181,7 +183,7 @@ test('an assistant connects: discovery from the 401, registration, consent, toke
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Revoke: its next request is refused, and the row says so.
-  await page.getByRole('button', { name: 'Revoke E2E assistant' }).click();
+  await page.getByRole('button', { name: 'Revoke An app on this computer' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Revoke agent' }).click();
   await expect.poll(async () => (await mcp({ jsonrpc: '2.0', id: 3, method: 'tools/list' })).status()).toBe(401);
   const after = await mcp({ jsonrpc: '2.0', id: 4, method: 'tools/list' });
@@ -246,4 +248,66 @@ test('the Agents page says what works on this instance', async ({ page }) => {
     for (const width of [375, 1440]) { await page.setViewportSize({ width, height: 900 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await shot(page, `agents-page-${name}-${width}`); }
     await page.unroute('**/api/agents/status'); await page.unroute('**/api/me');
   }
+});
+
+test('a self-registered app named Claude is led by its address, and signing in on the way brings the person back to the approval page', async ({ browser, playwright }) => {
+  test.skip(!process.env.E2E_OPERATOR_FILE, 'Requires a private operator file and isolated Worker');
+  test.setTimeout(120_000);
+  const origin = new URL(process.env.E2E_BASE_URL!).origin;
+  const operator = operatorCredentials();
+  const agent = await playwright.request.newContext({ baseURL: origin, ignoreHTTPSErrors: true });
+  // "Claude" registers; its name is not kept (a famous name), so the page has no name of the app's to show at all.
+  const registered = await agent.post('/oauth/register', { data: { client_name: 'Claude', redirect_uris: ['https://client.example/callback'], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' } });
+  expect(registered.status()).toBe(201);
+  const { client_id } = await registered.json();
+  expect((await registered.json()).client_name).toBeUndefined();
+  const named = await agent.post('/oauth/register', { data: { client_name: 'Mail Helper', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none' } });
+  expect(named.status()).toBe(201);
+  const helper = (await named.json()).client_id;
+  expect((await agent.post('/oauth/register', { data: { client_name: 'Claude (official) \u2713 Verified by Anthropic', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none' } })).status()).toBe(400);
+  expect((await agent.post('/oauth/register', { data: { client_name: '\u0421laude', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none' } })).status()).toBe(400);
+
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 375, height: 812 } });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15_000);
+  const authorize = (id: string) => '/oauth/authorize?' + new URLSearchParams({ response_type: 'code', client_id: id, redirect_uri: 'https://client.example/callback', scope: 'ready-set-mail', resource: origin + '/mcp', state: 'resume-state', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256' });
+  await page.goto(origin + authorize(client_id));
+  await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible();
+  await shot(page, 'consent-signed-out');
+  await page.getByRole('link', { name: 'Sign in and continue' }).click();
+  await expect(page.getByRole('heading', { name: /Sign in|Create your account/ })).toBeVisible();
+  await shot(page, 'sign-in-on-the-way');
+  // The password never enters a browser field here (support/session.ts): sign in the way signIn does, then the dashboard goes back to the request.
+  const before = mailedCodes().length;
+  const login = await page.request.post('/api/auth/login', { headers: { Origin: origin }, data: { email: operator.email, password: operator.password } });
+  expect(login.status()).toBe(200);
+  if ((await login.json() as { code_required?: boolean }).code_required) expect((await page.request.post('/api/auth/code', { headers: { Origin: origin }, data: { code: await nextMailedCode(before) } })).status()).toBe(200);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Allow the app at client.example to work with your domains?' })).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe('/oauth/authorize');
+  expect(new URL(page.url()).searchParams.get('state')).toBe('resume-state');
+  // Nothing on the page says "Claude" as the app's own name, and nothing is ticked for it.
+  const text = await page.locator('main').innerText();
+  expect(text).not.toContain('Claude');
+  expect(text).toContain('It gave no name.');
+  expect(await page.locator('input[type=checkbox]:checked').count()).toBe(0);
+  for (const [width, height] of [[375, 812], [1440, 900]] as const) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: `${SHOTS}/consent-claude-top-${width}.png` }); }
+    // The action bar stays in reach: the primary button is inside the viewport at the top of the page and half way down.
+    const allow = page.getByRole('button', { name: 'Allow access' });
+    const box = await allow.boundingBox();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/consent-claude-bar-${width}.png` });
+    expect((await allow.boundingBox())!.y + (await allow.boundingBox())!.height).toBeLessThanOrEqual(height);
+    await shot(page, `consent-claude-full-${width}`);
+  }
+  // The same, for an app that chose a name that is not famous: shown below the address as what it calls itself.
+  await page.goto(origin + authorize(helper));
+  await expect(page.getByRole('heading', { name: 'Allow the app at client.example to work with your domains?' })).toBeVisible();
+  await expect(page.getByText('It calls itself \u201cMail Helper\u201d. The app chose that name, so it may not be who it says.')).toBeVisible();
+  await context.close();
+  await agent.dispose();
 });

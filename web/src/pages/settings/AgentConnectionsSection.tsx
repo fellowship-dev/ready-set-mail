@@ -14,7 +14,10 @@ export { accessKey, timestamp } from './access-model';
 
 interface Connection {
 	principalId: string;
+	/** What the app is led with: its publisher's host, or the address it sends you back to. Never a name the app chose. */
 	name: string;
+	/** The name the app gave itself, shown as its own words. */
+	calledItself?: string;
 	workspaceId: string;
 	workspaceName?: string | null;
 	createdAt: number;
@@ -98,6 +101,12 @@ function ApprovedAgents({ workspace }: { workspace: string | null | undefined })
 										{c.verified ? null : <Badge variant="neutral">Not verified</Badge>}
 									</p>
 									<dl className="grid gap-x-4 gap-y-0.5 text-sm text-ink-2 sm:grid-cols-[auto_1fr]">
+										{c.calledItself ? (
+											<>
+												<dt>Calls itself</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">&ldquo;{cleanName(c.calledItself)}&rdquo;{c.verified ? '' : ' (its own word for itself)'}</dd>
+											</>
+										) : null}
 										<dt>Workspace</dt>
 										<dd className="min-w-0 [overflow-wrap:anywhere]">{c.workspaceName ? cleanName(c.workspaceName) : 'This workspace'}</dd>
 										{c.verified && c.verifiedHost ? (

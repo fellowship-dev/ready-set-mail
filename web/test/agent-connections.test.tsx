@@ -257,6 +257,27 @@ describe('access keys for scripts and services', () => {
 		expect(within(old).queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument();
 	});
 
+	it('leads with the address the app sends you back to; the name it chose is shown as what it calls itself', async () => {
+		const day = 1_700_000_000;
+		renderApp(<AgentConnectionsSection />, {
+			role: 'admin',
+			routes: {
+				'GET /api/mcp/connections': {
+					connections: [
+						{ principalId: 'a1', name: 'evil.example', calledItself: 'Claude', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+						{ principalId: 'a2', name: 'An app on this computer', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+					],
+				},
+			},
+		});
+		const row = (await screen.findByText('evil.example')).closest('li')!;
+		expect(within(row).getByText('Not verified')).toBeInTheDocument();
+		expect(within(row).getByText('\u201cClaude\u201d (its own word for itself)')).toBeInTheDocument();
+		expect(within(row).getByText('Calls itself')).toBeInTheDocument();
+		const local = screen.getByText('An app on this computer').closest('li')!;
+		expect(within(local).queryByText('Calls itself')).not.toBeInTheDocument();
+	});
+
 	it('shows unconfigured Google as unavailable and disables consent and sync controls', async () => {
 		renderApp(<MetricConnectionsSection />, {
 			routes: { 'GET /api/metrics/google/connections': { configured: false, connections: [{ domainId: 7, domain: 'mail.example.com', status: 'not_connected' }] } },

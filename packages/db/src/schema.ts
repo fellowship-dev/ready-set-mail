@@ -803,7 +803,7 @@ export const GLOBAL_TABLES = {
 	sessions: 'keyed by user; a session is resolved to a workspace through memberships',
 	auth_accounts: 'login methods of a user (password / OAuth link), keyed by user',
 	verifications: 'one-time auth tokens (password reset), keyed by identifier',
-	auth_rate_limits: 'auth endpoint rate-limit counters, keyed by IP and path',
+	auth_rate_limits: 'auth endpoint rate-limit counters, keyed by IP and path; also the apps that registered themselves and are not yet approved (key agent-client:<id>)',
 	hosted_zones: 'operator-owned: record counts of the hosted-records zone(s), not tenant data',
 	revocation_tombstones: 'failed Cloudflare revocations of deleted workspaces; the workspace row is gone by design',
 	canary_tokens: 'anonymous free-check (canary) addresses, expiring, not tied to any workspace',

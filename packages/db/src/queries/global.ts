@@ -3,7 +3,7 @@
  * in schema.ts): credentials lookups, anonymous free-check results, the shared
  * IP cache. Anything here must not return or modify tenant data.
  */
-import { and, eq, gt, inArray, isNull, like, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, like, lt, sql } from 'drizzle-orm';
 import { batchStatements, getDb, type DbLike } from '../client';
 import { chunkJson, JSON_PARAM_MAX_BYTES } from './report-store';
 import { workspaces, authAccounts, authRateLimits, sessions, canaryTokens, checkResults, hostedZones, ipInfo, users, verifications } from '../schema';
@@ -11,6 +11,10 @@ import { workspaces, authAccounts, authRateLimits, sessions, canaryTokens, check
 export interface IpInfoRow { ip: string; reverse_dns: string | null; base_domain: string | null; country_code: string | null; org: string | null; asn: string | null; fetched_at: number }
 
 type NewCheckResult = Omit<typeof checkResults.$inferInsert, 'id' | 'created_at'>;
+
+const AGENT_CLIENT_PREFIX = 'agent-client:';
+// ';' is the character after ':', so this is every key that starts with the prefix, as a range on the unique index.
+const agentClientRange = and(gte(authRateLimits.key, AGENT_CLIENT_PREFIX), lt(authRateLimits.key, 'agent-client;'));
 
 export function globalQueries(dbLike: DbLike) {
 	const db = getDb(dbLike);
@@ -112,6 +116,23 @@ export function globalQueries(dbLike: DbLike) {
 			/** Delete expired windows whose key starts with `prefix` (opportunistic cleanup; the rows carry no other data). */
 			prune: (prefix: string, olderThanMs: number) =>
 				db.delete(authRateLimits).where(and(like(authRateLimits.key, `${prefix}%`), lt(authRateLimits.lastRequest, olderThanMs))).run(),
+		},
+
+		/**
+		 * Apps that registered themselves and that nobody has approved yet (src/mcp/registration.ts), one row each in the rate-limit table
+		 * under `agent-client:<client id>`, with the registration time as `last_request`. A row leaves when the app is approved or deleted, so
+		 * what is here is exactly what may be expired or evicted. The key range uses the unique index on `key`.
+		 */
+		agentClients: {
+			add: (clientId: string, nowMs: number) =>
+				db.insert(authRateLimits).values({ id: crypto.randomUUID(), key: `${AGENT_CLIENT_PREFIX}${clientId}`, count: 1, lastRequest: nowMs }).onConflictDoNothing().run(),
+			/** The app was approved (or deleted): it is no longer a candidate for expiry. */
+			remove: (clientIds: string[]) => (clientIds.length ? db.delete(authRateLimits).where(inArray(authRateLimits.key, clientIds.map((c) => `${AGENT_CLIENT_PREFIX}${c}`))).run() : Promise.resolve()),
+			count: () => db.select({ n: sql<number>`COUNT(*)` }).from(authRateLimits).where(agentClientRange).get().then((r) => r?.n ?? 0),
+			/** Oldest first: those registered before `beforeMs` (all of them when omitted), at most `limit`. */
+			oldest: async (limit: number, beforeMs?: number): Promise<Array<{ clientId: string; registeredAt: number }>> =>
+				(await db.select({ key: authRateLimits.key, at: authRateLimits.lastRequest }).from(authRateLimits).where(beforeMs === undefined ? agentClientRange : and(agentClientRange, lt(authRateLimits.lastRequest, beforeMs))).orderBy(asc(authRateLimits.lastRequest)).limit(limit).all())
+					.map((r) => ({ clientId: r.key.slice(AGENT_CLIENT_PREFIX.length), registeredAt: r.at })),
 		},
 
 		checkResults: {

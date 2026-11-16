@@ -21,6 +21,12 @@ export function accessLookups(dbLike: DbLike) {
    const rows = await db.select({ id: clientId }).from(settings).where(/* workspace-scope-exempt: the daily sweep asks about apps across every workspace */ inArray(clientId, clientIds)).all();
    return new Set(rows.map(r => r.id));
   },
+  /** How many distinct apps have an approved connection, in any workspace (the apps a registration ceiling must not evict). */
+  connectedClientCount: async (prefix: string): Promise<number> => {
+   const clientId = sql<string>`CASE WHEN substr(${settings.key}, 1, ${prefix.length}) = ${prefix} AND json_valid(${settings.value}) THEN json_extract(${settings.value}, '$.clientId') END`;
+   const row = await db.select({ n: sql<number>`COUNT(DISTINCT ${clientId})` }).from(settings).where(/* workspace-scope-exempt: the registration ceiling counts approved apps across every workspace */ sql`substr(${settings.key}, 1, ${prefix.length}) = ${prefix}`).get();
+   return row?.n ?? 0;
+  },
   grantsForPrincipal: (id: string) => db.select().from(accessGrants).where(/* workspace-scope-exempt: finite portfolio consent enumerates workspaces */ eq(accessGrants.principal_id, id)).all(),
  };
 }
