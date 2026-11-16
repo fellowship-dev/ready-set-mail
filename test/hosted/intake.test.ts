@@ -41,8 +41,8 @@ describe('tokens', () => {
   it('resolve to workspace + domain; only the hash is stored', async () => {
     const w = await twoWorkspaces();
     const look = intakeLookups(w.env.DB);
-    expect(await look.resolveToken(await hashToken(w.tokenA), NOW)).toEqual({ workspace_id: 'ws_a', domain_id: 1, domain: 'a-corp.com' });
-    expect(await look.resolveToken(await hashToken(w.tokenB), NOW)).toEqual({ workspace_id: 'ws_b', domain_id: 2, domain: 'b-corp.org' });
+    expect(await look.resolveToken(await hashToken(w.tokenA), NOW)).toEqual({ workspace_id: 'ws_a', domain_id: 1, domain: 'a-corp.com', paused: false });
+    expect(await look.resolveToken(await hashToken(w.tokenB), NOW)).toEqual({ workspace_id: 'ws_b', domain_id: 2, domain: 'b-corp.org', paused: false });
     expect(await look.resolveToken(await hashToken(generateToken()), NOW)).toBeNull();
     expect(JSON.stringify(w.rows('SELECT * FROM intake_tokens'))).not.toContain(w.tokenA);
   });

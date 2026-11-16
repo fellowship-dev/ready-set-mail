@@ -61,7 +61,8 @@ describe('GHSA-q7gm-8cj9-94hr: deeply nested or very wide XML', () => {
     await refused(gz(xml({ inner: '<a>'.repeat(200) + '</a>'.repeat(200) })), 'xml_invalid');
   });
   it('hundreds of thousands of sibling elements are refused for their number', async () => {
-    await refused(gz(xml({ inner: '<a/>'.repeat(200_000) })), 'xml_invalid');
+    // the element ceiling follows the hard row bound (20,000 rows x 20 elements); the cap on decompressed size is raised so the number is what stops it
+    await refused(gz(xml({ inner: '<a/>'.repeat(500_000) })), 'xml_invalid', 8000, { INTAKE_MAX_DECOMPRESSED_BYTES: String(4 * 1024 * 1024) });
   });
 });
 

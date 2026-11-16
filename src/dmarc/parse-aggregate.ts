@@ -76,6 +76,16 @@ const BARE_IP_INFO = (ip: string): IpInfo => ({
 export interface ParseLimits {
   /** Refuse (before any lookup) a report with more records than this. */
   maxRecords?: number;
+  /**
+   * Hosted intake (docs/adr/0016): a report above `maxRecords` is not refused whole. It is parsed up to this many rows (a safety bound on the parser)
+   * and `shape` decides what is stored. Absent: `maxRecords` refuses, as before.
+   */
+  hardMaxRecords?: number;
+  /**
+   * Called with every parsed record, after the gate and before any IP lookup: return the records to store (src/dmarc/summarise.ts), or end the report
+   * by throwing ParseStop (a limit that counts the customer's own passing mail).
+   */
+  shape?: (records: ReportRecord[]) => Promise<ReportRecord[]> | ReportRecord[];
   /** Uncached source IPs to enrich per report; further records are stored with bare IP info. */
   maxNewIps?: number;
   /** The clock, unix seconds (tests). */
@@ -239,7 +249,8 @@ export async function parseAggregateReportXml(
 
     if (/<!(?:DOCTYPE|ENTITY)/i.test(xml)) throw new ReportRejected('xml_invalid', 'DOCTYPE and entity declarations are not allowed in a DMARC report');
 
-    checkXmlShape(xml, limits.maxRecords !== undefined ? limits.maxRecords * ELEMENTS_PER_RECORD + 1000 : 500_000);
+    const recordCeiling = limits.hardMaxRecords ?? limits.maxRecords;
+    checkXmlShape(xml, recordCeiling !== undefined ? recordCeiling * ELEMENTS_PER_RECORD + 1000 : 500_000);
 
     let parsed: Record<string, unknown>;
     try {
@@ -317,13 +328,13 @@ export async function parseAggregateReportXml(
     if (!rawRecords) throw new InvalidAggregateReport('Missing field: record');
     const recordList = Array.isArray(rawRecords) ? rawRecords : [rawRecords];
 
-    if (limits.maxRecords !== undefined && recordList.length > limits.maxRecords) {
-      throw new ReportRejected('too_many_records', `Report has ${recordList.length} records; the limit is ${limits.maxRecords}`);
+    if (recordCeiling !== undefined && recordList.length > recordCeiling) {
+      throw new ReportRejected('too_many_records', `Report has ${recordList.length} records; the limit is ${recordCeiling}`);
     }
 
     const plan = await limits.gate?.({ report_id: reportId, policy_domain: policyPublished.domain, org_name: orgName, report_email: strOrNull(meta['email']), record_count: recordList.length });
 
-    const records: ReportRecord[] = [];
+    let records: ReportRecord[] = [];
     for (const r of recordList as Record<string, unknown>[]) {
       try {
         records.push(parseReportRecord(r));
@@ -333,6 +344,7 @@ export async function parseAggregateReportXml(
         console.warn(`Skipping unparseable record: ${e}`);
       }
     }
+    if (limits.shape) records = await limits.shape(records);
 
     if (!offline && plan?.enrich !== false) {
       const weight = new Map<string, number>();

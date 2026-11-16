@@ -22,7 +22,8 @@ import { intakeLimits } from '../hosted/config';
 import { getMode } from '../tenancy/mode';
 import { reportCounting } from '../dmarc/counting';
 import { normalizeDomain } from '@ready-set-mail/dns-checks';
-import { storeReport } from '../dmarc/store-report';
+import { storeReport, type ReportShape } from '../dmarc/store-report';
+import { passes, shapeRecords } from '../dmarc/summarise';
 import { carrierFromHeaders, decideTier, guardEnvelope, reporterInfo, type Carrier, type ReporterTier, type TierDecision } from '../dmarc/reporter-auth';
 import type { ReporterInfo } from '../dmarc/store-report';
 import { globalQueries } from '@ready-set-mail/db';
@@ -60,6 +61,13 @@ export interface ReportOptions {
    * whether Google or Microsoft stop sending after a 5xx could not be verified. Set for carriers of class 'registry'.
    */
   dropOverCap?: boolean;
+  /**
+   * Hosted intake (docs/adr/0016): a COUNTED report with more rows than a report is stored with is accepted, not refused. Every passing row is kept, the failing
+   * rows with the most messages are kept up to `room().keepFailing`, and the rest are folded into summary rows with exact totals. `room` sees the report's
+   * passing and failing rows and returns a reason to refuse (a limit on the customer's OWN passing mail only) or how many failing rows may be stored as they are.
+   * Reports of the uncounted tiers keep their small per-report caps and are refused over them, as before.
+   */
+  summarise?: { hardMaxRecords: number; room: (rows: { passing: number; failing: number }) => Promise<{ refuse?: ReasonCode; keepFailing: number }> };
   /** Caps on the report's tier, after the tier is known (records stored, unauthenticated records): return a reason to refuse. */
   admitTier?: (tier: ReporterTier) => ReasonCode | null;
   /**
@@ -176,6 +184,7 @@ export async function handleDmarcReport(
     // Dedup AFTER the sender is classified, keyed on (domain, reporter identity, report id): a forger cannot squat a real reporter's id, and
     // an uncounted report never displaces a counted one.
     if (await tenant.scope.reports.isDuplicate(domain.id, decision.identity, info.report_id, decision.tier === 'counted')) throw new ParseStop('duplicate', 'duplicate');
+    if (opts.summarise && decision.tier === 'counted') return { enrich: true, maxNewIps: limits.newIpsPerReport }; // rows are judged after they are parsed (shape below)
     const tierCap = unrestricted ? limits.recordsPerReport : decision.tier === 'unauthenticated' ? limits.unauthRecordsPerReport : decision.tier === 'unknown' ? limits.unknownRecordsPerReport : limits.recordsPerReport;
     if (info.record_count > tierCap) throw new ParseStop('refused', 'too_many_records', `Report has ${info.record_count} records; the limit is ${tierCap}`);
     const over = opts.admitTier?.(decision.tier) ?? opts.admit?.(info.record_count, decision.tier) ?? null;
@@ -186,10 +195,24 @@ export async function handleDmarcReport(
 
   let report;
   let rawXml: string | null = null;
+  /** What shaping decided for a counted report (hosted): rows by result, and what was folded. */
+  const shaped: { v: ReportShape | null } = { v: null };
   try {
     report = await parseDmarcEmail(bytes, false, tenant.db, {
       maxBytes,
       maxRecords: opts.maxRecords ?? limits.recordsPerReport,
+      ...(opts.summarise ? {
+        hardMaxRecords: opts.summarise.hardMaxRecords,
+        shape: async (records) => {
+          if (dec.v?.tier !== 'counted') return records;
+          const passing = records.filter(passes).length;
+          const verdict = await opts.summarise!.room({ passing, failing: records.length - passing });
+          if (verdict.refuse) throw new ParseStop('refused', verdict.refuse);
+          const out = shapeRecords(records, { keepFailing: verdict.keepFailing });
+          shaped.v = { passing, failing: records.length - passing, summarisedRows: out.summarisedRows, summarisedSources: out.summarisedSources };
+          return out.records;
+        },
+      } : {}),
       maxNewIps: opts.maxNewIps ?? limits.newIpsPerReport,
       ...(opts.now !== undefined && { now: opts.now }),
       gate,
@@ -211,7 +234,7 @@ export async function handleDmarcReport(
       // A registry reporter over a cap: accepted, not stored, counted for the owner, never a 5xx (see ReportOptions.dropOverCap).
       if ((opts.dropOverCap || carrier.class === 'registry') && dec.v?.tier === 'counted' && err.code.startsWith('cap_') && found.domain) {
         const at = opts.now ?? Math.floor(Date.now() / 1000);
-        await tenant.scope.intake.markFailure(found.domain.id, today(), 'over_cap_accepted_dropped', at).catch(() => 0);
+        await tenant.scope.intake.markFailure(found.domain.id, today(), err.code === 'cap_free_plan_day' ? err.code : 'over_cap_accepted_dropped', at).catch(() => 0);
         // The COUNTED storage budget is full: say so loudly, once per reporter, with the time of the first drop (src/reports/visibility.ts, the setup check).
         if (STORAGE_CAPS.has(err.code)) await tenant.scope.intake.markDrop(found.domain.id, dec.v.identity, dec.v.knownAs ?? dec.v.identity, at).catch(() => undefined);
         return result('accepted', 'over_cap_accepted_dropped', trace());
@@ -253,7 +276,7 @@ export async function handleDmarcReport(
 
   // 4. Store in D1: one batch, all or nothing
   try {
-    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter);
+    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter, shaped.v ?? undefined);
     if (stored.stored) return result('accepted', 'ok', { ...known, dedup: stored.superseded ? 'superseded' : 'new' });
     // Lost the race to a concurrent delivery of the same report: nothing was written, which is the right outcome.
     return result('duplicate', 'duplicate', { ...known, dedup: 'duplicate' });

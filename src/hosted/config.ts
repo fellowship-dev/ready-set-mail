@@ -38,6 +38,11 @@ export interface HostedEnv {
   INTAKE_MAX_DECOMPRESSED_BYTES?: string;
   INTAKE_MAX_RAW_BYTES?: string;
   INTAKE_MAX_STORAGE_RETRIES_PER_DAY?: string;
+  INTAKE_FREE_PASSING_ROWS_PER_DAY?: string;
+  INTAKE_ALERT_PASSING_ROWS_PER_DAY?: string;
+  INTAKE_ALERT_FAILING_ROWS_PER_DAY?: string;
+  INTAKE_FAILING_STORAGE_PERCENT?: string;
+  INTAKE_HARD_MAX_RECORDS_PER_REPORT?: string;
   INTAKE_KNOWN_REPORTERS?: string;
   INTAKE_KNOWN_REPORTERS_DISABLE?: string;
   REPORT_COUNTING?: string;
@@ -156,6 +161,22 @@ export const SELFHOST_MAX_RAW_BYTES = 2 * 1024 * 1024;
 /** Storage failures per domain and UTC day after which a failing message is refused for good instead of being retried. */
 export const DEFAULT_MAX_STORAGE_RETRIES_PER_DAY = 20;
 export const DEFAULT_MAX_HOSTED_DOMAINS_PER_WORKSPACE = 10;
+/**
+ * The free plan's daily volume (docs/adr/0016): report ROWS that PASS DMARC for the customer's own domain (aligned SPF or aligned DKIM, the parser's own
+ * judgement). Mail that fails authentication never counts toward it: the customer does not control who fakes their domain. 20,000 is about ten times what
+ * an honest small domain's reports hold in a day.
+ */
+export const DEFAULT_FREE_PASSING_ROWS_PER_DAY = 20_000;
+/** Operator alerts, each once per workspace per day: passing rows on a free workspace ("heavy legitimate user"), failing rows seen ("may be under a spoofing run"). */
+export const DEFAULT_ALERT_PASSING_ROWS_PER_DAY = 5_000;
+export const DEFAULT_ALERT_FAILING_ROWS_PER_DAY = 100_000;
+/**
+ * Failing rows are stored (they are the valuable part) only while the stored-records counters are below this share of their caps; the rest of the
+ * room is kept for passing mail, so no amount of failing mail can leave a customer's own reports without room. Beyond it failing rows are summarised.
+ */
+export const DEFAULT_FAILING_STORAGE_PERCENT = 50;
+/** A report is parsed up to this many rows (a safety bound on the parser; beyond it the report is refused as malformed). Rows above `recordsPerReport` are summarised, not refused. */
+export const DEFAULT_HARD_MAX_RECORDS_PER_REPORT = 20_000;
 
 const positive = (v: string | undefined, dflt: number): number => {
   const n = Number(v?.trim());
@@ -193,6 +214,11 @@ export interface IntakeLimits {
   maxDecompressedBytes: number;
   maxRawBytes: number;
   storageRetriesPerDay: number;
+  freePassingRowsPerDay: number;
+  alertPassingRowsPerDay: number;
+  alertFailingRowsPerDay: number;
+  failingStoragePercent: number;
+  hardMaxRecordsPerReport: number;
 }
 
 export function intakeLimits(env: HostedEnv): IntakeLimits {
@@ -225,6 +251,11 @@ export function intakeLimits(env: HostedEnv): IntakeLimits {
     maxDecompressedBytes: Math.min(positive(env.INTAKE_MAX_DECOMPRESSED_BYTES, saas ? DEFAULT_MAX_DECOMPRESSED_BYTES : SELFHOST_MAX_DECOMPRESSED_BYTES), MAX_REPORT_BYTES),
     maxRawBytes: Math.min(positive(env.INTAKE_MAX_RAW_BYTES, saas ? DEFAULT_MAX_RAW_BYTES : SELFHOST_MAX_RAW_BYTES), MAX_REPORT_BYTES),
     storageRetriesPerDay: positive(env.INTAKE_MAX_STORAGE_RETRIES_PER_DAY, DEFAULT_MAX_STORAGE_RETRIES_PER_DAY),
+    freePassingRowsPerDay: positive(env.INTAKE_FREE_PASSING_ROWS_PER_DAY, DEFAULT_FREE_PASSING_ROWS_PER_DAY),
+    alertPassingRowsPerDay: positive(env.INTAKE_ALERT_PASSING_ROWS_PER_DAY, DEFAULT_ALERT_PASSING_ROWS_PER_DAY),
+    alertFailingRowsPerDay: positive(env.INTAKE_ALERT_FAILING_ROWS_PER_DAY, DEFAULT_ALERT_FAILING_ROWS_PER_DAY),
+    failingStoragePercent: Math.min(100, positive(env.INTAKE_FAILING_STORAGE_PERCENT, DEFAULT_FAILING_STORAGE_PERCENT)),
+    hardMaxRecordsPerReport: positive(env.INTAKE_HARD_MAX_RECORDS_PER_REPORT, DEFAULT_HARD_MAX_RECORDS_PER_REPORT),
   };
 }
 

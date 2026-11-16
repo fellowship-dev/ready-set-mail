@@ -49,12 +49,12 @@ export function ownerNoticeText(o: OrderRow): { subject: string; text: string } 
   };
 }
 
-/** One plain-text mail to OWNER_EMAIL. True when the provider accepted it. Never logs the address or the provider's error. */
-async function sendToOwner(env: BoundEnv, order: OrderRow, { subject, text }: { subject: string; text: string }): Promise<boolean> {
+/** One plain-text mail to OWNER_EMAIL (the person who runs the instance), for anything the operator should know. True when the provider accepted it. Never logs the address or the provider's error. */
+export async function emailOperator(env: BoundEnv, label: string, { subject, text }: { subject: string; text: string }): Promise<boolean> {
   const to = env.OWNER_EMAIL?.trim();
   const from = await senderAddress(env);
   if (!to || !env.SEND_EMAIL || !from) {
-    console.warn(`[billing] owner notice for ${order.id} not sent: ${!to ? 'OWNER_EMAIL is not set' : !env.SEND_EMAIL ? 'SEND_EMAIL binding not configured' : 'no sender address'}`);
+    console.warn(`[billing] owner notice for ${label} not sent: ${!to ? 'OWNER_EMAIL is not set' : !env.SEND_EMAIL ? 'SEND_EMAIL binding not configured' : 'no sender address'}`);
     return false;
   }
   const footer = mailFooter(env);
@@ -62,10 +62,12 @@ async function sendToOwner(env: BoundEnv, order: OrderRow, { subject, text }: { 
     await env.SEND_EMAIL.send({ from: { name: 'Ready Set Mail', email: from }, to: [to], subject, text: `${text}\n\nReady Set Mail${footer ? `\n${footer}` : ''}` });
     return true;
   } catch {
-    console.error(`[billing] owner notice for ${order.id} failed (provider error not logged)`);
+    console.error(`[billing] owner notice for ${label} failed (provider error not logged)`);
     return false;
   }
 }
+
+const sendToOwner = (env: BoundEnv, order: OrderRow, message: { subject: string; text: string }): Promise<boolean> => emailOperator(env, order.id, message);
 
 /** Email the instance owner that an order was paid. */
 export const emailOwnerPaid = (env: BoundEnv, order: OrderRow): Promise<boolean> => sendToOwner(env, order, ownerNoticeText(order));

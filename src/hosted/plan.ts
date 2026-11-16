@@ -35,13 +35,13 @@ export const PLAN_ROW_SAFETY = 500;
 export const unitOf = (domain: string): string => organizationalDomain(domain) ?? domain.trim().toLowerCase().replace(/\.$/, '');
 
 /** Subscription statuses in which new paid domains may be added. */
-const ACTIVE = new Set(['active', 'trialing']);
+const isActive = (status: string): boolean => status === 'active' || status === 'trialing';
 /** Statuses that leave the plan standing but pause adding: Stripe is still retrying the payment. `unpaid` (retries over) and `canceled` lapse it. */
-const SOFT = new Set(['past_due', 'incomplete']);
+const isSoft = (status: string): boolean => status === 'past_due' || status === 'incomplete';
 
 export type SubscriptionState = 'none' | 'active' | 'payment_problem' | 'lapsed';
 export const subscriptionState = (sub: Pick<SubscriptionRow, 'status' | 'lapsed_at'> | null): SubscriptionState =>
-  !sub ? 'none' : sub.lapsed_at ? 'lapsed' : ACTIVE.has(sub.status) ? 'active' : SOFT.has(sub.status) ? 'payment_problem' : 'lapsed';
+  !sub ? 'none' : sub.lapsed_at ? 'lapsed' : isActive(sub.status) ? 'active' : isSoft(sub.status) ? 'payment_problem' : 'lapsed';
 
 export interface PlanState {
   workspaceId: string;
@@ -102,6 +102,14 @@ export async function loadPlanState(env: BoundEnv, db: Db, workspaceId: string):
     revision: ws?.plan_revision ?? 0,
     customerId: ws?.stripe_customer_id ?? null,
   };
+}
+
+/** Is this workspace held to the free plan's limits (HOSTED_PLAN on, on the free plan, not the operator's)? A lapsed workspace is free again. */
+export async function isFreePlan(env: BoundEnv, db: Db, workspaceId: string): Promise<boolean> {
+  if (!planEnforced(env)) return false;
+  const ws = await forWorkspace(db, workspaceId).plan.get();
+  if (!ws || ws.plan !== 'free') return false;
+  return !(await isOperatorWorkspace(env, db, workspaceId));
 }
 
 /** Billable units after adding `n` new units to a workspace in this state. */

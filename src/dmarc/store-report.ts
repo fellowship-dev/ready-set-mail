@@ -10,6 +10,9 @@ import { sendFirstReportNotification } from '../notifications/first-report';
 import type { ReporterInfo } from './reporter-auth';
 export type { ReporterInfo };
 
+/** What the intake decided about a COUNTED report's rows (hosted): passing and failing rows as the report held them, and what was folded into summary rows. */
+export interface ReportShape { passing: number; failing: number; summarisedRows: number; summarisedSources: number }
+
 export interface StoreReportResult {
   stored: boolean;       // false = duplicate, nothing written
   superseded?: number;   // uncounted reports with this id replaced by this counted one
@@ -59,6 +62,7 @@ export function toTuple(rec: ParserRecord): RecordTuple {
     rec.source.base_domain,
     rec.source.country_code,
     rec.source.org ?? null,
+    rec.summarised_sources ?? null,
   ];
 }
 
@@ -82,6 +86,7 @@ export async function storeReport(
   rawXml: string | null = null,
   notifyFirstReport = false,
   reporter?: ReporterInfo,
+  shape?: ReportShape,
 ): Promise<StoreReportResult> {
   const { total, pass, fail } = computeCounts(report.records);
   const meta = report.report_metadata;
@@ -110,6 +115,8 @@ export async function storeReport(
       reporter_identity: reporter?.identity ?? null,
     },
     records: report.records.map(toTuple),
+    summary: shape && shape.summarisedRows > 0 ? { rows: shape.summarisedRows, sources: shape.summarisedSources } : undefined,
+    volume: shape ? { passing: shape.passing, failing: shape.failing } : undefined,
     supersedeXmlId: reporter?.tier === 'counted' ? meta.report_id : undefined,
     ingestToken: crypto.randomUUID(),
     day: new Date().toISOString().slice(0, 10),

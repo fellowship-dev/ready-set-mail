@@ -37,7 +37,9 @@ export interface ReportersInfo {
 
 export interface IntakeInfo {
 	status: 'ok' | 'limited' | 'not_processed';
-	limit: 'workspace_storage' | 'instance_storage' | 'address_day' | 'workspace_day' | 'counted_storage_dropped' | null;
+	limit: 'workspace_storage' | 'instance_storage' | 'address_day' | 'workspace_day' | 'counted_storage_dropped' | 'free_plan_day' | 'domain_paused' | null;
+	/** Reports whose failing rows were folded into summary rows by source network (exact message totals); null: none were. */
+	summarised?: { reports: number; sources: number } | null;
 	notice: string | null;
 	/** Known reporters whose counted reports were not stored for want of storage; times are ISO 8601 (UTC). */
 	dropped?: Array<{ reporter: string; label: string; since: string; last_at: string; messages: number; text: string }>;

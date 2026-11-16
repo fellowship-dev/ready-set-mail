@@ -31,6 +31,8 @@ import { hashToken, isTokenShaped, parseRecipient } from './tokens';
 import { handleCanaryEmail } from './canary';
 import { logAuthservDiscovery, logIntake, type IntakeKind } from './intake-log';
 import { OWNER_VISIBLE, rawTooLarge, REASONS, type Outcome, type ReasonCode } from './reasons';
+import { isFreePlan } from './plan';
+import { checkVolumeAlerts } from './volume-alerts';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -209,11 +211,36 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     return { outcome: 'accepted', reason: 'over_cap_accepted_dropped' };
   };
 
+  // A domain paused on the plan keeps its history, but its new reports are not processed: the owner is told how many (reason domain_paused). A registry
+  // reporter is accepted and dropped like over a cap (no 5xx); anyone else is refused. Nothing is charged against any cap for it.
+  if (tgt.paused) {
+    if (carrier.class !== 'registry') return refuseAndMark('domain_paused');
+    await q.markFailure(tgt.domain_id, day, 'domain_paused', now()).catch(() => 0);
+    seen.reporter = registryId;
+    return { outcome: 'accepted', reason: 'domain_paused' };
+  }
+
   const { reason: capped, quota } = await chargeIntakeCaps(q, { domainId: tgt.domain_id, workspaceId: tgt.workspace_id, day, rawSize: message.rawSize, envelopeFrom: message.from, carrier }, limits);
   if (capped) return overCap(capped);
 
   const body = new Proxy(message, { get: (t, p) => (p === 'raw' ? rest : Reflect.get(t, p, t) instanceof Function ? (Reflect.get(t, p, t) as Function).bind(t) : Reflect.get(t, p, t)) });
   const tenant = await loadTenant(env, { workspaceId: tgt.workspace_id });
+
+  // The free plan counts the customer's OWN passing mail only (docs/adr/0016): failing rows never reach its limit, and are summarised, not refused, when
+  // the room for them is used up. Passing rows have all the room there is.
+  const freePlan = kind === 'rua' && (await isFreePlan(env, env.DB, tgt.workspace_id).catch(() => false));
+  const summarise = kind === 'rua' ? {
+    hardMaxRecords: limits.hardMaxRecordsPerReport,
+    room: async ({ passing, failing }: { passing: number; failing: number }): Promise<{ refuse?: ReasonCode; keepFailing: number }> => {
+      if (quota.addressRecordsToday + passing > limits.addressRecordsPerDay) return { refuse: 'cap_address_records', keepFailing: 0 };
+      if (quota.workspaceRecords + passing > limits.workspaceRecords) return { refuse: 'cap_workspace_storage', keepFailing: 0 };
+      if (quota.instanceRecords + passing > limits.instanceRecords) return { refuse: 'cap_instance_storage', keepFailing: 0 };
+      if (freePlan && (await q.volumeToday(day)).passing + passing > limits.freePassingRowsPerDay) return { refuse: 'cap_free_plan_day', keepFailing: 0 };
+      const share = limits.failingStoragePercent / 100;
+      const room = Math.min(limits.addressRecordsPerDay * share - quota.addressRecordsToday, limits.workspaceRecords * share - quota.workspaceRecords, limits.instanceRecords * share - quota.instanceRecords) - passing;
+      return { keepFailing: Math.max(0, Math.min(failing, limits.recordsPerReport - passing, Math.floor(room))) };
+    },
+  } : undefined;
 
   let result: ReportResult;
   if (kind === 'rua') {
@@ -222,6 +249,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
       carrier,
       dropOverCap: carrier.class === 'registry',
       maxRecords: limits.recordsPerReport,
+      summarise,
       maxNewIps: limits.newIpsPerReport,
       token: { id: tgt.domain_id, domain: tgt.domain },
       // The fixed address was routed by the peek: the full parse must name the very same domain.
@@ -236,7 +264,14 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
           : quota.uncountedInstanceRecords + n > limits.uncountedInstanceRecords ? 'cap_uncounted_instance_storage' : null),
     });
     Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
-    if (result.outcome === 'accepted' && result.reason === 'ok') reportStored(tenant, ctx, tgt.domain_id); // docs/analytics.md
+    if (result.outcome === 'accepted' && result.reason === 'ok') {
+      reportStored(tenant, ctx, tgt.domain_id); // docs/analytics.md
+      if (result.tier === 'counted') {
+        // The operator hears of a heavy legitimate free workspace, or of a likely spoofing run, once per workspace per day (src/hosted/volume-alerts.ts).
+        const volume = await q.volumeToday(day).catch(() => null);
+        if (volume) await checkVolumeAlerts(env, { id: tgt.workspace_id, name: await forWorkspace(env.DB, tgt.workspace_id).plan.get().then((w) => w?.name ?? null).catch(() => null) }, volume, limits, freePlan).catch(() => []);
+      }
+    }
   } else {
     result = await handleTlsRptReport(body, tenant, { hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
   }

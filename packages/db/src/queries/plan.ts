@@ -22,7 +22,8 @@ const now = sql`unixepoch()`;
 
 export function planQueries(db: Db, workspaceId: string) {
 	const mine = eq(workspaces.id, workspaceId);
-	const myDomains = and(eq(domains.workspace_id, workspaceId), isNull(domains.evicted_at));
+	const mineD = eq(domains.workspace_id, workspaceId);
+	const myDomains = and(mineD, isNull(domains.evicted_at));
 	const mySub = eq(workspaceSubscriptions.workspace_id, workspaceId);
 	return {
 		workspaceId,
@@ -33,7 +34,7 @@ export function planQueries(db: Db, workspaceId: string) {
 		}).from(workspaces).where(mine).get().then((r) => r ?? null),
 
 		/** Live domain rows with what the plan needs to know about them. */
-		rows: () => db.select({ id: domains.id, domain: domains.domain, org_domain: domains.org_domain, paused_at: domains.paused_at, verified_via: domains.verified_via, created_at: domains.created_at })
+		rows: () => db.select({ id: domains.id, domain: domains.domain, org_domain: domains.org_domain, paused_at: domains.paused_at, created_at: domains.created_at })
 			.from(domains).where(myDomains).orderBy(asc(domains.id)).all(),
 
 		/** Fill `org_domain` of rows that have none (SQL cannot compute the Public Suffix List). Returns how many rows were filled. */

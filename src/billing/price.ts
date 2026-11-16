@@ -60,7 +60,7 @@ export async function resolvePrice(db: D1Database, stripe: StripeClient, lookupK
 }
 
 /** Lookup keys of the pay-as-you-go price (docs/billing.md "Stripe setup"). */
-export const PLAN_LOOKUP_KEYS: Record<PlanInterval, string> = { month: 'rsm_extra_domain_monthly', year: 'rsm_extra_domain_yearly' };
+export const planLookupKey = (interval: PlanInterval): string => (interval === 'year' ? 'rsm_extra_domain_yearly' : 'rsm_extra_domain_monthly');
 
 /** Throws PriceMisconfiguredError unless exactly one active recurring licensed per-unit USD price for `interval` carries the key. */
 export function validatePlanPrice(list: { data: unknown[] }, lookupKey: string, interval: PlanInterval): PlanPrice {
@@ -80,7 +80,7 @@ export function validatePlanPrice(list: { data: unknown[] }, lookupKey: string, 
 
 /** The pay-as-you-go price for an interval, by lookup key. `fresh`: ask Stripe now (a confirm) and refresh the cache; otherwise as resolvePrice. */
 export async function resolvePlanPrice(db: D1Database, stripe: StripeClient, interval: PlanInterval, opts: { fresh?: boolean; now?: () => number } = {}): Promise<PlanPrice> {
-  const lookupKey = PLAN_LOOKUP_KEYS[interval];
+  const lookupKey = planLookupKey(interval);
   const now = Math.floor((opts.now?.() ?? Date.now()) / 1000);
   const lookups = billingLookups(db);
   const cached = await lookups.price.get(lookupKey);

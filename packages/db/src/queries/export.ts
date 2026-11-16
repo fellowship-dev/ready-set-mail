@@ -13,7 +13,7 @@ import { getDb, type DbLike } from '../client';
 type Row = Record<string, unknown>;
 
 export const EXPORT_COLUMNS = {
-	workspaces: ['id', 'name', 'created_at', 'stripe_customer_id'],
+	workspaces: ['id', 'name', 'created_at', 'stripe_customer_id', 'plan', 'free_owner_user_id'],
 	memberships: ['role', 'created_at'],
 	users: ['id', 'email', 'name', 'last_login_at'],
 	invites: ['email', 'role', 'invited_by', 'created_at', 'expires_at', 'used_at'],
@@ -22,21 +22,22 @@ export const EXPORT_COLUMNS = {
 	google_postmaster_connections: ['id', 'domain_id', 'status', 'last_attempt_at', 'last_success_at'],
 	metric_observations: ['connection_id', 'domain_id', 'metric', 'period_start', 'period_end', 'source_id', 'payload'],
 	cloudflare_connections: ['id', 'label', 'cf_account_id', 'cf_account_name', 'auth_type', 'scopes', 'status', 'status_detail', 'created_by', 'created_at', 'last_used_at'],
-	domains: ['id', 'domain', 'rua_address', 'dmarc_policy', 'dmarc_pct', 'spf_record', 'auth_record_provisioned', 'created_at', 'updated_at', 'dns_record_id', 'rollout_rec_policy', 'rollout_rec_pct', 'parent_id', 'is_default', 'alerts_enabled', 'spf_lookup_count', 'cf_connection_id', 'verified_via', 'cf_account_id', 'cf_zone_id', 'verified_at', 'cf_zone_name', 'cf_name_servers', 'proof_checked_at', 'proof_lost_at', 'proof_attempted_at', 'proof_suspected_at', 'proof_answered_at', 'evicted_at', 'evicted_name', 'dns_checked_at', 'dns_check_attempted_at', 'dns_check_status', 'dmarc_issue', 'dmarc_inherited_from', 'dns_last_good_status', 'reports_connected_at', 'dmarc_sp', 'dmarc_p', 'dmarc_rua'],
-	aggregate_reports: ['id', 'domain_id', 'org_name', 'report_id', 'date_begin', 'date_end', 'total_count', 'pass_count', 'fail_count', 'created_at', 'reporter_auth', 'reporter_auth_domain', 'reporter_auth_reason', 'reporter_tier', 'reporter_known_as', 'reporter_identity', 'record_count'],
-	report_records: ['id', 'report_id', 'source_ip', 'count', 'disposition', 'dkim_result', 'dkim_domain', 'spf_result', 'spf_domain', 'header_from', 'created_at', 'reverse_dns', 'base_domain', 'country_code', 'org'],
+	domains: ['id', 'domain', 'rua_address', 'dmarc_policy', 'dmarc_pct', 'spf_record', 'auth_record_provisioned', 'created_at', 'updated_at', 'dns_record_id', 'rollout_rec_policy', 'rollout_rec_pct', 'parent_id', 'is_default', 'alerts_enabled', 'spf_lookup_count', 'cf_connection_id', 'verified_via', 'cf_account_id', 'cf_zone_id', 'verified_at', 'cf_zone_name', 'cf_name_servers', 'proof_checked_at', 'proof_lost_at', 'proof_attempted_at', 'proof_suspected_at', 'proof_answered_at', 'evicted_at', 'evicted_name', 'dns_checked_at', 'dns_check_attempted_at', 'dns_check_status', 'dmarc_issue', 'dmarc_inherited_from', 'dns_last_good_status', 'reports_connected_at', 'dmarc_sp', 'dmarc_p', 'dmarc_rua', 'org_domain', 'paused_at'],
+	aggregate_reports: ['id', 'domain_id', 'org_name', 'report_id', 'date_begin', 'date_end', 'total_count', 'pass_count', 'fail_count', 'created_at', 'reporter_auth', 'reporter_auth_domain', 'reporter_auth_reason', 'reporter_tier', 'reporter_known_as', 'reporter_identity', 'record_count', 'summarised_rows', 'summarised_sources'],
+	report_records: ['id', 'report_id', 'source_ip', 'count', 'disposition', 'dkim_result', 'dkim_domain', 'spf_result', 'spf_domain', 'header_from', 'created_at', 'reverse_dns', 'base_domain', 'country_code', 'org', 'summarised_sources'],
 	tls_reports: ['id', 'domain_id', 'org_name', 'date_begin', 'date_end', 'total_success', 'total_failure', 'failure_details', 'created_at'],
 	audit_log: ['id', 'actor_id', 'actor_email', 'actor_type', 'action', 'resource_type', 'resource_id', 'resource_name', 'before_value', 'after_value', 'meta', 'created_at'],
 	monitor_subscriptions: ['id', 'email', 'domain', 'spf_record', 'dmarc_policy', 'dmarc_pct', 'dmarc_record', 'active', 'last_checked_at', 'created_at', 'confirmed_at'],
 	spf_flatten_config: ['domain_id', 'enabled', 'cf_record_id', 'canonical_record', 'flattened_record', 'ip_count', 'lookup_count', 'last_flattened_at', 'last_error', 'created_at', 'updated_at'],
 	mta_sts_config: ['domain_id', 'enabled', 'mode', 'mx_hosts', 'max_age', 'policy_id', 'mta_sts_record_id', 'tls_rpt_record_id', 'cname_record_id', 'last_error', 'created_at', 'updated_at'],
 	billing_orders: ['id', 'domain_id', 'domain_name', 'offer', 'stripe_price_id', 'amount', 'amount_paid', 'currency', 'status', 'stripe_customer_id', 'stripe_invoice_id', 'stripe_payment_intent_id', 'stripe_charge_id', 'amount_refunded', 'buyer_user_id', 'buyer_email', 'failure_code', 'failure_message', 'note', 'created_at', 'updated_at', 'paid_at', 'started_at', 'done_at', 'refunded_at', 'failed_at'],
+	workspace_subscriptions: ['interval', 'status', 'quantity_sent', 'quantity_seen', 'current_period_end', 'cancel_at_period_end', 'canceled_at', 'lapsed_at', 'last_failed_at', 'synced_at', 'created_at', 'updated_at'],
 	hosted_domains: ['domain_id', 'hosted_id', 'zone_key', 'dmarc_record_id', 'spf_record_id', 'mta_sts_txt_record_id', 'mta_sts_host_record_id', 'tls_rpt_record_id', 'spf_source', 'dmarc_pointer', 'spf_pointer', 'mta_sts_pointer', 'tls_rpt_pointer', 'pointers_checked_at', 'created_at'],
 } as const;
 
 /** Columns deliberately not exported (secrets, other people's credentials, duplicates), or implied by the query (the workspace). */
 export const EXPORT_EXCLUDED = {
-	workspaces: [],
+	workspaces: ['plan_lock_token', 'plan_lock_until', 'plan_revision'],
 	memberships: ['workspace_id', 'user_id'],
 	users: ['password_hash', 'role', 'session_token', 'created_at', 'email_verified', 'image', 'updated_at', 'terms_accepted_at', 'terms_version'],
 	invites: ['token', 'workspace_id'],
@@ -54,6 +55,7 @@ export const EXPORT_EXCLUDED = {
 	spf_flatten_config: ['workspace_id'],
 	mta_sts_config: ['workspace_id'],
 	hosted_domains: ['workspace_id'],
+	workspace_subscriptions: ['workspace_id', 'stripe_subscription_id', 'stripe_item_id', 'price_id', 'dirty', 'action_url'],
 	billing_orders: ['workspace_id', 'workspace_name', 'hosted_invoice_url', 'owner_notified_at', 'operator_alerted_at'],
 } as const;
 
@@ -99,6 +101,7 @@ export function exportQueries(dbLike: DbLike, workspaceId: string) {
 			spf_flatten_config: () => all(sql`SELECT ${C('spf_flatten_config')} FROM spf_flatten_config WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
 			mta_sts_config: () => all(sql`SELECT ${C('mta_sts_config')} FROM mta_sts_config WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
 			hosted_domains: () => all(sql`SELECT ${C('hosted_domains')} FROM hosted_domains WHERE workspace_id = ${workspaceId} ORDER BY domain_id`),
+			workspace_subscriptions: () => all(sql`SELECT ${C('workspace_subscriptions')} FROM workspace_subscriptions WHERE workspace_id = ${workspaceId}`),
 			billing_orders: () => all(sql`SELECT ${C('billing_orders')} FROM billing_orders WHERE workspace_id = ${workspaceId} ORDER BY created_at, id`),
 		},
 

@@ -65,16 +65,16 @@ describe('G4: records are stored in a fixed number of D1 queries', () => {
     expect(w.rows("SELECT records FROM intake_quota WHERE scope = '*' AND day = 'total'")).toEqual([{ records: 5000 }]);
   });
 
-  it('the defaults: 2,000 records are stored, 2,001 are refused with a reason, counted for the owner, and cost almost nothing', async () => {
+  it('the defaults: 2,000 records are stored, and 2,001 PASSING rows are all kept too (a report is never refused whole for its rows)', async () => {
     const ok = await deliver(2000);
     expect(ok.threw).toBeNull();
     expect(ok.m.setReject).not.toHaveBeenCalled();
     expect(count(ok.w, 'report_records')).toBe(2000);
     const over = await deliver(2001);
-    expect(over.m.setReject.mock.calls[0][0]).toMatch(/Report has 2001 records; the limit is 2000/);
-    expect(count(over.w, 'aggregate_reports')).toBe(0);
-    expect(over.w.rows('SELECT reason, messages FROM intake_failures')).toEqual([{ reason: 'too_many_records', messages: 1 }]);
-    expect(over.counter.count).toBeLessThan(ok.counter.count);
+    expect(over.m.setReject).not.toHaveBeenCalled();
+    expect(count(over.w, 'aggregate_reports')).toBe(1);
+    expect(count(over.w, 'report_records')).toBe(2001);
+    expect(over.w.rows('SELECT COUNT(*) AS n FROM intake_failures')[0].n).toBe(0);
   });
 
   it('20,000 records (the largest an operator can allow): same fixed budget, one transaction', async () => {

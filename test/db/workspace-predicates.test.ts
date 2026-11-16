@@ -31,7 +31,7 @@ const TABLE_VARS: Record<string, string> = {
 	spfFlattenConfig: 'spf_flatten_config', mtaStsConfig: 'mta_sts_config', monitorSubscriptions: 'monitor_subscriptions',
 	settings: 'settings', invites: 'invites', auditLog: 'audit_log', memberships: 'memberships', apiKeys: 'api_keys',
 	intakeTokens: 'intake_tokens', hostedDomains: 'hosted_domains', cloudflareConnections: 'cloudflare_connections', cloudflareConnectionZones: 'cloudflare_connection_zones', cloudflareConnectionBlockedZones: 'cloudflare_connection_blocked_zones',
-	billingOrders: 'billing_orders', billingCheckoutSessions: 'billing_checkout_sessions',
+	billingOrders: 'billing_orders', billingCheckoutSessions: 'billing_checkout_sessions', workspaceSubscriptions: 'workspace_subscriptions',
 };
 
 interface Hit { table: string; problem: string }
@@ -152,12 +152,12 @@ describe('every query on tenant data carries a workspace predicate (per statemen
 		expect(scan(walk(join(ROOT, 'src'))).found).toEqual([]);
 	});
 
-	it('the query layer (except global.ts) is scoped, with the documented exemptions (one elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; four in access-grants.ts: credential id/hash, principal identity and finite portfolio consent; nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace)', () => {
+	it('the query layer (except global.ts) is scoped, with the documented exemptions (one elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; four in access-grants.ts: credential id/hash, principal identity and finite portfolio consent; nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace; five in plan.ts: a person\'s allowance and owned workspaces, a subscription named by Stripe, the daily sweeps of subscriptions and of domains without an organizational domain)', () => {
 		const files = walk(join(ROOT, 'packages/db/src/queries')).filter((f) => !/global(-lifecycle)?\.ts$/.test(f));
 		expect(files.length).toBeGreaterThan(5);
 		const { found, exemptions } = scan(files);
 		expect(found).toEqual([]);
-		expect(exemptions).toBe(47);
+		expect(exemptions).toBe(52);
 	});
 
 	it('pins the privileged access lookup census without exempting scoped access queries', () => {

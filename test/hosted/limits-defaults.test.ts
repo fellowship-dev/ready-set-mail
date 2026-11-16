@@ -18,6 +18,7 @@ describe('intake limits: hosted defaults', () => {
       workspaceMessagesPerDay: 2_000, workspaceRecords: 1_000_000,
       instanceMessagesPerDay: 50_000, instanceRecords: 10_000_000,
       maxDecompressedBytes: 1 * MiB, maxRawBytes: 2 * MiB, storageRetriesPerDay: 20,
+      freePassingRowsPerDay: 20_000, alertPassingRowsPerDay: 5_000, alertFailingRowsPerDay: 100_000, failingStoragePercent: 50, hardMaxRecordsPerReport: 20_000,
     });
   });
 

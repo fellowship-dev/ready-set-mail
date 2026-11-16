@@ -51,7 +51,7 @@ export async function parseDmarcEmail(
   if (xml.trimStart().startsWith('{')) throw new ParseEmailError('This is a JSON report (TLS-RPT), not a DMARC aggregate report', undefined, 'kind_mismatch_tlsrpt_to_rua');
 
   try {
-    return await parseAggregateReportXml(xml, offline, db, { maxRecords: opts.maxRecords, maxNewIps: opts.maxNewIps, now: opts.now, gate: opts.gate });
+    return await parseAggregateReportXml(xml, offline, db, { maxRecords: opts.maxRecords, hardMaxRecords: opts.hardMaxRecords, shape: opts.shape, maxNewIps: opts.maxNewIps, now: opts.now, gate: opts.gate });
   } catch (err) {
     if (err instanceof ParseStop) throw err;
     if (err instanceof InvalidAggregateReport) {

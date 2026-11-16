@@ -34,7 +34,12 @@ export interface IntakeView {
   /** Mail that reached this address and was not stored, last FAILURE_WINDOW_DAYS days. */
   not_processed: { messages: number; last_at: number | null; reasons: Array<{ reason: string; messages: number; last_at: number; text: string }> };
   /** Which limit is in force right now, if any (`limited`). 'counted_storage_dropped': reports of a known reporter were accepted and NOT stored (see `dropped`). */
-  limit: null | 'workspace_storage' | 'instance_storage' | 'address_day' | 'workspace_day' | 'counted_storage_dropped';
+  limit: null | 'workspace_storage' | 'instance_storage' | 'address_day' | 'workspace_day' | 'counted_storage_dropped' | 'free_plan_day' | 'domain_paused';
+  /**
+   * Reports in the window whose failing rows were too many to store one by one: they were folded into one row per source network, with exact message
+   * totals (src/dmarc/summarise.ts). `sources` is how many failing source addresses stand behind the summary rows. Null: nothing was summarised.
+   */
+  summarised: { reports: number; sources: number } | null;
   /**
    * Known reporters whose COUNTED reports were not stored because the counted budget was full, until a report of theirs is stored again. Times are ISO 8601
    * (UTC): the web renders them in the user's locale and time zone (`storageDropNotice` in web/src/lib/uncounted.ts). `text` is the same sentence with the time in UTC.
@@ -84,6 +89,15 @@ export const storageDropText = (reporterLabel: string, time: string) => `Report 
 /** UTC rendering for server-side text (the setup check, agents): 2026-11-14 03:12 UTC. */
 export const utcMinute = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 
+/**
+ * The free plan's daily limit, in terms of the customer's OWN passing mail (docs/adr/0016): mail that fails authentication never counts toward it.
+ * Plain, no alarm; the web adds the help link from `help_url`.
+ */
+export const freePlanDayNotice = (n: number, rows: number) => `Today your domain sent more of its own mail than the free plan's ${rows.toLocaleString('en-US')} report rows a day, so ${n} ${n === 1 ? 'report was' : 'reports were'} not saved. Mail that fails authentication never counts toward this. Everything already here stays.`;
+export const pausedNotice = (n: number) => `This domain is paused on the free plan, so ${n} new ${n === 1 ? 'report was' : 'reports were'} not processed. Everything already here stays.`;
+/** "This domain's reports have 1,240 failing sources; they are shown as 38 summary rows by network." The totals are exact. */
+export const summarisedNotice = (sources: number) => `${sources.toLocaleString('en-US')} failing ${sources === 1 ? 'source was' : 'sources were'} summarised by network; the message totals are exact.`;
+
 export const DAILY_LIMIT_NOTICE = 'Daily report limit reached for this address; newer reports are not being stored until tomorrow';
 
 /** "3 reports from senders we do not recognise are not counted." (authenticated, not in the registry: stored, never counted). */
@@ -118,7 +132,7 @@ function reasonText(reason: string): string {
   return reason in REASONS ? REASONS[reason as ReasonCode] : reason;
 }
 
-export function intakeView(failures: FailureRow[], usage: { addressMessagesToday: number; workspaceMessagesToday: number; workspaceRecords: number; instanceRecords: number } | null, limits: ReturnType<typeof intakeLimits> | null, drops: DropRow[] = []): IntakeView {
+export function intakeView(failures: FailureRow[], usage: { addressMessagesToday: number; workspaceMessagesToday: number; workspaceRecords: number; instanceRecords: number } | null, limits: ReturnType<typeof intakeLimits> | null, drops: DropRow[] = [], summarised: IntakeView['summarised'] = null): IntakeView {
   const dropped: IntakeView['dropped'] = drops.map((d) => ({ reporter: d.reporter, label: d.label, since: new Date(d.first_at * 1000).toISOString(), last_at: new Date(d.last_at * 1000).toISOString(), messages: Number(d.messages), text: storageDropText(d.label, utcMinute(d.first_at)) }));
   const rows = failures.filter((f) => OWNER_VISIBLE.has(f.reason as ReasonCode));
   const messages = rows.reduce((n, f) => n + Number(f.messages), 0);
@@ -130,14 +144,21 @@ export function intakeView(failures: FailureRow[], usage: { addressMessagesToday
     else if (usage.addressMessagesToday >= limits.addressMessagesPerDay) limit = 'address_day';
     else if (usage.workspaceMessagesToday >= limits.workspaceMessagesPerDay) limit = 'workspace_day';
   }
+  const countOf = (reason: string) => rows.filter((f) => f.reason === reason).reduce((n, f) => n + Number(f.messages), 0);
+  const freeDay = countOf('cap_free_plan_day');
+  const paused = countOf('domain_paused');
+  if (!limit && paused) limit = 'domain_paused';
+  if (freeDay) limit = 'free_plan_day'; // the plan's own limit says what it counts: the customer's own passing mail
   if (dropped.length) limit = 'counted_storage_dropped'; // the most specific statement: it names who was not stored
   const status: IntakeStatus = limit ? 'limited' : messages > 0 ? 'not_processed' : 'ok';
   const notice = limit === 'counted_storage_dropped' ? dropped.map((d) => d.text).join('. ')
+    : limit === 'free_plan_day' ? freePlanDayNotice(freeDay, limits?.freePassingRowsPerDay ?? 20_000)
+    : limit === 'domain_paused' ? pausedNotice(paused)
     : limit === 'workspace_storage' || limit === 'instance_storage' ? STORAGE_LIMIT_NOTICE
     : limit ? DAILY_LIMIT_NOTICE
     : messages > 0 ? notProcessedNotice(messages) : null;
   return {
-    status, limit, notice, dropped,
+    status, limit, notice, dropped, summarised,
     not_processed: { messages, last_at: last, reasons: rows.map((f) => ({ reason: f.reason, messages: Number(f.messages), last_at: f.last_at, text: reasonText(f.reason) })) },
   };
 }
@@ -169,6 +190,6 @@ export async function reportVisibilityMany(tenant: TenantContext, range: { fromI
     uncounted: reports.uncounted.get(domainId) ?? emptyUncounted(),
     reporters: reporterMix(reports.counted.get(domainId) ?? []),
     // The caps only apply to hosted intake; self-host has no daily caps to hit.
-    intake: intakeView(intake.failures.get(domainId) ?? [], hosted ? intake.usage(domainId) : null, hosted ? intakeLimits(tenant.env) : null, intake.drops.get(domainId) ?? []),
+    intake: intakeView(intake.failures.get(domainId) ?? [], hosted ? intake.usage(domainId) : null, hosted ? intakeLimits(tenant.env) : null, intake.drops.get(domainId) ?? [], intake.summarised.get(domainId) ?? null),
   });
 }

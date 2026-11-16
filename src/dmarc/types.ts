@@ -87,6 +87,8 @@ export interface ReportRecord {
   policy_evaluated: PolicyEvaluated;
   identifiers: Identifiers;
   auth_results: AuthResults;
+  /** Set on a summary row (src/dmarc/summarise.ts): how many failing source addresses of one network it stands for. Absent on a real row. */
+  summarised_sources?: number;
 }
 
 export interface AggregateReport {

@@ -231,7 +231,8 @@ describe('a report that is too big for its sender\'s standing', () => {
     expect(unproven.setReject.mock.calls[0][0]).toMatch(/limit is 2/);
     expect(failures(w)).toEqual([{ domain_id: 1, reason: 'too_many_records', messages: 1 }]);
     expect((await send(w, reportWithDistinctIps('a-corp.com', 'p', 3))).setReject).not.toHaveBeenCalled();
-    expect((await send(w, reportWithDistinctIps('a-corp.com', 'big', 11))).setReject).toHaveBeenCalled();
+    // a COUNTED report over the limit is accepted (docs/adr/0016): every row here passes, so every row is kept
+    expect((await send(w, reportWithDistinctIps('a-corp.com', 'big', 11))).setReject).not.toHaveBeenCalled();
   });
 });
 

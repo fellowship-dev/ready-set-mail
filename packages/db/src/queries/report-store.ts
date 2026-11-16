@@ -18,7 +18,7 @@ export const SQL_MAX_BYTES = 100_000;
 export type RecordTuple = [
 	ip: string, count: number, disposition: string, dkimResult: string | null, dkimDomain: string | null,
 	spfResult: string | null, spfDomain: string | null, headerFrom: string | null, reverseDns: string | null,
-	baseDomain: string | null, countryCode: string | null, org: string | null,
+	baseDomain: string | null, countryCode: string | null, org: string | null, summarisedSources?: number | null,
 ];
 
 const encoder = new TextEncoder();
@@ -59,6 +59,13 @@ export interface StoreReportInput {
 	 * deleted in the same batch, with their records, and their (uncounted) storage counters given back: a counted report supersedes an uncounted one, never the reverse.
 	 */
 	supersedeXmlId?: string;
+	/** Set when failing rows were folded into summary rows (src/dmarc/summarise.ts): how many rows, from how many source addresses. */
+	summary?: { rows: number; sources: number };
+	/**
+	 * A COUNTED report's rows by result as the report held them, for the daily volume counters in the same batch: `p:<workspace>` the passing rows (what the
+	 * free plan counts) and `f:<workspace>` the failing rows seen (what the operator is alerted on). Failing mail is never counted toward a plan.
+	 */
+	volume?: { passing: number; failing: number };
 	/** Random id of this attempt (links the records to the row this batch inserted). */
 	ingestToken: string;
 	/** UTC day (YYYY-MM-DD) for the per-address stored-records counter. */
@@ -84,16 +91,16 @@ export function storeStatements(i: StoreReportInput): SQL[] {
 		);
 	}
 	out.push(
-		sql`INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, raw_xml, workspace_id, reporter_auth, reporter_auth_domain, reporter_auth_reason, reporter_tier, reporter_known_as, reporter_identity, ingest_token, record_count)
-			VALUES (${i.domainId}, ${r.org_name}, ${r.report_id}, ${r.date_begin}, ${r.date_end}, ${r.total_count}, ${r.pass_count}, ${r.fail_count}, ${r.raw_xml}, ${ws}, ${r.reporter_auth}, ${r.reporter_auth_domain}, ${r.reporter_auth_reason}, ${r.reporter_tier}, ${r.reporter_known_as}, ${r.reporter_identity}, ${i.ingestToken}, ${i.records.length})
+		sql`INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, raw_xml, workspace_id, reporter_auth, reporter_auth_domain, reporter_auth_reason, reporter_tier, reporter_known_as, reporter_identity, ingest_token, record_count, summarised_rows, summarised_sources)
+			VALUES (${i.domainId}, ${r.org_name}, ${r.report_id}, ${r.date_begin}, ${r.date_end}, ${r.total_count}, ${r.pass_count}, ${r.fail_count}, ${r.raw_xml}, ${ws}, ${r.reporter_auth}, ${r.reporter_auth_domain}, ${r.reporter_auth_reason}, ${r.reporter_tier}, ${r.reporter_known_as}, ${r.reporter_identity}, ${i.ingestToken}, ${i.records.length}, ${i.summary?.rows ?? null}, ${i.summary?.sources ?? null})
 			ON CONFLICT DO NOTHING`,
 	);
 	for (const chunk of chunkJson(i.records)) {
 		// The join on ingest_token yields no row when the report already existed (its token is another attempt's): a
 		// re-delivery inserts nothing.
-		out.push(sql`INSERT INTO report_records (report_id, workspace_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, reverse_dns, base_domain, country_code, org)
+		out.push(sql`INSERT INTO report_records (report_id, workspace_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, reverse_dns, base_domain, country_code, org, summarised_sources)
 			SELECT a.id, ${ws}, json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'), json_extract(j.value, '$[3]'), json_extract(j.value, '$[4]'),
-				json_extract(j.value, '$[5]'), json_extract(j.value, '$[6]'), json_extract(j.value, '$[7]'), json_extract(j.value, '$[8]'), json_extract(j.value, '$[9]'), json_extract(j.value, '$[10]'), json_extract(j.value, '$[11]')
+				json_extract(j.value, '$[5]'), json_extract(j.value, '$[6]'), json_extract(j.value, '$[7]'), json_extract(j.value, '$[8]'), json_extract(j.value, '$[9]'), json_extract(j.value, '$[10]'), json_extract(j.value, '$[11]'), json_extract(j.value, '$[12]')
 			FROM json_each(${chunk}) j JOIN (SELECT id FROM aggregate_reports WHERE workspace_id = ${ws} AND ${mine}) a`);
 	}
 	const exists = sql`EXISTS (SELECT 1 FROM aggregate_reports WHERE workspace_id = ${ws} AND ${mine})`;
@@ -111,6 +118,13 @@ export function storeStatements(i: StoreReportInput): SQL[] {
 		sql`INSERT INTO intake_quota (scope, day, records) SELECT ${unc ? '*u' : '*'}, 'total', ${n} WHERE ${exists}
 			ON CONFLICT(scope, day) DO UPDATE SET records = records + excluded.records`,
 	);
+	if (i.volume && r.reporter_tier === 'counted') {
+		for (const [prefix, rows] of [['p:', i.volume.passing], ['f:', i.volume.failing]] as const) {
+			if (rows <= 0) continue;
+			out.push(sql`INSERT INTO intake_quota (scope, day, records) SELECT ${prefix + ws}, ${i.day}, ${rows} WHERE ${exists}
+				ON CONFLICT(scope, day) DO UPDATE SET records = records + excluded.records`);
+		}
+	}
 	// A counted report stored again clears the owner-visible "reports from X were not stored" state of that reporter on this address.
 	if (r.reporter_tier === 'counted' && r.reporter_identity) out.push(sql`DELETE FROM intake_drops WHERE workspace_id = ${ws} AND domain_id = ${i.domainId} AND reporter = ${r.reporter_identity} AND ${exists}`);
 	return out;

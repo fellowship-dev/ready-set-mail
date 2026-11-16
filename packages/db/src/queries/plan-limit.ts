@@ -20,19 +20,17 @@ export class PlanLimitError extends Error {
 export interface UnitRoom { max: number; subdomainMax?: number; rowMax?: number }
 export interface DomainRoom { maxDomains?: number; org?: string; units?: UnitRoom }
 
-const LIVE_OF = (workspaceId: string) => sql`workspace_id = ${workspaceId} AND evicted_at IS NULL`;
-
 /** The WHERE condition of a conditional domain insert, or null when nothing is capped. */
 export function roomCondition(workspaceId: string, room: DomainRoom) {
 	const parts = [] as ReturnType<typeof sql>[];
-	if (room.maxDomains !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE ${LIVE_OF(workspaceId)}) < ${room.maxDomains}`);
+	if (room.maxDomains !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${room.maxDomains}`);
 	const u = room.units;
 	if (u) {
 		const org = room.org!;
-		parts.push(sql`(EXISTS (SELECT 1 FROM domains WHERE ${LIVE_OF(workspaceId)} AND COALESCE(org_domain, domain) = ${org})
-			OR (SELECT COUNT(DISTINCT COALESCE(org_domain, domain)) FROM domains WHERE ${LIVE_OF(workspaceId)}) < ${u.max})`);
-		if (u.subdomainMax !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE ${LIVE_OF(workspaceId)} AND COALESCE(org_domain, domain) = ${org}) < ${u.subdomainMax}`);
-		if (u.rowMax !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE ${LIVE_OF(workspaceId)}) < ${u.rowMax}`);
+		parts.push(sql`(EXISTS (SELECT 1 FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL AND COALESCE(org_domain, domain) = ${org})
+			OR (SELECT COUNT(DISTINCT COALESCE(org_domain, domain)) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${u.max})`);
+		if (u.subdomainMax !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL AND COALESCE(org_domain, domain) = ${org}) < ${u.subdomainMax}`);
+		if (u.rowMax !== undefined) parts.push(sql`(SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${u.rowMax}`);
 	}
 	if (parts.length === 0) return null;
 	return parts.reduce((a, b) => sql`${a} AND ${b}`);
@@ -42,11 +40,11 @@ export function roomCondition(workspaceId: string, room: DomainRoom) {
 export async function whyRefused(db: { all: (q: any) => any }, workspaceId: string, room: DomainRoom): Promise<PlanLimitError> {
 	const u = room.units;
 	if (u?.subdomainMax !== undefined) {
-		const row = (await db.all(sql`SELECT COUNT(*) AS n FROM domains WHERE ${LIVE_OF(workspaceId)} AND COALESCE(org_domain, domain) = ${room.org!}`))[0] as { n: number } | undefined;
+		const row = (await db.all(sql`SELECT COUNT(*) AS n FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL AND COALESCE(org_domain, domain) = ${room.org!}`))[0] as { n: number } | undefined;
 		if ((row?.n ?? 0) >= u.subdomainMax) return new PlanLimitError('plan_subdomains', u.subdomainMax);
 	}
 	if (u) {
-		const row = (await db.all(sql`SELECT COUNT(DISTINCT COALESCE(org_domain, domain)) AS n FROM domains WHERE ${LIVE_OF(workspaceId)}`))[0] as { n: number } | undefined;
+		const row = (await db.all(sql`SELECT COUNT(DISTINCT COALESCE(org_domain, domain)) AS n FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL`))[0] as { n: number } | undefined;
 		if ((row?.n ?? 0) >= u.max) return new PlanLimitError('plan_units', u.max);
 	}
 	return new PlanLimitError('domains_per_workspace', room.maxDomains ?? u?.rowMax ?? 0);

@@ -12,7 +12,8 @@
 //   - Nothing is ever deleted for non-payment: a lapsed plan pauses domains (readable, exportable, new reports not processed).
 import { billingLookups, forWorkspace, planLookups, type SubscriptionRow } from '@ready-set-mail/db';
 import { logAudit } from '../audit/log';
-import { DomainServiceError, enrollDomain, requireDomainName } from '../domains/service';
+import { DomainServiceError, enrollDomain, commitVerifiedDomain, requireDomainName } from '../domains/service';
+import { verifyClaim } from '../domains/ownership';
 import { planHelpUrl } from '../hosted/plan-limits';
 import {
   PlanBusyError, billableAfter, loadPlanState, paidPathAvailable, planEnforced, subscriptionState, unitOf, withPlanLock,
@@ -166,7 +167,7 @@ async function pushQuantity(d: BillingDeps, lock: PlanLock, target: number): Pro
 // ── Adding paid domains ─────────────────────────────────────
 
 export interface PaidAddInput { domains: string[]; expectedAmount: number; expectedCurrency: string; interval?: PlanInterval; via: 'single' | 'cloudflare' }
-export interface PaidAddResult { added: { domain: string; domain_id: number }[]; pending: { domain: string; claim_id: number | null }[]; resumed: string[]; failed: { domain: string; error: string; code: string | null }[]; billable: number }
+export interface PaidAddResult { added: { domain: string; domain_id: number }[]; pending: { domain: string; claim_id: number | null; reason?: string }[]; resumed: string[]; failed: { domain: string; error: string; code: string | null }[]; billable: number }
 
 /**
  * The owner's confirmed paid add (a browser session of the workspace owner, checked by the route). Re-checks everything the confirm showed, then under
@@ -196,11 +197,20 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
       const paid = billableAfter(st, fresh.size) > st.billable;
       const grant = paid ? lock.grant(fresh.size) : undefined;
       if (paid && !grant) throw new BillingError(403, 'plan_limit', 'This workspace has reached its limit of domains.', { help_url: planHelpUrl(d.env) });
-      if (paid) await ensureSubscription(d, lock, ws, interval, 'add_domain');
       const result: PaidAddResult = { added: [], pending: [], resumed: [], failed: [], billable: 0 };
       const addedRows: { id: number; domain: string }[] = [];
       for (const domain of names) {
         try {
+          // A claim already waiting for its proof (the TXT record) is checked now; the grant lets the row in once it holds.
+          const claim = await tenant.scope.claims.get(domain);
+          if (claim && claim.status === 'pending' && claim.settled_at === null && !(await tenant.scope.domains.getByName(domain))) {
+            const outcome = await verifyClaim(tenant, claim);
+            if (outcome.kind === 'taken') { result.failed.push({ domain, error: 'another workspace has already verified this domain', code: 'domain_taken' }); continue; }
+            if (outcome.kind === 'unproven') { result.pending.push({ domain, claim_id: claim.id, reason: outcome.reason }); continue; }
+            const done = await commitVerifiedDomain(tenant, domain, outcome.via, actor.email, d.ctx, actor.userId, grant ? { grant } : {});
+            if (done.domain && !('resumed' in done && done.resumed)) { addedRows.push({ id: done.domain.id, domain }); result.added.push({ domain, domain_id: done.domain.id }); } else result.resumed.push(domain);
+            continue;
+          }
           const r = await enrollDomain(tenant, domain, actor.email, d.ctx, actor.userId, grant ? { grant } : {});
           if ('pending' in r && r.pending) result.pending.push({ domain, claim_id: (r.claim as { id?: number } | undefined)?.id ?? null });
           else if ('resumed' in r && r.resumed) result.resumed.push(domain);
@@ -214,7 +224,11 @@ export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: 
       result.billable = after.billable;
       if (!paid || (addedRows.length === 0 && after.subscription && after.subscription.quantity_sent === after.billable)) return result;
       try {
-        if (after.subscription) await pushQuantity(d, lock, after.billable);
+        if (addedRows.length > 0 || after.subscription) {
+          // The first paid domain starts the plan (a subscription at 0, then the quantity), a later one only raises the quantity.
+          await ensureSubscription(d, lock, ws, interval, 'add_domain');
+          await pushQuantity(d, lock, (await lock.refresh()).billable);
+        }
       } catch (e) {
         for (const row of addedRows) {
           await forWorkspace(d.db, ws.id).plan.rollbackDomain(row.id, row.domain);

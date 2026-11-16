@@ -168,7 +168,7 @@ export function intakeQueries(db: Db, workspaceId: string) {
 		 */
 		async intakeByDomain(range: { fromId: number; toId: number }, sinceSeconds: number, sinceDay: string, day: string) {
 			const inRange = sql`domain_id BETWEEN ${range.fromId} AND ${range.toId}`;
-			const [dropRows, failureRows, usageRows] = await Promise.all([
+			const [dropRows, failureRows, usageRows, summaryRows] = await Promise.all([
 				db.all<DropRow & { domain_id: number }>(sql`SELECT domain_id, reporter, label, first_at, last_at, messages FROM intake_drops WHERE workspace_id = ${workspaceId} AND ${inRange} AND last_at >= ${sinceSeconds} ORDER BY domain_id, first_at, reporter`),
 				db.all<FailureRow & { domain_id: number }>(sql`SELECT domain_id, reason, SUM(messages) AS messages, MAX(last_at) AS last_at FROM intake_failures
 					WHERE workspace_id = ${workspaceId} AND ${inRange} AND day >= ${sinceDay} GROUP BY domain_id, reason ORDER BY domain_id, last_at DESC`),
@@ -177,6 +177,9 @@ export function intakeQueries(db: Db, workspaceId: string) {
 					UNION ALL SELECT 'w', NULL, messages FROM intake_quota WHERE day = ${day} AND scope = ${'w:' + workspaceId}
 					UNION ALL SELECT 'ws', NULL, records FROM workspace_storage WHERE workspace_id = ${workspaceId}
 					UNION ALL SELECT 'inst', NULL, records FROM intake_quota WHERE scope = ${STORED_ROW.scope} AND day = ${STORED_ROW.day}`),
+				// Reports stored with failing rows folded into summary rows (0017): how many reports, from how many source addresses.
+				db.all<{ domain_id: number; reports: number; sources: number }>(sql`SELECT domain_id, COUNT(*) AS reports, COALESCE(SUM(summarised_sources), 0) AS sources FROM aggregate_reports
+					WHERE workspace_id = ${workspaceId} AND ${inRange} AND summarised_rows IS NOT NULL AND created_at >= ${sinceSeconds} GROUP BY domain_id`),
 			]);
 			const group = <T extends { domain_id: number }>(rows: T[]) => {
 				const m = new Map<number, Array<Omit<T, 'domain_id'>>>();
@@ -189,6 +192,7 @@ export function intakeQueries(db: Db, workspaceId: string) {
 			return {
 				drops: group(dropRows) as Map<number, DropRow[]>,
 				failures: group(failureRows) as Map<number, FailureRow[]>,
+				summarised: new Map(summaryRows.map((r) => [r.domain_id, { reports: Number(r.reports), sources: Number(r.sources) }])) as Map<number, { reports: number; sources: number }>,
 				usage: (domainId: number) => ({ addressMessagesToday: addressMessagesToday.get(domainId) ?? 0, workspaceMessagesToday: first('w'), workspaceRecords: first('ws'), instanceRecords: first('inst') }),
 			};
 		},
@@ -207,6 +211,13 @@ export function intakeQueries(db: Db, workspaceId: string) {
 			const rows = await db.all<{ messages: number }>(sql`INSERT INTO intake_quota (scope, day, messages) VALUES (${'sf:' + key}, ${day}, 1)
 				ON CONFLICT(scope, day) DO UPDATE SET messages = intake_quota.messages + 1 RETURNING messages`);
 			return rows[0]?.messages ?? 1;
+		},
+
+		/** Today's volume of the customer's own mail (0017): report rows that PASSED DMARC and were stored (what the free plan counts), and failing rows seen (what the operator is alerted on). */
+		async volumeToday(day: string): Promise<{ passing: number; failing: number }> {
+			const rows = await db.all<{ scope: string; records: number }>(sql`SELECT scope, records FROM intake_quota WHERE day = ${day} AND scope IN (${'p:' + workspaceId}, ${'f:' + workspaceId})`);
+			const n = (scope: string) => Number(rows.find((r) => r.scope === scope)?.records ?? 0);
+			return { passing: n('p:' + workspaceId), failing: n('f:' + workspaceId) };
 		},
 
 		/** Count one message that reached this address and was not stored (visible to the owner). Returns today's count for the reason. */
@@ -320,7 +331,8 @@ export function hostedQueries(db: Db, workspaceId: string) {
 	};
 }
 
-export interface IntakeTarget { workspace_id: string; domain_id: number; domain: string }
+/** `paused`: the domain is paused on the free plan (readable, exportable; its new reports are not processed). */
+export interface IntakeTarget { workspace_id: string; domain_id: number; domain: string; paused?: boolean }
 
 export function intakeLookups(dbLike: DbLike) {
 	const db = getDb(dbLike);
@@ -352,7 +364,7 @@ export function intakeLookups(dbLike: DbLike) {
 		/** The domain a token (as hashed from an inbound address) belongs to: the current token, or the previous one within its grace. */
 		resolveToken: (tokenHash: string, nowSeconds: number): Promise<IntakeTarget | null> =>
 			db
-				.select({ workspace_id: intakeTokens.workspace_id, domain_id: intakeTokens.domain_id, domain: domains.domain })
+				.select({ workspace_id: intakeTokens.workspace_id, domain_id: intakeTokens.domain_id, domain: domains.domain, paused_at: domains.paused_at })
 				.from(intakeTokens)
 				.innerJoin(domains, and(eq(domains.id, intakeTokens.domain_id), isNull(domains.evicted_at), isNull(domains.proof_lost_at))) // a domain whose proof lapsed receives nothing
 				.where(
@@ -360,7 +372,7 @@ export function intakeLookups(dbLike: DbLike) {
 					or(eq(intakeTokens.token_hash, tokenHash), and(eq(intakeTokens.prev_token_hash, tokenHash), gt(intakeTokens.prev_expires_at, nowSeconds))),
 				)
 				.get()
-				.then((r) => r ?? null),
+				.then((r) => (r ? { workspace_id: r.workspace_id, domain_id: r.domain_id, domain: r.domain, paused: r.paused_at !== null } : null)),
 
 		/**
 		 * The fixed hosted address (`rua@<intake domain>`) carries no token, so the report's own domain picks the target.
@@ -374,7 +386,7 @@ export function intakeLookups(dbLike: DbLike) {
 		async connectedForReport(candidates: string[], address: string): Promise<IntakeTarget | null> {
 			if (candidates.length === 0) return null;
 			const rows = await db
-				.select({ workspace_id: domains.workspace_id, domain_id: domains.id, domain: domains.domain, rua_address: domains.rua_address, verified_via: domains.verified_via })
+				.select({ workspace_id: domains.workspace_id, domain_id: domains.id, domain: domains.domain, rua_address: domains.rua_address, verified_via: domains.verified_via, paused_at: domains.paused_at })
 				.from(domains)
 				.where(
 					/* workspace-scope-exempt: domains.domain is globally unique and identifies the workspace */
@@ -393,7 +405,7 @@ export function intakeLookups(dbLike: DbLike) {
 			const owner = live[0];
 			if (!owner) return null;
 			const hit = live.find((r) => r.workspace_id === owner.workspace_id && (r.rua_address ?? '').trim().toLowerCase() === address.toLowerCase());
-			return hit ? { workspace_id: hit.workspace_id, domain_id: hit.domain_id, domain: hit.domain } : null;
+			return hit ? { workspace_id: hit.workspace_id, domain_id: hit.domain_id, domain: hit.domain, paused: hit.paused_at !== null } : null;
 		},
 
 		/** The domain behind an opaque hosted id (the label in `mta-sts.<id>.h.<zone>`). */
