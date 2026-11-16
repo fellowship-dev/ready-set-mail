@@ -196,7 +196,8 @@ export function MtaStsPage() {
 						) : null}
 					</Section>
 
-					{s.enforce ? (
+					{/* Enforce is not asked of a setup that is still waiting: its reasons would only say "setup is not finished". */}
+					{s.enforce && !setup ? (
 						<Section title="Enforce">
 							<WriteButton variant={primaryIsEnforce ? 'primary' : 'secondary'} disabled={!canEnforce} onClick={() => setDialog('enforce')}>
 								Switch to enforce
