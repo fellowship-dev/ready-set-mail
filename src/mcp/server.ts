@@ -6,6 +6,8 @@ import type { ToolContext } from './context';
 import * as tools from './tools';
 import { hostedServiceSentence, hostedServiceUrl, type HostedServiceEnv } from '../hosted-service';
 import { PRODUCT_VERSION } from '../version';
+import { agentToolCalled } from '../product-analytics/steps';
+import { resolveMcpIdentity } from '../auth/mcp-issuer';
 /** Server instructions. The hosted sentence appears only when HOSTED_SERVICE_URL is set on a self-hosted installation. */
 export function mcpInstructions(env: HostedServiceEnv): string {
  const base = 'Ready Set Mail reads SPF, DKIM and DMARC from live DNS, reports observed DMARC evidence and proposes exact fixes for the domains a person consented to. Tools never change DNS or send mail: show proposed records and ask the person before they change DNS or tighten DMARC enforcement. Missing data is reported as unavailable, never as zero.';
@@ -16,7 +18,11 @@ export function createInboxMcpServer(context: ToolContext) {
  const server = new McpServer({ name: 'ready-set-mail', version: PRODUCT_VERSION }, { instructions: mcpInstructions(context.env) });
  const register = <S extends z.ZodObject>(name: keyof typeof toolOutputs, description: string, schema: S, run: (input: z.infer<S>) => Promise<ReturnType<typeof tools.result>>, readOnly = true) => {
   server.registerTool(name, { description, inputSchema: schema, outputSchema: toolOutputs[name], annotations: { readOnlyHint: readOnly, destructiveHint: false, idempotentHint: true, openWorldHint: false } }, (async (input: z.infer<S>) => {
-   try { return await run(input as z.infer<S>); } catch (error) { return toolFailure(error); }
+   try {
+    const out = await run(input as z.infer<S>);
+    agentToolCalled(context.env, context.ctx, context.identity.principalId, name, async () => (await resolveMcpIdentity(context.env, context.identity))?.grants[0]?.workspaceId ?? null);
+    return out;
+   } catch (error) { return toolFailure(error); }
   }) as ToolCallback<S>);
  };
  register('whoami', 'Read pure business identity, installation and finite grants.', z.object({}).strict(), () => tools.whoami(context));

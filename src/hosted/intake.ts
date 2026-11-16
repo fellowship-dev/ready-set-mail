@@ -22,7 +22,7 @@ import type { Carrier } from '../dmarc/reporter-auth';
 import { loadTenant } from '../tenancy/load';
 import { handleDmarcReport, StorageFailure, type ReportResult } from '../email/dmarc-report';
 import { handleTlsRptReport } from '../email/tls-rpt';
-import { track } from '../telemetry';
+import { reportStored } from '../product-analytics/steps';
 import { carrierFromHeaders, guardEnvelope } from '../dmarc/reporter-auth';
 import { readAuthHeaders, trustedResults, type AuthHeaders } from '../email/sender-proof';
 import { attributeReport, chargeUnattributed, peekReportDomain, takePeek } from './fixed-address';
@@ -73,12 +73,12 @@ export async function chargeIntakeCaps(
   return refuse(carrier.class === 'authenticated' ? 'cap_unknown_reporter_day' : carrier.class === 'unauthenticated' ? 'cap_unauth_day' : 'cap_address_day');
 }
 
-export async function handleHostedEmail(message: ForwardableEmailMessage, env: BoundEnv): Promise<void> {
+export async function handleHostedEmail(message: ForwardableEmailMessage, env: BoundEnv, ctx?: ExecutionContext): Promise<void> {
   const started = Date.now();
   const seen: Seen = { kind: 'other', ws: null, dom: null, tier: null, reporter: null, dkim_org: null, from_org: null, email_matched: null, dedup: null, records: null };
   const line = (v: Verdict) => logIntake({ ...seen, ...v, size: message.rawSize ?? 0, ms: Date.now() - started });
   try {
-    line(await intake(message, env, seen));
+    line(await intake(message, env, seen, ctx));
   } catch (e) {
     if (e instanceof StorageFailure) Object.assign(seen, { records: e.known.records ?? null, reporter: e.known.reporter ?? null, tier: e.known.tier ?? null, dkim_org: e.known.dkimOrg ?? null, from_org: e.known.fromOrg ?? null });
     line({ outcome: 'deferred', reason: e instanceof StorageFailure ? 'storage_failed' : (e as { reason?: ReasonCode }).reason ?? 'internal_error' });
@@ -86,7 +86,7 @@ export async function handleHostedEmail(message: ForwardableEmailMessage, env: B
   }
 }
 
-async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: Seen): Promise<Verdict> {
+async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: Seen, ctx?: ExecutionContext): Promise<Verdict> {
   const cfg = hostedConfig(env);
   if (!hostedEnabled(env)) {
     // A deployment problem, not the sender's: fail the delivery so it is retried once fixed.
@@ -236,10 +236,9 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
           : quota.uncountedInstanceRecords + n > limits.uncountedInstanceRecords ? 'cap_uncounted_instance_storage' : null),
     });
     Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
-    if (result.outcome === 'accepted' || result.outcome === 'duplicate') track(tenant, { event: 'report.received', failure_count: result.failure_count });
+    if (result.outcome === 'accepted' && result.reason === 'ok') reportStored(tenant, ctx, tgt.domain_id); // docs/analytics.md
   } else {
     result = await handleTlsRptReport(body, tenant, { hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
-    if (result.outcome === 'accepted') track(tenant, { event: 'tls-rpt.received', failure_count: result.failure_count });
   }
   // Refused after the address was known (a cap on stored records, a report too big): tell the owner.
   if (result.outcome === 'refused' && OWNER_VISIBLE.has(result.reason) && !result.reason.startsWith('storage_failed')) {

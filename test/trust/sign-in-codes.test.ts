@@ -10,7 +10,6 @@ import { codeEmailText, SIGNUP_NOTICE_SUBJECT } from '../../src/auth/mail';
 import { mailFooter } from '../../src/auth/legal';
 import { SIGNIN_FAILURE_LIMIT } from '../../src/auth/welcome';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 const json = async (r: Response) => await r.json() as any;
 beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
 afterEach(() => { vi.restoreAllMocks(); });

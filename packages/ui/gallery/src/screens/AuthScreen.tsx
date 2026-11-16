@@ -1,4 +1,4 @@
-import { Alert, AuthLayout, Button, Checkbox, Field, FieldError, Input, Label } from "@ready-set-mail/ui";
+import { Alert, AuthLayout, Button, Field, FieldError, Input } from "@ready-set-mail/ui";
 import { useState, type FormEvent } from "react";
 import { SAMPLE_EMAIL } from "../sample";
 
@@ -7,7 +7,6 @@ export function AuthScreen({ mode }: { mode: "signin" | "setup" }) {
 	const registering = mode === "setup";
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
-	const [telemetry, setTelemetry] = useState(false);
 	const submit = (e: FormEvent) => {
 		e.preventDefault();
 		setError("");
@@ -38,15 +37,6 @@ export function AuthScreen({ mode }: { mode: "signin" | "setup" }) {
 					<Field id="confirm" label="Confirm password">
 						<Input id="confirm" type="password" required autoComplete="new-password" />
 					</Field>
-				) : null}
-				{registering ? (
-					<div className="flex items-start gap-3">
-						<Checkbox id="telemetry" checked={telemetry} onCheckedChange={(v) => setTelemetry(v === true)} className="mt-0.5" />
-						<Label htmlFor="telemetry" className="font-normal leading-snug">
-							<strong className="font-semibold">Share anonymous usage stats.</strong>{" "}
-							<span className="text-ink-2">Feature usage counts only: no personal data, email addresses or domain names. You can change this later.</span>
-						</Label>
-					</div>
 				) : null}
 				{error ? <FieldError>{error}</FieldError> : null}
 				<Button type="submit" className="w-full" loading={busy}>

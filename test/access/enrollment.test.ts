@@ -5,7 +5,6 @@ import { TenantContext } from '../../src/tenancy/context';
 import { resolveAccessSubject, authorizeResource } from '../../src/access/resolve';
 import { commitVerifiedDomain, enrollDomain, assertAgentEnrollmentSafe } from '../../src/domains/service';
 import type { BoundEnv } from '../../src/index';
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 async function fixture() {
  const db = createMigratedD1(), q = forWorkspace(db, 'ws_default');

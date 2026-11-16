@@ -6,7 +6,6 @@ import { resetSchemaReadyCache } from '@ready-set-mail/db';
 import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
 import { quiet } from '../hosted/world';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const NOW = Math.floor(Date.now() / 1000);
 const RUA = 'rua.readysetmail.com';

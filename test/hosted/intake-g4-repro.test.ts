@@ -11,7 +11,6 @@ import { resetSchemaReadyCache } from '@ready-set-mail/db';
 
 vi.setConfig({ testTimeout: 60_000 });
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import worker from '../../src/index';
 import { StorageFailure } from '../../src/email/dmarc-report';

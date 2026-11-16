@@ -15,6 +15,7 @@
 // caller's workspace only: another workspace's connection or domain id is a 404.
 
 import type { TenantContext } from '../tenancy/context';
+import { cloudflareConnectReturned, cloudflareConnectStarted, cloudflareTokenConnected, domainAdded } from '../product-analytics/steps';
 import {
   CfAuthError,
   CfConnectionError,
@@ -123,6 +124,7 @@ export async function handleConnectionRoutes(
 
       const res = json({ authorize_url: authorizeUrl, expires_in: 600 });
       res.headers.append('Set-Cookie', cookie(nonce, 600, url.protocol === 'https:'));
+      cloudflareConnectStarted(tenant, ctx);
       return res;
     }
 
@@ -189,6 +191,7 @@ export async function handleConnectionRoutes(
       const created = await svc.addToken({ token: body.token.trim(), label: typeof body.label === 'string' ? body.label : undefined, createdBy: caller.user?.id });
       audit('cf_connection.create', { id: created.id, name: created.label }, { after: { auth_type: 'token', cf_account_id: created.cf_account_id } });
       tenant.setHasConnections(true);
+      cloudflareTokenConnected(tenant, ctx, created); // docs/analytics.md: the token way's start and return
       return json({ connection: created }, 201);
     }
 
@@ -251,6 +254,7 @@ export async function handleConnectionRoutes(
         try {
           const result = await importZones(tenant, id, { zoneIds: body.zone_ids as string[] | undefined }, { id: caller.user?.id, email: caller.user?.email }, ctx);
           tenant.invalidate();
+          domainAdded(tenant, ctx, { source: 'cloudflare_import', added: result.imported.length, needsProof: false });
           return json(result);
         } catch (e) {
           if (e instanceof DomainServiceError) return json(e.body ?? { error: e.message }, e.status);
@@ -271,7 +275,7 @@ export async function handleConnectionRoutes(
 async function oauthCallback(
   request: Request,
   tenant: TenantContext,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   caller: ConnectionCaller,
   nowSeconds: number,
   audit: (action: string, resource: { id: string; name?: string }, extra?: { before?: unknown; after?: unknown }) => void,
@@ -309,7 +313,10 @@ async function oauthCallback(
   const back = (params: Record<string, string>) => clearCookie(redirectBack(request, verified.returnTo, params), request);
 
   const denied = url.searchParams.get('error');
-  if (denied) return back({ cf_error: sanitizeCode(denied) });
+  if (denied) {
+    cloudflareConnectReturned(tenant, ctx, 'oauth', 'denied');
+    return back({ cf_error: sanitizeCode(denied) });
+  }
   const code = url.searchParams.get('code');
   if (!code) return back({ cf_error: 'invalid_request' });
 
@@ -325,8 +332,10 @@ async function oauthCallback(
     audit(verified.connectionId ? 'cf_connection.reconnect' : 'cf_connection.create', { id: connection.id, name: connection.label }, { after: { auth_type: 'oauth', cf_account_id: connection.cf_account_id, scopes: connection.scopes } });
     tenant.setHasConnections(true);
     tenant.invalidate();
+    cloudflareConnectReturned(tenant, ctx, 'oauth', 'connected', connection);
     return back({ cf_connection: connection.id });
   } catch (e) {
+    cloudflareConnectReturned(tenant, ctx, 'oauth', 'failed');
     if (e instanceof OAuthError) return back({ cf_error: sanitizeCode(e.code ?? 'token_exchange_failed') });
     if (e instanceof ConnectionInputError) return back({ cf_error: sanitizeCode(e.code ?? 'invalid_request') });
     if (e instanceof CfConnectionError) return back({ cf_error: 'connection_not_found' });

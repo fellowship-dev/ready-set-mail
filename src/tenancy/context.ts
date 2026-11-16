@@ -85,7 +85,6 @@ export class TenantContext {
   /** domain name -> linked connection id (null: unlinked), read once per context. */
   #links?: Promise<Map<string, string | null>>;
   #hasConnections = false;
-  #telemetry?: Promise<boolean>;
 
   constructor(init: TenantInit) {
     this.access = init.access;
@@ -214,12 +213,6 @@ export class TenantContext {
     }
   }
 
-  /** Whether this tenant opted in to anonymous telemetry. Read once per context. */
-  telemetryEnabled(): Promise<boolean> {
-    this.#telemetry ??= this.scope.settings.get('telemetry_opted_in').then(r => r?.value === 'true');
-    return this.#telemetry;
-  }
-
   // env holds secrets (CLOUDFLARE_API_TOKEN, API_KEY): never let a log line or JSON.stringify reach it.
   toJSON(): { redacted: true; workspaceId: string } { return { redacted: true, workspaceId: this.workspaceId }; }
   [Symbol.for('nodejs.util.inspect.custom')](): string { return `TenantContext { workspaceId: '${this.workspaceId}', mode: '${this.mode}' }`; }
@@ -229,7 +222,6 @@ export class TenantContext {
     this.#cf = undefined;
     this.#links = undefined;
     this.#connections?.invalidate();
-    this.#telemetry = undefined;
   }
 }
 

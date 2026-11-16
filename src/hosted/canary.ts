@@ -9,7 +9,6 @@
 import type { BoundEnv } from '../index';
 import { globalQueries } from '@ready-set-mail/db';
 import { TenantContext } from '../tenancy/context';
-import { track } from '../telemetry';
 import { hostedConfig } from './config';
 import { extractAuthResults } from '../email/parse-headers';
 import { organizationalDomain } from '@ready-set-mail/dns-checks';
@@ -83,6 +82,5 @@ export async function handleCanaryEmail(message: ForwardableEmailMessage, env: B
   });
   // Loaded on demand: free-check imports cloudflare:email, which only exists inside the Workers runtime.
   const { handleFreeCheck } = await import('../email/free-check');
-  const { result } = await handleFreeCheck(message, tenant, rcpt.tag);
-  track(tenant, { event: 'check.received', result });
+  await handleFreeCheck(message, tenant, rcpt.tag);
 }

@@ -10,6 +10,7 @@ import type { AccessSubject } from '../access/principal';
 import { isSaas } from '../auth/config';
 import { mcpInstallation } from './discovery';
 import { cleanName } from '../auth/names';
+import { agentAuthorized } from '../product-analytics/steps';
 
 const prefix = 'mcp_connection:';
 export interface AgentConnection { principalId: string; userId: string; workspaceId: string; clientId: string; name: string; createdAt: number; expiresAt: number; lastUsedAt?: number }
@@ -130,6 +131,7 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
     const record: AgentConnection = { principalId, userId: user.id, workspaceId, clientId: approved.request.clientId, name: `Agent ${approved.request.clientId}`.slice(0, 80), createdAt: now, expiresAt };
     await forWorkspace(env.DB, workspaceId).settings.set(`${prefix}${principalId}`, JSON.stringify(record));
     const completed = await api.completeAuthorization({ request: approved.request, userId: user.id, scope: ['ready-set-mail'], props: { principalId, ...local }, metadata: { principalId }, revokeExistingGrants: false });
+    agentAuthorized(env, ctx, workspaceId, { actions: actions.length, domains: selections.length, days });
     const headers = new Headers(approved.headers); headers.set('Location', completed.redirectTo); headers.set('Cache-Control', 'no-store');
     return new Response(null, { status: 302, headers });
    } catch (error) {
