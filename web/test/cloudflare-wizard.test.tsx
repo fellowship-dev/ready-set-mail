@@ -255,7 +255,8 @@ describe('Cloudflare wizard: resume', () => {
 	it('persists progress as it moves', async () => {
 		render({ 'GET /api/cloudflare/connections': offer({ connections: [conn()] }), 'GET /api/cloudflare/connections/c1/zones': { zones: [] } });
 		await screen.findByRole('heading', { name: 'Choose zones' });
-		expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'zones', connectionId: 'c1' });
+		// Saved by an effect after the step shows.
+		await waitFor(() => expect(JSON.parse(sessionStorage.getItem(KEY)!)).toMatchObject({ step: 'zones', connectionId: 'c1' }));
 	});
 
 	it('hosted: no step counter of its own', async () => {
