@@ -197,7 +197,10 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			>
 				<div className="space-y-3">
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
-					{!upToDate ? (
+					{!upToDate && cfAvailable && intakeOn && ruaReady ? (
+						// Hosted with report intake, connected: our address is written only by Connect reports (ADR 0020), which reads the record as it is now.
+						<p className="text-ink-2">The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.</p>
+					) : !upToDate ? (
 						<>
 							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
 							{cfAvailable ? (
