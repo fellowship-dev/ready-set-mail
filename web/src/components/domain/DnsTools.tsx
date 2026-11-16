@@ -169,11 +169,15 @@ function Slot<T>({ q, title, show, render }: { q: UseQueryResult<T>; title: stri
 }
 
 /** SPF flattening (only where it can work) and MTA-STS (always, with its real state, so "not available" says why). */
+/** The tools the section lists, named for what is there: SPF flattening only where it is offered or set up, MTA-STS always (its card says its own state). */
+const dnsToolsSummary = (spfListed: boolean) => (spfListed ? 'Optional tools for your DNS: SPF flattening and MTA-STS.' : 'Optional tool for your DNS: MTA-STS.');
+const spfListed = (q: UseQueryResult<SpfFlatStatus>) => q.isSuccess && (q.data.available || !!q.data.config);
+
 export function DnsTools({ domainId }: { domainId: number }) {
 	const spf = useSpfFlatten(domainId);
 	const mta = useMtaSts(domainId);
 	return (
-		<Section title="DNS tools" description="Optional tools that change your DNS for you.">
+		<Section title="DNS tools" description={dnsToolsSummary(spfListed(spf))}>
 			<div className="grid gap-3 md:grid-cols-2">
 				<Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />
 				<Slot q={mta} title="MTA-STS" show={() => true} render={(d) => <MtaStsCard id={domainId} s={d} />} />

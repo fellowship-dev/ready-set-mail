@@ -76,8 +76,8 @@ describe('MTA-STS page: before it is on', () => {
 		expect(await screen.findByText(/asks other mail servers to use an encrypted connection \(TLS: the lock that keeps mail private on its way\) when they deliver mail to example\.com, and to send you a report on how it went/i)).toBeInTheDocument();
 		expect(screen.getByRole('list', { name: 'MX hosts' })).toHaveTextContent('mx.example.com');
 		expect(screen.getByText(/MX hosts are the servers that receive your mail/)).toBeInTheDocument();
-		expect(screen.getByText(/Turning it on writes three DNS records in your Cloudflare zone for example\.com \(they are listed below\)/)).toBeInTheDocument();
-		expect(screen.getByText(/These are the records it writes in your Cloudflare zone for example\.com/)).toBeInTheDocument();
+		expect(screen.getAllByText(/in your Cloudflare zone/)).toHaveLength(1); // said once
+		expect(screen.getByText(/Turning it on writes these three records in your Cloudflare zone for example\.com\./)).toBeInTheDocument();
 		expect(screen.getByText(/A CNAME record points one name at another; a TXT record holds a line of text/)).toBeInTheDocument();
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getByText(`mta-sts.${DOMAIN}`)).toBeInTheDocument();
@@ -100,7 +100,7 @@ describe('MTA-STS page: before it is on', () => {
 
 	it('by hand: the records are for you to add after turning it on, each copyable', async () => {
 		page(base({ via: 'manual' }));
-		expect(await screen.findByText(/After you turn it on, you add three DNS records at your DNS host for example\.com/)).toBeInTheDocument();
+		expect(await screen.findByText(/After you turn it on, add these three records at your DNS host for example\.com/)).toBeInTheDocument();
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getAllByRole('button', { name: /^Copy/ }).length).toBeGreaterThanOrEqual(6);
 	});
@@ -295,6 +295,12 @@ describe('the DNS tools card', () => {
 		expect(within(c).getByText(word)).toBeInTheDocument();
 		expect(within(c).getByRole('link', { name: link })).toHaveAttribute('href', '/domains/1/mta-sts');
 		expect(within(c).queryByRole('button')).not.toBeInTheDocument(); // everything happens on the page
+	});
+
+	it('names only the tools it lists: MTA-STS alone where SPF flattening is not offered', async () => {
+		await card(base());
+		expect(screen.getByText('Optional tool for your DNS: MTA-STS.')).toBeInTheDocument();
+		expect(screen.queryByText(/SPF flattening/)).not.toBeInTheDocument();
 	});
 
 	it('cardState is a pure reading of the server\'s state: a setup in progress is never "Testing"', () => {

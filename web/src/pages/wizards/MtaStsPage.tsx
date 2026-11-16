@@ -184,7 +184,7 @@ export function MtaStsPage() {
 					<Section title="Details">
 						<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)]">
 							<dt className="font-medium text-ink-2">Mode</dt>
-							<dd>{c.mode === 'enforce' ? 'Enforce: senders must use TLS or not deliver.' : 'Testing: senders deliver as before and report problems.'}</dd>
+							<dd>{c.mode === 'enforce' ? 'Enforce' : 'Testing'}</dd>
 							<dt className="font-medium text-ink-2">MX hosts</dt>
 							<dd>
 								<MxList hosts={c.mx_host_list} />
@@ -341,7 +341,7 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 			{mx.status === 'ok' ? (
 				<>
 					<p className="text-sm text-ink-2">
-						{manual ? `After you turn it on, you add three DNS records at your DNS host${where}` : `Turning it on writes three DNS records in your Cloudflare zone${where}`} (they are listed below). It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected.
+						It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected.
 					</p>
 					{error ? <Alert variant="danger" title="Could not turn it on">{error}</Alert> : null}
 					<div>
@@ -355,7 +355,7 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 			<div className="space-y-2">
 				<h3 className="text-sm font-semibold text-ink-1">The records</h3>
 				<p className="text-sm text-ink-2">
-					{manual ? `Add these records at your DNS host${where} after you turn it on.` : `These are the records it writes in your Cloudflare zone${where}.`} {RECORD_READING}
+					{manual ? `After you turn it on, add these three records at your DNS host${where}.` : `Turning it on writes these three records in your Cloudflare zone${where}.`} {RECORD_READING}
 				</p>
 				<RecordList records={s.records} copyable={manual} label="Records" />
 			</div>

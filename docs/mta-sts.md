@@ -8,7 +8,7 @@ Email between mail servers is encrypted only if both sides agree to it, and a pe
 
 ## What you get
 
-One page per domain, `/#/domains/:id/mta-sts`, opened from the MTA-STS card under "DNS tools" on the domain page. The card says the real state in a word: **Off**, **Setting up**, **Testing**, **Enforced**, or **Not available** with a short reason.
+One page per domain, `/#/domains/:id/mta-sts`, opened from the MTA-STS card under "DNS tools" on the domain page. That section stays hidden when neither tool is available nor set up (a hosted service without policy hosting configured shows no MTA-STS card at all), and its one-line summary names only the tools listed. The card says the real state in a word: **Off**, **Setting up**, **Testing**, **Enforced**, or **Not available** with a short reason.
 
 - **Before it is on:** one sentence of what it is, the MX hosts found now, the exact records (names and values) that turning it on writes, and one action, **Turn on in testing mode**. If there are no MX records, or the lookup failed, the page says which (they are not the same) and offers no action. If it cannot be turned on, the page says why in one sentence and offers no button.
 - **While it sets up:** the setup checks in words (In place, Waiting, Not found yet, Wrong, Couldn't check), the records still to add by hand, and **Check now**. The page also looks again by itself every 30 seconds for half an hour.
