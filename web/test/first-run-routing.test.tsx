@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from '../src/app';
 import { createQueryClient } from '../src/lib/query';
-import { markReviewDone } from '../src/lib/first-run';
+import { markReviewDone, rememberFocusDomain } from '../src/lib/first-run';
 import { fail, me, mockApi, STATUS } from './render';
 
 beforeEach(() => {
@@ -61,6 +61,7 @@ describe('the screen a returning person lands on', () => {
 	});
 
 	it('Cloudflare is connected and the domain\'s DMARC record does not name our address yet: C2, once', async () => {
+		rememberFocusDomain('ws_default', 'brightwave-mail.com');
 		boot('/', {
 			...signedIn,
 			'GET /api/domains': { domains: [row()] },
@@ -69,6 +70,22 @@ describe('the screen a returning person lands on', () => {
 		});
 		expect(await screen.findByTestId('review')).toBeInTheDocument();
 		expect(sessionStorage.getItem('rsm_review_redirected:ws_default')).toBe('1');
+	});
+
+	it('another browser (it did not set the domain up, so it does not know which imported domain was the first): the dashboard, not a review of a guess', async () => {
+		boot('/', {
+			...signedIn,
+			'GET /api/domains': { domains: [row({ id: 6, domain: 'quietfield.net' }), row()] },
+			'GET /api/cloudflare/connections': conns([active]),
+			'GET /api/domains/7/check-summary': summary({ dmarc_rua: 0 }),
+			'GET /api/domains/6/check-summary': summary({ domain_id: 6, domain: 'quietfield.net', dmarc_rua: 0 }),
+			'GET /api/domains/summaries': { summaries: [summary({ dmarc_rua: 0 })], next_after: null, window_days: 30 },
+			'GET /api/domains/7/stats': { domain: 'x', days: 30, stats: [] },
+			'GET /api/domains/6/stats': { domain: 'x', days: 30, stats: [] },
+		});
+		expect(await screen.findByRole('heading', { name: 'Domains' })).toBeInTheDocument();
+		expect(screen.queryByTestId('review')).toBeNull();
+		expect(sessionStorage.getItem('rsm_review_redirected:ws_default')).toBeNull();
 	});
 
 	it('the same state after the review was applied or skipped: the dashboard with the first-day card, not the review again', async () => {

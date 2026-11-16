@@ -9,7 +9,7 @@ import { PageSkeleton } from './components/states';
 import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
 import { setupSeenKey } from './lib/workspace';
-import { focusDomainOf, REVIEW_PATH, reviewDone } from './lib/first-run';
+import { readFocusDomain, REVIEW_PATH, reviewDone } from './lib/first-run';
 import { useCfConnections } from './lib/cloudflare';
 import { useCheckSummary } from './lib/domain-queries';
 import { useDomains } from './lib/queries';
@@ -74,7 +74,9 @@ function SetupRedirect({ children }: { children: ReactNode }) {
 /**
  * Hosted, someone who can write, opening the dashboard with Cloudflare connected and the first domain's DMARC record not yet
  * naming our report address: the review (C2) is where they left off. Once per tab, and never after the review was applied or
- * skipped. Everything it reads is already cached by the dashboard, or one cheap request.
+ * skipped. Only in the browser that set the domain up (it remembers which one): another browser or device does not know which of
+ * the imported domains was "the first", so it is not sent to a review of a guess. Everything it reads is already cached by the
+ * dashboard, or one cheap request.
  */
 function ReviewRedirect({ children }: { children: ReactNode }) {
 	const { status, canWrite, me } = useSession();
@@ -82,10 +84,11 @@ function ReviewRedirect({ children }: { children: ReactNode }) {
 	const hosted = status?.mode === 'saas';
 	const workspace = me?.workspace_id ?? '';
 	const flag = `rsm_review_redirected:${workspace}`;
-	const eligible = hosted && canWrite && pathname === '/' && !!workspace && !reviewDone(workspace) && !sessionStorage.getItem(flag);
+	const remembered = readFocusDomain(workspace || null);
+	const eligible = hosted && canWrite && pathname === '/' && !!workspace && !!remembered && !reviewDone(workspace) && !sessionStorage.getItem(flag);
 	const domains = useDomains();
 	const conns = useCfConnections(eligible);
-	const first = focusDomainOf(domains.data ?? [], workspace || null);
+	const first = (domains.data ?? []).find((d) => d.domain === remembered);
 	const summary = useCheckSummary(first?.id ?? 0, eligible && !!first);
 	const connected = !!conns.data?.connections.some((c) => c.status === 'active' && !c.implicit);
 	// Only when the read says so: a summary that has not arrived, or a record that already names our address, leaves the dashboard alone.
