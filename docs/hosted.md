@@ -373,6 +373,8 @@ visit to the dashboard returns to C2 once per tab while Cloudflare is connected,
 name our address, until C2 was applied or skipped. Only in the browser that set the domain up (it remembers which domain S4 was given): another browser
 or device does not know which imported domain was "the first", so it opens the dashboard, whose card links to the review.
 
+**The domain the first run is about** is the one S4 was given, held on the server (workspace setting `first_run_domain`, written by `POST /api/domains` for a workspace's first domain or claim, hosted only, and returned by `GET /api/domains`). Every browser names the same domain on C2 and the first-day card, even after Cloudflare imported other zones first; this browser's memory is only a fallback. The first-day card is for the setup just finished: a domain older than 14 days (`FIRST_RUN_WINDOW_DAYS`) keeps the overview it had before, with no card. S2's answers are kept in `sessionStorage` (never the password) across "Start over" and cleared once the account exists.
+
 **D1** replaces "Get to your first answer": one card for that domain, from what the server knows (proof, `report_connect`, the stored `dmarc_rua`, the
 report totals, the domain's age): waiting for proof; waiting for the report address in DMARC (with "Review the change" when Cloudflare is connected);
 "Your first reports are on their way" (records live, no report yet); "No reports yet" after 3 days; reports that cannot reach this workspace (no promise of
