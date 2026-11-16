@@ -7,7 +7,8 @@
 //    keeps as an include still spends the receiver's limits, so there the flattened record may give the same limit error the original gives, but never another result;
 //  - the original errors for any other reason (a syntax permerror, a temperror, an include of a name with no record): the flattened record must never be
 //    `pass`, and the engine must have refused (an `ok` result for a record that errors for a reason that is not a limit is a failure).
-// No sender is skipped silently: each is counted (`origErrLimit`, `origErrOther`).
+// No sender is skipped silently: each is counted (`origErrLimit`, `origErrOther`: the errors of a record the engine accepted, which is the failure when it is not 0 for `other`;
+// `refusedOrigErrLimit`, `refusedOrigErrOther`, `refusedOrigLoop`: what the engine refused, by the kind of error the original gives one sender, so the counts show the rules are reached).
 import { flattenFromSource, type SpfFlatOptions } from '../src/spf-flatten';
 import { SpfEval, staticLookups } from './spf-eval';
 import { gen, resolverOf } from './spf-gen';
@@ -46,7 +47,7 @@ export async function runProperty(run: PropertyRun): Promise<PropertySummary> {
   const seedStart = run.seedStart ?? 1;
   const SENDERS = run.senders ?? 60;
   const maxFailures = run.maxFailures ?? 200;
-  const stats: Record<string, number> = { cases: 0, ok: 0, refused: 0, evals: 0, overLimit: 0, overBytes: 0, overVoid: 0, origErrLimit: 0, origErrOther: 0, origErrStillLimited: 0, errorPasses: 0, errorNotRefused: 0, wider: 0, narrower: 0, other: 0 };
+  const stats: Record<string, number> = { cases: 0, ok: 0, refused: 0, evals: 0, overLimit: 0, overBytes: 0, overVoid: 0, origErrLimit: 0, origErrOther: 0, origErrStillLimited: 0, refusedOrigErrLimit: 0, refusedOrigErrOther: 0, refusedOrigLoop: 0, errorPasses: 0, errorNotRefused: 0, wider: 0, narrower: 0, other: 0 };
   const refusedKinds: Record<string, number> = {};
   const failureKinds: Record<string, number> = {};
   const failures: unknown[] = [];
@@ -63,7 +64,21 @@ export async function runProperty(run: PropertyRun): Promise<PropertySummary> {
       stats.cases!++;
       w.txt.delete(HOSTED_NAME);
       const res = await flattenFromSource('customer.test', root, resolverOf(w), opts);
-      if (!res.ok) { stats.refused!++; const k = res.problems[0]!.kind; refusedKinds[k] = (refusedKinds[k] ?? 0) + 1; continue; }
+      if (!res.ok) {
+        stats.refused!++; const k = res.problems[0]!.kind; refusedKinds[k] = (refusedKinds[k] ?? 0) + 1;
+        // What the engine refused, by what the original does for one sender: the proof that the "any other error" rule is reached, not only passed over.
+        try {
+          const probe = new SpfEval(w, '10.0.0.1', false).check('customer.test');
+          if (probe === 'permerror' || probe === 'temperror') {
+            const free = new SpfEval(w, '10.0.0.1', false, 'sender.test', false).check('customer.test');
+            stats[free === 'permerror' || free === 'temperror' ? 'refusedOrigErrOther' : 'refusedOrigErrLimit']!++;
+          }
+        } catch (e) {
+          if (!(e instanceof RangeError)) throw e;
+          stats.refusedOrigLoop!++; // an include that leads back to itself: with the limits off the evaluator never ends; a receiver stops it at the lookup limit
+        }
+        continue;
+      }
       stats.ok!++;
       const hostedRecord = res.flat.record;
       // In `include` mode what a receiver evaluates is the customer's pointer record, with the hosted record published at its own name.

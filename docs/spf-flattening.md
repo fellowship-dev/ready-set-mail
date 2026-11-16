@@ -67,7 +67,7 @@ Flattening moves terms out of the records they were read from and into the custo
 
 - the original gives a result: the flattened record gives the same, never wider (`wider` = a `pass` the original did not give);
 - the original errors because of a processing limit (it errors with the limits on and not with both off): the flattened record means the same without the limits (and spends no more void lookups than the original), and gives the result the original gives without them; an include the engine keeps as an include still spends the receiver's limits, so there it may give the same limit error the original gives, never another result (`origErrLimit`, `origErrStillLimited`);
-- the original errors for any other reason (a syntax permerror, a temperror, an include of a name with no record): the flattened record is never `pass` and the engine must have refused (`origErrOther`, `errorPasses`, `errorNotRefused`);
+- the original errors for any other reason (a syntax permerror, a temperror, an include of a name with no record): the flattened record is never `pass` and the engine must have refused. `origErrOther` counts the senders for which an accepted record's original errors for such a reason (the failure `errorNotRefused` when not 0), `errorPasses` a `pass` there; `refusedOrigErrOther`, `refusedOrigErrLimit` and `refusedOrigLoop` count what the engine refused by the kind of error the original gives one sender (so the rule is reached: in the 50,000-tree run on this branch, see the pull request, the refusals include trees whose original errors for a reason that is not a limit);
 - an `ok` result stays within 10 lookups and 450 bytes (bounded modes); no sender is skipped without being counted.
 
 ## A removal waits
