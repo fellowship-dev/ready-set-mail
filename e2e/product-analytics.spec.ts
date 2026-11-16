@@ -75,7 +75,7 @@ const call = (page: Page, method: string, path: string, body?: unknown, headers:
 
 const FORBIDDEN: RegExp[] = [/[^\s@"]+@[^\s@"]+/, /[a-z0-9-]+\.[a-z]{2,}/i, /\b\d{1,3}(?:\.\d{1,3}){3}\b/, /v=spf1/i, /v=DMARC1/i, /readysetmail-verify=|_readysetmail/i, /\b(?:cus|in|pi|ch|pm|seti|cs|evt)_[A-Za-z0-9]{6,}/, /\b(?:ws|ord)_[0-9a-f]{8,}/, /\b[0-9a-f]{32,}\b/i];
 
-test('hosted with PostHog configured: the walk from sign-up to a delivered order sends the funnel, under the visitor id, and nothing forbidden', async ({ page }) => {
+test('hosted with PostHog configured: the walk from sign-up to a delivered order sends the funnel, under the workspace's minted id, and nothing forbidden', async ({ page }) => {
 	const ph = await fakePostHog();
 	const stripe = await startFakeStripe({ port: 0, webhookUrl: `http://127.0.0.1:${PORT}/api/stripe/webhook`, webhookSecret: WHSEC });
 	const intake = 'rua.intake.example.net';
