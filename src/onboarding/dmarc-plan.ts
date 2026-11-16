@@ -7,6 +7,7 @@
 //    domain, pct and alignment included; p=none when nothing applies): never weaker, never stricter;
 //  - several records, an invalid p= or a failed lookup mean no write at all.
 
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 import { isDmarcRecord, parseDmarcRecord, parseDmarcTags, recordHasAddress, ruaEntries, withReportAddress } from '@ready-set-mail/dns-checks';
 
 /** What the public DNS says applies to a name that has no DMARC record of its own. */
@@ -31,9 +32,6 @@ export type DmarcDecision =
   | { action: 'update'; before: string; record: string; reason: string }
   | { action: 'create'; record: string; reason: string }
   | { action: 'skip'; reason: string };
-
-/** Cloudflare returns TXT content quoted in some responses. */
-export const unquote = (s: string): string => s.trim().replace(/^"([\s\S]*)"$/, '$1');
 
 const isPolicy = (v: string | undefined): v is 'none' | 'quarantine' | 'reject' => v === 'none' || v === 'quarantine' || v === 'reject';
 const mode = (v: string | undefined): 's' | 'r' | null => (v?.toLowerCase() === 's' ? 's' : v?.toLowerCase() === 'r' ? 'r' : null);
@@ -68,7 +66,7 @@ export function equivalentRecord(inherited: InheritedRead, rua: string | null): 
 
 export function planDmarc(input: DmarcPlanInput): DmarcDecision {
   const rua = input.rua?.trim() || null;
-  const own = input.ownRecords.map(unquote).filter(isDmarcRecord);
+  const own = input.ownRecords.map(decodeTxtData).filter(isDmarcRecord);
   if (own.length > 1) return { action: 'skip', reason: 'There is more than one DMARC record. Receivers ignore all of them until only one is left.' };
   if (own.length === 1) {
     const record = own[0].trim();

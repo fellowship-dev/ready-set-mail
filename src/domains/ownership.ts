@@ -21,6 +21,7 @@ import { removeAuthRecord, removeHostedRecords } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
@@ -220,7 +221,7 @@ export async function provenByTxt(claim: DomainClaimRow, resolver: Resolver): Pr
   const res = await resolver.txt(claimTxtName(claim.domain));
   if (res.status === 'error') return { ok: false, reason: `DNS lookup failed (${res.error ?? 'error'}) — try again in a minute`, code: 'lookup_failed' };
   const want = CLAIM_TXT_PREFIX + claim.token;
-  const holds = (records: string[], value: string) => records.some(r => r.trim().replace(/^"|"$/g, '').trim() === value);
+  const holds = (records: string[], value: string) => records.some(r => decodeTxtData(r).trim() === value);
   if (holds(res.records, want)) return { ok: true };
   // A claim made before the rename may already be published under the old record name: accept it too.
   const legacy = await resolver.txt(`${LEGACY_CLAIM_TXT_LABEL}.${claim.domain}`);

@@ -1,4 +1,5 @@
 import { Button } from '@ready-set-mail/ui';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 import { useQuery } from '@tanstack/react-query';
 import { Check, Clock } from 'lucide-react';
 import { fetchDnsState } from '../../lib/cloudflare';
@@ -6,8 +7,7 @@ import { fetchDnsState } from '../../lib/cloudflare';
 /** Two DMARC records are the same when every tag matches, names and values compared without letter case or spaces (rua= as a set). */
 export function sameRecord(a: string | null | undefined, b: string | null | undefined): boolean {
 	const norm = (r: string | null | undefined) =>
-		(r ?? '')
-			.replace(/^"|"$/g, '')
+		decodeTxtData(r ?? '')
 			.split(';')
 			.map((t) => t.trim())
 			.filter(Boolean)

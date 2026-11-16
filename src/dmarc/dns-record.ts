@@ -4,6 +4,7 @@
 // Never the report authorization record `<domain>._report._dmarc.<reports domain>` (src/dns/provision.ts), whose id is
 // stored in domains.dns_record_id: that record lives under the reports domain and must keep its `v=DMARC1;` content.
 
+import { decodeTxtData, encodeTxtData, TXT_STRING_MAX_BYTES } from '@ready-set-mail/dns-checks/txt';
 import { readDmarcTag } from '@ready-set-mail/dns-checks/dmarc-tags';
 import { isReportAddress } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import type { CfClient, CfDnsRecord } from '../tenancy/cf-client';
@@ -30,31 +31,14 @@ const TAG_VALUE: Readonly<Record<string, RegExp>> = {
   ri: /^[0-9]{1,10}$/,
 };
 
-/** One TXT character-string holds at most 255 characters; Cloudflare shows a longer record as several quoted strings. */
-const TXT_STRING_MAX = 255;
-const QUOTED_STRINGS = /^"(?:[^"\\]|\\.)*"(?:\s+"(?:[^"\\]|\\.)*")*$/;
-
-/**
- * The record text of TXT content as Cloudflare returns it: one string with or without its quotes, or several quoted
- * strings, which RFC 7489 §6.4 (via RFC 7208 §3.3) concatenates without spaces.
- */
-export function bareTxt(content: string): string {
-  const c = content.trim();
-  if (QUOTED_STRINGS.test(c)) return [...c.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\(.)/g, '$1')).join('');
-  return c.replace(/^"|"$/g, '');
-}
-
-/** TXT content for a record: as is up to 255 characters, else quoted 255-character strings (no quotes or backslashes inside: see dmarcRecordProblem). */
+/** TXT content for a record: as is when it is one character-string (Cloudflare adds the quotes), else quoted strings of at most 255 bytes (encodeTxtData). */
 export function txtContent(record: string): string {
-  if (record.length <= TXT_STRING_MAX) return record;
-  const parts: string[] = [];
-  for (let i = 0; i < record.length; i += TXT_STRING_MAX) parts.push(`"${record.slice(i, i + TXT_STRING_MAX)}"`);
-  return parts.join(' ');
+  return new TextEncoder().encode(record).length <= TXT_STRING_MAX_BYTES ? record : encodeTxtData(record);
 }
 
 /** Is this TXT content a DMARC record (its first tag is v=DMARC1)? */
 export function isDmarcTxt(content: string): boolean {
-  return /^v\s*=\s*DMARC1\s*(;|$)/i.test(bareTxt(content));
+  return /^v\s*=\s*DMARC1\s*(;|$)/i.test(decodeTxtData(content));
 }
 
 /**
@@ -98,7 +82,7 @@ export function dmarcRecordProblem(record: string): string | null {
 export function withPolicy(current: string | null, policy: DmarcPolicy, ourRua: string | null | undefined): string {
   const ours = isReportAddress(ourRua) ? ourRua!.trim() : null;
   if (!current) return ours ? `v=DMARC1; p=${policy}; rua=mailto:${ours}` : `v=DMARC1; p=${policy}`;
-  const parts = bareTxt(current).replace(/[;\s]+$/, '').split(';');
+  const parts = decodeTxtData(current).replace(/[;\s]+$/, '').split(';');
   const lead = (s: string) => /^\s*/.exec(s)?.[0] ?? '';
   const pi = parts.findIndex((p) => readDmarcTag(p)?.key === 'p');
   if (pi >= 0) parts[pi] = `${lead(parts[pi])}p=${policy}`;
@@ -130,13 +114,13 @@ export async function findDmarcRecord(cf: CfClient, zoneId: string, name: string
   const found = (await cf.listDnsRecords(zoneId, { type: 'TXT', name }))
     .filter((r) => r.name.toLowerCase().replace(/\.$/, '') === exact && isDmarcTxt(r.content));
   if (found.length > 1) return { kind: 'many', count: found.length };
-  return found.length ? { kind: 'one', record: found[0], content: bareTxt(found[0].content) } : { kind: 'none' };
+  return found.length ? { kind: 'one', record: found[0], content: decodeTxtData(found[0].content) } : { kind: 'none' };
 }
 
 /**
  * Write `content` to `_dmarc.<domain>` in its zone: update the existing DMARC record in place, or create one. The write
  * policy is told the one name it may land on (`allowedApexes`), so nothing else in the zone can be changed. A record
- * over 255 characters is written as several quoted strings (txtContent), which bareTxt joins back on the next read.
+ * over 255 bytes is written as several quoted strings (txtContent), which decodeTxtData joins back on the next read.
  */
 export function writeDmarcRecord(cf: CfClient, zoneId: string, domain: string, existing: CfDnsRecord | null, record: string): Promise<CfDnsRecord> {
   const name = `_dmarc.${domain}`;

@@ -18,6 +18,7 @@ import { CfClient, CfNotConfiguredError, type CfDnsRecord, type CfDnsRecordInput
 import { assertHostedDnsWrite } from '../dns/write-policy';
 import { hostedApex, hostedConfig, type HostedConfig, type HostedEnv } from './config';
 import { intakeAddress } from './tokens';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 export class HostedNameError extends Error {
   constructor(message: string) {
@@ -59,7 +60,7 @@ export function buildHostedTlsRpt(token: string, intakeDomain: string): string {
 
 /** Point the rua= of an existing DMARC record at a new address, keeping every other tag. */
 export function retargetRua(record: string, newAddress: string): string {
-  const parts = record.replace(/^"|"$/g, '').split(';').map(s => s.trim()).filter(Boolean);
+  const parts = decodeTxtData(record).split(';').map(s => s.trim()).filter(Boolean);
   const out = parts.filter(p => p.split('=')[0].trim().toLowerCase() !== 'rua');
   out.push(`rua=mailto:${newAddress}`);
   return out.join('; ');

@@ -18,6 +18,7 @@
 
 import { CfRecordNotAllowedError } from '../tenancy/cf-client';
 import type { Mode } from '../tenancy/mode';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 export interface DnsWrite {
   method: string;
@@ -46,7 +47,7 @@ function refuse(w: DnsWrite, reason: string): never {
   throw new CfRecordNotAllowedError(reason, { method: w.method, type: w.type, name: w.name });
 }
 
-const bare = (s: string) => s.trim().replace(/^"|"$/g, '').trim();
+const bare = (s: string) => decodeTxtData(s).trim();
 const norm = (s: string) => s.trim().toLowerCase().replace(/\.$/, '');
 
 /** Lower-cased FQDN of `name` inside `zone`, or throws. Relative names are accepted only for self-host MX (email routing). */

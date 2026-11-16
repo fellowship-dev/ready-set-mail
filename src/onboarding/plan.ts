@@ -6,7 +6,8 @@ import type { TenantContext } from '../tenancy/context';
 import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
 import { assertDnsWriteAllowed } from '../dns/write-policy';
-import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
+import { planDmarc, type InheritedRead } from './dmarc-plan';
 import { plainCloudflareError, rulesReadFailure } from './errors';
 import { writableDomains } from './domains';
 import { listEmailRules, type EmailRule } from './rules';
@@ -116,7 +117,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: plainCloudflareError(e), link: setupLink(d.id) });
       continue;
     }
-    const hasOwn = own.some(c => /^\s*v\s*=\s*DMARC1/i.test(unquote(c)));
+    const hasOwn = own.some(c => /^\s*v\s*=\s*DMARC1/i.test(decodeTxtData(c)));
     const inherited: InheritedRead = hasOwn ? { kind: 'none' } : await inheritedFor(resolver, d.domain);
     const hostedReports = await reportAddressForWrite(tenant, d, mayConnect);
     if (hostedReports.kind === 'refused' && !reportsRefused) {
@@ -130,7 +131,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
     } else {
       const id = `dmarc:${d.id}`;
       const existing = decision.action === 'none' || decision.action === 'update'
-        ? (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName })).find(r => /^\s*v\s*=\s*DMARC1/i.test(unquote(r.content)))
+        ? (await cf.listDnsRecords(zone.id, { type: 'TXT', name: dmarcName })).find(r => /^\s*v\s*=\s*DMARC1/i.test(decodeTxtData(r.content)))
         : undefined;
       dmarcWrites.push({
         id, domain: d.domain, zone: zone.name, type: 'TXT', name: dmarcName, content: decision.record, action: decision.action,

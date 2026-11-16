@@ -11,6 +11,7 @@
 
 import type { TenantContext } from '../tenancy/context';
 import { CfError, CfNetworkError, CfNotConfiguredError, CfZoneNotFoundError, type CfClient } from '../tenancy/cf-client';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 /** Zone-scoped call; resolves to the `result` and throws a typed CfError on failure. */
 function zoneCall<T>(cf: CfClient, zoneId: string, method: string, path: string, body?: unknown): Promise<T> {
@@ -176,13 +177,10 @@ export async function ensureNullSenderRecords(
   // --- SPF on reports subdomain ---
   const spfExpected = 'v=spf1 -all';
   const spfRecords = await cf.listDnsRecords(zoneId, { type: 'TXT', name: rdomain, per_page: 50 });
-  const spfMatch = spfRecords.find(r => {
-    const clean = r.content.replace(/^"|"$/g, '');
-    return clean.startsWith('v=spf1');
-  });
+  const spfMatch = spfRecords.find(r => decodeTxtData(r.content).startsWith('v=spf1'));
 
   if (spfMatch) {
-    const clean = spfMatch.content.replace(/^"|"$/g, '');
+    const clean = decodeTxtData(spfMatch.content);
     if (clean === spfExpected) {
       actions.push(`SPF ${rdomain}: exists`);
     } else {
@@ -198,13 +196,10 @@ export async function ensureNullSenderRecords(
   const dmarcExpected = 'v=DMARC1; p=reject;';
   const dmarcName = `_dmarc.${rdomain}`;
   const dmarcRecords = await cf.listDnsRecords(zoneId, { type: 'TXT', name: dmarcName, per_page: 50 });
-  const dmarcMatch = dmarcRecords.find(r => {
-    const clean = r.content.replace(/^"|"$/g, '');
-    return clean.startsWith('v=DMARC1');
-  });
+  const dmarcMatch = dmarcRecords.find(r => decodeTxtData(r.content).startsWith('v=DMARC1'));
 
   if (dmarcMatch) {
-    const clean = dmarcMatch.content.replace(/^"|"$/g, '');
+    const clean = decodeTxtData(dmarcMatch.content);
     if (clean === dmarcExpected) {
       actions.push(`DMARC ${dmarcName}: exists`);
     } else {

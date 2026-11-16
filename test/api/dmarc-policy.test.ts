@@ -177,7 +177,8 @@ describe('PATCH /api/domains/:id/dmarc', () => {
     const env = makeEnv([{ id: 1, domain: 'acme.com', dns_record_id: 'auth-elsewhere', rua: '' }]);
     expect((await handleApi(apply, env, ctx)).status).toBe(200);
     const [stored] = content('zone-acme', '_dmarc.acme.com');
-    expect(stored).toMatch(/^"[^"]{255}" "[^"]+"$/);
+    expect(stored).toMatch(/^"[^"]+"( "[^"]+")+$/); // several quoted strings, each at most 255 bytes, split at a space
+    expect(stored.slice(1, -1).split('" "').every((p: string) => p.length <= 255)).toBe(true);
     expect(stored.slice(1, -1).split('" "').join('')).toBe(long);
 
     const r = await call(1, 'reject', env);

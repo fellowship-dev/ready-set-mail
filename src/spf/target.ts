@@ -4,7 +4,7 @@
 
 import type { TenantContext } from '../tenancy/context';
 import { CfApiError, CfAuthError, CfConnectionError, CfError, CfNetworkError, CfNotConfiguredError, CfNotFoundError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, type CfDnsRecord } from '../tenancy/cf-client';
-import { isSpfRecord } from '@ready-set-mail/dns-checks';
+import { decodeTxtData, encodeTxtData, isSpfRecord } from '@ready-set-mail/dns-checks';
 import type { HostedRecordWriter } from '../hosted/records';
 
 export type SpfLive = { found: true; id: string; content: string } | { found: false } | { multiple: true };
@@ -15,10 +15,8 @@ export interface SpfTarget {
   write(id: string, content: string): Promise<void>;
 }
 
-/** The content Cloudflare returns may come quoted. */
-export const unquote = (content: string): string => content.replace(/^"|"$/g, '').trim();
-
-const isSpf = (r: CfDnsRecord) => isSpfRecord(unquote(r.content));
+/** Cloudflare returns TXT content as quoted character strings, several for a record over 255 bytes: decodeTxtData reads them, encodeTxtData writes them (packages/dns-checks/src/txt.ts). */
+const isSpf = (r: CfDnsRecord) => isSpfRecord(decodeTxtData(r.content));
 
 /** Is this a failure of the connection (as opposed to a bug)? Those become the `connection_lost` problem; anything else is rethrown. */
 export function isConnectionFailure(e: unknown): boolean {
@@ -42,19 +40,19 @@ export function cloudflareTarget(tenant: TenantContext, domain: string): SpfTarg
         }
       }
       if (found.length > 1) return { multiple: true };
-      return found[0] ? { found: true, id: found[0].id, content: unquote(found[0].content) } : { found: false };
+      return found[0] ? { found: true, id: found[0].id, content: decodeTxtData(found[0].content) } : { found: false };
     },
     async write(id, content) {
       const cf = await tenant.cfFor(domain);
       const zone = await cf.zoneFor(domain);
       try {
-        await cf.patchDnsRecord(zone.id, id, { content }, { allowedApexes: [domain] });
+        await cf.patchDnsRecord(zone.id, id, { content: encodeTxtData(content) }, { allowedApexes: [domain] });
       } catch (e) {
         // Records written before per-domain zones live in the base zone.
         const legacy = e instanceof CfNotFoundError ? tenant.legacyZoneId(zone.id) : undefined;
         if (!legacy) throw e;
         console.warn(`[spf] ${domain}: record ${id} not in its own zone; patching it in the base zone (legacy location)`);
-        await cf.patchDnsRecord(legacy, id, { content });
+        await cf.patchDnsRecord(legacy, id, { content: encodeTxtData(content) });
       }
     },
   };
@@ -65,10 +63,10 @@ export function hostedTarget(writer: HostedRecordWriter, recordId: string, name:
   return {
     async read() {
       const r = await writer.read(recordId, name);
-      return { found: true, id: r.id, content: unquote(r.content) };
+      return { found: true, id: r.id, content: decodeTxtData(r.content) };
     },
     async write(id, content) {
-      await writer.setContent(id, name, content);
+      await writer.setContent(id, name, encodeTxtData(content));
     },
   };
 }

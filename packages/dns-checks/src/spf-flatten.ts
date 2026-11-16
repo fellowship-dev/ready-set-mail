@@ -14,6 +14,7 @@
 
 import { normalizeName, type Resolver } from './doh';
 import { ipProblem } from './spf-record';
+import { decodeTxtData } from './txt';
 import { isSpfRecord, parseSpfTerms, type SpfTerm } from './spf-terms';
 
 /** RFC 7208 §4.6.4. */
@@ -366,9 +367,9 @@ function refuseResult(w: Flattener, kind: SpfProblemKind, domain: string | null,
   return { ok: false, problems: [{ kind, domain, message }], fetches: w.fetches };
 }
 
-/** Unquote, collapse spaces, lowercase everything but macros. */
+/** Decode the quoted strings (decodeTxtData), collapse spaces, lowercase everything but macros. */
 export function normalizeSpfRecord(raw: string): string {
-  return raw.trim().replace(/^"|"$/g, '').trim().split(/\s+/).map(lower).join(' ');
+  return decodeTxtData(raw).trim().split(/\s+/).map(lower).join(' ');
 }
 
 /**

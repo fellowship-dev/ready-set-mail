@@ -1511,18 +1511,18 @@ async function _handleApi(
         cf = await tenant.cfFor(domain.domain);
         zoneId = (await cf.zoneFor(domain.domain)).id;
         existingSpf = (await cf.listDnsRecords(zoneId, { type: 'TXT', name: recordName, per_page: 100 }))
-          .find(r => r.content.replace(/^"|"$/g, '').startsWith('v=spf1'));
+          .find(r => decodeTxtData(r.content).startsWith('v=spf1'));
       } catch (e) {
         return cfFailure(e);
       }
       // The one SPF rule against the live record: a ptr it already has may stay (the wizard warns), a new ptr is refused.
-      const ptrProblem = validateSpfRecord(record, existingSpf ? existingSpf.content.replace(/^"|"$/g, '') : null);
+      const ptrProblem = validateSpfRecord(record, existingSpf ? decodeTxtData(existingSpf.content) : null);
       if (ptrProblem) return err(ptrProblem, 400);
       const existingId = existingSpf?.id;
 
       // Safety: require explicit confirmation when overwriting an existing record
       if (existingSpf && !body.confirm_overwrite) {
-        return json({ ok: false, needs_confirmation: true, existing_record: existingSpf.content.replace(/^"|"$/g, ''), proposed_record: record }, 200);
+        return json({ ok: false, needs_confirmation: true, existing_record: decodeTxtData(existingSpf.content), proposed_record: record }, 200);
       }
 
       let written;
