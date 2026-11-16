@@ -22,6 +22,7 @@ describe('B1: a source whose SPF and DKIM passed but whose mail failed DMARC is 
 		expect(t).toContain('SPF passed for the return-path (MAIL FROM) domain bounces.esp.example');
 		expect(t).toContain('DKIM passed for the signing domain d=esp.example');
 		expect(t).toContain('not in the same organization as example.com');
+		expect(t).toContain('(<selector>._domainkey.<the d= it signs with>)');
 	});
 	it('under strict alignment the same organization is not enough, and the row says why (section 3.2.10.2)', () => {
 		const t = explain(src({ dmarc_fail: 1, spf_aligned: 0, dkim_aligned: 0, dkim_domain: 'mailer.example', aspf: 's' }), 'reject');

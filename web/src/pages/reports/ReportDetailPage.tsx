@@ -185,7 +185,7 @@ export function ReportDetailPage() {
 					</StatGroup>
 
 					{failing.length > 0 ? (
-						<Section title="Needs attention" description="These sources failed SPF or DKIM for this day.">
+						<Section title="Needs attention" description="These sources failed DMARC for this day: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain.">
 							<div className="space-y-3">
 								{failing.map((s) => (
 									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />

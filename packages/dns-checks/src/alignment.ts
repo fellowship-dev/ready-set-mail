@@ -122,7 +122,7 @@ export function alignmentFix(a: IdentifierAlignment, from: string | null | undef
     return `Authorize the sending server in the SPF record of its return-path domain, or sign with DKIM as ${f}.`;
   }
   if (a.why === 'strict-differs') return `Either change adkim=s to adkim=r (or remove it) in the DMARC record that applies to ${f}, or have the service sign with d=${f}.`;
-  if (a.why === 'other-organization') return `In the sending service's settings, turn on domain authentication so it signs with a d= under ${org}, and publish the DKIM key records it lists, at the names it shows (selector._domainkey.${f}).`;
+  if (a.why === 'other-organization') return `In the sending service's settings, turn on domain authentication so it signs with a d= under ${org}, and publish the DKIM key records it lists, at the names it shows (<selector>._domainkey.<the d= it signs with>).`;
   return `Turn on DKIM signing for ${f} in the sending service and publish its key records.`;
 }
 

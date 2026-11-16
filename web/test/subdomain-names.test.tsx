@@ -79,6 +79,8 @@ describe('the failing-source row says which identifier did not align', () => {
 			},
 		);
 		expect(await screen.findByText('Alignment fail')).toBeInTheDocument();
+		expect(screen.getByText(/Sources whose mail failed DMARC: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain\./)).toBeInTheDocument();
+		expect(screen.queryByText('Sources that failed SPF or DKIM.')).toBeNull();
 		expect(screen.getByText(/SPF passed for the return-path \(MAIL FROM\) domain bounces\.esp\.example, which is not in the same organization as example\.com/)).toBeInTheDocument();
 	});
 });

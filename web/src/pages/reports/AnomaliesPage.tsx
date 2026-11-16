@@ -30,7 +30,7 @@ export function AnomaliesPage() {
 			<PageHeader
 				eyebrow={<BackLink to={`/domains/${id}`}>{name ?? 'Back'}</BackLink>}
 				title="Anomalies"
-				description="Sources that failed SPF or DKIM."
+				description="Sources whose mail failed DMARC: SPF or DKIM did not pass, or passed for a domain that does not align with the From domain."
 				actions={<WindowPills value={days} onChange={setDays} />}
 			/>
 
@@ -43,7 +43,7 @@ export function AnomaliesPage() {
 			) : active.length + older.length === 0 ? (
 				<EmptyState
 					title={`No failing sources in the last ${days} days`}
-					description="No source in the reports received for this window failed SPF or DKIM. If no reports arrived, there is nothing to judge yet, so check what was received."
+					description="No source in the reports received for this window failed DMARC, SPF or DKIM. If no reports arrived, there is nothing to judge yet, so check what was received."
 					action={
 						<Button asChild variant="secondary">
 							<Link to={`/domains/${id}/reports`}>See received reports</Link>
