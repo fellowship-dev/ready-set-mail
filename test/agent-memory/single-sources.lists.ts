@@ -44,6 +44,12 @@ export const SINGLE: Single[] = [
     signature: /\bcollectIps\b|\bbuildFlatRecord\b|\bwithSpfSource\b|\bpreviewFlatten\b|\bflattenFromSource\b/,
     owners: ['packages/dns-checks/src/spf-flatten.ts', 'src/spf/', 'src/hosted/service.ts', 'src/hosted/cron.ts'],
   },
+  {
+    concept: 'TXT content (quotes and character strings of a TXT record)',
+    // stripping the outer quotes of TXT content by hand: decodeTxtData reads every form (one string, several quoted strings, unquoted), encodeTxtData writes it
+    signature: /\.replace\(\/\^"\|"\$\/g/,
+    owners: ['packages/dns-checks/src/txt.ts'],
+  },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];
@@ -174,4 +180,12 @@ export const MUST_NOT_GROW: Duplicate[] = [
  * Reviewed exceptions. Each entry: the concept (exactly as above), the file, a reason of at least 20 characters and four words,
  * who agreed (the reviewer), and the date (YYYY-MM-DD, not in the future). Empty today.
  */
-export const ALLOW: Allow[] = [];
+export const ALLOW: Allow[] = [
+  {
+    concept: 'TXT content (quotes and character strings of a TXT record)',
+    file: 'tools/audit-fleet/lib/doh.ts',
+    reason: 'The operator audit tool has its own small DNS-over-HTTPS client by design (known duplicate "DNS-over-HTTPS endpoints"); it leaves with that consolidation.',
+    by: 'coordinator, round 2 of PR 189',
+    date: '2026-11-16',
+  },
+];

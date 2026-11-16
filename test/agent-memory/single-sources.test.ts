@@ -2,39 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { ALLOW, LIST_FILE, MUST_NOT_GROW, SINGLE, type Allow } from './single-sources.lists';
+import { DIRS, ROOT, isProduction, sources, stripComments } from './single-sources.scan';
 
 // "There is exactly one of these" (docs/single-sources.md), enforced. The lists and the escape hatch are in
 // test/agent-memory/single-sources.lists.ts; this file scans the code and explains every failure.
 
-const ROOT = join(__dirname, '../..');
 const MAP = 'docs/single-sources.md';
-
-/** Production code: these folders, without tests, fixtures, mocks or build output. Nothing else is scanned. */
-export const DIRS = ['src', 'web/src', 'packages/db/src', 'packages/dns-checks/src', 'packages/report/src', 'packages/ui/src', 'scripts', 'tools', 'plugins'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'test', 'tests', '__tests__', '__fixtures__', 'fixtures', '__mocks__', 'e2e']);
-export const isProduction = (name: string): boolean => /\.(ts|tsx|mts|mjs|js|cjs)$/.test(name) && !/\.(test|spec|stories|fixture)\./.test(name) && !name.endsWith('.d.ts');
-
-function sources(dir: string): string[] {
-  let names: string[];
-  try { names = readdirSync(dir); } catch { return []; }
-  return names.flatMap(name => {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) return SKIP_DIRS.has(name) ? [] : sources(p);
-    return isProduction(name) ? [p] : [];
-  });
-}
-
-/** Blanks full-line comments, block comments that start a line, and trailing `// …` comments (not `https://`). Keeps line numbers. */
-export function stripComments(text: string): string {
-  let inBlock = false;
-  return text.split('\n').map(line => {
-    const s = line.trim();
-    if (inBlock) { if (s.includes('*/')) inBlock = false; return ''; }
-    if (s.startsWith('/*') && !s.includes('*/')) { inBlock = true; return ''; }
-    if (s.startsWith('//') || s.startsWith('*') || (s.startsWith('/*') && s.endsWith('*/'))) return '';
-    return line.replace(/(^|\s)\/\/(\s.*)?$/, '');
-  }).join('\n');
-}
 
 const files = DIRS.flatMap(d => sources(join(ROOT, d))).map(p => ({ path: relative(ROOT, p).split('\\').join('/'), text: stripComments(readFileSync(p, 'utf8')) }));
 
