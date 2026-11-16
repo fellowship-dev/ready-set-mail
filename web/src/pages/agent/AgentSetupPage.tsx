@@ -88,22 +88,6 @@ function NotReady() {
 function Ready({ serverUrl, status }: { serverUrl: string; status: AgentStatus }) {
 	return (
 		<>
-			<Section title="What an agent can do here">
-				<Card>
-					<CardContent className="p-5 sm:p-6">
-						<ul className="space-y-2 text-sm">
-							{CAN.map((line) => (
-								<li key={line} className="flex gap-2">
-									<Check aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
-									<span>{line}</span>
-								</li>
-							))}
-						</ul>
-						<p className="mt-4 text-sm text-ink-2">Only for the domains and permissions you approve, and only until the date you pick (1 to 30 days).</p>
-					</CardContent>
-				</Card>
-			</Section>
-
 			<Section title="Connect your assistant">
 				<Card>
 					<CardContent className="space-y-6 p-5 sm:p-6">
@@ -137,6 +121,22 @@ function Ready({ serverUrl, status }: { serverUrl: string; status: AgentStatus }
 			</Section>
 
 			<Clients serverUrl={serverUrl} status={status} />
+
+			<Section title="What an agent can do here">
+				<Card>
+					<CardContent className="p-5 sm:p-6">
+						<ul className="space-y-2 text-sm">
+							{CAN.map((line) => (
+								<li key={line} className="flex gap-2">
+									<Check aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
+									<span>{line}</span>
+								</li>
+							))}
+						</ul>
+						<p className="mt-4 text-sm text-ink-2">Only for the domains and permissions you approve, and only until the date you pick (1 to 30 days).</p>
+					</CardContent>
+				</Card>
+			</Section>
 
 			<Section title="See and revoke connections">
 				<Card>
