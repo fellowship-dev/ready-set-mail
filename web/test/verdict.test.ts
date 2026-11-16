@@ -333,10 +333,15 @@ describe('the next step toward SPF flattening is an add-on', () => {
 	it('links to the wizard where the workspace has it (the default)', () => {
 		expect(lookups({})).toMatchObject({ to: '/domains/1/spf-flatten', cta: 'Open SPF flattening', writes: true });
 	});
-	it('says the same thing and links nowhere where it is not available', () => {
+	it('where it is not available the step is the same and leads to where the lookups go, read-only: never a dead step', () => {
 		const a = lookups({ spfFlattening: false })!;
 		expect(a.do).toBe('Bring SPF down to 10 DNS lookups or fewer');
-		expect(a.to).toBeUndefined();
-		expect(a.cta).toBeUndefined();
+		expect(a).toMatchObject({ to: '/domains/1/spf-lookups', cta: 'See where the lookups go' });
+		expect(a.writes).toBeUndefined();
+	});
+	it('with flattening on it reads the flattened lookups, not the count stored before: no "It needs 11" on a record that needs 3', () => {
+		expect(lookups({ spfFlat: { lookups_after: 3 } })).toBeUndefined();
+		expect(lookups({ spfFlat: { lookups_after: 12 } })).toMatchObject({ why: expect.stringContaining('It needs 12.') });
+		expect(lookups({ spfFlat: { lookups_after: null } })).toMatchObject({ why: expect.stringContaining('It needs 14.') });
 	});
 });

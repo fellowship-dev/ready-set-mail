@@ -12,6 +12,7 @@ import { DnsTools } from '../../components/domain/DnsTools';
 import { DoThisNext } from '../../components/domain/DoThisNext';
 import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
+import { SpfStatusLine } from '../../components/domain/SpfStatusLine';
 import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
 import { FailingSources } from '../../components/domain/FailingSources';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
@@ -313,6 +314,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
 	const actionInput = {
 		spfFlattening: spfAddOn,
+		spfFlat: spfTool.data?.config && spfTool.data.config.enabled ? { lookups_after: spfTool.data.config.lookups_after } : null,
 		domain,
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
@@ -372,6 +374,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
+			<SpfStatusLine domainId={domain.id} status={spfAddOn ? spfTool.data : undefined} />
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}

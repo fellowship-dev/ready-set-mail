@@ -132,3 +132,21 @@ export function stoppedSentence(reason: 'connection_gone' | 'proof_lost'): strin
 export const TURN_ON_RISK = 'When a provider starts sending from new addresses, mail from them can fail SPF until the next daily check, up to about a day.';
 /** For a record that is within the limits: who should not use it, and why. */
 export const NOT_NEEDED_WHY = 'Flattening is for records that need more than 10 lookups. Within the limit, a record with includes follows its providers as they change; a flattened one follows them once a day.';
+
+/**
+ * The one line at the top of the domain page while flattening is on (or was): its state in a few words and where the whole state is. Null when flattening was never
+ * on. Basis: the reviewer found the card 1.6 screens down in a closed disclosure after turning on; owner's rule T1 (the thing to look at is on the first screen) and ADR 0012
+ * (the status is the page the person lands on after turning on, so the way back to it is one tap).
+ */
+export function statusLine(s: SpfFlatStatus, now = Date.now() / 1000): { text: string; tone: 'ok' | 'wait' | 'attention' } | null {
+	const st = spfState(s, now);
+	if (st.kind === 'off') return null;
+	if (s.access?.allowed === false) return { text: 'SPF flattening is no longer switched on for this workspace; your record keeps the addresses of the last check.', tone: 'attention' };
+	if (st.kind === 'stopped') return { text: st.reason === 'connection_gone' ? 'SPF flattening has stopped: Cloudflare can no longer be changed from here.' : 'SPF flattening has stopped: we can no longer show you control this domain.', tone: 'attention' };
+	if (st.kind === 'turning_off_failed') return { text: 'Turning off SPF flattening did not finish: your original record is not back yet.', tone: 'attention' };
+	if (st.kind === 'problem') return { text: 'SPF flattening needs attention.', tone: 'attention' };
+	const c = st.config;
+	if (c.pending) return { text: `SPF flattening: waiting to confirm a change, after ${utcClock(c.pending.confirm_after, now)}.`, tone: 'wait' };
+	const lookups = c.lookups_after !== null ? ` · ${c.lookups_after} of ${SPF_LOOKUP_ALLOWED} lookups` : '';
+	return { text: `SPF flattening: on${lookups} · ${c.last_refreshed_at !== null ? `checked ${timeAgo(c.last_refreshed_at, now)}` : 'not checked yet'}`, tone: st.stale ? 'attention' : 'ok' };
+}

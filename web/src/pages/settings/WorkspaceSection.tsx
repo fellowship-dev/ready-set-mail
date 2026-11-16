@@ -6,6 +6,7 @@ import { useDomains } from '../../lib/queries';
 import { useSession } from '../../lib/session';
 import { switchToWorkspace, useDeleteWorkspace, useLeaveWorkspace, useRenameWorkspace, useWorkspaces } from '../../lib/workspaces';
 import { Field } from '../auth/AuthLayout';
+import { TxtRecord } from '../../components/wizard/RecordPair';
 
 /** The open workspace, whether it can be left or deleted (only when there is another one to land in), and where to go after. */
 export function useCurrentWorkspace() {
@@ -97,6 +98,9 @@ export function DeleteButton({ id, name, then }: { id: string; name: string; the
 	const del = useDeleteWorkspace(id, then);
 	const count = domains.data?.length ?? 0;
 	const needsConfirm = count > 0 || (del.error instanceof ApiError && del.error.status === 409);
+	// A flattened SPF record that could not be put back stops the delete before anything is deleted: the originals are in the answer.
+	const body = del.error instanceof ApiError && del.error.status === 409 ? (del.error.body as { code?: string; domains?: Array<{ domain: string; reason: string; original: string }> } | undefined) : undefined;
+	const spfStop = body?.code === 'spf_restore_failed' ? (body.domains ?? []) : null;
 	return (
 		<>
 			<Button variant="danger" onClick={() => setOpen(true)}>
@@ -115,7 +119,7 @@ export function DeleteButton({ id, name, then }: { id: string; name: string; the
 							<DialogTitle>Delete {name}?</DialogTitle>
 							<DialogDescription>
 								{count > 0
-									? `This removes its ${count} ${count === 1 ? 'domain' : 'domains'} (and the DNS records Ready Set Mail added for them), every report, its members' access and its Cloudflare connections. This cannot be undone.`
+									? `This removes its ${count} ${count === 1 ? 'domain' : 'domains'} (and the DNS records Ready Set Mail added for them), every report, its members' access and its Cloudflare connections. This cannot be undone. A domain with SPF flattening on gets its original SPF record put back in Cloudflare first; if one cannot be put back, nothing is deleted.`
 									: 'It has no domains. Its members lose access. This cannot be undone.'}
 							</DialogDescription>
 						</DialogHeader>
@@ -124,7 +128,21 @@ export function DeleteButton({ id, name, then }: { id: string; name: string; the
 								<Input id="confirm-delete" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
 							</Field>
 						) : null}
-						{del.isError ? <FieldError>{errorMessage(del.error)}</FieldError> : null}
+						{spfStop ? (
+							<div role="alert" className="space-y-3 rounded-lg border border-warning/40 bg-warning-subtle p-3 text-sm" data-testid="spf-delete-stop">
+								<p className="font-medium text-ink-1">Nothing was deleted: {spfStop.length === 1 ? 'an SPF record' : 'some SPF records'} could not be put back.</p>
+								{spfStop.map((d) => (
+									<div key={d.domain} className="space-y-1.5">
+										<p className="text-ink-1"><span className="font-mono">{d.domain}</span>: {d.reason}</p>
+										<TxtRecord title="Its original SPF record (copy it into Cloudflare)" value={d.original} />
+									</div>
+								))}
+								<p className="text-ink-2">If you delete anyway, the flattened record{spfStop.length === 1 ? '' : 's'} stay{spfStop.length === 1 ? 's' : ''} in Cloudflare and nothing will refresh {spfStop.length === 1 ? 'it' : 'them'} again.</p>
+								<Button type="button" variant="danger" loading={del.isPending} disabled={typed !== name} onClick={() => del.mutate({ confirm: typed, leaveSpf: true })}>
+									Delete anyway
+								</Button>
+							</div>
+						) : del.isError ? <FieldError>{errorMessage(del.error)}</FieldError> : null}
 						<DialogFooter>
 							<Button type="button" variant="secondary" onClick={() => setOpen(false)}>
 								Cancel

@@ -479,7 +479,7 @@ export async function disableSpf(tenant: TenantContext, domain: { id: number; do
 // ── When the domain, the workspace or the connection goes ────
 
 /** The body of the 409 that stops a delete: the sentence, the record to copy, and what Cloudflare holds now. */
-export interface SpfRestoreRefusal { error: string; code: 'spf_restore_failed'; domain: string; original: string; flattened_record: string | null; leave_param: 'leave_spf_record=1' }
+export interface SpfRestoreRefusal { error: string; /** Why, in one sentence, without the records. */ reason: string; code: 'spf_restore_failed'; domain: string; original: string; flattened_record: string | null; leave_param: 'leave_spf_record=1' }
 
 /**
  * Before a domain (or the workspace that holds it) is deleted: put the owner's original record back. Deleting the row without this would leave the flattened
@@ -491,7 +491,7 @@ export async function restoreSpfBeforeRemoval(tenant: TenantContext, domain: { i
   if (r.ok || 'notConfigured' in r) return { ok: true };
   return { ok: false, refusal: {
     error: `${r.restoreFailed} Your SPF record in Cloudflare is still the flattened one, and deleting ${domain.domain} would leave it there with nothing keeping it up to date. Your original record is: ${r.original}`,
-    code: 'spf_restore_failed', domain: domain.domain, original: r.original, flattened_record: r.flattened, leave_param: 'leave_spf_record=1',
+    reason: r.restoreFailed, code: 'spf_restore_failed', domain: domain.domain, original: r.original, flattened_record: r.flattened, leave_param: 'leave_spf_record=1',
   } };
 }
 

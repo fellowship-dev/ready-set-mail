@@ -111,18 +111,36 @@ describe('SPF flatten wizard', () => {
 		expect(await screen.findByText('not yours')).toBeInTheDocument();
 	});
 
-	it('review after an edit made in Cloudflare: both records, Replace asks first, and posts replace', async () => {
-		const problem = { kind: 'edited_outside', message: 'The SPF record in Cloudflare is not the one Ready Set Mail published, so someone changed it there. We have left it as it is.', since: now() };
-		const { calls } = renderApp(ui, {
-			route: '/domains/3/spf-flatten?review=1',
-			routes: wizard({ 'GET /api/domains/3/spf-flatten': status(config({ problem })), 'GET /api/domains/3/spf-flatten/preview': preview({ live: 'v=spf1 include:someone.example -all' }), 'POST /api/domains/3/spf-flatten/refresh': { ok: true, outcome: 'changed', config: config() } }),
-		});
+	const reviewProblem = { kind: 'edited_outside', message: 'The SPF record in Cloudflare is not the one Ready Set Mail published, so someone changed it there. We have left it as it is.', since: now() };
+	const reviewRoutes = (extra: Record<string, unknown | Handler> = {}) => wizard({
+		'GET /api/domains/3/spf-flatten': status(config({ problem: reviewProblem })),
+		'GET /api/domains/3/spf-flatten/preview': preview({ live: `${FLAT.replace(' ~all', '')} include:newprovider.example ~all` }),
+		...extra,
+	});
+
+	it('review after an edit made in Cloudflare: both records, a choice, and "Use my edit as the new original" is the one that is selected', async () => {
+		const { calls } = renderApp(ui, { route: '/domains/3/spf-flatten?review=1', routes: reviewRoutes({ 'POST /api/domains/3/spf-flatten/adopt': { ok: true, outcome: 'written', config: config() } }) });
 		expect(await screen.findByText('In Cloudflare now')).toBeInTheDocument();
-		expect(screen.getByText('v=spf1 include:someone.example -all')).toBeInTheDocument();
 		expect(screen.getByText('Flattened from your original')).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('button', { name: 'Replace with the flattened record' }));
+		const adopt = screen.getByRole('radio', { name: /Use my edit as the new original/ });
+		const discard = screen.getByRole('radio', { name: /Discard my edit/ });
+		expect(adopt).toBeChecked();
+		expect(discard).not.toBeChecked();
+		expect(screen.getByText(/It becomes your original record, and the flattened record is made from it, so what you added stays\./)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Use my edit' }));
+		await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/spf-flatten/adopt'))).toBe(true));
 		expect(calls.some((c) => c.path.endsWith('/refresh'))).toBe(false);
-		await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Replace' }));
+	});
+
+	it('discarding the edit says exactly which terms will be dropped, asks first, and posts replace', async () => {
+		const { calls } = renderApp(ui, { route: '/domains/3/spf-flatten?review=1', routes: reviewRoutes({ 'POST /api/domains/3/spf-flatten/refresh': { ok: true, outcome: 'changed', config: config() } }) });
+		await userEvent.click(await screen.findByRole('radio', { name: /Discard my edit/ }));
+		expect(screen.getByText(/These will be dropped: include:newprovider\.example\./)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Discard my edit' }));
+		expect(calls.some((c) => c.path.endsWith('/refresh') || c.path.endsWith('/adopt'))).toBe(false);
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/These will be dropped: include:newprovider\.example\./)).toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole('button', { name: 'Discard my edit' }));
 		await waitFor(() => expect(calls.find((c) => c.path.endsWith('/refresh'))?.body).toEqual({ replace: true }));
 	});
 

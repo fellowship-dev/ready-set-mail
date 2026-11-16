@@ -36,6 +36,7 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 	const qc = useQueryClient();
 	const { pathname, search } = useLocation();
 	const [confirm, setConfirm] = useState(false);
+	const [waitAnswer, setWaitAnswer] = useState<string | null>(null);
 	const state = spfState(status);
 	const allowed = status.access?.allowed !== false;
 	const count = status.lookup_count ?? null;
@@ -48,6 +49,7 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 	const checkNow = useMutation({
 		mutationFn: () => api<{ outcome: 'changed' | 'unchanged' | 'pending' | 'problem'; message?: string }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST' }),
 		onSuccess: async (r) => {
+			setWaitAnswer(r.outcome === 'pending' ? (r.message ?? null) : null);
 			if (r.outcome === 'pending') toast({ title: 'Still waiting to confirm', description: r.message, variant: 'info' });
 			else if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
 			else if (r.outcome === 'unchanged') toast({ title: 'Checked', description: 'Nothing changed.', variant: 'success' });
@@ -103,6 +105,7 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 					<Alert variant="info" data-testid="spf-pending">
 						<p>{pendingSentence(state.config.pending)}</p>
 						<p className="mt-1">{PENDING_WHY}</p>
+						{waitAnswer ? <p className="mt-1 font-medium" role="status">{waitAnswer}</p> : null}
 					</Alert>
 				</>
 			);

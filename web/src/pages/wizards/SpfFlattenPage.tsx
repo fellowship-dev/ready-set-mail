@@ -69,6 +69,8 @@ function SpfFlattenWizard() {
 	const [step, setStep] = useState(0);
 	const [anyway, setAnyway] = useState(false);
 	const [confirm, setConfirm] = useState<'off' | 'discard' | null>(null);
+	/** What the last "Check again now" answered while a removal still waits: it stays on the page, a toast is gone in seconds. */
+	const [waitAnswer, setWaitAnswer] = useState<string | null>(null);
 	const [choice, setChoice] = useState<'adopt' | 'discard'>('adopt'); // the safe one: the person's edit is kept
 
 	const reload = async () => {
@@ -107,6 +109,7 @@ function SpfFlattenWizard() {
 		mutationFn: (replace: boolean) => api<{ outcome: string; message?: string; config: SpfFlatConfig }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST', body: { replace } }),
 		onSuccess: async (r) => {
 			setConfirm(null);
+			setWaitAnswer(r.outcome === 'pending' ? (r.message ?? null) : null);
 			if (r.outcome === 'pending') toast({ title: 'Still waiting to confirm', description: r.message, variant: 'info' });
 			else if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
 			else if (r.outcome === 'unchanged') toast({ title: 'Checked', description: 'Nothing changed.', variant: 'success' });
@@ -219,6 +222,7 @@ function SpfFlattenWizard() {
 										<Alert variant="info" data-testid="spf-pending">
 											<p>{pendingSentence(c.pending)}</p>
 											<p className="mt-1">{PENDING_WHY}</p>
+											{waitAnswer ? <p className="mt-1 font-medium" role="status">{waitAnswer}</p> : null}
 										</Alert>
 									) : null}
 								</>
