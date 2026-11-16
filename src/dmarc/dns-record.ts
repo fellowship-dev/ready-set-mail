@@ -119,7 +119,7 @@ export function withPolicy(current: string | null, policy: DmarcPolicy, ourRua: 
 export type LiveDmarcRecord =
   | { kind: 'none' }
   | { kind: 'one'; record: CfDnsRecord; content: string }
-  | { kind: 'many'; count: number };
+  | { kind: 'many'; count: number; contents: string[] };
 
 /**
  * The DMARC record(s) published at `name` in `zoneId`: TXT records there that are not DMARC records are ignored. Every page
@@ -129,7 +129,7 @@ export async function findDmarcRecord(cf: CfClient, zoneId: string, name: string
   const exact = name.toLowerCase().replace(/\.$/, '');
   const found = (await cf.listDnsRecords(zoneId, { type: 'TXT', name }))
     .filter((r) => r.name.toLowerCase().replace(/\.$/, '') === exact && isDmarcTxt(r.content));
-  if (found.length > 1) return { kind: 'many', count: found.length };
+  if (found.length > 1) return { kind: 'many', count: found.length, contents: found.map((r) => bareTxt(r.content)) };
   return found.length ? { kind: 'one', record: found[0], content: bareTxt(found[0].content) } : { kind: 'none' };
 }
 
