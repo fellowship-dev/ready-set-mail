@@ -108,7 +108,7 @@ function SpfFlattenWizard() {
 	const checkNow = useMutation({
 		mutationFn: (replace: boolean) => api<{ outcome: string; message?: string; config: SpfFlatConfig }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST', body: { replace } }),
 		onSuccess: async (r) => {
-			setConfirm(null);
+			setConfirm((c) => (c === 'discard' ? null : c)); // a Turn off dialog the person opened meanwhile stays open
 			setWaitAnswer(r.outcome === 'pending' ? (r.message ?? null) : null);
 			if (r.outcome === 'pending') toast({ title: 'Still waiting to confirm', description: r.message, variant: 'info' });
 			else if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });

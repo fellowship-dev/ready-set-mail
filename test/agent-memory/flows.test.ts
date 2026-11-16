@@ -96,6 +96,15 @@ describe('scripts/check-flows.mjs: record names', () => {
     expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.not-affected.md')).toBe(true);
     expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.pr177.md')).toBe(false);
   });
+  it('a not-affected record may carry a tag too, so two pull requests judging one flow on one day add different files', () => {
+    const na = notAffectedName('buy-fix-one-domain');
+    expect(na.test('2026-11-16-buy-fix-one-domain.pr189.not-affected.md')).toBe(true);
+    expect(na.test('2026-11-16-buy-fix-one-domain.round-3.not-affected.md')).toBe(true);
+    expect(na.test('2026-11-16-buy-fix-one-domain.PR189.not-affected.md')).toBe(false);
+    expect(na.test('2026-11-16-buy-fix-one-domain.a.b.not-affected.md')).toBe(false);
+    expect(na.test('2026-11-16-other-flow.pr189.not-affected.md')).toBe(false);
+    expect(walk.test('2026-11-16-buy-fix-one-domain.pr189.not-affected.md')).toBe(false);
+  });
   it('other names, other flows and bad tags do not match', () => {
     for (const n of ['2026-11-16-buy-fix-one-domain.PR177.md', '2026-11-16-buy-fix-one-domain..md', '2026-11-16-buy-fix-one-domain.a.b.md', '2026-11-16-buy-fix-one-domain.pr177.txt', '2026-11-16-other-flow.pr177.md', '2026-1-16-buy-fix-one-domain.md', 'x2026-11-16-buy-fix-one-domain.md']) expect(walk.test(n), n).toBe(false);
   });
@@ -139,8 +148,8 @@ describe('scripts/check-flows.mjs: which records count', () => {
     expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Walked: '2026-11-15 (date)', Commit: 'aaaaaaa' }), { ...ctx, newFlow: true })).toEqual([]);
     expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Commit: 'aaaaaaa' }), ctx).length).toBeGreaterThan(0);
   });
-  const na = (o: Record<string, string> = {}) => Object.entries({ Flow: 'buy-fix-one-domain', Changed: '`src/billing/webhook.ts`', Reason: 'Renames a private helper; no screen, request or state the buyer meets changes.', By: 'reviewer', Date: '2026-11-16', ...o }).map(([k, v]) => `- **${k}:** ${v}`).join('\n');
-  const nctx = { id: 'buy-fix-one-domain', baseDate: '2026-11-15', today: '2026-11-17', hits: ['src/billing/webhook.ts'], flowChanged: false };
+  const na = (o: Record<string, string> = {}) => Object.entries({ Flow: 'buy-fix-one-domain', Changed: '`src/billing/webhook.ts`', Reason: 'Renames a private helper; no screen, request or state the buyer meets changes.', By: 'reviewer', Date: '2026-11-16', Commit: 'bbbbbbb', ...o }).map(([k, v]) => `- **${k}:** ${v}`).join('\n');
+  const nctx = { id: 'buy-fix-one-domain', baseDate: '2026-11-15', today: '2026-11-17', hits: ['src/billing/webhook.ts'], flowChanged: false, commitState: ctx.commitState, coveredChangedSince: ctx.coveredChangedSince };
   it('a "not affected" record needs the flow, every changed file, a reason, who and a date; never when the flow itself changed', () => {
     expect(notAffectedProblems(na(), nctx)).toEqual([]);
     expect(notAffectedProblems(na({ Reason: 'typo' }), nctx).join()).toMatch(/Reason/);
@@ -148,6 +157,13 @@ describe('scripts/check-flows.mjs: which records count', () => {
     expect(notAffectedProblems(na({ Date: '2026-11-01' }), nctx).join()).toMatch(/Date/);
     expect(notAffectedProblems(na({ By: '' }), nctx).join()).toMatch(/By/);
     expect(notAffectedProblems(na(), { ...nctx, flowChanged: true }).join()).toMatch(/walk it/);
+  });
+  it('a "not affected" record carries the commit it was judged at, read like a walk\'s: in this change, and no covered file changed after it', () => {
+    expect(notAffectedProblems(na({ Commit: '' }), nctx).join()).toMatch(/Commit is not a commit id/);
+    expect(notAffectedProblems(na({ Commit: 'aaaaaaa' }), nctx).join()).toMatch(/already in the base/);
+    expect(notAffectedProblems(na({ Commit: 'ccccccc' }), nctx).join()).toMatch(/not an ancestor of HEAD/);
+    expect(notAffectedProblems(na({ Commit: 'ddddddd' }), nctx).join()).toMatch(/not in this repository/);
+    expect(notAffectedProblems(na({ Commit: 'eeeeeee' }), nctx).join()).toMatch(/src\/billing\/orders\.ts changed after the judged commit eeeeeee: judge the flow again/);
   });
   it('reads covers globs as the shell does', () => {
     expect(globMatches('src/billing/*', 'src/billing/webhook.ts')).toBe(true);
