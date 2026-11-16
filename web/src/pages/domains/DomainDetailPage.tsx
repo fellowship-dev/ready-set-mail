@@ -22,14 +22,14 @@ import { ReportsNotConnected, useReportsNotConnected } from '../../components/Re
 import { Disclosure, ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section } from '../../components/states';
 import { actionsPending, domainActions } from '../../lib/actions';
 import { errorMessage } from '../../lib/api';
-import { useHostedLevelInput } from '../../lib/hosted';
+import { useDnsToolsOff, useHostedLevelInput } from '../../lib/hosted';
 import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, type ReportTotals } from '../../lib/verdict';
 import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
 import { recordAlignment } from '../../lib/dmarc-coverage';
 import { spTag, sumStats, wizardProgress } from '../../lib/dmarc';
 import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useNames, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
 import { listedParentFinder } from '../../lib/listed-parent';
-import { useReportsRefusal } from '../../lib/report-address';
+import { useReportAddress, useReportIntakeEnabled, useReportsRefusal } from '../../lib/report-address';
 import type { ReportsRefusal } from '../../lib/dmarc-step';
 import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
 import type { StatusKind } from '@ready-set-mail/ui';
@@ -273,8 +273,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const spfTool = useSpfFlatten(domain.id);
-	const mtaTool = useMtaSts(domain.id);
+	const { spfOff, mtaOff } = useDnsToolsOff(domain.id); // the one predicate (src: web/src/lib/hosted.ts)
+	const spfTool = useSpfFlatten(domain.id, !spfOff);
+	const mtaTool = useMtaSts(domain.id, !mtaOff);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
@@ -282,6 +283,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const nxdomain = !!onboarding.data?.nxdomain;
 	// Hosted: the self-host reporting-address block never applies (the reports panel shows the address).
 	const hostedMode = useHosted();
+	const intakeOn = useReportIntakeEnabled();
+	const reportAddr = useReportAddress(domain.id, intakeOn && !nxdomain);
 
 	// Reading DNS here also stores what it found (the overview's "checked when"), so refresh the stored summary after it.
 	const readAt = onboarding.dataUpdatedAt;
@@ -309,6 +312,18 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// Whether reports can be connected here (hosted plans may not offer it): asked only for a domain without them.
 	// Why reports cannot be connected for this domain, from the same per-domain answer the overview reads.
 	const { pending: refusalPending, refusal: reportsRefusal } = useReportsRefusal(domain.id);
+	// Reports that need an action (not connected, or connected and not in the record yet) are shown first, where the statement and the
+	// action fit the first screen, and stay there for this visit: the panel that is acted on never moves under the person.
+	const needsAction = (() => {
+		const a = reportAddr.data;
+		return !!a && a.available && !a.managed_by && a.can_connect && (a.state === 'not_connected' || a.state === 'not_published');
+	})();
+	const reportsFirst = useRef<number | null>(null);
+	if (needsAction) reportsFirst.current = domain.id;
+	const wantsReports = intakeOn && !nxdomain && (reportsOff || reportsFirst.current === domain.id);
+	// Where reports cannot be connected (another workspace runs intake, the domain is unproven) the panel keeps its place and its words below.
+	const connectFirst = wantsReports && !!reportAddr.data && reportAddr.data.available && reportAddr.data.can_connect && !reportAddr.data.managed_by;
+	const connectLoading = wantsReports && reportAddr.isPending;
 	const summaryFresh = freshness !== 'waiting' && !hostedPending && !refusalPending;
 	// A listed parent whose own record does not cover this name: a public suffix (gov.uk above www.gov.uk).
 	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
@@ -324,6 +339,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		hosted: hostedInfo,
 		suffixParent,
 		reportsRefusal,
+		hostedMode,
 	};
 	const actions = domainActions(actionInput);
 
@@ -338,7 +354,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const selectors = onboarding.data?.dkim.selectors.length;
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
-	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
+	const toolsShown = !((spfOff || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && (mtaOff || (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config)));
 	const failing = sources.data?.sources.length ?? 0;
 	const oneCheck = sources.data?.one_check.sources ?? 0;
 	const unrecorded = sources.data?.not_recorded.sources ?? 0;
@@ -374,7 +390,11 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
-			{/* An offer, not a nag: once, right after the first step (so it is on the first screen and "Do this next" still leads), never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
+			{/* The order is the same at every width: the first step, the offer (once, right after the first step so it is on the first screen and "Do this next" still leads; never on a domain
+			    that is fine or still being read; renders nothing unless hosted billing is on), the other steps, then the reports panel. With no offer on the page the panel is first,
+			    where its statement and action are in the first screen. The panel also comes first once there is something to Apply (ConnectReports). The connect-reports step in
+			    "Do this next" presses the panel's button. */}
+			<div className="flex flex-col gap-8 [&:not(:has(#fix-offer-title))>:last-child]:order-first">
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
@@ -384,13 +404,15 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
 				afterFirst={<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />}
 			/>
+			{connectLoading ? <ListSkeleton rows={1} label="Loading the report address" /> : connectFirst ? <ConnectReports domain={domain} /> : null}
+			</div>
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 
 			{/* A name that does not resolve has nothing to host. */}
 			{nxdomain ? null : <HostedPanel key={domain.id} domainId={domain.id} />}
 			{/* Hosted with report intake, once connected: connected → published → received. Before that, ReportsNotConnected
 			    carries the Connect reports action. Renders nothing elsewhere. */}
-			{reportsOff || nxdomain ? null : <ConnectReports domain={domain} />}
+			{reportsOff || nxdomain || connectFirst ? null : <ConnectReports domain={domain} />}
 
 			<div className="space-y-3">
 				<Disclosure
@@ -403,7 +425,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 
 				{/* Hosted, before report intake: no reports can arrive, so the report sections say so once instead of showing zeros. */}
 				{reportsOff ? (
-					<ReportsNotConnected domain={domain.domain} domainId={domain.id} />
+					connectFirst || connectLoading ? null : <ReportsNotConnected domain={domain.domain} domainId={domain.id} />
 				) : (
 				<Disclosure
 						title="Reports"
@@ -548,7 +570,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				)}
 
 				{toolsShown ? (
-					<Disclosure title="DNS tools" summary="Optional tools that change your DNS for you: SPF flattening and MTA-STS.">
+					<Disclosure title="DNS tools" summary={spfOff ? 'Optional tool that changes your DNS for you: MTA-STS.' : mtaOff ? 'Optional tool that changes your DNS for you: SPF flattening.' : 'Optional tools that change your DNS for you: SPF flattening and MTA-STS.'}>
 						<DnsTools domainId={domain.id} />
 					</Disclosure>
 				) : null}

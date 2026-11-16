@@ -1,4 +1,5 @@
 import { StatusDot, cn } from '@ready-set-mail/ui';
+import { Link } from 'react-router';
 import { hasReportAddress } from '../lib/dmarc-record';
 import { useDomains } from '../lib/queries';
 import { useDomainSummaries } from '../lib/domain-queries';
@@ -36,7 +37,7 @@ export function useWorkspaceReportsNotConnected(): boolean {
  * With `domainId` (one domain) and report intake on, it also offers Connect reports (ConnectReports `bare`: the action only).
  */
 /** Reports cannot come to this server for the domain at all (another workspace runs report intake here, or there is none). */
-const cannotCome = (kind: string | undefined) => kind === 'operator_only' || kind === 'unavailable';
+export const cannotCome = (kind: string | undefined) => kind === 'operator_only' || kind === 'unavailable';
 
 /**
  * Why reports cannot be connected: for one domain from its own summary (`report_connect`), for the workspace when every
@@ -49,6 +50,32 @@ function useRefusal(id: number | undefined) {
 	if (id !== undefined) return one.refusal;
 	const rows = [...(batch.data?.values() ?? [])].map((s) => reportsRefusalOf(s));
 	return rows.length > 0 && rows.every((r) => cannotCome(r?.kind)) ? rows[0]! : null;
+}
+
+/**
+ * On a page about every domain: the way to connect reports for the domains that can. One domain: its own action. Several: a link to each
+ * domain's page, where its reports panel is first.
+ */
+function ConnectEach() {
+	const domains = useDomains();
+	const batch = useDomainSummaries(true);
+	const open = (domains.data ?? []).filter((d) => !hasReportAddress(d.rua_address) && !cannotCome(reportsRefusalOf(batch.data?.get(d.id))?.kind));
+	if (open.length === 0) return null;
+	if (open.length === 1) return <ConnectReports domain={{ id: open[0]!.id, domain: open[0]!.domain }} bare />;
+	const shown = open.slice(0, 5);
+	return (
+		<ul className="space-y-1 text-sm" aria-label="Connect reports">
+			{shown.map((d) => (
+				<li key={d.id} className="flex flex-wrap items-baseline gap-x-3">
+					<span className="font-mono text-ink-1 [overflow-wrap:anywhere]">{d.domain}</span>
+					<Link to={`/domains/${d.id}`} className="font-medium text-brand-ink underline underline-offset-4">
+						Connect reports
+					</Link>
+				</li>
+			))}
+			{open.length > shown.length ? <li className="text-ink-2">and {open.length - shown.length} more: open the domain.</li> : null}
+		</ul>
+	);
 }
 
 export function ReportsNotConnected({ domain, domainId, refusalId, className }: { domain?: string; domainId?: number; /** The domain whose refusal decides the wording, when no Connect action is shown (setup). */ refusalId?: number; className?: string }) {
@@ -78,7 +105,7 @@ export function ReportsNotConnected({ domain, domainId, refusalId, className }: 
 				senders and whether it is safe to enforce cannot be shown.
 			</p>
 			<p className="text-sm text-ink-2">Still checked from live DNS: your SPF, DKIM and DMARC records, each domain&apos;s level, and the exact records to fix.</p>
-			{domain && domainId !== undefined ? <ConnectReports domain={{ id: domainId, domain }} bare /> : null}
+			{domain && domainId !== undefined ? <ConnectReports domain={{ id: domainId, domain }} bare /> : domain === undefined ? <ConnectEach /> : null}
 			<TalkToMax priority={HELP_PRIORITY.reportsNotConnected} lead="Want reports for your domains?" about="about connecting them" />
 		</section>
 	);

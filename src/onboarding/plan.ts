@@ -1,16 +1,16 @@
 // The DNS plan of the one-click onboarding: what each step would write, computed from Cloudflare's current records.
 // Nothing here writes. apply.ts performs a step's writes from the same plan.
 
-import { lookupDmarc, organizationalDomain, type Resolver } from '@ready-set-mail/dns-checks';
+import { organizationalDomain } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { CfNotConfiguredError, type CfClient } from '../tenancy/cf-client';
 import { resolverFor } from '../dns/resolver';
 import { assertDnsWriteAllowed } from '../dns/write-policy';
-import { planDmarc, unquote, type InheritedRead } from './dmarc-plan';
+import { planDmarc, readInherited, unquote, type InheritedRead, type WriteDecision } from './dmarc-plan';
 import { plainCloudflareError, rulesReadFailure } from './errors';
 import { writableDomains } from './domains';
 import { listEmailRules, type EmailRule } from './rules';
-import { reportAddressForWrite, workspaceMayConnect } from '../hosted/report-address';
+import { reportAddressForWrite, reviewReportRecord, workspaceMayConnect, type ReportRecordReview } from '../hosted/report-address';
 import { hostedEnabled } from '../hosted/config';
 
 export interface PlanWrite {
@@ -30,7 +30,7 @@ export interface NotWritten { domain?: string; what: string; reason: string; lin
 export interface DnsPlan { plan_id: string; steps: PlanStep[]; not_written: NotWritten[] }
 
 /** What apply needs beyond the public write: the zone and record to touch. */
-export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string; /** dmarc, hosted: the report address the record carries; applying connects the domain's reports. */ reportAddress?: string }
+export interface Exec { cf: CfClient; zoneId: string; recordId?: string; domainId?: number; kind: 'dmarc' | 'auth' | 'mx' | 'rule'; /** rule: the full address it matches. */ address?: string; /** dmarc, hosted: the hash of the review this write was planned from; applying goes through applyReportRecord (src/hosted/report-address.ts), which connects the domain's reports and writes the record that carries our address. */ reportReview?: string }
 
 export type { EmailRule };
 
@@ -58,18 +58,15 @@ export function sameOrganisation(a: string, b: string): boolean {
 
 const setupLink = (domainId: number) => `/domains/${domainId}/setup`;
 
-async function inheritedFor(resolver: Resolver, domain: string): Promise<InheritedRead> {
-  try {
-    const r = await lookupDmarc(resolver, domain);
-    if (r.status === 'error') return { kind: 'unknown', reason: r.error ?? 'lookup failed' };
-    if (r.status === 'none') return { kind: 'none' };
-    if (r.status === 'multiple') return r.inherited ? { kind: 'unknown', reason: `${r.foundAt?.replace(/^_dmarc\./, '')} has several DMARC records` } : { kind: 'none' };
-    // Found at the name itself although the zone holds none: public DNS and the zone disagree, so do not guess.
-    if (!r.inherited) return { kind: 'unknown', reason: 'public DNS shows a record that the Cloudflare zone does not hold' };
-    return { kind: 'inherited', parent: r.organizationalDomain ?? r.foundAt!.replace(/^_dmarc\./, ''), record: r.record!.raw };
-  } catch (e) {
-    return { kind: 'unknown', reason: e instanceof Error ? e.message : 'lookup failed' };
-  }
+/** The plan's DMARC decision for a hosted domain, from the review of the one function that writes our address. */
+function hostedDecision(review: ReportRecordReview): WriteDecision {
+  const o = review.outcome;
+  const now = review.now ?? '';
+  if (o.kind === 'blocked') return { action: 'skip', reason: o.reason };
+  if (o.kind === 'present') return { action: 'none', record: now, reason: o.reason };
+  // Two or more addresses: nothing is written here; the person chooses under Connect reports on the domain page.
+  if (o.kind === 'choose') return { action: 'none', record: now, reason: `${o.reason} Choose under Connect reports on the domain page.` };
+  return o.action === 'update' ? { action: 'update', before: now, record: o.after, reason: o.reason } : { action: 'create', record: o.after, reason: o.reason };
 }
 
 export async function buildPlan(tenant: TenantContext, domainIds: number[]): Promise<{ plan: DnsPlan; exec: Map<string, Exec> }> {
@@ -117,14 +114,15 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
       continue;
     }
     const hasOwn = own.some(c => /^\s*v\s*=\s*DMARC1/i.test(unquote(c)));
-    const inherited: InheritedRead = hasOwn ? { kind: 'none' } : await inheritedFor(resolver, d.domain);
+    const inherited: InheritedRead = hasOwn ? { kind: 'none' } : await readInherited(resolver, d.domain);
     const hostedReports = await reportAddressForWrite(tenant, d, mayConnect);
     if (hostedReports.kind === 'refused' && !reportsRefused) {
       reportsRefused = true;
       notWritten.push({ what: 'Report address', step: 'dmarc', reason: `Reports are not connected for this workspace. ${hostedReports.reason} The records below are written without a report address.` });
     }
-    const hostedAddress = hostedReports.kind === 'ready' ? hostedReports.address : null;
-    const decision = planDmarc({ ownRecords: own, inherited, rua: hostedAddress ?? rua, ruaLimit: hostedAddress !== null });
+    // Hosted and connectable: the record carrying our address comes from the one function that writes it (the same review the domain page shows).
+    const review = hostedReports.kind === 'ready' ? await reviewReportRecord(tenant, d, {}).catch(() => null) : null;
+    const decision = review ? hostedDecision(review) : planDmarc({ ownRecords: own, inherited, rua });
     if (decision.action === 'skip') {
       notWritten.push({ domain: d.domain, what: 'DMARC', step: 'dmarc', reason: decision.reason, link: setupLink(d.id) });
     } else {
@@ -136,7 +134,7 @@ export async function buildPlan(tenant: TenantContext, domainIds: number[]): Pro
         id, domain: d.domain, zone: zone.name, type: 'TXT', name: dmarcName, content: decision.record, action: decision.action,
         before: decision.action === 'update' ? decision.before : null, reason: decision.reason,
       });
-      exec.set(id, { cf, zoneId: zone.id, recordId: existing?.id, domainId: d.id, kind: 'dmarc', ...(hostedAddress && decision.record.toLowerCase().includes(hostedAddress.toLowerCase()) ? { reportAddress: hostedAddress } : {}) });
+      exec.set(id, { cf, zoneId: zone.id, recordId: existing?.id, domainId: d.id, kind: 'dmarc', ...(review && (review.outcome.kind === 'write' || review.outcome.kind === 'present') ? { reportReview: review.hash } : {}) });
     }
 
     // Report authorisation: <d>._report._dmarc.<reports domain> (self-host). Not needed when both names share an organisational

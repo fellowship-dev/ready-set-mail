@@ -249,6 +249,16 @@ describe('the DMARC records row says what receivers do with a broken record', ()
 		expect(await screen.findByText('Published, and aggregate reports are sent to Ready Set Mail.')).toBeInTheDocument();
 		expect(screen.queryByText('Recommended record')).toBeNull();
 	});
+	it('a rollout that cannot be read is asked for once, not again on every render of its section', async () => {
+		const api = page(pageRoutes({
+			'GET /api/domains/1/check-summary': SUM(),
+			'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: `v=DMARC1; p=none; rua=mailto:${RUA}`, cf_managed: true },
+			'GET /api/domains/1/onboarding-status': ONB({ found: true, has_our_rua: true, current_record: `v=DMARC1; p=none; rua=mailto:${RUA}` }),
+		}));
+		expect(await screen.findByText('Could not be loaded.')).toBeInTheDocument();
+		await new Promise((r) => setTimeout(r, 300));
+		expect(api.calls.filter((c) => c.path === '/api/domains/1/rollout-next').length).toBeLessThanOrEqual(2);
+	});
 	it('a TXT that is not DMARC, an invalid p= or an invalid sp= gets no offer', () => {
 		expect(offeredDmarcRecord('google-site-verification=abc', { kind: 'own' }, RUA)).toBeNull();
 		expect(offeredDmarcRecord('v=DMARC1; p=rejected', { kind: 'own' }, RUA)).toBeNull();

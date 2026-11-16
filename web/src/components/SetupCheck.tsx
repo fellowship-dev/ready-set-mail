@@ -16,7 +16,7 @@ function Items({ items }: { items: PreflightItem[] }) {
 
 /**
  * The instance configuration check, for the person who runs the instance and nobody else.
- * `compact`: the banner on every page, shown only while something needs action.
+ * `compact`: the banner on every page, shown only while something needs action: its title, and the list behind "What to fix".
  */
 export function SetupCheck({ compact = false }: { compact?: boolean }) {
 	const { owner, query } = usePreflight();
@@ -27,8 +27,12 @@ export function SetupCheck({ compact = false }: { compact?: boolean }) {
 		if (!actions.length) return null;
 		return (
 			<Alert variant="warning" role="status" title={actions.length === 1 ? 'One setting needs your attention' : `${actions.length} settings need your attention`}>
-				<p>Only you see this, because you run this instance (on the hosted service, the verified account in OWNER_EMAIL). Settings are changed where the Worker is deployed; none of their values are shown here.</p>
-				<Items items={actions} />
+				{/* One line on every page: the list opens on demand, so the page's own first screen stays the page's. */}
+				<details>
+					<summary className="cursor-pointer rounded-sm font-medium underline underline-offset-4">What to fix</summary>
+					<p className="mt-2">Only you see this, because you run this instance (on the hosted service, the verified account in OWNER_EMAIL). Settings are changed where the Worker is deployed; none of their values are shown here.</p>
+					<Items items={actions} />
+				</details>
 			</Alert>
 		);
 	}

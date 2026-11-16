@@ -142,6 +142,8 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/api/domains/2/report-address', kind: 'denied' },
   { method: 'POST', path: '/api/domains/2/report-address', body: {}, kind: 'denied' },
   { method: 'DELETE', path: '/api/domains/2/report-address', kind: 'denied' },
+  { method: 'GET', path: '/api/domains/2/report-address/review', kind: 'denied' },
+  { method: 'POST', path: '/api/domains/2/report-address/apply', body: { reviewed: 'x', choice: { kind: 'add' } }, kind: 'denied' },
   { method: 'GET', path: '/api/domains/1/report-address', kind: 'scoped' },
   { method: 'POST', path: '/api/domains/1/report-address', body: {}, kind: 'scoped', note: 'A\'s own row predates ownership checks: refused, and nothing of B is touched' },
   // analytics (src/analytics/routes.ts): read-only rollups of the caller's own reports
@@ -309,7 +311,7 @@ describe('two hosted workspaces: A cannot reach B', () => {
   it('table covers every route of the report-address module (add new routes here)', () => {
     const src = readFileSync(join(__dirname, '../../src/hosted/report-address-routes.ts'), 'utf8');
     const documented = [...src.matchAll(/^\/\/\s+(GET|POST|PUT|DELETE)\s+(\/api\/\S+)/gm)].map(m => `${m[1]} ${m[2].replace(':id', '2')}`);
-    expect(documented.length).toBe(3);
+    expect(documented.length).toBe(5);
     const covered = ROUTES.filter(r => r.kind === 'denied').map(r => `${r.method} ${r.path}`);
     expect(documented.filter(d => !covered.includes(d))).toEqual([]);
   });
