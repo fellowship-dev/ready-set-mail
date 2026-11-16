@@ -45,6 +45,12 @@ export function planLimitBody(env: Partial<LimitEnv>, kind: PlanLimitKind, max: 
   };
 }
 
+/** The same cap, reached by domains plus domains still waiting for proof: nobody publishes a TXT record for a domain that could never be added. */
+export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, waiting: number) {
+  const body = planLimitBody(env, 'domains_per_workspace', max);
+  return { ...body, error: `This workspace can hold ${max} ${max === 1 ? 'domain' : 'domains'}, and ${waiting} ${waiting === 1 ? 'is' : 'are'} still waiting for proof. Finish proving one, or remove it, to add another.` };
+}
+
 /** HTTP 403 for a cap that is reached. */
 export function planLimitResponse(env: Partial<LimitEnv>, kind: PlanLimitKind, max: number): Response {
   return Response.json(planLimitBody(env, kind, max), { status: 403 });

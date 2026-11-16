@@ -66,6 +66,9 @@ const MAX_PROFILE_BODY = 4096;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Longest password accepted (PBKDF2 of a huge body is a cheap way to burn CPU). */
 const MAX_PASSWORD = 256;
+/** The one sentence for a failed password sign-in: it says neither that the address has no account nor that the password is wrong. */
+export const INVALID_CREDENTIALS = 'That email and password do not match. Check both, or reset your password.';
+export const WRONG_CURRENT_PASSWORD = 'Your current password is not right. Check it and try again.';
 
 /** Better Auth endpoints reachable from outside, as `METHOD /path`. */
 const PASSTHROUGH: readonly RegExp[] = [
@@ -639,7 +642,7 @@ export async function handleAuthRoute(
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
     const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string }>(request);
     if (!body.email || !body.password) return err('email and password are required', 400);
-    if (body.password.length > MAX_PASSWORD) return err('invalid credentials', 401);
+    if (body.password.length > MAX_PASSWORD) return err(INVALID_CREDENTIALS, 401, 'invalid_credentials');
     { const bot = await botCheck(env, request, body.cf_turnstile_token, 'signin'); if (bot) return bot; }
     const email = body.email.toLowerCase().trim();
     // Per-address failure throttle (10 wrong passwords in 15 minutes), counted the same for addresses with no account, whether
@@ -657,7 +660,7 @@ export async function handleAuthRoute(
     const user = await globalQueries(env.DB).users.byEmail(email);
     if (!(await passwordMatches(env, user, body.password)) || !user) {
       await recordSigninFailure(env, email);
-      return err('invalid credentials', 401);
+      return err(INVALID_CREDENTIALS, 401, 'invalid_credentials');
     }
     await clearSigninFailures(env, email);
     if (!(await codesFor(env, user.id))) return passwordSession(env, request, ctx, user, {});
@@ -981,6 +984,12 @@ export async function handleAuthRoute(
     if (everywhere && caller && res.ok) await rotateDeviceEpoch(env, caller.id);
     // A new password voids every code attempt started with the old one.
     if (changing && caller && res.ok) await dropAttemptsOf(env, caller.id);
+    // Better Auth answers `{ code, message }`; the dashboard reads `error`, so a refused change says why instead of a bare status.
+    if (changing && !res.ok) {
+      const refusal = await res.clone().json().catch(() => null) as { code?: string; message?: string } | null;
+      if (refusal?.code === 'INVALID_PASSWORD') return err(WRONG_CURRENT_PASSWORD, res.status, 'wrong_current_password');
+      if (refusal?.message) return err(refusal.message, res.status, refusal.code?.toLowerCase());
+    }
     if (fromBrowser(request) && res.headers.has('set-auth-token')) {
       // Same rule as sessionResponse: a browser holds its session in the cookie only.
       const clean = new Response(res.body, res);

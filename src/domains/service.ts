@@ -1,7 +1,7 @@
 import { PlanLimitError, ProofIncompleteError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
-import { EVICTED_KEEP_DAYS, admitDomain, claimView, freeingFor, proofColumns, restoreInPlace, settleClaims, type VerifiedVia } from './ownership';
+import { EVICTED_KEEP_DAYS, admitDomain, claimLimitBody, claimView, freeingFor, proofColumns, restoreInPlace, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
 import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
@@ -100,7 +100,10 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
   if (!existing) await assertDomainRoom(tenant); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
   const admission = await admitDomain(tenant, domain);
   if (admission.kind === 'taken') throw new DomainServiceError('domain already registered in another workspace', 409);
-  if (admission.kind === 'limit') throw new DomainServiceError('too many unverified domains — verify or remove some first', 429);
+  if (admission.kind === 'limit') {
+    const body = claimLimitBody(tenant, admission);
+    throw new DomainServiceError(body.error, 403, body);
+  }
   if (admission.kind === 'pending') return { pending: true as const, claim: claimView(admission.claim), domain: null };
   return commitVerifiedDomain(tenant, domain, admission.via, userEmail, ctx, actorId, options);
 }

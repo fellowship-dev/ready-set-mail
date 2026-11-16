@@ -9,7 +9,7 @@ import { PlanLimitError } from '@ready-set-mail/db';
 import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import { domainCap, domainRefusal } from './service';
-import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
+import { admitDomain, claimLimitBody, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { recordFirstDnsCheck } from './first-check';
 import { ownershipVerified } from '../product-analytics/steps';
@@ -119,7 +119,7 @@ export async function bulkInsertDomains(
 
     const admission = await admitDomain(tenant, domain);
     if (admission.kind === 'taken') { results.push({ domain, status: 'duplicate', error: 'already registered in another workspace' }); continue; }
-    if (admission.kind === 'limit') { results.push({ domain, status: 'error', error: 'too many unverified domains — verify or remove some first' }); continue; }
+    if (admission.kind === 'limit') { const { error, help_url } = claimLimitBody(tenant, admission); results.push({ domain, status: 'error', error, code: 'plan_limit', help_url }); continue; }
     if (admission.kind === 'pending') { results.push({ domain, status: 'pending', claim: claimView(admission.claim) }); continue; }
 
     let domainId: number;

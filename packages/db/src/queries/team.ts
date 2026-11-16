@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, notExists, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, ne, notExists, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { invites, memberships, users, type MembershipRole } from '../schema';
 
@@ -79,6 +79,12 @@ export function teamQueries(db: Db, workspaceId: string) {
 			return ((res as any).meta?.changes ?? (res as any).changes ?? 0) > 0;
 		},
 
+		/** Change a member's role in this workspace (the caller has checked who may, and that it is not the owner). Returns whether a row changed. */
+		async setRole(userId: string, role: 'admin' | 'member'): Promise<boolean> {
+			const res = await db.update(memberships).set({ role }).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId), ne(memberships.role, 'owner'), ne(memberships.role, role))).returning({ u: memberships.user_id }).all();
+			return res.length > 0;
+		},
+
 		/** Add an existing user to this workspace (no-op if they already belong). */
 		addMember(userId: string, role: MembershipRole) {
 			return db.insert(memberships).values({ workspace_id: workspaceId, user_id: userId, role }).onConflictDoNothing().run();
@@ -144,6 +150,13 @@ export function teamQueries(db: Db, workspaceId: string) {
 		async revokeInvite(token: string): Promise<boolean> {
 			const res = await db.delete(invites).where(and(eq(invites.workspace_id, workspaceId), eq(invites.token, token), isNull(invites.used_at))).returning({ token: invites.token }).all();
 			return res.length > 0;
+		},
+
+		/** Revoke the pending invites for an address except `keep` (the new one replacing them). Returns the revoked invites. */
+		async revokePendingFor(email: string, keep: string) {
+			return db.delete(invites)
+				.where(and(eq(invites.workspace_id, workspaceId), eq(invites.email, email.toLowerCase().trim()), isNull(invites.used_at), ne(invites.token, keep)))
+				.returning({ token: invites.token, role: invites.role, invited_by: invites.invited_by }).all();
 		},
 
 		/** Revoke every pending invite a user sent (invited_by holds the inviter's email); call when they are removed. */

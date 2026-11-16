@@ -323,3 +323,57 @@ describe('what a zone proof has to establish (added with the first-run import)',
     expect((await w.verify(w.A, c.id)).status).toBe(200); // a repeat answers with the domain it became
   });
 });
+
+describe('a Verify that fails says the real reason when a Cloudflare connection lists the zone', () => {
+  const TXT_WORDS = /TXT record .* not found yet/;
+
+  it('the zone left the account: it says Cloudflare no longer lets the connection read it, not that a TXT record is missing', async () => {
+    const w = await world();
+    const c = await w.claim(w.A, 'acme.com');
+    w.connect(w.A.ws);
+    vi.spyOn(ConnectionService.prototype, 'clientFor').mockImplementation(async () => ({ getZone: async () => { throw new Error('Cloudflare 403'); } }) as any);
+    const res = await w.verify(w.A, c.id);
+    expect(res.status).toBe(422);
+    const body = await json(res);
+    expect(body.code).toBe('cloudflare_unproven');
+    expect(body.error).toBe('Cloudflare no longer lets the connection x read the zone acme.com: the zone left that account, or the connection lost access to it. Reconnect Cloudflare, or prove ownership with the TXT record instead.');
+    expect(body.error).not.toMatch(TXT_WORDS);
+    expect(body.claim.last_error).toBe(body.error);
+  });
+
+  it('a lapsed domain (proof lost): Prove again opens the claim, and Verify names the zone problem', async () => {
+    const w = await world();
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, proof_lost_at) VALUES (?, 'acme.com', 'rua@x', 'legacy', unixepoch())").run(w.A.ws);
+    const prove = await call(w.env, 'POST', `/api/domains/${w.rows("SELECT id FROM domains WHERE domain = 'acme.com'")[0].id}/prove`, { key: w.A.token });
+    expect(prove.status).toBe(202);
+    const claim = (await json(prove)).claim as { id: number };
+    w.connect(w.A.ws);
+    w.live.status = 'moved';
+    const body = await json(await w.verify(w.A, claim.id));
+    expect(body.code).toBe('cloudflare_unproven');
+    expect(body.error).toMatch(/zone acme\.com is not active on that account any more, or it moved/);
+    expect(body.error).not.toMatch(TXT_WORDS);
+  });
+
+  it.each([
+    ['not delegated', (w: any) => { w.dns['NS acme.com'] = ['ns1.elsewhere.example.']; }, /Public DNS does not point acme\.com to the Cloudflare zone in x/],
+    ['read-only token', (w: any) => { w.live.permissions = ['#zone:read']; }, /cannot edit DNS for acme\.com/],
+    ['name servers unreadable', (w: any) => { w.dns['NS acme.com'] = 'SERVFAIL'; }, /could not read the name servers of acme\.com/],
+  ])('%s', async (_n, patch, words) => {
+    const w = await world();
+    const c = await w.claim(w.A, 'acme.com');
+    w.connect(w.A.ws);
+    patch(w);
+    const body = await json(await w.verify(w.A, c.id));
+    expect(body.error).toMatch(words);
+    expect(body.error).not.toMatch(TXT_WORDS);
+  });
+
+  it('with no connection covering the name, the TXT wording stays: that is the real reason', async () => {
+    const w = await world();
+    const c = await w.claim(w.A, 'acme.com');
+    const body = await json(await w.verify(w.A, c.id));
+    expect(body.code).toBe('not_found_yet');
+    expect(body.error).toMatch(TXT_WORDS);
+  });
+});

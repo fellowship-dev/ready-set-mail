@@ -123,3 +123,23 @@ describe('OWNER_EMAIL reserves first ownership', () => {
     expect((await call(env, 'POST', `/api/invites/${token}`, { body: { name: 'F', password: 'password-123' } })).status).toBe(201);
   });
 });
+
+describe('sign-in and change-password refusals say something a person can act on', () => {
+  it('a wrong password at sign-in and an unknown address answer with the same sentence and code', async () => {
+    const env = makeEnv();
+    await setupOwner(env, 'owner@example.com', 'old-password-123');
+    const wrong = await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'not-the-password' } });
+    const unknown = await call(env, 'POST', '/api/auth/login', { body: { email: 'nobody@example.com', password: 'not-the-password' } });
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual(await unknown.json());
+    expect(await (await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'x' } })).json()).toMatchObject({ error: 'That email and password do not match. Check both, or reset your password.', code: 'invalid_credentials' });
+  });
+
+  it('a wrong current password at change-password says so in `error`', async () => {
+    const env = makeEnv();
+    const s1 = await setupOwner(env, 'owner@example.com', 'old-password-123');
+    const res = await call(env, 'POST', '/api/auth/change-password', { key: s1, body: { currentPassword: 'wrong-password-1', newPassword: 'new-password-456' } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Your current password is not right. Check it and try again.', code: 'wrong_current_password' });
+  });
+});

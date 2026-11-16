@@ -1,4 +1,4 @@
-// /api/workspaces — the caller's workspaces: list, create, rename, leave, delete.
+// /api/workspaces — the caller's workspaces: list, create, rename, leave, delete, hand ownership on, change a member's role.
 //
 // These act on the *user*, not on the workspace named by X-Workspace-Id: the router resolves them
 // without that header, and each handler checks the caller's membership (and role) in the workspace
@@ -144,7 +144,7 @@ export async function handleWorkspaceRoutes(
     return json({ id, name, role: 'owner', member_count: 1 }, 201);
   }
 
-  const m = path.match(/^\/api\/workspaces\/([^/]+)(?:\/(leave|export|transfer-ownership))?$/);
+  const m = path.match(/^\/api\/workspaces\/([^/]+)(?:\/(leave|export|transfer-ownership|members\/[^/]+\/role))?$/);
   if (!m) return err('not found', 404);
   const id = decodeURIComponent(m[1]);
   const role: MembershipRole | null = await lifecycle.roleOf(user.id, id);
@@ -216,6 +216,25 @@ export async function handleWorkspaceRoutes(
     await globalQueries(deps.db).users.setLegacyRole(to, 'admin');
     audit(id, { action: 'workspace.ownership_transferred', resource_type: 'user', resource_id: to, resource_name: target.email, before_value: { owner: user.email }, after_value: { owner: target.email } });
     return json({ ok: true });
+  }
+
+  // POST /api/workspaces/:id/members/:userId/role { role: 'admin' | 'member' } — the owner promotes a member or demotes an admin.
+  // Never the owner's own row (hand ownership on instead), never yourself, never to owner (that is a transfer).
+  if (m[2]?.startsWith('members/') && method === 'POST') {
+    if (role !== 'owner') return err('only an owner can change a role', 403);
+    const targetId = decodeURIComponent(m[2].split('/')[1]);
+    let body: { role?: unknown };
+    try { body = await request.json(); } catch { return err('Invalid JSON body', 400); }
+    if (body.role !== 'admin' && body.role !== 'member') return err('role must be admin or member; hand ownership on with transfer-ownership', 400);
+    if (targetId === user.id) return err('you cannot change your own role', 400);
+    const team = (await deps.tenantFor(id)).scope.team;
+    const target = await team.getMember(targetId);
+    if (!target) return err('that person is not a member of this workspace', 404);
+    if (target.role === 'owner') return err('the owner row cannot change role: hand ownership on instead', 403);
+    if (target.role === body.role) return json({ ok: true, role: body.role, changed: false });
+    if (!(await team.setRole(targetId, body.role))) return err('could not change the role; reload and try again', 409);
+    audit(id, { action: 'team.role_changed', resource_type: 'user', resource_id: targetId, resource_name: target.email, before_value: { role: target.role }, after_value: { role: body.role } });
+    return json({ ok: true, role: body.role, changed: true });
   }
 
   return err('method not allowed', 405);

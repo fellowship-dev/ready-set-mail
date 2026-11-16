@@ -61,6 +61,7 @@
 //   DELETE /api/workspaces/:id                — delete (owner; ?confirm=<name> when it has domains); revokes Cloudflare OAuth grants
 //   GET    /api/workspaces/:id/export         — JSON export of everything the workspace holds (owner)
 //   POST   /api/workspaces/:id/transfer-ownership — hand ownership to another member (owner)
+//   POST   /api/workspaces/:id/members/:userId/role — owner makes a member an admin or an admin a member (owner)
 //   DELETE /api/account                       — delete your own account ({confirm: <your email>})
 //   GET    /api/team                          — list users (admin only)
 //   POST   /api/team/invite                   — send invite link (admin only; only an owner can invite an admin)
@@ -120,7 +121,7 @@ import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../d
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
-import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
@@ -267,6 +268,22 @@ async function inviteId(token: string): Promise<string> {
 }
 
 /**
+ * One open invite per address in a workspace: a new invite revokes the earlier open ones, so two live links never go to the same person.
+ * Called once the new invite stands (a refused or unsent one leaves the old link working). Returns how many it replaced.
+ */
+async function replaceOpenInvites(tenant: TenantContext, actor: { id: string; email: string }, email: string, keep: string, ctx: ExecutionContext): Promise<number> {
+  const gone = await tenant.scope.team.revokePendingFor(email, keep);
+  for (const g of gone) {
+    logAudit(tenant, {
+      actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
+      action: 'auth.invite_revoked', resource_type: 'user', resource_name: email,
+      before_value: { email, role: g.role, invited_by: g.invited_by }, meta: { reason: 'replaced by a new invite' },
+    }, ctx);
+  }
+  return gone.length;
+}
+
+/**
  * Hand setup to a teammate (spec H1): the ordinary admin invite plus the hand-off row, then the fixed invitation email when mayEmailHandoff allows it (else the link is returned, `emailed: false`). The caller has
  * already checked who may invite an admin. Hosted only (the invitee has no account to be told by anything else), the domain must be this
  * workspace's own (a domain or a claim waiting for proof), and the number open and sent per day is bounded. A refused send leaves nothing behind
@@ -314,6 +331,7 @@ async function sendHandoff(
     await tenant.scope.team.revokeInvite(replaces);
     await deleteHandoff(env, replaces);
   }
+  await replaceOpenInvites(tenant, actor, email, token, ctx);
   setupPathChosen(env, ctx, tenant.workspaceId, 'teammate'); // docs/analytics.md: the S4 choice "hand setup to a teammate"
   logAudit(tenant, {
     actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
@@ -810,7 +828,7 @@ async function _handleApi(
       // SaaS: the hub domain is a claim like any other until its owner is proven.
       const admission = await admitDomain(tenant, domain);
       if (admission.kind === 'taken') return err('this domain is already registered in another workspace', 409);
-      if (admission.kind === 'limit') return err('too many unverified domains — verify or remove some first', 429);
+      if (admission.kind === 'limit') return json(claimLimitBody(tenant, admission), 403);
       if (admission.kind === 'pending') {
         domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: true, domain, claimId: admission.claim.id }); // once per claim (docs/analytics.md)
         return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
@@ -1800,7 +1818,10 @@ async function _handleApi(
     if (path === '/api/team' && method === 'GET') {
       if (!isAdmin) return err('admin required', 403);
       const results = await tenant.scope.team.list();
-      return json({ users: results, current_user_id: userBySession?.id ?? null });
+      // Removing someone who is in no other workspace deletes their login (team.removeUser): the page says so when that applies.
+      const lifecycle = workspaceLifecycle(env.DB);
+      const users = await Promise.all(results.map(async (u) => ({ ...u, other_workspaces: (await lifecycle.listForUser(u.id)).filter((w) => w.id !== tenant.workspaceId).length })));
+      return json({ users, current_user_id: userBySession?.id ?? null });
     }
 
     // POST /api/team/invite — generate one-time invite link (admin only)
@@ -1834,6 +1855,7 @@ async function _handleApi(
         invited_by: actor.email,
         expires_at: expiresAt,
       });
+      const replaced = await replaceOpenInvites(tenant, actor, inviteEmail, token, ctx);
       logAudit(tenant, {
           actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
         action: 'auth.invite_sent',
@@ -1841,7 +1863,7 @@ async function _handleApi(
         after_value: { email: inviteEmail, role: inviteRole, invited_by: actor.email },
       }, ctx);
       inviteSent(tenant, ctx, inviteRole);
-      return json({ token }, 201);
+      return json({ token, replaced }, 201);
     }
 
     // GET /api/team/handoffs — where each hand-off stands (the inviter's dashboard, H2). Owner and admin.

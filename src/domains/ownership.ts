@@ -21,6 +21,7 @@ import { removeAuthRecord, removeHostedRecords } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
+import { planLimits, planLimitWaitingBody } from '../hosted/plan-limits';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
@@ -45,9 +46,6 @@ export const proofMethodOf = (row: ProofSource): ProofMethod => proofMethodOfVia
 /** `cloudflare` when the proof is the Cloudflare zone, otherwise `manual`: how the ownership was proven, not how records were written. */
 export const proofPathOf = (method: ProofMethod): ProofPath => (method === 'cloudflare_zone' ? 'cloudflare' : 'manual');
 
-/** Most unproven claims one workspace may hold at a time. */
-export const MAX_PENDING_CLAIMS = 25;
-
 export const CLAIM_TXT_LABEL = '_readysetmail';
 export const CLAIM_TXT_PREFIX = 'readysetmail-verify=';
 /** The record a claim made before the rename to Ready Set Mail (2026-11-13) told its owner to publish. Still accepted; never shown. */
@@ -59,7 +57,7 @@ export type Admission =
   | { kind: 'pending'; claim: DomainClaimRow }
   /** Another workspace already owns this domain. */
   | { kind: 'taken' }
-  | { kind: 'limit' };
+  | { kind: 'limit'; cap: number; waiting: number };
 
 export interface ClaimView {
   id: number;
@@ -132,7 +130,21 @@ export function canEditDns(connection: { auth_type: string; scopes: string | nul
  *  - hosted: not when a parent or a child of the name is verified in another workspace; that takes the TXT proof.
  */
 export async function cloudflareProof(tenant: TenantContext, domain: string, resolver: Resolver = resolverFor(tenant.env)): Promise<CloudflareProof | null> {
-  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return null;
+  return (await cloudflareProofOrGap(tenant, domain, resolver)).proof;
+}
+
+/** Why a connection that lists the zone still does not prove the name: said in words by `cloudflareGapSentence`. */
+export type CloudflareGap =
+  | { kind: 'unreadable'; zone: string; connection: string }
+  | { kind: 'changed'; zone: string; connection: string }
+  | { kind: 'read_only'; zone: string; connection: string }
+  | { kind: 'not_delegated'; zone: string; connection: string }
+  | { kind: 'delegation_unknown'; zone: string; connection: string };
+
+/** The one rule of `cloudflareProof`, with the reason when an active connection lists the zone but Cloudflare or public DNS does not confirm it (null: no connection covers the name at all). */
+async function cloudflareProofOrGap(tenant: TenantContext, domain: string, resolver: Resolver): Promise<{ proof: CloudflareProof | null; gap: CloudflareGap | null }> {
+  if (getMode(tenant.env) === 'saas' && await claimLookups(tenant.db).relatedOwnedByOther(domain, tenant.workspaceId)) return { proof: null, gap: null };
+  let gap: CloudflareGap | null = null;
   const q = tenant.scope.connections;
   for (const c of await q.list()) {
     if (c.status !== 'active') continue;
@@ -143,19 +155,34 @@ export async function cloudflareProof(tenant: TenantContext, domain: string, res
     if (blocked.some(b => within(domain, b))) continue;
     // The stored allow-list can be stale (zone moved away, expired): ask Cloudflare now, through the connection.
     for (const zone of zones) {
+      const at = { zone: zone.zone_name, connection: c.label };
       try {
         const live = await (await tenant.connections.clientFor(c.id)).getZone(zone.zone_id);
-        if (live.status !== 'active' || live.type !== 'full' || live.name?.toLowerCase() !== zone.zone_name.toLowerCase()) continue;
-        if (c.cf_account_id && live.account?.id !== c.cf_account_id) continue;
-        if (zone.cf_account_id && live.account?.id !== zone.cf_account_id) continue;
-        if (!canEditDns(c, live)) continue;
-        if ((await checkDelegation(resolver, zone.zone_name, live.name_servers)) === 'match') {
-          return { method: 'cloudflare_zone', connection_id: c.id, cf_account_id: live.account?.id ?? c.cf_account_id, zone_id: zone.zone_id, zone_name: zone.zone_name.toLowerCase(), name_servers: (live.name_servers ?? []).map(normalizeName).sort(), at: Math.floor(Date.now() / 1000) };
+        if (live.status !== 'active' || live.type !== 'full' || live.name?.toLowerCase() !== zone.zone_name.toLowerCase()) { gap ??= { kind: 'changed', ...at }; continue; }
+        if (c.cf_account_id && live.account?.id !== c.cf_account_id) { gap ??= { kind: 'changed', ...at }; continue; }
+        if (zone.cf_account_id && live.account?.id !== zone.cf_account_id) { gap ??= { kind: 'changed', ...at }; continue; }
+        if (!canEditDns(c, live)) { gap ??= { kind: 'read_only', ...at }; continue; }
+        const delegation = await checkDelegation(resolver, zone.zone_name, live.name_servers);
+        if (delegation === 'match') {
+          return { gap: null, proof: { method: 'cloudflare_zone', connection_id: c.id, cf_account_id: live.account?.id ?? c.cf_account_id, zone_id: zone.zone_id, zone_name: zone.zone_name.toLowerCase(), name_servers: (live.name_servers ?? []).map(normalizeName).sort(), at: Math.floor(Date.now() / 1000) } };
         }
-      } catch { /* unreachable or refused: not proven */ }
+        gap ??= { kind: delegation === 'unknown' ? 'delegation_unknown' : 'not_delegated', ...at };
+      } catch { gap ??= { kind: 'unreadable', ...at }; /* unreachable or refused: not proven */ }
     }
   }
-  return null;
+  return { proof: null, gap };
+}
+
+/** What a person is told when their Cloudflare connection lists the zone but the proof did not hold: the real reason, not a missing TXT record. */
+export function cloudflareGapSentence(gap: CloudflareGap): string {
+  const where = `${gap.connection}'s zone ${gap.zone}`;
+  switch (gap.kind) {
+    case 'unreadable': return `Cloudflare no longer lets the connection ${gap.connection} read the zone ${gap.zone}: the zone left that account, or the connection lost access to it. Reconnect Cloudflare, or prove ownership with the TXT record instead.`;
+    case 'changed': return `${where} is not active on that account any more, or it moved. Reconnect Cloudflare, or prove ownership with the TXT record instead.`;
+    case 'read_only': return `The connection ${gap.connection} cannot edit DNS for ${gap.zone}, so it cannot prove ownership. Reconnect it with DNS edit access, or prove ownership with the TXT record instead.`;
+    case 'not_delegated': return `Public DNS does not point ${gap.zone} to the Cloudflare zone in ${gap.connection} (its name servers are elsewhere). Point the domain's name servers at Cloudflare, or prove ownership with the TXT record instead.`;
+    case 'delegation_unknown': return `We could not read the name servers of ${gap.zone} just now, so Cloudflare could not prove ownership. Try again in a minute, or prove ownership with the TXT record instead.`;
+  }
 }
 
 export const provenByCloudflare = async (tenant: TenantContext, domain: string, resolver?: Resolver): Promise<boolean> => (await cloudflareProof(tenant, domain, resolver)) !== null;
@@ -342,6 +369,9 @@ async function nameClientWorkspace(tenant: TenantContext, domain: string): Promi
   }
 }
 
+/** The 403 body (code `plan_limit`) for a name that cannot wait for proof because the workspace's domain slots are full. */
+export const claimLimitBody = (tenant: TenantContext, a: { cap: number; waiting: number }) => planLimitWaitingBody(tenant.env, a.cap, a.waiting);
+
 async function admitDomainInner(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
   // Already ours and proven: the insert reports the duplicate. Ours but UNPROVEN (a proof that lapsed, a parent that left): not "existing", the proof
@@ -360,7 +390,12 @@ async function admitDomainInner(tenant: TenantContext, domain: string): Promise<
     if (existing.status === 'lost') await tenant.scope.claims.delete(existing.id); // the other workspace may have since let go: start again
     else return { kind: 'pending', claim: existing };
   }
-  if ((await tenant.scope.claims.count()) >= MAX_PENDING_CLAIMS) return { kind: 'limit' };
+  // A claim is a domain waiting for proof: it takes one of the workspace's domain slots (src/hosted/plan-limits.ts), so 12 claims cannot wait in a workspace that holds 10.
+  const cap = planLimits(tenant.env)?.domainsPerWorkspace;
+  if (cap !== undefined) {
+    const waiting = await tenant.scope.claims.count();
+    if ((await tenant.scope.domains.list()).length - (own ? 1 : 0) + waiting >= cap) return { kind: 'limit', cap, waiting };
+  }
   return { kind: 'pending', claim: await tenant.scope.claims.upsert(domain, newToken()) };
 }
 
@@ -383,8 +418,8 @@ export async function admitByZone(tenant: TenantContext, domain: string, resolve
   return { kind: 'verified', via: 'cloudflare' };
 }
 
-/** Why a Verify did not prove the claim: the record is not visible (yet), or DNS could not be asked. Neither counts against anything. */
-export type UnprovenCode = 'not_found_yet' | 'lookup_failed';
+/** Why a Verify did not prove the claim: the record is not visible (yet), DNS could not be asked, or a Cloudflare connection lists the zone but did not prove it. None counts against anything. */
+export type UnprovenCode = 'not_found_yet' | 'lookup_failed' | 'cloudflare_unproven';
 
 export type VerifyOutcome =
   | { kind: 'verified'; via: VerifiedVia }
@@ -400,12 +435,15 @@ export async function verifyClaim(tenant: TenantContext, claim: DomainClaimRow, 
     return { kind: 'taken' };
   }
   if (await provenByParent(tenant, claim.domain)) { await planEviction(tenant, claim.domain, 'parent'); return { kind: 'verified', via: 'parent' }; }
-  const zoneProof = await cloudflareProof(tenant, claim.domain, resolver);
-  if (zoneProof) { await planEviction(tenant, claim.domain, 'cloudflare'); keepProof(tenant, claim.domain, zoneProof); return { kind: 'verified', via: 'cloudflare' }; }
+  const cloudflare = await cloudflareProofOrGap(tenant, claim.domain, resolver);
+  if (cloudflare.proof) { await planEviction(tenant, claim.domain, 'cloudflare'); keepProof(tenant, claim.domain, cloudflare.proof); return { kind: 'verified', via: 'cloudflare' }; }
   const txt = await provenByTxt(claim, resolver);
-  await tenant.scope.claims.recordCheck(claim.id, txt.ok ? null : (txt.reason ?? null));
+  // A connection that lists the zone is what the card tells the person to rely on: when it is why this failed, say that, not "TXT record not found".
+  const reason = cloudflare.gap ? cloudflareGapSentence(cloudflare.gap) : txt.reason;
+  await tenant.scope.claims.recordCheck(claim.id, txt.ok ? null : (reason ?? null));
   if (txt.ok) await planEviction(tenant, claim.domain, 'txt');
-  return txt.ok ? { kind: 'verified', via: 'txt' } : { kind: 'unproven', reason: txt.reason ?? 'not verified', ...(txt.code ? { code: txt.code } : {}) };
+  const code: UnprovenCode | undefined = cloudflare.gap ? 'cloudflare_unproven' : txt.code;
+  return txt.ok ? { kind: 'verified', via: 'txt' } : { kind: 'unproven', reason: reason ?? 'not verified', ...(code ? { code } : {}) };
 }
 
 /**

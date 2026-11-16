@@ -145,6 +145,28 @@ describe('domains per workspace', () => {
     expect(w.liveDomains(a.ws)).toBe(10);
   });
 
+  it('claims waiting for proof take domain slots: 12 cannot wait in a workspace of 10, and the answer says why', async () => {
+    const w = await hosted();
+    const a = await w.user('a@example.com');
+    for (let i = 0; i < 10; i++) expect((await add(w, a, `wait${i}.example.org`)).status).toBe(202);
+    const res = await add(w, a, 'wait10.example.org');
+    expect(res.status).toBe(403);
+    expect(await json(res)).toMatchObject({
+      error: 'This workspace can hold 10 domains, and 10 are still waiting for proof. Finish proving one, or remove it, to add another.',
+      code: 'plan_limit', limit: { kind: 'domains_per_workspace', max: 10 },
+    });
+    expect(w.rows('SELECT COUNT(*) AS n FROM domain_claims WHERE workspace_id = ?', a.ws)[0].n).toBe(10);
+    expect((await add(w, a, 'wait3.example.org')).status).toBe(202); // a claim it already holds is not a new one
+  });
+
+  it('domains and waiting claims share the slots', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 2);
+    expect((await add(w, a, 'one.example.org')).status).toBe(202); // 2 domains + 1 waiting = 3 of 3
+    expect((await add(w, a, 'two.example.org')).status).toBe(403);
+  });
+
   it('a domain the workspace already has keeps working at the cap', async () => {
     const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '2' });
     const a = await w.user('a@example.com');
