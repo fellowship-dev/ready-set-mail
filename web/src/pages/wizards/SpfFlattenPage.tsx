@@ -7,11 +7,12 @@ import { LoadError, PageSkeleton, ReadOnlyNotice, WriteButton } from '../../comp
 import { CopyButton } from '../../components/wizard/CopyButton';
 import { LookupBadge, RecordPair, TxtRecord } from '../../components/wizard/RecordPair';
 import { StepCard } from '../../components/wizard/StepCard';
+import { ToolOff } from '../../components/wizard/ToolOff';
 import { StepFooter, StepNav } from '../../components/wizard/StepNav';
 import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { api, errorMessage } from '../../lib/api';
-import { useHosted } from '../../lib/session';
+import { useDnsToolsOff } from '../../lib/hosted';
 import type { OnboardingStatus, SpfFlatConfig, SpfFlatStatus } from '../../lib/types';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { dnsErrorDetail, dnsErrorsFor } from './setup/steps';
@@ -59,16 +60,11 @@ async function loadFlatten(domainId: number): Promise<FlattenData> {
 	return { flat, record, recordError, lookupCount, preview, previewFailed };
 }
 
-/** Not on the hosted service: its routes are off there, and a hosted-records domain's SPF is flattened by the hosted service itself. */
+/** Off where the tool is off for this domain (`useDnsToolsOff`): then one line and a way back, and no request to the tool's API. */
 export function SpfFlattenPage() {
-	const hosted = useHosted();
-	if (hosted) {
-		return (
-			<StepCard title="SPF flattening">
-				<p className="text-sm text-ink-2">SPF flattening is not available on the hosted service.</p>
-			</StepCard>
-		);
-	}
+	const domainId = useRouteDomainId();
+	const { spfOff } = useDnsToolsOff(domainId);
+	if (spfOff) return <ToolOff title="SPF flattening" line="SPF flattening is not available on the hosted service yet." backTo={`/domains/${domainId}`} />;
 	return <SpfFlattenWizard />;
 }
 
