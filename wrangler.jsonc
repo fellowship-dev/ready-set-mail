@@ -92,6 +92,8 @@
 	//   MAX_WORKSPACES_PER_USER    workspaces one person may own (default 5; workspaces they were only invited to do not count)
 	//   MAX_DOMAINS_PER_WORKSPACE  domains one workspace may hold (default 10)
 	// A refused request answers 403 with code "plan_limit"; BOOKING_URL (https only) is offered as the way to ask for more.
+	// Hosted plan (docs/billing.md#pay-as-you-go): HOSTED_PLAN=free_one_domain makes the dashboard free for one domain per person and pay as you go for more (default off:
+	// nothing changes). Needs billing configured for the paid path; without it the free limits apply and more domains say "talk to us". Never applied when self-hosting.
 
 	// Hosted billing (MODE=saas only, docs/billing.md): secrets STRIPE_SECRET_KEY (a restricted rk_ key) and STRIPE_WEBHOOK_SECRET; optional STRIPE_PRICE_LOOKUP_KEY. Off unless both secrets are set.
 	// Hosted product analytics (MODE=saas only, docs/analytics.md): POSTHOG_KEY (the PUBLIC project key, phc_…) and POSTHOG_HOST (e.g. https://us.i.posthog.com). Off unless both are set;

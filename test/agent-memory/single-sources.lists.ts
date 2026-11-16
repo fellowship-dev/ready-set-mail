@@ -28,6 +28,12 @@ export const SINGLE: Single[] = [
     owners: ['src/billing/'],
   },
   {
+    concept: 'What a workspace holds and may add under the plan (units, allowance, the lease)',
+    // the one write of a subscription's quantity: only the plan service sends it, so only the plan service can bill
+    signature: /\bsetItemQuantity\b|\/v1\/subscription_items\b/,
+    owners: ['src/billing/stripe-client.ts', 'src/billing/plan-service.ts'],
+  },
+  {
     concept: 'PostHog sends',
     // PostHog's hosts, its SDKs, its capture path and a read of an endpoint setting (host, app host, test-only API base); never a bare `/batch/` (Cloudflare has one too)
     signature: /posthog\.com|\.POSTHOG_(?:HOST|APP_HOST|API_BASE)\b|['"]posthog-(?:js|node)['"]|\/i\/v0\/e\b/i,

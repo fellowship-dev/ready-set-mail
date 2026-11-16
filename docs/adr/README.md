@@ -17,5 +17,8 @@ Short records of decisions already made, with who made them. A change that contr
 | 0011 | [Reviews of the hosted service judge what can happen with today's customers](0011-reviews-judge-todays-customers.md) | accepted |
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
+| 0014 | [The hosted dashboard is free for one domain per person, and pay as you go for more](0014-free-for-one-domain-pay-as-you-go-for-more.md) | accepted, behind HOSTED_PLAN |
+| 0015 | [One module decides what a workspace holds and may add; the server alone writes the subscription quantity](0015-one-plan-engine-the-server-writes-the-quantity.md) | accepted |
+| 0016 | [Mail that fails authentication never counts toward a customer's limits](0016-failing-mail-never-counts-toward-a-limit.md) | proposed, pending owner confirmation |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

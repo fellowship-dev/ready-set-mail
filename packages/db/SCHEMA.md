@@ -33,6 +33,8 @@ Every workspace-owned table has `workspace_id TEXT NOT NULL DEFAULT 'ws_default'
 | `cloudflare_connections` | ✔ | a connected Cloudflare account (OAuth or pasted token); the token only as an AES-GCM envelope. `cf_account_id` is the **Cloudflare** account |
 | `cloudflare_connection_zones` | ✔ | the zones Ready Set Mail may manage through a connection (owner-picked allow-list) |
 | `cloudflare_connection_blocked_zones` | ✔ | child zones of an allowed zone that are not on the list (their names are refused, not written to the parent) |
+| `workspace_subscriptions` | ✔ | the one Stripe subscription of a pay-as-you-go workspace: status, quantity sent and seen, period end, dirty flag (0017) |
+| `workspace_intents` | — (keyed by user: the workspace does not exist yet) | a wish to create a workspace until its card is verified (0017) |
 | `billing_orders` | ✔ (no FK) | hosted purchases: accounting records that outlive the workspace and the domain (`workspace_name`, `domain_name` are snapshots); one open order per workspace + domain name + offer (partial unique index). Read across workspaces only by the Stripe webhook, the instance owner's Orders list and the daily job (`billingLookups`) |
 | `billing_checkout_sessions` | ✔ | binds a Stripe Checkout (add a card) session to the workspace and person that started it; deleted with the workspace |
 | `billing_events`, `billing_price_cache` | global | Stripe events already seen (webhook idempotency); the Stripe price an offer resolves to |
