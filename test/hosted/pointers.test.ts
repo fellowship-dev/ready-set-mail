@@ -14,7 +14,6 @@ const N = hostedNames(ID, APEX);
 const inPlace = (): Record<string, DnsName> => ({
   '_dmarc.a-corp.com': { CNAME: N.dmarc },
   'a-corp.com': { TXT: [`v=spf1 include:_spf.google.com include:${N.spf} -all`] },
-  '_mta-sts.a-corp.com': { CNAME: N.mtaSts },
   '_smtp._tls.a-corp.com': { CNAME: N.tlsRpt },
 });
 
@@ -23,7 +22,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('pointer verification', () => {
   it('ok when the CNAMEs and the SPF include are in place', async () => {
-    expect(await verifyPointers('a-corp.com', ID, APEX, dnsFrom(inPlace()))).toEqual({ dmarc: 'ok', spf: 'ok', mta_sts: 'ok', tls_rpt: 'ok' });
+    expect(await verifyPointers('a-corp.com', ID, APEX, dnsFrom(inPlace()))).toEqual({ dmarc: 'ok', spf: 'ok', tls_rpt: 'ok' });
   });
 
   it('is case- and trailing-dot-insensitive', async () => {
@@ -34,17 +33,16 @@ describe('pointer verification', () => {
 
   it('missing when nothing is published (NXDOMAIN, or the name exists with nothing relevant)', async () => {
     const r = await verifyPointers('a-corp.com', ID, APEX, dnsFrom({ 'a-corp.com': { TXT: ['google-site-verification=x'] }, '_smtp._tls.a-corp.com': {} }));
-    expect(r).toEqual({ dmarc: 'missing', spf: 'missing', mta_sts: 'missing', tls_rpt: 'missing' });
+    expect(r).toEqual({ dmarc: 'missing', spf: 'missing', tls_rpt: 'missing' });
   });
 
   it('wrong when something else is there', async () => {
     const r = await verifyPointers('a-corp.com', ID, APEX, dnsFrom({
       '_dmarc.a-corp.com': { CNAME: 'otherid._dmarc.h.readysetmail.com' },        // someone else's hosted id
       'a-corp.com': { TXT: ['v=spf1 include:_spf.google.com -all'] },            // SPF without our include
-      '_mta-sts.a-corp.com': { TXT: ['v=STSv1; id=1'] },                          // a TXT where the CNAME should be
       '_smtp._tls.a-corp.com': { CNAME: 'tls.elsewhere.example' },
     }));
-    expect(r).toEqual({ dmarc: 'wrong', spf: 'wrong', mta_sts: 'wrong', tls_rpt: 'wrong' });
+    expect(r).toEqual({ dmarc: 'wrong', spf: 'wrong', tls_rpt: 'wrong' });
   });
 
   it('an own DMARC TXT where the CNAME should be is wrong, not missing', async () => {
@@ -54,17 +52,17 @@ describe('pointer verification', () => {
 
   it('error (not missing) when the DNS cannot be read', async () => {
     const r = await verifyPointers('a-corp.com', ID, APEX, dnsFrom({ ...inPlace(), '_dmarc.a-corp.com': { error: true }, 'a-corp.com': { error: true } }));
-    expect(r).toMatchObject({ dmarc: 'error', spf: 'error', mta_sts: 'ok' });
+    expect(r).toMatchObject({ dmarc: 'error', spf: 'error', tls_rpt: 'ok' });
   });
 
   it('a failed lookup keeps the last known status', () => {
-    const prev = { dmarc_pointer: 'ok', spf_pointer: 'missing', mta_sts_pointer: null, tls_rpt_pointer: null };
-    expect(mergePointerReport(prev, { dmarc: 'error', spf: 'ok', mta_sts: 'error', tls_rpt: 'wrong' }))
-      .toEqual({ dmarc_pointer: 'ok', spf_pointer: 'ok', mta_sts_pointer: 'error', tls_rpt_pointer: 'wrong' });
+    const prev = { dmarc_pointer: 'ok', spf_pointer: 'missing', tls_rpt_pointer: null };
+    expect(mergePointerReport(prev, { dmarc: 'error', spf: 'ok', tls_rpt: 'wrong' }))
+      .toEqual({ dmarc_pointer: 'ok', spf_pointer: 'ok', tls_rpt_pointer: 'wrong' });
   });
 
   it('feeds the Level: a hosted record counts as published only once its pointer is ok', () => {
-    expect(levelInputs({ dmarc: 'ok', spf: 'wrong', mta_sts: null })).toEqual({ dmarc_published: true, spf_published: false, mta_sts_published: false });
+    expect(levelInputs({ dmarc: 'ok', spf: 'wrong' })).toEqual({ dmarc_published: true, spf_published: false, mta_sts_published: false });
   });
 });
 
@@ -80,8 +78,8 @@ describe('stored status', () => {
     const tenant = makeTenant({ db: w.db, workspaceId: 'ws_a', env: HOSTED_ENV as any });
     const domain = (await tenant.scope.domains.getById(1))!;
     const view = await verifyDomainPointers(tenant, domain, { resolver: dnsFrom(inPlace()), now: () => NOW * 1000 });
-    expect(view.pointer_status).toEqual({ dmarc: 'ok', spf: 'ok', mta_sts: 'ok', tls_rpt: 'ok', checked_at: NOW });
-    expect(view.level_inputs).toEqual({ dmarc_published: true, spf_published: true, mta_sts_published: true });
+    expect(view.pointer_status).toEqual({ dmarc: 'ok', spf: 'ok', mta_sts: null, tls_rpt: 'ok', checked_at: NOW });
+    expect(view.level_inputs).toEqual({ dmarc_published: true, spf_published: true, mta_sts_published: false });
     expect(w.rows('SELECT domain_id, dmarc_pointer, pointers_checked_at FROM hosted_domains ORDER BY 1')).toEqual([
       { domain_id: 1, dmarc_pointer: 'ok', pointers_checked_at: NOW },
       { domain_id: 2, dmarc_pointer: null, pointers_checked_at: null },

@@ -4,7 +4,7 @@ import { PlanLimitError, forWorkspace } from '@ready-set-mail/db';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from './world';
-import { planLimitBody, planLimitResponse, planLimits } from '../../src/hosted/plan-limits';
+import { mayUseMtaSts, planLimitBody, planLimitResponse, planLimits } from '../../src/hosted/plan-limits';
 
 vi.mock('../../src/dns/provision', () => ({
   provisionDomain: vi.fn().mockResolvedValue({ recordId: null, recordName: null, manual: true }),
@@ -278,5 +278,39 @@ describe('domains per workspace', () => {
     const owner = await setupOwner(env);
     for (let i = 0; i < 12; i++) expect((await call(env, 'POST', '/api/domains', { key: owner, body: { domain: `s${i}.example.com` } })).status).toBe(201);
     expect(db.sqlite.prepare('SELECT COUNT(*) AS n FROM domains').get()).toEqual({ n: 12 });
+  });
+});
+
+describe('mayUseMtaSts', () => {
+  const facts = { configured: true, reportsAdmitted: true, hostsInUse: 0, needsHostname: true, max: 100 };
+
+  it('self-host has no gate, whatever the facts', () => {
+    expect(mayUseMtaSts({}, { ...facts, configured: false, hostsInUse: 10_000 })).toEqual({ allowed: true });
+  });
+
+  it('hosted: allowed once the operator has set it up, the workspace is admitted and there is room', () => {
+    expect(mayUseMtaSts({ MODE: 'saas' }, facts)).toEqual({ allowed: true });
+    expect(mayUseMtaSts({ MODE: 'saas' }, { ...facts, hostsInUse: 99 })).toEqual({ allowed: true });
+  });
+
+  it('refuses in this order, each with a true sentence, a 403-shaped body and the help link', () => {
+    const env = { MODE: 'saas', BOOKING_URL: 'https://example.com/help' };
+    const a = mayUseMtaSts(env, { ...facts, configured: false, reportsAdmitted: false, hostsInUse: 500 });
+    expect(a).toMatchObject({ allowed: false, reason: 'not_configured', body: { code: 'mta_sts_unavailable', reason: 'not_configured', help_url: 'https://example.com/help' } });
+    expect((a as any).body.error).toBe('MTA-STS is not available on this service yet: the operator has not set up policy hosting.');
+    const b = mayUseMtaSts(env, { ...facts, reportsAdmitted: false, hostsInUse: 500 });
+    expect(b).toMatchObject({ allowed: false, reason: 'not_allowed' });
+    expect((b as any).body.error).toBe('MTA-STS is not open to this workspace yet: its TLS reports could not be received.');
+    const c = mayUseMtaSts(env, { ...facts, hostsInUse: 100 });
+    expect(c).toMatchObject({ allowed: false, reason: 'ceiling', body: { limit: { kind: 'policy_hosts', max: 100 } } });
+    expect((c as any).body.error).toBe('This service has reached its limit of 100 MTA-STS policy hosts.');
+  });
+
+  it('the ceiling counts only a domain that needs a custom hostname (the operator\'s own domain does not)', () => {
+    expect(mayUseMtaSts({ MODE: 'saas' }, { ...facts, hostsInUse: 100, needsHostname: false })).toEqual({ allowed: true });
+  });
+
+  it('says "host" for a ceiling of one', () => {
+    expect((mayUseMtaSts({ MODE: 'saas' }, { ...facts, hostsInUse: 1, max: 1 }) as any).body.error).toBe('This service has reached its limit of 1 MTA-STS policy host.');
   });
 });

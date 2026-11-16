@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../../src/audit/log', () => ({ logAudit: vi.fn() }));
 
-import { provisionMtaSts, deprovisionMtaSts, updateMtaStsTxtRecord } from '../../src/email/mta-sts';
+import { createPolicyHostCname, createPolicyIdRecord, createTlsRptRecord, deprovisionMtaSts, getWorkerRoute, updateMtaStsTxtRecord } from '../../src/email/mta-sts';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { makeTenant } from '../helpers/tenant';
 
@@ -25,42 +25,63 @@ const tenant = (settings: Record<string, string> = {}, env: Record<string, strin
     settings: { reportsDomain: 'reports.acme.com', zoneId: 'zone-acme', zoneName: 'acme.com', cfAccountId: 'cf', ...settings },
   });
 
-describe('provisionMtaSts', () => {
-  it('creates the three records in the zone of the domain being provisioned', async () => {
+/** What self-host enable does with these pieces (src/mta-sts/service.ts): the Worker's own host as the proxied CNAME target. */
+async function writeAll(t: ReturnType<typeof tenant>, domain: string, address = `tls-rpt@${t.settings.reportsDomain}`) {
+  const target = await getWorkerRoute(t, domain);
+  const cname = await createPolicyHostCname(t, domain, { target, proxied: true });
+  const tls = await createTlsRptRecord(t, domain, address);
+  const sts = await createPolicyIdRecord(t, domain, '20261116000000');
+  return { target, cname, tls, sts };
+}
+
+describe('the three record writers', () => {
+  it('create the three records in the zone of the domain being provisioned', async () => {
     const cf = world();
     const t = tenant({ workersSubdomain: 'fellowshipdev' });
 
-    const a = await provisionMtaSts(t, 'acme.com');
-    const b = await provisionMtaSts(t, 'other-company.org');
+    await writeAll(t, 'acme.com');
+    await writeAll(t, 'other-company.org');
 
     expect(cf.records.get('zone-acme')!.map(r => r.name).sort()).toEqual(['_mta-sts.acme.com', '_smtp._tls.acme.com', 'mta-sts.acme.com']);
     expect(cf.records.get('zone-other')!.map(r => r.name).sort()).toEqual(['_mta-sts.other-company.org', '_smtp._tls.other-company.org', 'mta-sts.other-company.org']);
-    expect(a.mx_hosts).toEqual(['mx.acme.com']);
-    expect(b.mx_hosts).toEqual(['mx.other-company.org']);
+    expect(cf.records.get('zone-acme')!.find(r => r.name === '_mta-sts.acme.com')!.content).toBe('v=STSv1; id=20261116000000');
   });
 
-  it('points TLS-RPT at the tenant\'s reports domain', async () => {
+  it('point TLS-RPT at the address they are given', async () => {
     const cf = world();
-    await provisionMtaSts(tenant({ workersSubdomain: 'x', reportsDomain: 'reports.acme.com' }), 'acme.com');
-    const tlsrpt = cf.records.get('zone-acme')!.find(r => r.name === '_smtp._tls.acme.com')!;
-    expect(tlsrpt.content).toBe('v=TLSRPTv1; rua=mailto:tls-rpt@reports.acme.com');
+    await writeAll(tenant({ workersSubdomain: 'x', reportsDomain: 'reports.acme.com' }), 'acme.com');
+    expect(cf.records.get('zone-acme')!.find(r => r.name === '_smtp._tls.acme.com')!.content).toBe('v=TLSRPTv1; rua=mailto:tls-rpt@reports.acme.com');
+    const hosted = world();
+    await writeAll(tenant({ workersSubdomain: 'x' }), 'acme.com', 'tls-rpt@rua.readysetmail.com');
+    expect(hosted.records.get('zone-acme')!.find(r => r.name === '_smtp._tls.acme.com')!.content).toBe('v=TLSRPTv1; rua=mailto:tls-rpt@rua.readysetmail.com');
   });
 
+  it('write the CNAME as given: proxied for the Worker host, DNS-only for the hosted policy host; only that target passes the write policy', async () => {
+    const cf = world();
+    const t = tenant();
+    await createPolicyHostCname(t, 'acme.com', { target: 'mta-sts-host.readysetmail.com', proxied: false });
+    const sent = cf.calls.find(c => c.method === 'POST' && c.body?.type === 'CNAME')!;
+    expect(sent.body).toMatchObject({ name: 'mta-sts.acme.com', content: 'mta-sts-host.readysetmail.com', proxied: false });
+    await expect(createPolicyHostCname(t, 'other-company.org', { target: 'attacker.example', proxied: false })).resolves.toBeTruthy(); // the target the caller vouches for is the one allowed
+  });
+});
+
+describe('getWorkerRoute (the self-host policy target)', () => {
   it('uses an existing route of the domain\'s zone as the CNAME target', async () => {
     const cf = world();
-    await provisionMtaSts(tenant(), 'acme.com');
+    await writeAll(tenant(), 'acme.com');
     expect(cf.records.get('zone-acme')!.find(r => r.type === 'CNAME')!.content).toBe('inbox.acme.com');
   });
 
   it('falls back to {worker}.{account subdomain}.workers.dev, not the bare {worker}.workers.dev', async () => {
     const cf = world();
-    await provisionMtaSts(tenant({ workersSubdomain: 'fellowshipdev' }), 'other-company.org');
+    await writeAll(tenant({ workersSubdomain: 'fellowshipdev' }), 'other-company.org');
     expect(cf.records.get('zone-other')!.find(r => r.type === 'CNAME')!.content).toBe('ready-set-mail-worker.fellowshipdev.workers.dev');
   });
 
   it('honours a custom WORKER_NAME in the fallback address', async () => {
     const cf = world();
-    await provisionMtaSts(tenant({ workersSubdomain: 'fellowshipdev' }, { WORKER_NAME: 'my-angel' }), 'other-company.org');
+    await writeAll(tenant({ workersSubdomain: 'fellowshipdev' }, { WORKER_NAME: 'my-angel' }), 'other-company.org');
     expect(cf.records.get('zone-other')!.find(r => r.type === 'CNAME')!.content).toBe('my-angel.fellowshipdev.workers.dev');
   });
 
@@ -72,20 +93,20 @@ describe('provisionMtaSts', () => {
       if (url.endsWith('/accounts/cf/workers/subdomain')) return new Response(JSON.stringify({ success: true, result: { subdomain: 'looked-up' } }), { status: 200 });
       return original(input, init);
     });
-    await provisionMtaSts(tenant(), 'other-company.org');
+    await writeAll(tenant(), 'other-company.org');
     expect(cf.records.get('zone-other')!.find(r => r.type === 'CNAME')!.content).toBe('ready-set-mail-worker.looked-up.workers.dev');
   });
 
-  it('refuses to publish a CNAME that cannot resolve when the subdomain is unknown', async () => {
+  it('refuses a target that cannot resolve when the subdomain is unknown, so nothing is written', async () => {
     const cf = world();
-    await expect(provisionMtaSts(tenant(), 'other-company.org')).rejects.toThrow(/Cannot determine the public hostname/);
+    await expect(writeAll(tenant(), 'other-company.org')).rejects.toThrow(/Cannot determine the public hostname/);
     expect(cf.records.get('zone-other')).toBeUndefined();
   });
 
   it('writes nothing when the domain has no zone', async () => {
     const cf = world();
     cf.mx['unmanaged.net'] = ['10 mx.unmanaged.net.'];
-    await expect(provisionMtaSts(tenant({ workersSubdomain: 'x' }), 'unmanaged.net')).rejects.toThrow(/No Cloudflare zone found for unmanaged\.net/);
+    await expect(writeAll(tenant({ workersSubdomain: 'x' }), 'unmanaged.net')).rejects.toThrow(/No Cloudflare zone found for unmanaged\.net/);
     expect(cf.calls.filter(c => c.method === 'POST')).toHaveLength(0);
   });
 });

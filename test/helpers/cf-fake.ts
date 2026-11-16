@@ -36,8 +36,16 @@ export class FakeCloudflare {
   readonly mx: Record<string, string[]> = {};
   /** CNAME answers for DNS-over-HTTPS lookups: name -> target. */
   readonly cname: Record<string, string> = {};
-  /** Worker routes per zone id, served at /zones/:id/workers/routes. */
-  readonly routes: Record<string, { pattern: string; script: string }[]> = {};
+  /** A / AAAA answers for DNS-over-HTTPS lookups: name -> addresses. */
+  readonly a: Record<string, string[]> = {};
+  /** Worker routes per zone id, served at /zones/:id/workers/routes (GET list and one, POST, DELETE). */
+  readonly routes: Record<string, { id?: string; pattern: string; script: string }[]> = {};
+  /** Cloudflare for SaaS custom hostnames per zone id, served at /zones/:id/custom_hostnames (list with ?hostname=, GET one, POST, DELETE). */
+  readonly customHostnames: Record<string, { id: string; hostname: string; status: string; ssl: { status: string } }[]> = {};
+  /** Make a custom hostname's certificate active (what happens minutes after the customer's CNAME resolves). */
+  activateHostname(hostname: string): void {
+    for (const list of Object.values(this.customHostnames)) for (const h of list) if (h.hostname === hostname) { h.status = 'active'; h.ssl.status = 'active'; }
+  }
   /** Email Routing rules per zone id, served (paged) at /zones/:id/email/routing/rules. */
   readonly rules: Record<string, unknown[]> = {};
   /** When set, that page of the rules list answers 500. */
@@ -96,9 +104,10 @@ export class FakeCloudflare {
         const hosts = this.ns[name] ?? (this.zones[name] ? (this.zones[name].nameServers ?? CF_NS) : undefined);
         return new Response(JSON.stringify(hosts ? { Status: 0, Answer: hosts.map(h => ({ name: `${name}.`, type: 2, data: `${h}.` })) } : { Status: 3 }), { status: 200 });
       }
-      const answers = qtype === 'CNAME' ? (this.cname[name] ? [this.cname[name]] : undefined) : isMx ? this.mx[name] : this.doh[name];
-      const payload = answers
-        ? { Status: 0, Answer: answers.map(data => (isMx ? { type: 15, data } : qtype === 'CNAME' ? { type: 5, data: `${data}.` } : { type: 16, data: `"${data}"` })) }
+      const isAddr = qtype === 'A' || qtype === 'AAAA';
+      const answers = qtype === 'CNAME' ? (this.cname[name] ? [this.cname[name]] : undefined) : isMx ? this.mx[name] : isAddr ? this.a[name]?.filter(x => (qtype === 'AAAA') === x.includes(':')) : this.doh[name];
+      const payload = answers && answers.length
+        ? { Status: 0, Answer: answers.map(data => (isMx ? { type: 15, data } : qtype === 'CNAME' ? { type: 5, data: `${data}.` } : isAddr ? { type: qtype === 'AAAA' ? 28 : 1, data } : { type: 16, data: `"${data}"` })) }
         : { Status: 3 };
       return new Response(JSON.stringify(payload), { status: 200 });
     }
@@ -148,6 +157,44 @@ export class FakeCloudflare {
         return ok({ id: z.id, name: n, status: z.status ?? 'active', type: z.type ?? 'full', name_servers: z.nameServers ?? CF_NS, account: z.cfAccountId ? { id: z.cfAccountId, name: z.cfAccountName } : undefined, permissions: z.permissions ?? ['#zone:read', '#dns_records:edit'] });
       }
       if (rest === '/workers/routes' && method === 'GET') return ok(this.routes[zoneId] ?? []);
+      if (rest === '/workers/routes' && method === 'POST') {
+        const route = { id: `route-${this.#nextId++}`, pattern: body.pattern, script: body.script };
+        this.routes[zoneId] = [...(this.routes[zoneId] ?? []), route];
+        return ok(route);
+      }
+      const oneRoute = rest.match(/^\/workers\/routes\/([^/]+)$/);
+      if (oneRoute && method === 'GET') {
+        const r = (this.routes[zoneId] ?? []).find(x => x.id === oneRoute[1]);
+        return r ? ok(r) : fail(404, 'route not found');
+      }
+      if (oneRoute && method === 'DELETE') {
+        if (!(this.routes[zoneId] ?? []).some(x => x.id === oneRoute[1])) return fail(404, 'route not found');
+        this.routes[zoneId] = (this.routes[zoneId] ?? []).filter(x => x.id !== oneRoute[1]);
+        return ok({ id: oneRoute[1] });
+      }
+      if (rest === '/custom_hostnames' && method === 'GET') {
+        const want = url.searchParams.get('hostname');
+        return paged((this.customHostnames[zoneId] ?? []).filter(h => !want || h.hostname === want));
+      }
+      if (rest === '/custom_hostnames' && method === 'POST') {
+        const zoneName = Object.entries(this.zones).find(([, z]) => z.id === zoneId)?.[0];
+        const host = String(body.hostname ?? '').toLowerCase();
+        if (zoneName && host === zoneName) return fail(403, 'Custom hostname matches zone name');
+        if ((this.customHostnames[zoneId] ?? []).some(h => h.hostname === host)) return fail(409, 'Duplicate custom hostname found');
+        const h = { id: `ch-${this.#nextId++}`, hostname: host, status: 'pending', ssl: { status: 'pending_validation' } };
+        this.customHostnames[zoneId] = [...(this.customHostnames[zoneId] ?? []), h];
+        return ok(h);
+      }
+      const oneHost = rest.match(/^\/custom_hostnames\/([^/]+)$/);
+      if (oneHost && method === 'GET') {
+        const h = (this.customHostnames[zoneId] ?? []).find(x => x.id === oneHost[1]);
+        return h ? ok(h) : fail(404, 'custom hostname not found');
+      }
+      if (oneHost && method === 'DELETE') {
+        if (!(this.customHostnames[zoneId] ?? []).some(x => x.id === oneHost[1])) return fail(404, 'custom hostname not found');
+        this.customHostnames[zoneId] = (this.customHostnames[zoneId] ?? []).filter(x => x.id !== oneHost[1]);
+        return ok({ id: oneHost[1] });
+      }
       if (rest === '/email/routing/rules' && method === 'GET') {
         if (this.ruleFailPage && Number(url.searchParams.get('page') || 1) === this.ruleFailPage) return fail(500, 'Internal error');
         return paged(this.rules[zoneId] ?? []);
