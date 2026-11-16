@@ -6,7 +6,7 @@ const parsed=ts.parseConfigFileTextToJson('wrangler.jsonc',readFileSync('wrangle
 it('routes protocol and API requests through the Worker before SPA fallback',()=>{
  expect(parsed.error).toBeUndefined();
  expect(parsed.config.assets.binding).toBe('ASSETS');
- expect(parsed.config.assets.run_worker_first).toEqual(expect.arrayContaining(['/api/*','/mcp','/mcp/*','/oauth/*','/.well-known/*','/health']));
+ expect(parsed.config.assets.run_worker_first).toBe(true); // every request, so protocol, API and policy-host paths never hit a static file first
 });
 it('ships no installation-specific resource ids: a deploy must fail until the operator substitutes their own',()=>{
  for(const db of parsed.config.d1_databases) expect(db.database_id).toMatch(/^REPLACE_WITH_/);

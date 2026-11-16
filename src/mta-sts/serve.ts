@@ -4,7 +4,7 @@
 // `mta-sts.*` hostname is a 404: the dashboard, the API and the assets are not served under a customer's name. The answer is never cached: senders must
 // see a changed policy as soon as the `_mta-sts` id changes (RFC 8461 §8.1), and they may not use HTTP caching themselves (§3.3).
 
-import type { MtaStsRow } from '@ready-set-mail/db';
+import { assertSchemaReady, SchemaNotReadyError, type MtaStsRow } from '@ready-set-mail/db';
 import { buildPolicyFile } from '@ready-set-mail/dns-checks';
 import type { Env } from '../index';
 import { scope } from '../db/scope';
@@ -26,6 +26,25 @@ export function policyText(config: Pick<MtaStsRow, 'mode' | 'mx_hosts' | 'state'
 
 /** Is this an MTA-STS policy hostname (`mta-sts.<something>`)? */
 export const isPolicyHostname = (hostname: string): boolean => hostname.toLowerCase().startsWith('mta-sts.');
+
+/**
+ * The Worker with policy hosts answered FIRST, before anything else looks at the request (the OAuth/MCP layer, the relay, llms.txt, the API, the dashboard):
+ * a customer's `mta-sts.<domain>` serves the policy file and 404s every other path, whatever else this Worker serves on its own host.
+ * wrangler.jsonc `run_worker_first: true` is what makes static assets reach the Worker before they answer.
+ */
+export function withPolicyHostFirst<T extends { fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> }>(worker: T): T {
+  return { ...worker, async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    if (!isPolicyHostname(new URL(request.url).hostname)) return worker.fetch(request, env, ctx);
+    if (!env.DB) return notFound();
+    try {
+      await assertSchemaReady(env.DB);
+    } catch (e) {
+      if (e instanceof SchemaNotReadyError) return new Response(e.message, { status: 503 });
+      throw e;
+    }
+    return servePolicyHost(request, env as Env & { DB: D1Database });
+  } };
+}
 
 /** The response for any request on a policy hostname. `env.DB` must be present. */
 export async function servePolicyHost(request: Request, env: Env & { DB: D1Database }): Promise<Response> {

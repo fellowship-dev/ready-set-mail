@@ -8,7 +8,7 @@ import { resolveInboundWorkspace } from './tenancy/resolver';
 import { getMode } from './tenancy/mode';
 import { handleHostedEmail } from './hosted/intake';
 import { logIntake } from './hosted/intake-log';
-import { isPolicyHostname, servePolicyHost } from './mta-sts/serve';
+import { withPolicyHostFirst } from './mta-sts/serve';
 import { runHostedCron } from './hosted/cron';
 import { runCronForWorkspaces } from './cron';
 import { assertSchemaReady, SchemaNotReadyError } from '@ready-set-mail/db';
@@ -178,10 +178,7 @@ export const coreWorker = Object.freeze({
       throw e;
     }
     const url = new URL(request.url);
-    const { pathname, hostname } = url;
-
-    // MTA-STS policy hosts (`mta-sts.<domain>`, RFC 8461): the policy file and nothing else (src/mta-sts/serve.ts).
-    if (isPolicyHostname(hostname)) return servePolicyHost(request, env as BoundEnv);
+    const { pathname } = url;
 
     if (pathname === '/health' || pathname.startsWith('/api/')) {
       return handleApi(request, env as BoundEnv, ctx);
@@ -224,7 +221,8 @@ export const coreWorker = Object.freeze({
 } satisfies ExportedHandler<Env>);
 
 
-export default withMcpAuthorization(coreWorker, createInboxMcpHandler());
+// Policy hosts first: a request on `mta-sts.<domain>` never reaches the agent endpoints, the API, llms.txt or the dashboard (src/mta-sts/serve.ts).
+export default withPolicyHostFirst(withMcpAuthorization(coreWorker, createInboxMcpHandler()));
 
 export function setupPage(env: Pick<Env, 'MODE' | 'HOSTED_SERVICE_URL'> = {}): Response {
   const hosted = hostedServiceUrl(env);

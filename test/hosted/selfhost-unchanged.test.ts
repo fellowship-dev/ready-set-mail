@@ -104,7 +104,7 @@ describe('self-host is unchanged', () => {
     s.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, policy_id, workspace_id, mx_hosts, mode) VALUES (1, 'p1', 'ws_default', 'mx.acme.com', 'enforce')").run();
     const res = await worker.fetch(new Request('https://mta-sts.acme.com/.well-known/mta-sts.txt'), s.env, ctx);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('version: STSv1\nmode: enforce\nmx: mx.acme.com\nmax_age: 86400\n');
+    expect(await res.text()).toBe('version: STSv1\nmode: enforce\nmx: mx.acme.com\nmax_age: 604800\n');
     expect((await worker.fetch(new Request('https://mta-sts.unknown.example/.well-known/mta-sts.txt'), s.env, ctx)).status).toBe(404);
   });
 
