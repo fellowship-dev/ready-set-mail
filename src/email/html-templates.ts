@@ -69,10 +69,10 @@ function htmlLayout(title: string, bodyHtml: string, brand: Brand): string {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${c['surface-2']};font-family:Arial,sans-serif;font-size:14px;color:${c['ink-1']};">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:${c['surface-2']};">
-<tr><td align="center" style="padding:24px 8px;">
-<table width="600" cellpadding="0" cellspacing="0" style="background:${c['surface-1']};border-radius:6px;overflow:hidden;max-width:600px;">
+<tr><td align="center" style="padding:16px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${c['surface-1']};border-radius:6px;overflow:hidden;">
   ${header}
-  <tr><td style="padding:24px;">
+  <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     ${bodyHtml}
   </td></tr>
   <tr><td style="padding:12px 24px;background:${c['surface-0']};border-top:1px solid ${c.line};font-size:11px;color:${c['ink-2']};text-align:center;">
@@ -111,10 +111,10 @@ export function buildLetterHtml(p: { title: string; blocks: LetterBlock[]; brand
     if ('heading' in b) return `<h2 style="margin:20px 0 8px;font-size:16px;${ink}">${esc(b.heading)}</h2>`;
     if ('list' in b) return `<ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;${ink}">${b.list.map((i) => `<li style="margin-bottom:6px;">${esc(i)}</li>`).join('')}</ul>`;
     if ('table' in b) {
-      const cell = (t: string, i: number, extra = '') => `<td style="padding:6px 8px;${i > 0 ? 'text-align:right;' : ''}${extra}">${esc(t)}</td>`;
+      const cell = (t: string, i: number, extra = '') => `<td style="padding:6px 2px;${i > 0 ? 'text-align:right;' : 'word-break:break-word;overflow-wrap:anywhere;'}${extra}">${esc(t)}</td>`;
       const head = `<tr style="background:${c['surface-0']};font-weight:600;">${b.table.head.map((h, i) => cell(h, i)).join('')}</tr>`;
-      const rows = b.table.rows.map((r) => `<tr style="border-bottom:1px solid ${c.line};">${r.cells.map((t, i) => cell(t, i, i === 0 && r.indent ? 'padding-left:24px;' : '')).join('')}</tr>`).join('');
-      return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:14px;${ink}">${head}${rows}</table>`;
+      const rows = b.table.rows.map((r) => `<tr style="border-bottom:1px solid ${c.line};">${r.cells.map((t, i) => cell(t, i, i === 0 && r.indent ? 'padding-left:16px;' : '')).join('')}</tr>`).join('');
+      return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;${ink}">${head}${rows}</table>`;
     }
     if ('code' in b) return `<pre style="margin:0 0 14px;padding:10px 12px;background:${c['surface-0']};border:1px solid ${c.line};border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;${ink}">${esc(b.code)}</pre>`;
     if ('small' in b) return `<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:${c['ink-2']};">${esc(b.small)}</p>`;
@@ -356,15 +356,15 @@ export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
 
   let body = `<h2 style="margin:0 0 12px;font-size:18px;">Email security configuration changed</h2>
 <p style="margin:0 0 16px;">We detected changes to the email security configuration of <strong>${esc(p.domain)}</strong>.</p>
-<table cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:16px;">
-<tr style="background:${c['surface-0']};font-weight:600;"><td>Field</td><td>Was</td><td>Now</td><td>Status</td></tr>`;
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:13px;word-break:break-word;overflow-wrap:anywhere;">
+<tr style="background:${c['surface-0']};font-weight:600;"><td style="padding:6px 4px;">Field</td><td style="padding:6px 4px;">Was</td><td style="padding:6px 4px;">Now</td><td style="padding:6px 4px;">Status</td></tr>`;
 
   for (const ch of p.changes) {
     body += `<tr style="border-top:1px solid ${c.line};">
-<td><strong>${esc(ch.field)}</strong></td>
-<td style="font-size:13px;color:${c['ink-2']};">${esc(ch.was || '(not set)')}</td>
-<td style="font-size:13px;">${esc(ch.now || '(removed)')}</td>
-<td>${severityBadge(ch.severity)}</td>
+<td style="padding:6px 4px;"><strong>${esc(ch.field)}</strong></td>
+<td style="padding:6px 4px;color:${c['ink-2']};">${esc(ch.was || '(not set)')}</td>
+<td style="padding:6px 4px;">${esc(ch.now || '(removed)')}</td>
+<td style="padding:6px 4px;">${severityBadge(ch.severity)}</td>
 </tr>`;
   }
 

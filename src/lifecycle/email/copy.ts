@@ -205,7 +205,7 @@ export function weeklySummary(p: Who & { week: { start: number; end: number }; f
     `Here is what DMARC reports said about your domains last week (${rangeText(p.week.start, p.week.end, true)}, UTC).`,
     {
       table: {
-        head: ['Domain', 'Messages', 'Passed DMARC', 'Pass rate', 'Policy'],
+        head: ['Domain', 'Messages', 'Passed', 'Rate', 'Policy'],
         rows: p.rows.map((r) => ({ indent: r.indent, cells: [r.domain, n(r.messages), n(r.passed), r.messages > 0 ? `${passRate({ total: r.messages, passed: r.passed })}%` : '-', r.policy ? `p=${r.policy}` : 'not read'] })),
       },
     },

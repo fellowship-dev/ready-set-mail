@@ -12,7 +12,7 @@ const byName = (name: string): Variant => {
 const rendered = (name: string) => render(byName(name).mail);
 
 /** The part of the HTML between the brand header and the layout footer. */
-const bodyOf = (html: string): string => html.split('<tr><td style="padding:24px;">')[1].split('<tr><td style="padding:12px 24px;')[0];
+const bodyOf = (html: string): string => html.split('<tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">')[1].split('<tr><td style="padding:12px 24px;')[0];
 const decode = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&middot;/g, '·').replace(/&amp;/g, '&');
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 /** Every visible piece of text of the body, one per element. */
@@ -115,6 +115,16 @@ describe('dates are UTC and written like "Mon 16 Nov"', () => {
     for (const v of variants) {
       for (const m of render(v.mail).text.matchAll(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b ?(\S*)/g)) expect(m[2]).toMatch(/^\d{1,2}$/);
     }
+  });
+});
+
+describe('fits a 375 px phone: no fixed width, wrapping text (checked in Chromium for the gallery)', () => {
+  it.each(variants.map((v) => [v.name, v] as const))('%s', (_name, v) => {
+    const html = render(v.mail).html;
+    expect(html).not.toMatch(/\swidth="(?!100%)[^"]*"/); // no width attribute but 100%
+    expect(html).not.toMatch(/(?<![-\w])(?:min-)?width:\s*(?!100%|0)\d+(?:px)?/); // no fixed or minimum pixel width (max-width is the cap)
+    expect(html).toContain('width:100%;max-width:600px');
+    for (const pre of html.match(/<pre [^>]*>/g) ?? []) expect(pre).toMatch(/white-space:pre-wrap;word-break:break-all/);
   });
 });
 
@@ -302,8 +312,8 @@ describe('what each email says is true for its data', () => {
     expect(r.text).toMatch(/^brightwave-mail\.com +1,240 +1,203 +97% +p=none$/m);
     expect(r.text).toMatch(/^ {2}news\.brightwave-mail\.com +2,880 +2,820 +98% +p=quarantine$/m);
     expect(r.text).toMatch(/^brightwave-news\.example +0 +0 +- +not read$/m);
-    expect(r.html).toContain('padding-left:24px;">news.brightwave-mail.com</td>');
-    expect(r.html.match(/padding-left:24px;/g)).toHaveLength(1);
+    expect(r.html).toContain('padding-left:16px;">news.brightwave-mail.com</td>');
+    expect(r.html.match(/padding-left:16px;/g)).toHaveLength(1);
   });
   it('weekly summary: the button names the domain only for one domain', () => {
     expect(rendered('summary: one domain, owner, started failing').text).toContain('Open brightwave-mail.com: ');
