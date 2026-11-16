@@ -199,7 +199,7 @@ describe('SPF flattening is not offered on the hosted service', () => {
 			</Routes>,
 			{ route: '/domains/1/spf-flatten', ...HOSTED, routes: baseRoutes() },
 		);
-		expect(await screen.findByText('SPF flattening is not available on the hosted service.')).toBeInTheDocument();
+		expect(await screen.findByText('SPF flattening is not available on the hosted service yet.')).toBeInTheDocument();
 		unmount();
 	});
 
