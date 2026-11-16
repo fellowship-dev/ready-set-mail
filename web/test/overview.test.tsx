@@ -251,6 +251,7 @@ describe('OverviewPage: unknown is never "not found"', () => {
 });
 
 const justNow = () => Math.floor(Date.now() / 1000) - 600;
+const daysAgo = (n: number) => Math.floor(Date.now() / 1000) - n * 86400;
 const dayCard = () => screen.findByTestId('first-day');
 const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
@@ -432,7 +433,7 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 	});
 
 	it('nothing after 3 days: says why reports may not have come and what to check', async () => {
-		renderOverview({ routes: routesFor({ created_at: 1700000000 }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
+		renderOverview({ routes: routesFor({ created_at: daysAgo(5) }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
 		const card = await dayCard();
 		expect(within(card).getByRole('heading', { name: 'No reports yet for example.com' })).toBeInTheDocument();
 		expect(within(card).getByText(/Reports only come when mail has been sent from the domain\. If it has, check that _dmarc still names our address\./)).toBeInTheDocument();
@@ -456,6 +457,27 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		expect(within(card).getByRole('heading', { name: /Waiting for the report address/ })).toBeInTheDocument();
 	});
 
+	describe('an existing account is not given the first-day card (only the setup just finished is)', () => {
+		const connected = { 'GET /api/cloudflare/connections': { connections: [{ id: 'c1', label: 'Harbor', auth_type: 'oauth', status: 'active', status_detail: null, cf_account_id: 'acc1', cf_account_name: 'Harbor', scopes: [], zones: [{ id: 'z1', name: 'example.com' }] }], oauth: { available: true, scopes: [], via_relay: false }, token_paste: true, encryption_configured: true } };
+		it('a connected domain that already receives reports: no first-day card, no "First reports" card, whatever the age of the browser\'s memory', async () => {
+			renderOverview({ routes: { ...routesFor({ created_at: daysAgo(30), cf_account_id: 'acc1', verified_via: 'cloudflare' }, { dmarc_policy: 'reject', dmarc_rua: 1 }, stats(90, 100)), ...connected } });
+			await row('example.com');
+			expect(screen.queryByTestId('first-day')).toBeNull();
+			expect(screen.queryByRole('heading', { name: /First reports for/ })).toBeNull();
+		});
+		it('an older domain with no reports yet keeps main\'s overview: no card saying this server receives no DMARC reports', async () => {
+			const refusal = 'Reports are only connected for the workspaces of the person who runs this service.';
+			renderOverview({ routes: routesFor({ created_at: daysAgo(30), rua_address: '' }, { dmarc_rua: 0, report_connect: { can_connect: false, refusal, refusal_kind: 'operator_only' } }) });
+			await row('example.com');
+			expect(screen.queryByTestId('first-day')).toBeNull();
+			expect(screen.queryByText(/is checked from public DNS/)).toBeNull();
+		});
+		it('the same domain in its first days does get the card', async () => {
+			renderOverview({ routes: routesFor({ created_at: daysAgo(2), rua_address: '' }, { dmarc_rua: 0, report_connect: { can_connect: false, refusal: 'x', refusal_kind: 'operator_only' } }) });
+			expect(await dayCard()).toBeInTheDocument();
+		});
+	});
+
 	it('Test a real email is not offered where the Email check cannot work', async () => {
 		renderOverview({ status: { email_check: false }, routes: routesFor({ created_at: justNow(), dmarc_policy: 'none' }, { dmarc_policy: 'none', dmarc_rua: 1 }) });
 		const card = await dayCard();
@@ -470,7 +492,7 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 
 	// One rule for the order: while a domain is in its first-day state the card is the first thing on the page, whatever else is there.
 	it('the card comes first even when a domain needs attention (an older domain keeps its "Not yet" headline)', async () => {
-		renderOverview({ routes: routesFor({ dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
+		renderOverview({ routes: routesFor({ dmarc_policy: null, created_at: daysAgo(5) }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
 		const r = await row('example.com');
 		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
 		const card = await dayCard();

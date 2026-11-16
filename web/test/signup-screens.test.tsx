@@ -464,3 +464,47 @@ describe('S1 carries where the sign-up came from (analytics, categories only)', 
 		}
 	});
 });
+
+describe('"Start over" after a mistyped address keeps the S2 answers (this tab only, never the password)', () => {
+	const PROFILE_FULL = { ...PROFILE, role: 'developer', heard_about: 'a colleague' };
+	async function startOverTo(route: string, pending: PendingSignup) {
+		const f = flow({ route, pending });
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: 'Start over' }));
+		await user.type(await screen.findByLabelText('Work email'), 'dana@brightwave-mail.com');
+		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await screen.findByRole('heading', { name: 'Tell us about yourself' });
+		return f;
+	}
+	it('from S3: the new attempt\'s S2 is prefilled, and nothing stored holds the password', async () => {
+		await startOverTo('/signup/code', { ...CODE_PENDING, profile: PROFILE_FULL } as PendingSignup);
+		expect(screen.getByLabelText('Your name')).toHaveValue('Dana Whitfield');
+		expect(screen.getByLabelText('Organization name')).toHaveValue('Brightwave Studio');
+		expect(screen.getByRole('radio', { name: "My company's" })).toBeChecked();
+		expect(screen.getByLabelText('Where did you hear about us? (optional)')).toHaveValue('a colleague');
+		const stored = JSON.stringify({ ...sessionStorage });
+		expect(stored).not.toContain('long-enough-1');
+		expect(JSON.stringify({ ...localStorage })).not.toContain('Dana');
+	});
+	it('from S2: what is typed so far survives too', async () => {
+		const f = flow({ route: '/signup/about', pending: ABOUT_PENDING });
+		const user = userEvent.setup();
+		await user.type(await screen.findByLabelText('Your name'), 'Dana');
+		await user.click(screen.getByRole('radio', { name: 'My clients\' (I\'m an agency or IT provider)' }));
+		await user.click(screen.getByRole('button', { name: 'Start over' }));
+		await user.type(await screen.findByLabelText('Work email'), 'dana@brightwave-mail.com');
+		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await screen.findByRole('heading', { name: 'Tell us about yourself' });
+		expect(screen.getByLabelText('Your name')).toHaveValue('Dana');
+		expect(screen.getByRole('radio', { name: /My clients'/ })).toBeChecked();
+		f.unmount();
+	});
+	it('the right code clears them', async () => {
+		sessionStorage.setItem('rsm_signup_about', JSON.stringify({ name: 'Dana' }));
+		flow({ route: '/signup/code', pending: CODE_PENDING, routes: { 'POST /api/auth/code': { token: 't', code_required: false } } });
+		await userEvent.setup().type(await screen.findByLabelText('6-digit code'), '123456');
+		await waitFor(() => expect(sessionStorage.getItem('rsm_signup_about')).toBeNull());
+	});
+});

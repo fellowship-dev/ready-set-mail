@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { RadioCard } from '../../components/wizard/RadioCard';
-import { PROFILE_LIMITS, ROLE_OPTIONS, setPendingSignup, SIGNUP_PATH, WHOSE_EMAIL_OPTIONS, type PendingSignup, type SignupProfile, type WhoseEmail } from '../../lib/signup';
+import { PROFILE_LIMITS, readSignupAbout, rememberSignupAbout, ROLE_OPTIONS, setPendingSignup, SIGNUP_PATH, WHOSE_EMAIL_OPTIONS, type PendingSignup, type SignupProfile, type WhoseEmail } from '../../lib/signup';
 import { AuthLayout, Field } from './AuthLayout';
 import { startOver } from './SignupCode';
 
@@ -19,7 +19,8 @@ type FieldName = 'name' | 'organization' | 'whose_email' | 'role' | 'heard_about
 export function SignupAbout({ pending }: { pending: Pending }) {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
-	const saved = pending.profile;
+	// This attempt's own answers, else the ones typed before a "Start over" in this tab (never the password).
+	const saved = pending.profile ?? readSignupAbout() ?? undefined;
 	const [name, setName] = useState(saved?.name ?? '');
 	const [organization, setOrganization] = useState(saved?.organization ?? '');
 	const [whose, setWhose] = useState<WhoseEmail | ''>(saved?.whose_email ?? '');
@@ -47,6 +48,7 @@ export function SignupAbout({ pending }: { pending: Pending }) {
 		try {
 			const body = { name: name.trim(), organization: organization.trim(), whose_email: whose, ...(role ? { role } : {}), ...(heard.trim() ? { heard_about: heard.trim() } : {}) };
 			await api('/api/auth/signup/profile', { method: 'POST', body });
+			rememberSignupAbout(body as SignupProfile);
 			setPendingSignup(qc, { ...pending, step: 'code', profile: body as SignupProfile });
 			navigate(SIGNUP_PATH.code);
 		} catch (err) {
@@ -129,14 +131,14 @@ export function SignupAbout({ pending }: { pending: Pending }) {
 			</form>
 			<p className="text-center text-sm text-ink-2">
 				Wrong address?{' '}
-				<StartOverLink />
+				<StartOverLink draft={() => ({ name, organization, whose_email: whose || undefined, role, heard_about: heard })} />
 			</p>
 		</AuthLayout>
 	);
 }
 
 /** "Start over": drops the pending attempt on the server and returns to an empty S1. */
-function StartOverLink() {
+function StartOverLink({ draft }: { draft: () => Partial<SignupProfile> }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const [busy, setBusy] = useState(false);
@@ -147,6 +149,7 @@ function StartOverLink() {
 			disabled={busy}
 			onClick={async () => {
 				setBusy(true);
+				rememberSignupAbout(draft()); // what is typed so far survives the new attempt
 				await startOver(qc);
 				navigate(SIGNUP_PATH.form, { replace: true });
 			}}

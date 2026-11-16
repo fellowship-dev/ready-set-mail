@@ -76,6 +76,38 @@ export function forgetSignupEmail(): void {
 	}
 }
 
+const ABOUT_KEY = 'rsm_signup_about';
+/**
+ * The answers on S2 (name, organization, whose email, role, heard about), kept in this tab only so "Start over" after a mistyped
+ * address does not make the person type them again. NEVER the password. Cleared once the account is created. The next attempt's S2
+ * is prefilled from it; the server still holds only the attempt's own answers.
+ */
+export function rememberSignupAbout(about: Partial<SignupProfile>): void {
+	try {
+		sessionStorage.setItem(ABOUT_KEY, JSON.stringify({ name: about.name ?? '', organization: about.organization ?? '', whose_email: about.whose_email ?? '', role: about.role ?? '', heard_about: about.heard_about ?? '' }));
+	} catch {
+		/* private mode: S2 opens empty */
+	}
+}
+export function readSignupAbout(): Partial<SignupProfile> | null {
+	try {
+		const v = JSON.parse(sessionStorage.getItem(ABOUT_KEY) ?? 'null') as Record<string, unknown> | null;
+		if (!v || typeof v !== 'object') return null;
+		const text = (x: unknown, max: number) => (typeof x === 'string' ? x.slice(0, max) : '');
+		const whose = v.whose_email === 'company' || v.whose_email === 'clients' || v.whose_email === 'looking' ? v.whose_email : undefined;
+		return { name: text(v.name, PROFILE_LIMITS.name), organization: text(v.organization, PROFILE_LIMITS.organization), ...(whose ? { whose_email: whose } : {}), role: text(v.role, 40), heard_about: text(v.heard_about, PROFILE_LIMITS.heard_about) };
+	} catch {
+		return null;
+	}
+}
+export function forgetSignupAbout(): void {
+	try {
+		sessionStorage.removeItem(ABOUT_KEY);
+	} catch {
+		/* ignore */
+	}
+}
+
 export const WHOSE_EMAIL_OPTIONS: ReadonlyArray<{ value: WhoseEmail; title: string }> = [
 	{ value: 'company', title: "My company's" },
 	{ value: 'clients', title: "My clients' (I'm an agency or IT provider)" },

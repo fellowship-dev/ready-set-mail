@@ -302,7 +302,7 @@ describe('S4 opened on a named domain (the invitee, or "Finish it myself")', () 
 				'GET /api/cloudflare/connections': { connections: [], oauth: { available: true, scopes: [], via_relay: false }, token_paste: true, encryption_configured: true },
 			},
 		});
-		await waitFor(() => expect(screen.getByTestId('dns-result')).toHaveTextContent('brightwave-mail.com: 3 things to fix'));
+		await waitFor(() => expect(screen.getByTestId('dns-result')).toHaveTextContent('3 things to fix'));
 		expect(screen.queryByText('dashboard')).toBeNull();
 	});
 });

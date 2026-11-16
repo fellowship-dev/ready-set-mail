@@ -11,6 +11,12 @@ import type { DomainVerdict, ReportTotals } from './verdict';
 /** Days after which "no reports yet" stops being normal and says what to check. */
 export const QUIET_AFTER_DAYS = 3;
 
+/**
+ * The first-day card is for the setup the person has just finished. A domain older than this is an existing account's: it keeps what the
+ * overview said before (its verdict, "Not yet"), with no card on top, whether or not reports have arrived.
+ */
+export const FIRST_RUN_WINDOW_DAYS = 14;
+
 export type FirstDay =
 	/** No domain and no claim: the one thing to do. */
 	| { kind: 'empty' }
@@ -48,6 +54,8 @@ export function firstDay(i: FirstDayInput): FirstDay | null {
 	if (!i.domain) return waiting ? { kind: 'proof', domain: waiting.domain, lost: false } : { kind: 'empty' };
 	const d = i.domain;
 	if (isUnproven(d)) return { kind: 'proof', domain: d.domain, lost: true };
+	const now = i.now ?? Math.floor(Date.now() / 1000);
+	if (now - d.created_at >= FIRST_RUN_WINDOW_DAYS * 86400) return null;
 	const s = i.summary;
 	if (!s) return null; // still loading, or its facts failed: say nothing rather than guess
 	if (s.total_messages > 0) return i.arrivedSeen ? null : { kind: 'arrived', domain: d.domain, total: s.total_messages, passed: s.pass_messages };
@@ -55,7 +63,6 @@ export function firstDay(i: FirstDayInput): FirstDay | null {
 	// Not connected and not refusable (self-host with no reports address, hosted before the address is written): reports are off only when they cannot be connected.
 	if (refused || (!s.report_connect && !hasReportAddress(d.rua_address))) return { kind: 'reports_off', domain: d.domain, reason: refused ? (s.report_connect?.refusal ?? null) : null };
 	if (s.dmarc_rua !== 1 || !hasReportAddress(d.rua_address)) return { kind: 'records', domain: d.domain, domainId: d.id, viaCloudflare: !!d.cf_account_id, applied: !!i.applied };
-	const now = i.now ?? Math.floor(Date.now() / 1000);
 	if (now - d.created_at >= QUIET_AFTER_DAYS * 86400) return { kind: 'quiet', domain: d.domain, domainId: d.id, readAt: s.dns_checked_at };
 	return { kind: 'live', domain: d.domain, domainId: d.id, readAt: s.dns_checked_at };
 }

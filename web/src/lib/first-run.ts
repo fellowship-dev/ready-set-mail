@@ -51,40 +51,32 @@ export function dnsFromStatus(s: OnboardingStatus): PublicDns {
 }
 
 /**
- * The one-line result of a domain, from public DNS only: how many things need fixing and the plain reason for each.
- * Counted: no SPF, no DMARC, DMARC that sends its reports nowhere. DKIM is only ever "not found at the usual names" (public DNS
- * cannot list every selector), so it is a sentence, not a count, unless nothing at all is published.
+ * The result of a domain, from public DNS only, in ONE line (the domain is the screen's headline already): how many things need fixing and
+ * the plain reason for each. Counted: no SPF, no DMARC, DMARC that sends its reports nowhere. DKIM is only ever "not found at the usual
+ * names" (public DNS cannot list every selector), so it is a note on a good result, not a count, unless nothing at all is published.
  */
 export function resultLine(domain: string, d: PublicDns): string {
 	if (d.nxdomain) return `${domain} doesn't exist in public DNS. Check the spelling.`;
 	const unread = [d.spf === 'error' ? 'SPF' : null, d.dmarc === 'error' ? 'DMARC' : null].filter(Boolean);
-	const parts: string[] = [];
-	let count = 0;
-	if (d.spf === 'missing' && d.dmarc === 'missing' && d.dkim === 'not_found') {
-		count = 3;
-		parts.push('No SPF, DKIM or DMARC record found.');
-	} else {
+	const fix: string[] = [];
+	const nothing = d.spf === 'missing' && d.dmarc === 'missing' && d.dkim === 'not_found';
+	if (nothing) fix.push('no SPF, DKIM or DMARC record');
+	else {
 		// A DMARC record that sends its reports nowhere is a thing to fix, except at p=reject, where the domain is already protected and only the reports are missing (said below).
-		if (d.dmarc === 'found' && d.dmarcHasRua === false && d.dmarcPolicy !== 'reject') {
-			count++;
-			parts.push(`DMARC is published${d.dmarcPolicy ? ` (p=${d.dmarcPolicy})` : ''} but sends its reports nowhere.`);
-		}
-		if (d.spf === 'missing') {
-			count++;
-			parts.push('No SPF record.');
-		}
-		if (d.dmarc === 'missing') {
-			count++;
-			parts.push('No DMARC record.');
-		}
-		if (d.dkim === 'not_found') parts.push("We couldn't find a DKIM key at the usual names; reports will show which service signs.");
+		if (d.dmarc === 'found' && d.dmarcHasRua === false && d.dmarcPolicy !== 'reject') fix.push(`DMARC${d.dmarcPolicy ? ` (p=${d.dmarcPolicy})` : ''} sends its reports nowhere`);
+		if (d.spf === 'missing') fix.push('no SPF record');
+		if (d.dmarc === 'missing') fix.push('no DMARC record');
 	}
-	if (unread.length > 0) parts.push(`We couldn't read ${unread.join(' and ')} from public DNS just now.`);
-	if (count === 0) {
-		const quiet = d.dmarc === 'found' && d.dmarcHasRua === false ? " Its DMARC record doesn't send reports anywhere yet." : '';
-		return unread.length > 0 ? `${domain}: ${parts.join(' ')}` : `${domain}: in good shape.${quiet}${parts.length ? ` ${parts.join(' ')}` : ''}`;
+	const cant = unread.length > 0 ? `couldn't read ${unread.join(' and ')} from public DNS just now` : '';
+	if (fix.length > 0) {
+		const count = nothing ? 3 : fix.length;
+		const head = `${count} ${count === 1 ? 'thing' : 'things'} to fix: ${fix.join(', ')}`;
+		return `${head}${cant ? `; ${cant}` : ''}.`;
 	}
-	return `${domain}: ${count} ${count === 1 ? 'thing' : 'things'} to fix. ${parts.join(' ')}`;
+	// Nothing to fix: what is still worth a clause, never a second sentence.
+	const note = d.dmarc === 'found' && d.dmarcHasRua === false ? "its DMARC record sends no reports yet" : d.dkim === 'not_found' ? 'no DKIM key at the usual names' : '';
+	if (cant) return `Couldn't read ${unread.join(' and ')} from public DNS just now.`;
+	return note ? `In good shape; ${note}.` : 'In good shape.';
 }
 
 // ── How to set it up, by who hosts DNS ──────────────────────────

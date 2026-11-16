@@ -104,7 +104,7 @@ describe('S4 variants', () => {
 	it('from the checker: the domain is checked on arrival (no field, no Check click), named with "Not this domain?", and the result is shown', async () => {
 		rememberSignupDomain('brightwave-mail.com');
 		const { calls } = open({ routes: { 'POST /api/domains': { __status: 202, body: { pending: true, claim: claim('brightwave-mail.com'), domain: null } }, 'GET /api/domains/claims/5/preview': preview('brightwave-mail.com'), 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') } });
-		await waitFor(() => expect(screen.getByTestId('dns-result')).toHaveTextContent('brightwave-mail.com:'));
+		await waitFor(() => expect(screen.getByTestId('dns-result')).toHaveTextContent('things to fix'));
 		expect(screen.getByText(/Domain:/)).toHaveTextContent('Domain: brightwave-mail.com · Not this domain?');
 		expect(calls.filter((c) => c.method === 'POST' && c.path === '/api/domains')).toHaveLength(1);
 		expect(screen.queryByLabelText('Domain')).toBeNull();
@@ -197,7 +197,7 @@ describe('S4 by who hosts DNS', () => {
 		const { calls } = open({ routes: added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare'), 'POST /api/cloudflare/oauth/start': { authorize_url: 'about:blank#cf' } }) });
 		await enter('brightwave-mail.com');
 		expect(await screen.findByRole('heading', { name: 'brightwave-mail.com uses Cloudflare for DNS' })).toBeInTheDocument();
-		expect(await screen.findByTestId('dns-result')).toHaveTextContent('brightwave-mail.com: 2 things to fix. DMARC is published (p=quarantine) but sends its reports nowhere. No SPF record.');
+		expect(await screen.findByTestId('dns-result')).toHaveTextContent('2 things to fix: DMARC (p=quarantine) sends its reports nowhere, no SPF record.');
 		expect(screen.getByText(/Connect Cloudflare and we'll prepare the changes\. You see every record before anything is written\./)).toBeInTheDocument();
 		const connect = screen.getByRole('button', { name: 'Connect Cloudflare' });
 		expect(connect.className).toMatch(/\bbg-brand\b/);
@@ -254,7 +254,7 @@ describe('S4 by who hosts DNS', () => {
 			},
 		});
 		await enter('brightwave-mail.com');
-		expect(await screen.findByTestId('dns-result')).toHaveTextContent('brightwave-mail.com: 3 things to fix. No SPF, DKIM or DMARC record found.');
+		expect(await screen.findByTestId('dns-result')).toHaveTextContent('3 things to fix: no SPF, DKIM or DMARC record.');
 		await userEvent.setup().click(await screen.findByRole('button', { name: 'Continue with Brightwave Studio' }));
 		expect(await screen.findByText('review screen')).toBeInTheDocument();
 	});
@@ -343,16 +343,21 @@ describe('the result line', () => {
 	const dns = (o: Partial<PublicDns> = {}): PublicDns => ({ nxdomain: false, spf: 'found', dmarc: 'found', dmarcPolicy: 'reject', dmarcHasRua: true, dkim: 'found', ...o });
 
 	it.each([
-		[dns(), 'x.com: in good shape.'],
-		[dns({ dmarcHasRua: false, dkim: 'found' }), "x.com: in good shape. Its DMARC record doesn't send reports anywhere yet."],
-		[dns({ spf: 'missing', dmarc: 'missing', dmarcPolicy: null, dmarcHasRua: null, dkim: 'not_found' }), 'x.com: 3 things to fix. No SPF, DKIM or DMARC record found.'],
-		[dns({ spf: 'missing', dmarcPolicy: 'quarantine', dmarcHasRua: false }), 'x.com: 2 things to fix. DMARC is published (p=quarantine) but sends its reports nowhere. No SPF record.'],
-		[dns({ spf: 'missing' }), 'x.com: 1 thing to fix. No SPF record.'],
-		[dns({ dkim: 'not_found' }), "x.com: in good shape. We couldn't find a DKIM key at the usual names; reports will show which service signs."],
-		[dns({ spf: 'error' }), "x.com: We couldn't read SPF from public DNS just now."],
+		[dns(), 'In good shape.'],
+		[dns({ dmarcHasRua: false, dkim: 'found' }), 'In good shape; its DMARC record sends no reports yet.'],
+		[dns({ spf: 'missing', dmarc: 'missing', dmarcPolicy: null, dmarcHasRua: null, dkim: 'not_found' }), '3 things to fix: no SPF, DKIM or DMARC record.'],
+		[dns({ spf: 'missing', dmarcPolicy: 'quarantine', dmarcHasRua: false }), '2 things to fix: DMARC (p=quarantine) sends its reports nowhere, no SPF record.'],
+		[dns({ spf: 'missing' }), '1 thing to fix: no SPF record.'],
+		[dns({ dkim: 'not_found' }), 'In good shape; no DKIM key at the usual names.'],
+		[dns({ spf: 'error' }), "Couldn't read SPF from public DNS just now."],
 		[dns({ nxdomain: true }), "x.com doesn't exist in public DNS. Check the spelling."],
 	])('%j → %s', (d, line) => {
 		expect(resultLine('x.com', d)).toBe(line);
+	});
+
+	it('is one line: a single sentence, with no second sentence for any combination', () => {
+		const states: PublicDns[] = [dns(), dns({ dkim: 'not_found' }), dns({ dmarcHasRua: false }), dns({ spf: 'missing', dmarc: 'missing', dmarcPolicy: null, dmarcHasRua: null, dkim: 'not_found' }), dns({ spf: 'missing', dmarcPolicy: 'quarantine', dmarcHasRua: false, dkim: 'not_found' }), dns({ spf: 'error', dmarc: 'missing', dmarcPolicy: null, dmarcHasRua: null })];
+		for (const d of states) expect(resultLine('x.com', d).replace(/\.$/, '')).not.toMatch(/\. /);
 	});
 
 	it('is read from the preview of a claim and from the status of a proven domain', () => {

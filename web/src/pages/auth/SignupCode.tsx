@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
-import { forgetSignupEmail, setPendingSignup, SIGNUP_PATH, SIGNUP_PENDING_KEY, type PendingSignup } from '../../lib/signup';
+import { forgetSignupAbout, forgetSignupEmail, rememberSignupAbout, setPendingSignup, SIGNUP_PATH, SIGNUP_PENDING_KEY, type PendingSignup } from '../../lib/signup';
 import { AuthLayout } from './AuthLayout';
 import { codeDigits, CODE_MINUTES, needsCode } from './CodeStep';
 import { useHumanCheck } from './Turnstile';
@@ -200,6 +200,7 @@ export function SignupCode({ pending }: { pending: Pending }) {
 			onSubmit={async (value) => {
 				await api('/api/auth/code', { method: 'POST', body: { code: value } });
 				forgetSignupEmail();
+				forgetSignupAbout(); // the account exists: nothing of S2 is kept in this tab
 				qc.removeQueries({ queryKey: SIGNUP_PENDING_KEY });
 				await signedIn();
 				navigate('/', { replace: true });
@@ -219,6 +220,7 @@ export function SignupCode({ pending }: { pending: Pending }) {
 				}
 			}}
 			onStartOver={async () => {
+				if (pending.profile) rememberSignupAbout(pending.profile); // a mistyped address must not cost the S2 answers (never the password)
 				await startOver(qc);
 				navigate(SIGNUP_PATH.form, { replace: true });
 			}}
