@@ -8,6 +8,7 @@ import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { PlanLimitNotice, planLimitOf, type PlanLimit } from '../PlanLimitNotice';
 import { clearProgress, connectCloudflarePath, useCfConnections } from '../../lib/cloudflare';
 import { hostOf, isCloudflareHost, safeHelpUrl, useDnsHost, type DnsHostProvider } from '../../lib/dns-host';
+import { useDnsPoll } from '../../lib/poll';
 import { useSession } from '../../lib/session';
 import { ClaimPreview } from './ClaimPreview';
 import { ProofRecord } from './ProofRecord';
@@ -45,7 +46,7 @@ function verifyFailure(e: unknown): string {
  * A domain that is not ours to monitor yet: add this TXT record to prove ownership, then Verify.
  * `pending` has no reports, stats or DNS: only the claim exists. `lost` can only be removed.
  */
-export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, preview }: { claim: DomainClaim; onVerified?: (domain: Domain, info: { resumed: boolean }) => void; onRemoved?: () => void; canWrite?: boolean; /** Show what public DNS says about the domain: `true` loads it now, `'lazy'` waits for a click. */ preview?: boolean | 'lazy' }) {
+export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, preview, recordsOnly = false }: { claim: DomainClaim; /** The first run's S4 already offered Cloudflare and the person chose the record: show the record path, with the provider named, and no second Cloudflare offer. */ recordsOnly?: boolean; onVerified?: (domain: Domain, info: { resumed: boolean }) => void; onRemoved?: () => void; canWrite?: boolean; /** Show what public DNS says about the domain: `true` loads it now, `'lazy'` waits for a click. */ preview?: boolean | 'lazy' }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const { pathname, search } = useLocation();
@@ -58,16 +59,21 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const refresh = () => qc.invalidateQueries({ queryKey: ['domains'] });
 
 	const verify = useMutation({
-		mutationFn: () => api<{ domain: Domain; resumed?: boolean }>(`/api/domains/claims/${claim.id}/verify`, { method: 'POST' }),
+		// `silent`: the automatic look while this card is open (it says nothing when the record is not there yet).
+		mutationFn: (_silent?: boolean) => api<{ domain: Domain; resumed?: boolean }>(`/api/domains/claims/${claim.id}/verify`, { method: 'POST' }),
 		onSuccess: async (res) => {
 			await refresh();
 			// `resumed`: the workspace already had the domain, so this press verified nothing new.
 			if (onVerified) onVerified(res.domain, { resumed: res.resumed === true });
 			else navigate(`/domains/${res.domain.id}`);
 		},
-		onError: (e) => {
+		onError: (e, silent) => {
 			const atLimit = planLimitOf(e);
 			if (atLimit) return setLimit(atLimit);
+			if (silent) {
+				if (e instanceof ApiError && e.status === 409) void refresh();
+				return;
+			}
 			setError(verifyFailure(e));
 			setWaiting(notVisibleYet(e));
 			setFailures((n) => n + 1);
@@ -93,11 +99,13 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const onCloudflare = isCloudflareHost(provider);
 	// An active connection whose allowed zone contains the domain: the server accepts that as proof, so Verify needs no record.
 	const covering = onCloudflare && (conns.data?.connections ?? []).some((c) => c.status === 'active' && c.zones.some((z) => claim.domain === z.name || claim.domain.endsWith(`.${z.name}`)));
-	const cloudflareFirst = !lost && onCloudflare && (covering || canConnect);
+	const cloudflareFirst = !lost && !recordsOnly && onCloudflare && (covering || canConnect);
 	/** "I'll add it myself": the record, for someone who would rather not connect Cloudflare. */
 	const [manual, setManual] = useState(false);
 	const showRecord = !lost && (!cloudflareFirst || manual);
 	const connectPrimary = cloudflareFirst && !covering && !manual;
+	// With the record on screen, the page looks for it itself (every 15 s for 10 minutes while open, then every minute) and moves on when it is there.
+	useDnsPoll(() => verify.mutateAsync(true), showRecord && canWrite && session.canWrite && !verify.isSuccess, claim.id);
 	const helpUrl = onCloudflare ? null : safeHelpUrl(provider);
 	const unknownHost = !dnsHost.isPending && !provider;
 	const connect = () => {
@@ -124,9 +132,9 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 						<p className="text-sm text-ink-1">{covering ? `Cloudflare is connected for ${claim.domain}. Verify to prove you control it.` : `${claim.domain} uses Cloudflare for DNS. Connect Cloudflare and we add the record and verify for you`}</p>
 					) : onCloudflare ? (
 						// Cloudflare, but no connection can be stored here (or the person chose to add it themselves): the record first.
-						<p className="text-sm text-ink-1">{`${claim.domain} uses Cloudflare for DNS. Add this record there to show you control the domain`}</p>
+						<p className="text-sm text-ink-1">{recordsOnly ? 'Add this record in Cloudflare to show you control the domain' : `${claim.domain} uses Cloudflare for DNS. Add this record there to show you control the domain`}</p>
 					) : provider ? (
-						<p className="text-sm text-ink-1">{`${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
+						<p className="text-sm text-ink-1">{recordsOnly ? `Add this record at ${provider.name} to show you control the domain` : `${claim.domain}'s DNS is hosted at ${provider.name}. Add this record there to show you control the domain`}</p>
 					) : (
 						<>
 							<p className="text-sm text-ink-1">Prove you control {claim.domain} by adding this DNS record</p>
@@ -175,7 +183,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 					Remove
 				</Button>
 			</div>
-			{!lost && !connectPrimary ? <p className="text-sm text-ink-2">{showRecord ? 'Usually a minute or two.' : 'Usually a few seconds.'}</p> : null}
+			{!lost && !connectPrimary ? <p className="text-sm text-ink-2">{showRecord ? 'Usually a minute or two. We look for it ourselves every 15 seconds while this page is open.' : 'Usually a few seconds.'}</p> : null}
 			{!lost && preview ? <ClaimPreview claimId={claim.id} domain={claim.domain} lazy={preview === 'lazy'} compact /> : null}
 		</div>
 	);

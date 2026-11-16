@@ -130,6 +130,8 @@ dashboard (the claim card), the first screen or any setup screen goes into the s
 continues there; `#/cloudflare/connect?back=/` and `back=/setup…` are redirected into it. Settings keeps returning to Settings, and a
 connect started from a domain's own page (`back=/domains/<id>…`) still lists zones, links that domain and returns to it.
 
+**After the import (hosted).** On a first run the wizard then goes to the review (`#/setup/review`, C2: what is there now, what Apply would write, one Apply; see [docs/hosted.md](hosted.md#first-run-hosted-s4-c2-and-the-first-day-card)); a later connection, or an import that added nothing, goes to the dashboard.
+
 **Import (hosted).** Once a connection exists, the wizard calls `POST /api/cloudflare/connections/:id/import`. The server reads the zone list
 through the stored connection (a browser can only name zone ids from that list), and adds every **active** zone as a domain of the workspace,
 verified through the connection under the [rule below](#how-a-zone-proves-ownership). Importing writes nothing to DNS; it reads public DNS once per

@@ -52,13 +52,13 @@ describe('the code itself', () => {
     const code = await lastCodeFor(w.env, 'a@example.com');
     const mail = mailsTo(w.env, 'a@example.com').at(-1)!;
     expect(mail.subject).toBe(`${code} is your Ready Set Mail code`);
-    expect(mail.text).toContain('Use this code to confirm your email address and finish creating your Ready Set Mail account:');
-    expect(mail.text).toContain('It expires in 10 minutes');
-    expect(mail.text).toContain("If you didn't ask for this, you can ignore this email; nobody can use it without the code.");
+    expect(mail.text).toContain('Enter this code to finish creating your Ready Set Mail account.');
+    expect(mail.text).toContain('It works for 10 minutes, once, in the browser where you asked for it. Enter it only on https://ia.example.com.');
+    expect(mail.text).toContain("If you didn't ask for this, you can ignore this email.");
     expect(mail.text).toContain('Ready Set Mail is operated by Fellowship.dev, Inc. Privacy: https://readysetmail.com/privacy');
     expect(mail.text).not.toMatch(/#\/|token|\?/);
-    expect(codeEmailText('123456', 'signin', 'https://app.example', null)).toContain('Use this code to finish signing in to Ready Set Mail:');
-    expect(codeEmailText('123456', 'reset', 'https://app.example', null)).toContain('Use this code to reset your Ready Set Mail password:');
+    expect(codeEmailText('123456', 'signin', 'https://app.example', null)).toContain('Enter this code to finish signing in to Ready Set Mail.');
+    expect(codeEmailText('123456', 'reset', 'https://app.example', null)).toContain('Enter this code to reset your Ready Set Mail password.');
     expect(codeEmailText('123456', 'signup', 'https://app.example', 'Valdivia, CL')).toContain('Asked for from near Valdivia, CL');
   });
 });
@@ -156,7 +156,7 @@ describe('threat 1: pre-registration and password overwrite', () => {
     await signupVerified(w.env, 'owner@acme.com', 'owner-pass-1');
     for (let i = 0; i < 6; i++) await signup(w.env, 'owner@acme.com', 'attacker-pass-1');
     await flushBackground();
-    // the sign-up's own code used one of the hour's two
+    // the sign-up's own code used one of the hour's five
     expect(mailsTo(w.env, 'owner@acme.com').filter(m => m.subject === SIGNUP_NOTICE_SUBJECT)).toHaveLength(CODE_MAIL_CAPS.signup.hour - 1);
   });
 });
@@ -258,19 +258,19 @@ describe('threat 2: guessing a code', () => {
 
 describe('threat 3: mail flooding and denial', () => {
   it(`allowances per address: sign-up ${CODE_MAIL_CAPS.signup.hour}/h, sign-in ${CODE_MAIL_CAPS.signin.hour}/h, reset ${CODE_MAIL_CAPS.reset.hour}/h, separate pools`, () => {
-    expect(CODE_MAIL_CAPS).toEqual({ signup: { hour: 2, day: 4 }, signin: { hour: 10, day: 30 }, reset: { hour: 3, day: 10 }, 'reset-device': { hour: 3, day: 10 } });
+    expect(CODE_MAIL_CAPS).toEqual({ signup: { hour: 5, day: 10 }, signin: { hour: 10, day: 30 }, reset: { hour: 3, day: 10 }, 'reset-device': { hour: 3, day: 10 } });
   });
 
   it('sign-up codes need the bot check and stop at the allowance, with the same answer', async () => {
     const w = hosted();
     expect((await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123', cf_turnstile_token: '' } })).status).toBe(403);
     const answers: Array<[number, string]> = [];
-    for (let i = 0; i < 5; i++) { const r = await signup(w.env, 'v@example.com', 'pass-word-123'); answers.push([r.status, JSON.stringify(await json(r))]); }
+    for (let i = 0; i < 7; i++) { const r = await signup(w.env, 'v@example.com', 'pass-word-123'); answers.push([r.status, JSON.stringify(await json(r))]); }
     await flushBackground();
     // Within the allowance one answer; past it, one plainly worded refusal (the allowance is spent alike for every address).
-    expect(answers.map(a => a[0])).toEqual([200, 200, 429, 429, 429]);
-    expect(new Set(answers.slice(0, 2).map(a => a[1])).size).toBe(1);
-    expect(JSON.parse(answers[2]![1]).error).toMatch(/^Several codes were sent to this address recently\. Use the newest one, or try again in \d+ minutes?\.$/);
+    expect(answers.map(a => a[0])).toEqual([200, 200, 200, 200, 200, 429, 429]);
+    expect(new Set(answers.slice(0, 5).map(a => a[1])).size).toBe(1);
+    expect(JSON.parse(answers[5]![1]).error).toMatch(/^We sent several codes to this address recently, so we can't send another yet\. Try again in \d+ minutes?\.$/);
     expect(mailsTo(w.env, 'v@example.com')).toHaveLength(CODE_MAIL_CAPS.signup.hour);
   });
 

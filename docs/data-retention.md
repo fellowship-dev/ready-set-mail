@@ -22,7 +22,9 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Aggregate reports that are stored but never counted (`reporter_tier` `unknown` or `unauthenticated`) | **30 days** | `RETENTION_UNCOUNTED_REPORTS_DAYS` (the earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` is still honoured when it is unset) | Stored but never counted. Not applied when `REPORT_COUNTING=all`, where they are the numbers. A reporter an owner later promotes becomes `counted` and keeps the normal window. |
 | Authenticated senders not in the known-reporter registry (`reporter_candidate_days`: DKIM organisation, From domain, report email, counts per day) | **90 days** | | Instance-wide, no report content, no customer or address. |
 | Sessions | until they expire (sessions last 30 days) | | Includes the IP address and user agent stored with the session. |
-| Sign-in code attempts (code hash, password hash typed at sign-up) | 10 minutes; deleted when used or replaced, expired rows swept | | |
+| Sign-in code attempts (code hash, password hash typed at sign-up, and the "about you" answers typed on the second sign-up screen) | 10 minutes; deleted when used or replaced, expired rows swept | | The answers (name, organization, whose email, optional role and where they heard about us) end with the attempt unless its code is right. |
+| Sign-up profile (`account-profile:<user id>` in `verifications`: the same answers, kept for the account) | until the account is deleted | | Deleted with the account. |
+| Hand-off records (`invite-handoff:<invite token>`: workspace, domain name, who asked, where the invitation went) | **30 days** after they are sent | | Swept as expired `verifications` rows. |
 | Invites | **30 days after they expire** (used or not) | `RETENTION_INVITES_DAYS` | |
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |

@@ -1,0 +1,426 @@
+// Hand setup to a teammate (spec H1, H2, I1): the ordinary admin invite plus the domain to finish, an emailed fixed invitation, the
+// invitee's routing data and the inviter's status list.
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { createMigratedD1 } from '@ready-set-mail/db/testing';
+import { call, enterCode, flushBackground, lastCodeFor, makeEnv, pendingCookieOf, signupVerified, inviteAndAccept } from '../auth/helpers';
+import { HOSTED_ENV } from '../hosted/world';
+import { handoffEmail } from '../../src/auth/mail';
+import { d1RateLimitStorage } from '../../src/auth/rate-limit';
+import { MAX_OPEN_HANDOFFS, mayEmailHandoff } from '../../src/team/handoff';
+import { dohFetch } from '../../packages/dns-checks/test/helpers';
+
+vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
+const json = async (r: Response) => await r.json() as any;
+beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.stubGlobal('fetch', dohFetch({}, [])); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+function world(extra: Record<string, unknown> = {}) {
+  const db = createMigratedD1();
+  const send = vi.fn(async () => {});
+  const env = makeEnv(db, { ...HOSTED_ENV, SEND_EMAIL: { send }, MAIL_REPLY_TO: 'hello@readysetmail.com', ...extra });
+  const rows = (sql: string, ...p: unknown[]) => db.sqlite.prepare(sql).all(...p) as any[];
+  return { db, env, send, rows };
+}
+type W = ReturnType<typeof world>;
+
+/** An owner (named), with one domain claim in their workspace. */
+async function owner(w: W, email = 'dana@brightwave-mail.com') {
+  const key = await signupVerified(w.env, email);
+  w.db.sqlite.prepare("UPDATE users SET name = 'Dana Whitfield' WHERE email = ?").run(email);
+  const claim = await call(w.env, 'POST', '/api/domains', { key, body: { domain: 'brightwave-mail.com' } });
+  expect(claim.status).toBe(202);
+  return key;
+}
+const handoff = (w: W, key: string, over: Record<string, unknown> = {}) =>
+  call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'sam@brightwave-mail.com', role: 'admin', handoff_domain: 'brightwave-mail.com', ...over } });
+const sentTo = (w: W, to: string) => w.send.mock.calls.map((c) => c[0] as any).filter((m) => m.to.includes(to) && !/is your Ready Set Mail code$/.test(m.subject));
+
+describe('the hand-off invite', () => {
+  it('is an admin invite that names the domain, emails the fixed invitation, and answers 201', async () => {
+    const w = world();
+    const key = await owner(w);
+    const res = await handoff(w, key);
+    expect(res.status).toBe(201);
+    const body = await json(res);
+    expect(body.emailed).toBe(true);
+    expect(w.rows('SELECT email, role, expires_at - created_at AS life FROM invites')).toEqual([{ email: 'sam@brightwave-mail.com', role: 'admin', life: 7 * 86400 }]);
+    expect(w.rows("SELECT identifier FROM verifications WHERE identifier LIKE 'invite-handoff:%'")).toHaveLength(1);
+    const [mail] = sentTo(w, 'sam@brightwave-mail.com');
+    // the domain is only a claim here (unproven): the email says "a domain", names the sender by verified address
+    expect(mail.subject).toBe('dana@brightwave-mail.com asked you to finish setting up email for a domain');
+    expect(mail.text).toContain('dana@brightwave-mail.com invited you to a workspace on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for a domain. They call themselves "Dana Whitfield".');
+    expect(mail.text).not.toContain('brightwave-mail.com asked');
+    expect(mail.text).toContain(`/#/invite/${body.token}`);
+    expect(mail.text).toContain('The link works for 7 days.');
+    expect(mail.html).toMatch(/>readysetmail<\/span>/);
+    expect(mail.html).toContain(`/#/invite/${body.token}`);
+    expect(mail.html).not.toMatch(/<img|<svg|url\(|@import|<link/i);
+    expect(mail.replyTo).toBe('hello@readysetmail.com');
+  });
+
+  it('works for a domain still waiting for proof, and for one already added', async () => {
+    const w = world();
+    const key = await owner(w);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) SELECT workspace_id, 'harbor-lane.org', '', 'txt' FROM domain_claims LIMIT 1").run();
+    expect((await handoff(w, key, { handoff_domain: 'harbor-lane.org', email: 'a@x.example' })).status).toBe(201);
+    expect((await handoff(w, key, { handoff_domain: 'Brightwave-Mail.com', email: 'b@x.example' })).status).toBe(201);
+  });
+
+  it('is owner-only (it invites an admin), needs the admin role, and a hosted workspace', async () => {
+    const w = world();
+    const key = await owner(w);
+    const adminKey = await inviteAndAccept(w.env, key, 'admin@brightwave-mail.com', 'admin');
+    expect((await handoff(w, adminKey)).status).toBe(403);
+    const memberKey = await inviteAndAccept(w.env, key, 'member@brightwave-mail.com', 'member');
+    expect((await handoff(w, memberKey)).status).toBe(403);
+    expect((await handoff(w, key, { role: 'member' })).status).toBe(400);
+    expect((await handoff(w, key, { role: undefined })).status).toBe(400);
+    expect((await handoff(w, key, { role: 'owner' })).status).toBe(400);
+    expect(sentTo(w, 'sam@brightwave-mail.com')).toHaveLength(0);
+  });
+
+  it('the domain must belong to this workspace and be a valid name', async () => {
+    const w = world();
+    const key = await owner(w);
+    const other = await signupVerified(w.env, 'eve@other.example');
+    expect((await call(w.env, 'POST', '/api/domains', { key: other, body: { domain: 'other-domain.net' } })).status).toBe(202);
+    for (const d of ['other-domain.net', 'nope.net']) expect((await handoff(w, key, { handoff_domain: d })).status).toBe(404);
+    for (const d of ['not a domain', '', 42, null, 'https://x.com/path']) expect((await handoff(w, key, { handoff_domain: d })).status).toBe(400);
+    expect(w.rows('SELECT 1 FROM invites')).toHaveLength(0);
+  });
+
+  it('keeps the existing rules: a bad address is refused, and a person already in the workspace is a conflict', async () => {
+    const w = world();
+    const key = await owner(w);
+    expect((await handoff(w, key, { email: 'nope' })).status).toBe(400);
+    expect((await handoff(w, key, { email: 'dana@brightwave-mail.com' })).status).toBe(409);
+  });
+
+  it('is bounded: at most 5 waiting at once', async () => {
+    const w = world();
+    const key = await owner(w);
+    for (let i = 0; i < MAX_OPEN_HANDOFFS; i++) expect((await handoff(w, key, { email: `t${i}@brightwave-mail.com` })).status).toBe(201);
+    const over = await handoff(w, key, { email: 'one-more@brightwave-mail.com' });
+    expect(over.status).toBe(429);
+    expect((await json(over)).code).toBe('handoff_limit');
+    expect(sentTo(w, 'one-more@brightwave-mail.com')).toHaveLength(0);
+  });
+
+  it('a refused send is never answered as sent and leaves no invite behind', async () => {
+    const w = world();
+    const key = await owner(w);
+    w.send.mockRejectedValueOnce(new Error('provider down'));
+    const res = await handoff(w, key);
+    expect(res.status).toBe(503);
+    expect((await json(res)).code).toBe('handoff_not_sent');
+    expect(w.rows('SELECT 1 FROM invites')).toHaveLength(0);
+    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'invite-handoff:%'")).toHaveLength(0);
+    expect((await handoff(w, key)).status).toBe(201);
+  });
+
+  it('an ordinary invite is unchanged: no email, no hand-off row, and the invite page has no hand-off', async () => {
+    const w = world();
+    const key = await owner(w);
+    const res = await call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'sam@brightwave-mail.com', role: 'admin' } });
+    expect(res.status).toBe(201);
+    const { token } = await json(res);
+    expect(sentTo(w, 'sam@brightwave-mail.com')).toHaveLength(0);
+    const info = await json(await call(w.env, 'GET', `/api/invites/${token}`));
+    expect(info).toMatchObject({ email: 'sam@brightwave-mail.com', role: 'admin' });
+    expect(info.handoff).toBeUndefined();
+  });
+});
+
+describe('the invitee (I1)', () => {
+  it('the invite page says what to finish and who asked; accepting with the code reports the domain to land on, and gives no S2', async () => {
+    const w = world();
+    const key = await owner(w);
+    const { token } = await json(await handoff(w, key));
+    const info = await json(await call(w.env, 'GET', `/api/invites/${token}`));
+    expect(info).toMatchObject({ role: 'admin', handoff: { domain: 'brightwave-mail.com', inviter_name: 'Dana Whitfield' } });
+
+    const accepted = await call(w.env, 'POST', `/api/invites/${token}`, { body: { password: 'sam-password-1' } });
+    expect(accepted.status).toBe(200);
+    const done = await enterCode(w.env, pendingCookieOf(accepted), await lastCodeFor(w.env, 'sam@brightwave-mail.com'));
+    expect(done.status).toBe(200);
+    const body = await json(done);
+    expect(body).toMatchObject({ purpose: 'invite', handoff_domain: 'brightwave-mail.com' });
+    expect(w.rows("SELECT m.role AS role FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = 'sam@brightwave-mail.com' AND m.workspace_id = ?", body.workspace_id)).toEqual([{ role: 'admin' }]);
+    // no profile questions: nothing was asked or stored for them
+    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'account-profile:%'")).toHaveLength(0);
+  });
+
+  it('an ordinary invite accepted by code reports no domain (it lands on the dashboard)', async () => {
+    const w = world();
+    const key = await owner(w);
+    const { token } = await json(await call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'sam@brightwave-mail.com', role: 'admin' } }));
+    const accepted = await call(w.env, 'POST', `/api/invites/${token}`, { body: { password: 'sam-password-1' } });
+    const done = await json(await enterCode(w.env, pendingCookieOf(accepted), await lastCodeFor(w.env, 'sam@brightwave-mail.com')));
+    expect(done.handoff_domain).toBeUndefined();
+  });
+
+  it('someone who already has a login accepts with one click and is told the domain too', async () => {
+    const w = world();
+    const key = await owner(w);
+    const samKey = await signupVerified(w.env, 'sam@brightwave-mail.com');
+    const { token } = await json(await handoff(w, key));
+    const res = await call(w.env, 'POST', `/api/invites/${token}`, { key: samKey, body: {} });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({ ok: true, handoff_domain: 'brightwave-mail.com' });
+  });
+});
+
+describe('where it stands (H2) and resend', () => {
+  it('lists the hand-off as sent, then joined; only owners and admins can read it', async () => {
+    const w = world();
+    const key = await owner(w);
+    const { token } = await json(await handoff(w, key));
+    let list = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ email: 'sam@brightwave-mail.com', domain: 'brightwave-mail.com', joined_at: null });
+    expect(list[0].expires_at - list[0].sent_at).toBeGreaterThanOrEqual(7 * 86400 - 5);
+    expect(JSON.stringify(list)).not.toContain(token); // the link stays with the invitee
+    const accepted = await call(w.env, 'POST', `/api/invites/${token}`, { body: { password: 'sam-password-1' } });
+    await enterCode(w.env, pendingCookieOf(accepted), await lastCodeFor(w.env, 'sam@brightwave-mail.com'));
+    list = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    expect(list[0].joined_at).toBeGreaterThan(0);
+    const member = await inviteAndAccept(w.env, key, 'm@brightwave-mail.com', 'member');
+    expect((await call(w.env, 'GET', '/api/team/handoffs', { key: member })).status).toBe(403);
+  });
+
+  it('another workspace never sees it', async () => {
+    const w = world();
+    const key = await owner(w);
+    await handoff(w, key);
+    const other = await signupVerified(w.env, 'eve@other.example');
+    expect((await json(await call(w.env, 'GET', '/api/team/handoffs', { key: other }))).handoffs).toEqual([]);
+  });
+
+  it('resend gives a new link by email, the old link stops working, and a joined hand-off cannot be resent', async () => {
+    const w = world();
+    const key = await owner(w);
+    const first = await json(await handoff(w, key));
+    const [{ id }] = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(201);
+    const second = await json(res);
+    expect(second.token).not.toBe(first.token);
+    expect((await call(w.env, 'GET', `/api/invites/${first.token}`)).status).toBe(404);
+    expect((await call(w.env, 'GET', `/api/invites/${second.token}`)).status).toBe(200);
+    expect(sentTo(w, 'sam@brightwave-mail.com')).toHaveLength(2);
+    expect((await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs).toHaveLength(1);
+
+    const accepted = await call(w.env, 'POST', `/api/invites/${second.token}`, { body: { password: 'sam-password-1' } });
+    await enterCode(w.env, pendingCookieOf(accepted), await lastCodeFor(w.env, 'sam@brightwave-mail.com'));
+    const [{ id: id2 }] = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    expect((await call(w.env, 'POST', `/api/team/handoffs/${id2}/resend`, { key, body: {} })).status).toBe(409);
+    expect((await call(w.env, 'POST', '/api/team/handoffs/deadbeef/resend', { key, body: {} })).status).toBe(404);
+  });
+});
+
+describe('a resend never costs the working link', () => {
+  async function sentOne() {
+    const w = world();
+    const key = await owner(w);
+    const first = await json(await handoff(w, key));
+    const [{ id }] = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    return { w, key, first, id };
+  }
+  const stillWorks = async (w: W, key: string, token: string) => {
+    expect((await call(w.env, 'GET', `/api/invites/${token}`)).status).toBe(200);
+    const list = (await json(await call(w.env, 'GET', '/api/team/handoffs', { key }))).handoffs;
+    expect(list).toHaveLength(1);
+    expect(w.rows('SELECT 1 FROM verifications WHERE identifier = ?', `invite-handoff:${token}`)).toHaveLength(1);
+  };
+  it('at the daily cap: 429, the old link still works and its card remains', async () => {
+    const { w, key, first, id } = await sentOne();
+    const ws = w.rows('SELECT workspace_id FROM invites')[0].workspace_id as string;
+    for (let i = 0; i < 20; i++) await d1RateLimitStorage(w.db as any).consume(`handoff:${ws}`, { window: 86400, max: 10 });
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(429);
+    expect((await json(res)).code).toBe('handoff_limit');
+    await stillWorks(w, key, first.token);
+  });
+  it('when the email cannot be sent: 503, the old link still works and its card remains', async () => {
+    const { w, key, first, id } = await sentOne();
+    w.send.mockRejectedValueOnce(new Error('provider down'));
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(503);
+    expect((await json(res)).code).toBe('handoff_not_sent');
+    await stillWorks(w, key, first.token);
+    expect(w.rows('SELECT 1 FROM invites')).toHaveLength(1);
+  });
+  it('with the most hand-offs waiting, a resend still replaces its own (it is not a sixth)', async () => {
+    const { w, key, first, id } = await sentOne();
+    for (let i = 1; i < MAX_OPEN_HANDOFFS; i++) expect((await handoff(w, key, { email: `p${i}@brightwave-mail.com` })).status).toBe(201);
+    const res = await call(w.env, 'POST', `/api/team/handoffs/${id}/resend`, { key, body: {} });
+    expect(res.status).toBe(201);
+    expect((await call(w.env, 'GET', `/api/invites/${first.token}`)).status).toBe(404);
+  });
+});
+
+describe('the invitation email', () => {
+  const m = handoffEmail({ inviterName: 'Dana Whitfield', inviterEmail: 'dana@brightwave-mail.com', workspaceName: 'Brightwave Studio', domain: 'brightwave-mail.com', url: 'https://app.example/#/invite/t' });
+  it('has the spec\'s fixed wording', () => {
+    expect(m.subject).toBe('dana@brightwave-mail.com asked you to finish setting up email for brightwave-mail.com');
+    expect(m.text).toBe('dana@brightwave-mail.com invited you to a workspace on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for brightwave-mail.com. They call themselves "Dana Whitfield". They call the workspace "Brightwave Studio".\n\nhttps://app.example/#/invite/t\n\nThe link works for 7 days. If you do not know them, ignore this email.');
+    expect(m.html).toContain('Open Ready Set Mail');
+  });
+  it('lets no typed text change its shape: names are cleaned, markup is escaped', () => {
+    const x = handoffEmail({ inviterName: 'Eve‮\nBcc: x@y.z', inviterEmail: 'e@x.example', workspaceName: '<b>Acme</b>', domain: 'x.com', url: 'https://app.example/#/invite/t' });
+    expect(x.subject).not.toMatch(/[\r\n‮]/);
+    expect(x.html).not.toContain('<b>Acme</b>');
+    expect(x.html).toContain('&lt;b&gt;Acme&lt;/b&gt;');
+  });
+  it('the workspace name is framed like the display name, cut at 40 characters, and never in the main sentence', () => {
+    const long = 'Acme '.repeat(30);
+    const x = handoffEmail({ inviterName: 'Dana', inviterEmail: 'd@x.example', workspaceName: long, domain: 'x.com', url: 'https://app.example/#/invite/t' });
+    const line = x.text.match(/They call the workspace "([^"]*)"\./);
+    expect(line?.[1]).toBe(long.trim().slice(0, 40).trim());
+    expect([...line![1]].length).toBeLessThanOrEqual(40);
+    expect(x.text.split('\n')[0]).toMatch(/^d@x\.example invited you to a workspace on Ready Set Mail as an admin, /);
+    expect(x.text.split('Acme')[0]).toContain('They call the workspace');
+  });
+  it('an unproven domain names no workspace at all', () => {
+    const x = handoffEmail({ inviterName: 'Dana', inviterEmail: 'd@x.example', workspaceName: 'Secret Co', domain: null, url: 'https://app.example/#/invite/t' });
+    expect(x.text).not.toContain('Secret Co');
+    expect(x.text).not.toContain('the workspace');
+  });
+});
+
+describe('the hand-off as a carrier (review item 16)', () => {
+  const LURE = 'PayPal Security: call +1 800 555 0100 or visit paypa1-help.com';
+  async function stranger(w: W, domain: string) {
+    const key = await signupVerified(w.env, 'attacker@freemail.example');
+    w.db.sqlite.prepare('UPDATE users SET name = ? WHERE email = ?').run(LURE, 'attacker@freemail.example');
+    expect((await call(w.env, 'POST', '/api/domains', { key, body: { domain } })).status).toBe(202);
+    return key;
+  }
+  const to = (w: W, key: string, email: string, domain: string) => call(w.env, 'POST', '/api/team/invite', { key, body: { email, role: 'admin', handoff_domain: domain } });
+
+  it('the reviewer\'s probe: an unproven claim on someone else\'s domain cannot make us email an address outside the sender\'s own email domain', async () => {
+    const w = world();
+    const key = await stranger(w, 'paypal.com');
+    const r = await to(w, key, 'anyone@victim.example', 'paypal.com');
+    // no refusal and no email: the invite and the hand-off row exist, and the sender gets the link to send themselves
+    expect(r.status).toBe(201);
+    const body = await json(r);
+    expect(body.emailed).toBe(false);
+    expect(body.url).toContain(`/#/invite/${body.token}`);
+    expect(sentTo(w, 'anyone@victim.example')).toHaveLength(0);
+    expect(w.rows('SELECT email, role FROM invites')).toEqual([{ email: 'anyone@victim.example', role: 'admin' }]);
+    expect(w.rows("SELECT 1 FROM verifications WHERE identifier LIKE 'invite-handoff:%'")).toHaveLength(1);
+  });
+
+  it('to the sender\'s own email domain it is allowed, and the email says nothing the sender typed except a capped "they call themselves"', async () => {
+    const w = world();
+    const key = await stranger(w, 'paypal.com');
+    const r = await to(w, key, 'friend@freemail.example', 'paypal.com');
+    expect(r.status).toBe(201);
+    const [m] = sentTo(w, 'friend@freemail.example');
+    expect(m.subject).toBe('attacker@freemail.example asked you to finish setting up email for a domain');
+    expect(m.subject).not.toMatch(/PayPal|paypal|800/);
+    expect(m.text).not.toContain('paypal.com');
+    expect(m.text).not.toContain('paypa1-help.com'); // the lure is cut at 40 characters: it never reaches its link
+    expect(m.text).toContain('They call themselves "PayPal Security: call +1 800 555 0100 or');
+    expect(m.html).not.toContain('paypal.com');
+  });
+
+  it('once a domain is proven in the workspace, any address may be asked, and the proven domain and workspace are named', async () => {
+    const w = world();
+    const key = await owner(w);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) SELECT workspace_id, 'harbor-lane.org', '', 'txt' FROM domain_claims LIMIT 1").run();
+    expect((await to(w, key, 'sam@other.example', 'harbor-lane.org')).status).toBe(201);
+    const [m] = sentTo(w, 'sam@other.example');
+    expect(m.subject).toBe('dana@brightwave-mail.com asked you to finish setting up email for harbor-lane.org');
+    // the unproven claim in the same workspace is still not named
+    expect((await to(w, key, 'sam2@other.example', 'brightwave-mail.com')).status).toBe(201);
+    expect(sentTo(w, 'sam2@other.example')[0].subject).toMatch(/for a domain$/);
+  });
+
+  it('a lapsed proof does not count as proven', async () => {
+    const w = world();
+    const key = await owner(w);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, proof_lost_at) SELECT workspace_id, 'harbor-lane.org', '', 'legacy', 1 FROM domain_claims LIMIT 1").run();
+    const r = await to(w, key, 'sam@other.example', 'harbor-lane.org');
+    expect(r.status).toBe(201);
+    expect((await json(r)).emailed).toBe(false);
+    expect(sentTo(w, 'sam@other.example')).toHaveLength(0);
+  });
+
+  it('the daily cap is per ACCOUNT as well as per workspace: a second workspace is not a second allowance', async () => {
+    const w = world();
+    const key = await owner(w);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) SELECT workspace_id, 'harbor-lane.org', '', 'txt' FROM domain_claims LIMIT 1").run();
+    let sent = 0;
+    const made = await call(w.env, 'POST', '/api/workspaces', { key, body: { name: 'Second' } });
+    const id = (await json(made)).id;
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES (?, 'second-co.com', '', 'txt')").run(id);
+    for (let i = 0; i < 14; i++) {
+      const ws = i % 2 ? { 'x-workspace-id': id } : {};
+      const domain = i % 2 ? 'second-co.com' : 'harbor-lane.org';
+      const r = await call(w.env, 'POST', '/api/team/invite', { key, headers: ws, body: { email: `p${i}@brightwave-mail.com`, role: 'admin', handoff_domain: domain } });
+      if (r.status === 201) sent++;
+      for (const inv of (await json(await call(w.env, 'GET', '/api/team/invites', { key, headers: ws }))).invites ?? []) await call(w.env, 'DELETE', `/api/team/invites/${inv.id}`, { key, headers: ws });
+    }
+    expect(sent).toBe(10);
+  });
+});
+
+describe('who we email a hand-off to (mayEmailHandoff, the one rule)', () => {
+  const may = (senderEmail: string, recipientEmail: string, workspaceProven = false) => mayEmailHandoff({ senderEmail, recipientEmail, workspaceProven });
+  it('emails a teammate at the sender\'s own, non-free-mail domain', () => {
+    expect(may('dana@brightwave-mail.com', 'sam@Brightwave-Mail.com')).toBe(true);
+  });
+  it('does not email another company until the workspace has a proven domain', () => {
+    expect(may('dana@brightwave-mail.com', 'dev@pixelforge.dev')).toBe(false);
+    expect(may('dana@brightwave-mail.com', 'dev@pixelforge.dev', true)).toBe(true);
+  });
+  it('never counts a free-mail domain as one organisation: gmail to gmail is a link only', () => {
+    for (const d of ['gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'proton.me']) expect(may(`a@${d}`, `b@${d}`)).toBe(false);
+    expect(may('a@gmail.com', 'b@gmail.com', true)).toBe(true);
+  });
+  it('is false for an address without a domain', () => {
+    expect(may('', '')).toBe(false);
+  });
+});
+
+describe('the hand-off answer: link only, or emailed', () => {
+  it('another company\'s developer, brand-new account: 201, a link, no email, and the hand-off row and caps still apply', async () => {
+    const w = world();
+    const key = await owner(w);
+    const r = await handoff(w, key, { email: 'dev@pixelforge.dev' });
+    expect(r.status).toBe(201);
+    const b = await json(r);
+    expect(b.emailed).toBe(false);
+    expect(b.url).toContain(`/#/invite/${b.token}`);
+    expect(sentTo(w, 'dev@pixelforge.dev')).toHaveLength(0);
+    const list = await json(await call(w.env, 'GET', '/api/team/handoffs', { key }));
+    expect(list.handoffs.map((h: any) => h.email)).toEqual(['dev@pixelforge.dev']);
+  });
+  it('gmail to gmail: a link only, no email', async () => {
+    const w = world();
+    const key = await signupVerified(w.env, 'promo.offer@gmail.com');
+    expect((await call(w.env, 'POST', '/api/domains', { key, body: { domain: 'brightwave-mail.com' } })).status).toBe(202);
+    const r = await call(w.env, 'POST', '/api/team/invite', { key, body: { email: 'victim.person@gmail.com', role: 'admin', handoff_domain: 'brightwave-mail.com' } });
+    expect(r.status).toBe(201);
+    expect((await json(r)).emailed).toBe(false);
+    expect(sentTo(w, 'victim.person@gmail.com')).toHaveLength(0);
+  });
+  it('same company domain: emailed; a proven domain in the workspace: emailed to another company', async () => {
+    const w = world();
+    const key = await owner(w);
+    expect((await json(await handoff(w, key))).emailed).toBe(true);
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) SELECT workspace_id, 'harbor-lane.org', '', 'txt' FROM domain_claims LIMIT 1").run();
+    const r = await handoff(w, key, { email: 'dev@pixelforge.dev', handoff_domain: 'harbor-lane.org' });
+    expect((await json(r)).emailed).toBe(true);
+    expect(sentTo(w, 'dev@pixelforge.dev')).toHaveLength(1);
+  });
+  it('the link-only invite is accepted like any other (it is the same invite)', async () => {
+    const w = world();
+    const key = await owner(w);
+    const b = await json(await handoff(w, key, { email: 'dev@pixelforge.dev' }));
+    const info = await json(await call(w.env, 'GET', `/api/invites/${b.token}`, {}));
+    expect(info.handoff).toBeTruthy();
+  });
+});

@@ -7,7 +7,7 @@ import { useHosted, useSession } from '../../lib/session';
  * What blocks Cloudflare from working, and what is waiting in the connected accounts, as one quiet block at the top of the overview.
  * Nothing for people who cannot connect Cloudflare, or when everything is fine.
  */
-export function CloudflareAttention() {
+export function CloudflareAttention({ hideBroken = false }: { /** The first-day card already says it in one line. */ hideBroken?: boolean } = {}) {
 	const { canWrite } = useSession();
 	const hosted = useHosted();
 	const conns = useCfConnections(canWrite);
@@ -16,10 +16,10 @@ export function CloudflareAttention() {
 	if (!canWrite || !conns.data) return null;
 	const broken = conns.data.connections.filter((c) => !c.implicit && c.status !== 'active');
 	const fresh = (suggestions.data ?? []).filter((s) => !s.removed);
-	if (broken.length === 0 && fresh.length === 0) return null;
+	if ((broken.length === 0 || hideBroken) && fresh.length === 0) return null;
 	return (
 		<div className="space-y-3">
-			{broken.length > 0 ? (
+			{broken.length > 0 && !hideBroken ? (
 				<Alert variant="warning" title="Cloudflare needs to be reconnected">
 					<span>
 						{broken.length === 1 ? broken[0]!.label : `${broken.length} connections`} can no longer reach Cloudflare. Your domains stay verified and watched; changing their DNS needs a reconnect.{' '}

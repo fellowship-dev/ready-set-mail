@@ -277,6 +277,7 @@ export function lifecycleQueries(dbLike: DbLike) {
 					sql`lower(${verifications.identifier}) = lower(${email})`,
 					eq(verifications.identifier, `device-epoch:${userId}`),
 					eq(verifications.identifier, `code-proven:${userId}`),
+					eq(verifications.identifier, `account-profile:${userId}`),
 					sql`(${verifications.identifier} LIKE 'signin-code:%' AND json_extract(${verifications.value}, '$.u') = ${userId})`,
 				)),
 				db.delete(passwordResetTokens).where(eq(passwordResetTokens.user_id, userId)),

@@ -4,19 +4,24 @@ import { Download, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import { removalNotice, type RemovedState } from '../../lib/removal-notice';
-import type { ImportedNote } from '../../lib/cloudflare';
+import { useCfConnections, type ImportedNote } from '../../lib/cloudflare';
 import { CloudflareAttention } from '../../components/domain/CloudflareAttention';
 import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
-import { GetStarted } from '../../components/GetStarted';
+import { FirstDayCard, firstReportSeen } from '../../components/FirstDay';
+import { HandoffCard } from '../../components/HandoffCard';
+import { useHandoffs } from '../../lib/handoff';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
-import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
-import { getStartedSteps } from '../../lib/get-started';
+import { domainKeys, fetchStats, fetchSummary, invalidateDomain, useDomainSummaries } from '../../lib/domain-queries';
+import { DAY_ONE_SECONDS, blockerOf, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
+import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
+import { useDnsPoll } from '../../lib/poll';
+import { firstCheck } from '../../lib/dns-plan';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
-import { useDomainClaims, useDomains } from '../../lib/queries';
+import { useDomainClaims, useDomains, useFirstRunDomain } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
@@ -86,10 +91,11 @@ function AddDomainButton() {
 
 export function OverviewPage() {
 	const qc = useQueryClient();
-	const { canWrite } = useSession();
+	const { canWrite, me, status, role } = useSession();
 	const removed = (useLocation().state as RemovedState | null)?.removed;
 	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
+	const setUpDomain = useFirstRunDomain().data;
 	const domains = list.data ?? [];
 	const claims = useDomainClaims().data ?? [];
 	// Waiting for proof: pending claims, and domains held but unproven (a name with both counts once).
@@ -135,29 +141,20 @@ export function OverviewPage() {
 		// Per domain, as the server decides it (report_connect in the same batch): the domain page reads the same row.
 		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(s) });
 	});
+	// Day one: until the first report, a new domain is "waiting for reports", not red (dayOneVerdict). The domain page keeps its own rules.
+	const shownVerdicts = verdicts.map((v, i) => (v ? dayOneVerdict(v, domains[i]!, summaryOf(domains[i]!), totals[i]) : v));
+	const dayOneRows = shownVerdicts.map((v, i) => !!v && v !== verdicts[i]);
 	const retry = batch.isError ? () => void batch.refetch() : undefined;
-	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: verdicts[i] ?? null, retry }]));
+	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: shownVerdicts[i] ?? null, retry }]));
 
 	// Most urgent first, a subdomain right under its parent. Until every row is known the order stays as listed,
 	// so rows do not jump while they load.
-	const settled = verdicts.every(Boolean);
+	const settled = shownVerdicts.every(Boolean);
 	const rank = (d: Domain) => statusRank(byId.get(d.id)?.verdict?.status ?? 'unknown');
 	// Every domain has a row at any depth (a sub-subdomain under its nearest listed ancestor).
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
-	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), waiting);
-	// In the rows' order, so the first-answer list's "Fix …" opens the first row that needs it.
-	const at = ordered.map((r) => domains.indexOf(r.d));
-	const steps = getStartedSteps({
-		hosted: hostedMode,
-		domains: at.map((k) => domains[k]!),
-		claims: waiting - lostProof,
-		lostProof,
-		summaries: at.map((k) => summaryOf(domains[k]!)),
-		verdicts: at.map((k) => verdicts[k] ?? null),
-		reports: at.map((k) => totals[k]),
-	});
-
+	const answer = (waiting === 0 ? dayOneAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null, dayOne: dayOneRows[i] ?? false }))) : null) ?? workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null })), waiting);
 	async function exportPdf() {
 		setExporting(true);
 		try {
@@ -189,10 +186,40 @@ export function OverviewPage() {
 	}
 
 	const empty = domains.length === 0 && claims.length === 0;
-	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
-	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
-	const needsAttention = verdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
-	const stepper = canWrite ? <GetStarted steps={steps} /> : null;
+	const needsAttention = shownVerdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
+	// One rule for the order: while a domain is in its first-day state the first-day card is the first thing on the page, whatever else the page
+	// has to say (a row that needs attention comes after it, and does not bring back "Not yet." as the headline on day one).
+	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.
+	const focus = focusDomainOf(domains, me?.workspace_id ?? null, setUpDomain);
+	const dayState = canWrite
+		? firstDay({ domain: focus, claims, summary: focus ? summaryOf(focus) : undefined, arrivedSeen: firstReportSeen(me?.workspace_id ?? null), applied: reviewOutcome(me?.workspace_id ?? null) === 'applied' })
+		: null;
+	// H2: while a teammate finishes this domain (until its records are live), their progress replaces the first-day card.
+	const handoffs = useHandoffs(canWrite && hostedMode);
+	// Waiting for the report address to show in public DNS: look again by itself (15 s for 10 minutes while this page is open, then every minute)
+	// and the card changes when it is there. Reading public DNS changes nothing in anyone's DNS.
+	useDnsPoll(
+		async () => {
+			if (!focus) return;
+			await firstCheck([focus.id]);
+			await invalidateDomain(qc, focus.id);
+		},
+		dayState?.kind === 'records' && !!focus,
+		focus?.id,
+	);
+	const focusName = focus?.domain ?? claims.find((c) => c.status === 'pending')?.domain;
+	const handoff = focusName ? (handoffs.data ?? []).filter((h) => h.domain === focusName).sort((a, b) => b.sent_at - a.sent_at)[0] : undefined;
+	// A real failure (a stopped connection, a lapsed proof) is one line inside the first-day card, so it is on the first screen; its full block stays below.
+	const cfConns = useCfConnections(canWrite);
+	const blocker = canWrite && dayState && !(dayState.kind === 'proof' && dayState.lost) ? blockerOf((cfConns.data?.connections ?? []).filter((c) => !c.implicit && c.status !== 'active'), domains) : null;
+	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
+	// While the first-day card (or the hand-off card) speaks and nothing blocks, the card is the first thing said: no "Not yet." above it.
+	const cardSpeaks = !!(handoff && !recordsLive) || (!!dayState && dayState.kind !== 'arrived' && dayState.kind !== 'empty' && dayState.kind !== 'proof');
+	// On a domain's first day an attention row does not bring "Not yet." back as the headline; later it does.
+	const focusFirstDay = !!focus && Math.floor(Date.now() / 1000) - focus.created_at < DAY_ONE_SECONDS;
+	const headline = cardSpeaks && waiting === 0 && (focusFirstDay || !needsAttention) && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
+	const handoffOpen = !!handoff && !recordsLive;
+	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard blocker={blocker} state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
 		<div className="space-y-6">
@@ -224,11 +251,14 @@ export function OverviewPage() {
 				<LoadError error={list.error} onRetry={() => void list.refetch()} title="Could not load your domains" />
 			) : (
 				<>
+					{stepper}
+
 					<div className="space-y-1">
 						<p className="text-lg font-semibold tracking-tight text-ink-1 [overflow-wrap:anywhere] sm:text-xl" aria-live="polite" data-testid="am-i-done">
-							{answer}
+							{headline}
 						</p>
-						{!empty ? (
+						{/* While the first-day card speaks the headline is "Getting <domain> set up.": the card is the answer, so the line explaining the list waits. */}
+						{!empty && headline === answer ? (
 							<p className="max-w-prose text-sm text-ink-2">
 								{reportsOff ? 'Each domain below says what public DNS shows, and who acts next. Most urgent first.' : `Each domain below says what public DNS and its last ${WINDOW} days of reports show, and who acts next. Most urgent first.`}
 							</p>
@@ -237,10 +267,9 @@ export function OverviewPage() {
 
 					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
 					<ProofLostList domains={domains} canWrite={canWrite} />
-					{canWrite ? <CloudflareAttention /> : null}
-					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain))} canWrite={canWrite} />
-
-					{!needsAttention && stepper}
+					{canWrite ? <CloudflareAttention hideBroken={!!blocker && blocker.kind === 'connection' && !handoffOpen} /> : null}
+					{/* While a teammate finishes a domain, the hand-off card says where it stands and is the one thing about it: no proof block or Connect button for the same domain beside it. */}
+					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain) && !(handoffOpen && c.domain === handoff?.domain))} canWrite={canWrite} />
 
 					{empty && !canWrite ? (
 						<EmptyState
@@ -254,17 +283,16 @@ export function OverviewPage() {
 							<h2 id={listId} className="sr-only">
 								Your domains
 							</h2>
-							{reportsOff ? <ReportsNotConnected /> : null}
+							{/* While the card says the report address is what we wait for, the long "Reports not connected yet" block says the same again. */}
+							{reportsOff && !(cardSpeaks && dayState?.kind === 'records') ? <ReportsNotConnected /> : null}
 							<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1">
 								{ordered.map(({ d, parent, depth }) => {
 									const row = byId.get(d.id)!;
-									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} />;
+									return <DomainRow key={d.id} domain={d} parent={parent} depth={depth} verdict={row.verdict} canWrite={canWrite} onRetry={row.retry} hideEvidence={reportsOff} hideLadder={onFirstDay(d, totals[domains.indexOf(d)])} />;
 								})}
 							</ul>
 						</section>
 					) : null}
-
-					{needsAttention && stepper}
 				</>
 			)}
 		</div>

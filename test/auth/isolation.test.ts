@@ -189,6 +189,8 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/api/team/invite', body: { email: 'new-for-a@example.com' }, kind: 'scoped' },
   { method: 'DELETE', path: '/api/team/u-b-member', kind: 'denied' },
   { method: 'GET', path: '/api/team/invites', kind: 'scoped' },
+  { method: 'GET', path: '/api/team/handoffs', kind: 'scoped' },
+  { method: 'POST', path: '/api/team/handoffs/0123456789abcdef/resend', body: {}, kind: 'denied', note: 'a hand-off that is not A\'s (resend finds only the caller\'s workspace)' },
   { method: 'DELETE', path: `/api/team/invites/${B_INVITE_ID}`, kind: 'denied', note: 'B\'s pending invite' },
   { method: 'GET', path: '/api/audit-log', kind: 'scoped' },
   { method: 'GET', path: '/api/me', kind: 'scoped' },

@@ -81,17 +81,20 @@ describe('Talk to Max: always visible when the booking link is set, absent other
 	});
 });
 
+import { cleanup } from '@testing-library/react';
+const unmountAll = () => cleanup();
+
 describe('hosted sign-in, sign-up and check-your-email', () => {
-	it('sign-in has no contextual line; sign-up offers Talk to Max and says what works and what is not connected', async () => {
+	it('sign-in has no contextual line; sign-up keeps Talk to Max in its footer only, and says nothing about reports', async () => {
 		renderApp(<AuthPage />, { role: null, status: HOSTED });
 		await screen.findByRole('button', { name: 'Sign in' });
 		expect(talkLinks()).toHaveLength(0);
-		await userEvent.setup().click(screen.getByRole('button', { name: 'Create an account' }));
-		expect(await screen.findByText('See where your domains stand and what to fix, checked from live DNS.')).toBeInTheDocument();
+		unmountAll();
+		renderApp(<AuthPage initialMode="signup" />, { role: null, status: HOSTED, routes: { 'GET /api/auth/signup/pending': { pending: false } } });
+		expect(await screen.findByText("Check and fix your domain's SPF, DKIM and DMARC.")).toBeInTheDocument();
 		expect(screen.queryByText(/DMARC reports are not connected yet/)).toBeNull();
-		expect(screen.getByText("We'll email you a 6-digit code to confirm it.")).toBeInTheDocument();
-		expectSafeTalkLink(talkLinks()[0]!);
-		expect(talkLinks()).toHaveLength(1);
+		expect(talkLinks()).toHaveLength(0); // nothing contextual on S1: one job
+		expectSafeTalkLink(await screen.findByRole('link', { name: /Talk to Max/ })); // the quiet footer's
 	});
 
 	it('never asks a hosted registrant for an installer proof, even if the status said "not configured"', async () => {

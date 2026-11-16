@@ -383,6 +383,10 @@ export interface Me {
   pending_invites?: Array<{ token: string; role: string; invited_by: string; workspace_id: string; workspace_name: string | null }>;
   /** Runs this instance (OWNER_EMAIL, or the self-host owner): sees the leads page. */
   instance_owner?: boolean;
+  /** Hosted: what the person said on sign-up about whose email they set up (never the free-text answers). */
+  whose_email?: 'company' | 'clients' | 'looking';
+  /** Hosted, "My clients'": the agency's own name. The workspace switcher's heading; each client workspace is a row under it. */
+  agency_name?: string;
 }
 
 /** GET /api/leads (instance owner only) */

@@ -21,22 +21,22 @@ beforeEach(() => {
 });
 
 describe('1. one password, typed once, confirmed by an emailed code', () => {
-	it('hosted sign-up asks for the email and one password, then the code', async () => {
+	it('hosted sign-up asks for the email and one password only (the code email goes out on Continue, and S2 follows)', async () => {
 		const { calls } = renderApp(<AuthPage initialMode="signup" />, {
 			role: null,
 			status: HOSTED,
-			routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } },
+			routes: {
+				'GET /api/auth/signup/pending': { pending: false },
+				'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 },
+			},
 		});
 		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('Email'), 'new@example.com');
+		await user.type(await screen.findByLabelText('Work email'), 'new@example.com');
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument();
-		expect(screen.queryByLabelText('Your name (optional)')).not.toBeInTheDocument(); // Settings has it, after the address is proven
-		expect(screen.getByText("We'll email you a 6-digit code to confirm it.")).toBeInTheDocument();
-		await user.click(screen.getByRole('button', { name: 'Create account' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
-		expect(calls.find((c) => c.path === '/api/auth/signup')?.body).toEqual({ email: 'new@example.com', password: 'long-enough-1' });
-		expect(screen.getByText(/This confirms your email address\./)).toBeInTheDocument();
+		expect(screen.queryByLabelText(/Your name/)).not.toBeInTheDocument(); // S2 asks, after the code is on its way
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(calls.find((c) => c.path === '/api/auth/signup')?.body).toEqual({ email: 'new@example.com', password: 'long-enough-1' }));
 	});
 
 	it('an old confirmation link changes nothing and says what to do instead', async () => {
@@ -80,7 +80,11 @@ describe('1. one password, typed once, confirmed by an emailed code', () => {
 		expect(screen.queryByLabelText('Your name')).not.toBeInTheDocument();
 		await user.type(screen.getByLabelText('Choose a password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Accept invite' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		// the same screen as sign-up's S3, not the older code screen
+		expect(await screen.findByRole('heading', { name: 'Check your inbox' })).toBeInTheDocument();
+		expect(screen.getByText(/We sent a 6-digit code to/)).toHaveTextContent('new@example.com');
+		expect(screen.getByLabelText('6-digit code')).toHaveAttribute('autocomplete', 'one-time-code');
+		expect(screen.queryByText('Start over')).toBeNull(); // an invited address is fixed
 		expect(calls.find((c) => c.method === 'POST' && c.path === '/api/invites/t1')?.body).toEqual({ password: 'long-enough-1' });
 	});
 });

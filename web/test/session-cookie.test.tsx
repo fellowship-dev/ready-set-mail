@@ -29,21 +29,21 @@ describe('cookie-only session', () => {
 });
 
 describe('the emailed code', () => {
-	it('after sign-up: the code screen; "Send a new code" repeats the sign-up (cookie-only, no token in storage)', async () => {
-		const { calls } = renderApp(<AuthPage />, {
+	it('at the code screen "Send a new code" asks the server to repeat this attempt (cookie only, no token in storage)', async () => {
+		const { calls } = renderApp(<AuthPage initialMode="signup" />, {
 			role: null,
+			route: '/signup/code',
 			status: { mode: 'saas', signup_open: true },
-			routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } },
+			routes: {
+				'GET /api/auth/signup/pending': { pending: true, email: 'new@example.com', step: 'code', expires_in: 500, lifetime_seconds: 600 },
+				'POST /api/auth/signup/resend': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 },
+			},
 		});
 		const user = userEvent.setup();
-		await user.click(await screen.findByRole('button', { name: 'Create an account' }));
-		await user.type(screen.getByLabelText('Email'), 'new@example.com');
-		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
-		await user.click(screen.getByRole('button', { name: 'Create account' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		await user.click(await screen.findByRole('button', { name: 'Not seeing it?' }));
 		await user.click(screen.getByRole('button', { name: 'Send a new code' }));
-		expect(await screen.findByText('A new code is on its way to new@example.com. The previous code no longer works.')).toBeInTheDocument();
-		expect(calls.filter((c) => c.path === '/api/auth/signup')).toHaveLength(2);
+		expect(await screen.findByText('A new code is on its way. The previous one no longer works.')).toBeInTheDocument();
+		expect(calls.filter((c) => c.path === '/api/auth/signup/resend')).toHaveLength(1);
 		expect(localStorage.getItem('ia_api_key')).toBeNull();
 	});
 
@@ -66,7 +66,11 @@ describe('the emailed code', () => {
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Accept invite' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		// the same screen as sign-up's S3, not the older code screen
+		expect(await screen.findByRole('heading', { name: 'Check your inbox' })).toBeInTheDocument();
+		expect(screen.getByText(/We sent a 6-digit code to/)).toHaveTextContent('new@example.com');
+		expect(screen.getByLabelText('6-digit code')).toHaveAttribute('autocomplete', 'one-time-code');
+		expect(screen.queryByText('Start over')).toBeNull(); // an invited address is fixed
 	});
 
 	it('an unverified cookie session (403 on /api/me) lands on sign-in, not an error', async () => {

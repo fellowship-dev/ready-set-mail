@@ -7,23 +7,26 @@
 import { authLookups, forWorkspace, workspaceLifecycle } from '@ready-set-mail/db';
 import type { AuthEnv } from './config';
 import { d1RateLimitStorage } from './rate-limit';
-import { cleanName, defaultWorkspaceName } from './names';
+import { cleanName, defaultWorkspaceName, PLACEHOLDER_NAME_KEY } from './names';
 
 /**
  * Names typed before the address was proven belong to whoever typed them (possibly someone who registered this address to
  * plant text in the real owner's dashboard). When an address is proven they are replaced: the display name by the email
  * address (or a name given at that moment), the workspace sign-up made (owned by this account alone) by one derived from that
- * name, else from the email's domain. Workspaces the account was invited into are not touched.
+ * name, else from the email's domain (or `workspaceNameOverride`: the sign-up's own answer, see names.ts firstWorkspaceName).
+ * Workspaces the account was invited into are not touched.
  */
-export async function resetUnprovenNames(db: D1Database, userId: string, email: string, name = ''): Promise<void> {
+export async function resetUnprovenNames(db: D1Database, userId: string, email: string, name = '', workspaceNameOverride?: string, placeholderName = false): Promise<void> {
   const given = cleanName(name);
   await db.prepare('UPDATE users SET name = ?1 WHERE id = ?2').bind(given || email, userId).run();
-  const workspaceName = defaultWorkspaceName(given, email);
+  const workspaceName = workspaceNameOverride ?? defaultWorkspaceName(given, email);
   for (const m of await authLookups(db).membershipsOf(userId)) {
     if (m.role !== 'owner') continue;
     // Only a workspace this account alone is in: the one sign-up made (an unproven account can have done nothing else).
     if ((await forWorkspace(db, m.workspace_id).team.list()).length !== 1) continue;
     await workspaceLifecycle(db).rename(m.workspace_id, workspaceName);
+    await db.prepare(placeholderName ? 'INSERT OR REPLACE INTO settings (workspace_id, key, value) VALUES (?1, ?2, ?3)' : 'DELETE FROM settings WHERE workspace_id = ?1 AND key = ?2 AND ?3 IS NOT NULL')
+      .bind(m.workspace_id, PLACEHOLDER_NAME_KEY, '1').run();
   }
 }
 

@@ -119,56 +119,11 @@ describe('first screen: Cloudflare first', () => {
 		expect(calls.some((c) => c.path === '/api/cloudflare/connections')).toBe(false);
 	});
 
-	it('hosted with a pasted-token path shows the two-path chooser', async () => {
-		render(offer(), { hosted: true });
-		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: "I'll add DNS records myself" })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
-		expect(screen.queryByText('Routing')).toBeNull();
-		expect(screen.queryByText(/steps complete/)).toBeNull();
-		expect(screen.queryByText(/TOKEN_ENCRYPTION_KEY/)).not.toBeInTheDocument();
-	});
-
-	it('hosted with OAuth shows the chooser', async () => {
-		render(offer({ oauth: { available: true, scopes: [], via_relay: false } }), { hosted: true });
-		expect(await screen.findByRole('button', { name: 'Connect Cloudflare' })).toBeInTheDocument();
-	});
-
 	it('hosted without an encryption key never shows the self-host command, whatever else is reported', async () => {
 		render(offer({ encryption_configured: false, token_paste: true }), { hosted: true });
 		expect(await screen.findByRole('heading', { name: 'Which domain do you send email from?' })).toBeInTheDocument();
 		expect(screen.queryByText(/TOKEN_ENCRYPTION_KEY|wrangler/)).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Connect Cloudflare' })).not.toBeInTheDocument();
 	});
-
-	it('hosted: a waiting claim does not hide the Cloudflare card; the claim waits behind "I\'ll add DNS records myself"', async () => {
-		renderApp(<Page />, {
-			route: '/setup',
-			status: { mode: 'saas', has_domain: false },
-			routes: {
-				...base,
-				'GET /api/cloudflare/connections': offer(),
-				'GET /api/domains/dns-host?name=acme.org': { provider: { id: 'cloudflare', name: 'Cloudflare' }, nameservers: ['a.ns.cloudflare.com'], status: 'known' },
-				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
-			},
-		});
-		expect(await screen.findByRole('heading', { name: 'Connect Cloudflare' })).toBeInTheDocument();
-		expect(screen.queryByText(/uses Cloudflare for DNS/)).toBeNull();
-		await userEvent.click(screen.getByRole('button', { name: 'Connect Cloudflare' }));
-		await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/setup/cloudflare'));
-	});
-
-	it('hosted: the waiting claim is still there for someone who adds records themselves', async () => {
-		renderApp(<Page />, {
-			route: '/setup',
-			status: { mode: 'saas', has_domain: false },
-			routes: {
-				...base,
-				'GET /api/cloudflare/connections': offer(),
-				'GET /api/domains': { domains: [], pending_claims: [{ id: 5, domain: 'acme.org', status: 'pending', txt_name: '_readysetmail.acme.org', txt_value: 'readysetmail-verify=abc', created_at: 1, last_checked_at: null, last_error: null }] },
-			},
-		});
-		await userEvent.click(await screen.findByRole('button', { name: "I'll add DNS records myself" }));
-		expect(await screen.findByText('readysetmail-verify=abc')).toBeInTheDocument();
-	});
+	// Hosted Cloudflare-first choices (the chooser, a waiting claim) are S4 now: test/setup-domain.test.tsx.
 });

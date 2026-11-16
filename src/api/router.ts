@@ -81,6 +81,7 @@ import { checkForUpdate } from '../update-check';
 import { hostedServiceUrl } from '../hosted-service';
 import { globals } from '../db/scope';
 import { handleAuthRoute } from '../auth/routes';
+import { accountProfile } from '../auth/profile';
 import { handleAccessRoutes } from '../access/routes';
 import { handleGoogleMetricRoutes } from '../metrics/routes';
 import { handleBillingRoutes } from '../billing/routes';
@@ -111,12 +112,16 @@ import { IMPLICIT_WORKSPACE_ID, authLookups, globalQueries, workspaceLifecycle, 
 import { currentUser, passesCsrfCheck } from '../auth/session';
 import { keyedHash } from '../mail/tokens';
 import { getMode } from '../tenancy/mode';
+import { MAX_HANDOFFS_PER_ACCOUNT_PER_DAY, MAX_HANDOFFS_PER_DAY, MAX_OPEN_HANDOFFS, deleteHandoff, handoffsOf, mayEmailHandoff, saveHandoff } from '../team/handoff';
+import { sendHandoffEmail } from '../auth/mail';
+import { baseUrl } from '../auth/config';
+import { d1RateLimitStorage } from '../auth/rate-limit';
 import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
 import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
-import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
+import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
@@ -130,6 +135,7 @@ import { resolverFor } from '../dns/resolver';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
 import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
 import { analyticsEnabled } from '../product-analytics/capture';
+import { setupPathChosen } from '../product-analytics/auth';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
@@ -242,7 +248,8 @@ async function parseBody<T>(request: Request): Promise<T> {
 async function getDomainsHandler(tenant: TenantContext): Promise<Response> {
   const results = await withReportsVia(tenant, await tenant.scope.domains.list());
   // `domains` are verified; `pending_claims` are domains this workspace has asked for but not yet proven (SaaS).
-  return json({ domains: results, pending_claims: await listClaims(tenant) });
+  // `first_run_domain` is the one S4 was given (settings, hosted only): the first-run screens name it in every browser.
+  return json({ domains: results, pending_claims: await listClaims(tenant), first_run_domain: (await tenant.scope.settings.get(FIRST_RUN_DOMAIN_KEY))?.value ?? null });
 }
 
 async function addDomain(request: Request, tenant: TenantContext, userEmail?: string, ctx?: ExecutionContext, actorId?: string): Promise<Response> {
@@ -252,6 +259,7 @@ async function addDomain(request: Request, tenant: TenantContext, userEmail?: st
   }
 
   const result = await enrollDomain(tenant, body.domain, userEmail, ctx, actorId);
+  await rememberFirstRunDomain(tenant, 'pending' in result ? result.claim.domain : result.domain.domain);
   enrollmentAdded(tenant, ctx, 'typed', 'pending' in result ? result.claim.domain : result.domain.domain, result);
   return json(result, 'pending' in result ? 202 : result.resumed ? 200 : 201);
 }
@@ -260,6 +268,63 @@ async function addDomain(request: Request, tenant: TenantContext, userEmail?: st
 async function inviteId(token: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
   return [...digest.slice(0, 8)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Hand setup to a teammate (spec H1): the ordinary admin invite plus the hand-off row, then the fixed invitation email when mayEmailHandoff allows it (else the link is returned, `emailed: false`). The caller has
+ * already checked who may invite an admin. Hosted only (the invitee has no account to be told by anything else), the domain must be this
+ * workspace's own (a domain or a claim waiting for proof), and the number open and sent per day is bounded. A refused send leaves nothing behind
+ * and is never answered as sent. `replaces` is the token of the hand-off a resend supersedes: it stays valid (and its card stays) until
+ * the new invitation was issued and, when we email it, sent; a limit or a failed send leaves the old link working.
+ */
+async function sendHandoff(
+  env: Env, tenant: TenantContext, request: Request, actor: { id: string; email: string; name: string }, email: string, domainInput: unknown, ctx: ExecutionContext, replaces?: string,
+): Promise<Response> {
+  if (getMode(env) !== 'saas') return err('handing setup to a teammate is only available on the hosted service', 400);
+  const named = typeof domainInput === 'string' ? normalizeDomainName(domainInput) : null;
+  if (!named || !named.ok) return err('a valid domain is required', 400);
+  const domain = named.domain;
+  if (!(await tenant.scope.domains.getByName(domain)) && !(await tenant.scope.claims.get(domain))) return err('that domain is not in this workspace', 404);
+  let open = 0;
+  for (const h of await handoffsOf(env, tenant.workspaceId)) {
+    if (h.token === replaces) continue; // the one being replaced is not a second waiting hand-off
+    const inv = await tenant.scope.team.getInvite(h.token);
+    if (inv && !inv.used_at && inv.expires_at > Math.floor(Date.now() / 1000)) open++;
+  }
+  // Whether WE email the invitation is the hand-off module's one rule (mayEmailHandoff); otherwise the sender gets the link to send themselves.
+  // "Proven" is the ownership module's rule (isDomainProven), not a second copy of it.
+  const held = await tenant.scope.domains.list();
+  const provenNames = new Set<string>();
+  for (const d of held) if (await isDomainProven(tenant, d)) provenNames.add(d.domain);
+  const emailIt = mayEmailHandoff({ senderEmail: actor.email, recipientEmail: email, workspaceProven: provenNames.size > 0 });
+  const namedDomain = provenNames.has(domain) ? domain : null;
+  if (open >= MAX_OPEN_HANDOFFS) return Response.json({ error: `${MAX_OPEN_HANDOFFS} hand-offs are already waiting. Revoke one or wait for it to be accepted.`, code: 'handoff_limit' }, { status: 429 });
+  if (!(await d1RateLimitStorage(env.DB).consume(`handoff:${tenant.workspaceId}`, { window: 86400, max: MAX_HANDOFFS_PER_DAY })).allowed) return Response.json({ error: 'Too many invitations today. Try again tomorrow.', code: 'handoff_limit' }, { status: 429 });
+
+  if (!(await d1RateLimitStorage(env.DB).consume(`handoff-account:${actor.id}`, { window: 86400, max: MAX_HANDOFFS_PER_ACCOUNT_PER_DAY })).allowed) return Response.json({ error: 'Too many invitations today. Try again tomorrow.', code: 'handoff_limit' }, { status: 429 });
+
+  const token = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  await tenant.scope.team.insertInvite({ token, email, role: 'admin', invited_by: actor.email, expires_at: now + 7 * 24 * 3600 });
+  await saveHandoff(env, { token, workspaceId: tenant.workspaceId, domain, inviterName: actor.name, inviterEmail: actor.email, email, sentAt: now, emailed: emailIt });
+  const workspaceName = namedDomain ? ((await workspaceLifecycle(env.DB).get(tenant.workspaceId))?.name ?? '') : '';
+  const url = `${baseUrl(env, new URL(request.url).origin)}/#/invite/${token}`;
+  if (emailIt && !(await sendHandoffEmail(env, email, { inviterName: actor.name, inviterEmail: actor.email, workspaceName, domain: namedDomain, url }))) {
+    await tenant.scope.team.revokeInvite(token);
+    await deleteHandoff(env, token);
+    return Response.json({ error: "We couldn't send the invitation just now. Try again in a minute.", code: 'handoff_not_sent' }, { status: 503 });
+  }
+  if (replaces) {
+    await tenant.scope.team.revokeInvite(replaces);
+    await deleteHandoff(env, replaces);
+  }
+  setupPathChosen(env, ctx, tenant.workspaceId, 'teammate'); // docs/analytics.md: the S4 choice "hand setup to a teammate"
+  logAudit(tenant, {
+    actor_id: actor.id, actor_email: actor.email, actor_type: 'user',
+    action: 'auth.invite_sent', resource_type: 'user', resource_name: email,
+    after_value: { email, role: 'admin', invited_by: actor.email, handoff_domain: domain },
+  }, ctx);
+  return json({ token, url, emailed: emailIt }, 201);
 }
 
 /** The same request, minus X-Workspace-Id (for routes about the user's workspaces rather than one of them). */
@@ -719,8 +784,12 @@ async function _handleApi(
   // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
   tenant.operatorView = instanceOwner;
   if (path === '/api/me' && method === 'GET') {
+    // What the person said on sign-up that the dashboard shows back: whose email they set up, and for an agency its name (the
+    // workspace switcher's heading). Never the free-text answers.
+    const profile = userBySession ? await accountProfile(env, userBySession.id) : null;
     if ((workspace as AuthedWorkspace).kind === 'session') dashboardViewed(tenant, ctx, workspace.role);
     return json({
+      ...(profile ? { whose_email: profile.whose_email, ...(profile.whose_email === 'clients' ? { agency_name: profile.organization } : {}) } : {}),
       instance_owner: instanceOwner,
       user: userBySession,
       role: workspace.role ?? 'member',
@@ -1766,19 +1835,24 @@ async function _handleApi(
       if (!isAdmin) return err('admin required', 403);
       const actor = userBySession;
       if (!actor) return err('sign in as a user to invite teammates', 403);
-      const body = await parseBody<{ email?: string; role?: string }>(request);
+      const body = await parseBody<{ email?: string; role?: string; handoff_domain?: unknown }>(request);
       if (!body.email) return err('email is required', 400);
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return err('invalid email', 400);
       // Someone who already has a login is invited too: accepting adds a membership, never a second user.
       const existing = await globals(env.DB).users.byEmail(body.email.toLowerCase().trim());
       if (existing && (await tenant.scope.team.roleOf(existing.id))) return err('this person is already a member of the workspace', 409);
 
-      const token = crypto.randomUUID();
-      const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7 days
       const inviteEmail = body.email.toLowerCase().trim();
       // Only an owner can hand out admin; owner itself cannot be granted by invite.
       if ((body.role === 'admin' || body.role === 'owner') && workspace.role !== 'owner') return err('only an owner can invite an admin or an owner', 403);
       if (body.role === 'owner') return err('ownership cannot be granted by invite', 400);
+      // Handing setup to a teammate is this same invite, as an admin, that also names the domain to finish.
+      if (body.handoff_domain !== undefined) {
+        if (body.role !== 'admin') return err('a hand-off invites an admin', 400);
+        return sendHandoff(env, tenant, request, actor, inviteEmail, body.handoff_domain, ctx);
+      }
+      const token = crypto.randomUUID();
+      const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7 days
       const inviteRole = body.role === 'admin' ? 'admin' : 'member';
       await tenant.scope.team.insertInvite({
         token,
@@ -1795,6 +1869,31 @@ async function _handleApi(
       }, ctx);
       inviteSent(tenant, ctx, inviteRole);
       return json({ token }, 201);
+    }
+
+    // GET /api/team/handoffs — where each hand-off stands (the inviter's dashboard, H2). Owner and admin.
+    if (path === '/api/team/handoffs' && method === 'GET') {
+      if (!isAdmin) return err('admin required', 403);
+      const list = await handoffsOf(env, tenant.workspaceId);
+      const out = await Promise.all(list.map(async (h) => {
+        const inv = await tenant.scope.team.getInvite(h.token);
+        return { id: await inviteId(h.token), email: h.email, domain: h.domain, sent_at: h.sentAt, expires_at: inv?.expires_at ?? h.sentAt + 7 * 86400, joined_at: inv?.used_at ?? null, emailed: h.emailed, revoked: !inv };
+      }));
+      return json({ handoffs: out.filter((h) => !h.revoked) });
+    }
+    // POST /api/team/handoffs/:id/resend — a new link for a hand-off nobody has accepted; the old link stops working once the new one is issued (and sent, when we email it). Owner only (it invites an admin).
+    const handoffResend = path.match(/^\/api\/team\/handoffs\/([^/]+)\/resend$/);
+    if (handoffResend && method === 'POST') {
+      if (!isAdmin) return err('admin required', 403);
+      if (workspace.role !== 'owner') return err('only an owner can invite an admin or an owner', 403);
+      const actor = userBySession;
+      if (!actor) return err('sign in as a user to invite teammates', 403);
+      let found: Awaited<ReturnType<typeof handoffsOf>>[number] | undefined;
+      for (const h of await handoffsOf(env, tenant.workspaceId)) if ((await inviteId(h.token)) === handoffResend[1]) found = h;
+      const inv = found ? await tenant.scope.team.getInvite(found.token) : null;
+      if (!found || !inv) return err('hand-off not found', 404);
+      if (inv.used_at) return err('this person has already joined', 409);
+      return sendHandoff(env, tenant, request, actor, found.email, found.domain, ctx, found.token);
     }
 
     // GET /api/team/invites — pending invites (owner and admin). The token itself is not listed: `id` identifies one for revoking.
