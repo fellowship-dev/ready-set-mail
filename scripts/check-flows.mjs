@@ -55,11 +55,9 @@ export function walkRecordProblems(text, { id, baseTime, newFlow, commitState })
   if (!new RegExp(`^# Walk record: ${id}\\s*$`, 'm').test(text)) p.push(`first line is not "# Walk record: ${id}"`);
   for (const k of ['Flow', 'Value moment', 'Walked', 'Target', 'Commit', 'Kind', 'Gate', 'Rules']) if (!f[k]) p.push(`no "- **${k}:**" line`);
   if (!/^[0-9a-f]{7,40}$/i.test(f.Commit ?? '')) p.push(`Commit is not a commit id: ${f.Commit ?? 'missing'}`);
-  else {
-    const state = commitState(f.Commit);
-    if (state === 'in-base') p.push(`Commit ${f.Commit} is already in the base: the walk is older than this change`);
-  }
-  if (newFlow && f.Kind === 'baseline') return p; // the first record of a flow this change adds: its baseline, reviewed in the PR
+  // The first record of a flow this change adds may be its baseline, measured on the base itself; reviewed in the PR.
+  if (newFlow && f.Kind === 'baseline') return p;
+  if (p.length === 0 && commitState(f.Commit) === 'in-base') p.push(`Commit ${f.Commit} is already in the base: the walk is older than this change`);
   const t = Date.parse(f.Walked ?? '');
   if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(f.Walked ?? '') || !Number.isFinite(t)) p.push(`Walked is not the gate's timestamp: ${f.Walked ?? 'missing'}`);
   else {

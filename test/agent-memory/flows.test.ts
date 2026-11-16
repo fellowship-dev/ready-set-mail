@@ -106,6 +106,8 @@ describe('scripts/check-flows.mjs: which records count', () => {
   });
   it('a baseline counts only for a flow this change adds', () => {
     expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Walked: '2026-11-15 (date)' }), { ...ctx, newFlow: true })).toEqual([]);
+    expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Walked: '2026-11-15 (date)', Commit: 'aaaaaaa' }), { ...ctx, newFlow: true })).toEqual([]);
+    expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Commit: 'aaaaaaa' }), ctx).length).toBeGreaterThan(0);
   });
   const na = (o: Record<string, string> = {}) => Object.entries({ Flow: 'buy-fix-one-domain', Changed: '`src/billing/webhook.ts`', Reason: 'Renames a private helper; no screen, request or state the buyer meets changes.', By: 'reviewer', Date: '2026-11-16', ...o }).map(([k, v]) => `- **${k}:** ${v}`).join('\n');
   const nctx = { id: 'buy-fix-one-domain', baseDate: '2026-11-15', today: '2026-11-17', hits: ['src/billing/webhook.ts'], flowChanged: false };
