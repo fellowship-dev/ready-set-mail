@@ -8,11 +8,11 @@
 // (its dashboard pages AND the server files that implement its steps), the flow file and the flow map. Each touched protected
 // flow needs ONE of these, ADDED by this change (editing an older record does not count):
 //
-//   .flowchad/walks/<date>-<id>.md               the walk record FlowChad's gate writes (/flow-gate <id> --record .flowchad/walks).
+//   .flowchad/walks/<date>[-<HHMM>]-<id>.md      the walk record FlowChad's gate writes (/flow-gate <id> --record .flowchad/walks).
 //       It must carry the gate's fields: Flow, Value moment, Walked (a full timestamp), Target, Commit, Kind, Gate and Rules;
 //       Gate PASS or PASS-WITH-OVERRIDES; Rules equal to the vendored gate's RULES_VERSION; walked after the base commit, at a
 //       commit that is not already in the base. A new flow's first record may be its baseline (Kind: baseline).
-//   .flowchad/walks/<date>-<id>.not-affected.md  a reviewed "not affected" record, for a change to a mapped file that does not
+//   .flowchad/walks/<date>[-<HHMM>]-<id>.not-affected.md  a reviewed "not affected" record, for a change to a mapped file that does not
 //       change what the person sees or does on the flow. Fields: Flow, Changed (every mapped file this change touches, in
 //       back-quotes), Reason (why the flow is unchanged), By, Date. Not accepted when the flow file or its map changed.
 //
@@ -46,6 +46,8 @@ export const coversOf = (yml) => {
 };
 /** A `covers:` glob as the shell `case` in changed.sh reads it: `*` matches any characters, slashes included. */
 export const globMatches = (glob, file) => new RegExp(`^${glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(file);
+/** A record's path: `<date>-<id><suffix>` with an optional `-HHMM` (UTC) after the date, for two walks of one flow on one day. */
+export const recordPath = (id, suffix = '.md') => new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}(?:-(?:[01]\\d|2[0-3])[0-5]\\d)?-${id}${suffix.replaceAll('.', '\\.')}$`);
 const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 /** Problems with a walk record, or [] when it is valid for this change. */
@@ -124,8 +126,8 @@ function main(argv) {
     const flowChanged = changed.includes(flowPath) || changed.includes(mapPath);
     const hits = changed.filter((f) => coversOf(yml).some((g) => globMatches(g, f)));
     const newFlow = !gitOk('cat-file', '-e', `${base}:${flowPath}`);
-    const walkRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.md$`);
-    const naRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
+    const walkRe = recordPath(id);
+    const naRe = recordPath(id, '.not-affected.md');
     const tried = [];
     let ok = null;
     for (const file of [...added].filter((f) => walkRe.test(f)).sort().reverse()) {
@@ -143,7 +145,7 @@ function main(argv) {
     failures.push([
       `REWALK ${id}: ${reason}`,
       `    files on this flow changed since ${short}: ${hits.length ? hits.join(', ') : '(the flow file or its map)'}`,
-      ...(tried.length ? ['    records in this change that do not count:', ...tried.map((t) => `    ${t}`)] : [`    no new ${WALKS}/<date>-${id}.md or ${WALKS}/<date>-${id}.not-affected.md in this change`]),
+      ...(tried.length ? ['    records in this change that do not count:', ...tried.map((t) => `    ${t}`)] : [`    no new ${WALKS}/<date>[-<HHMM>]-${id}.md or ${WALKS}/<date>[-<HHMM>]-${id}.not-affected.md in this change`]),
       ...(old.length ? [`    edited, not added (an edit to an older record does not count): ${old.join(', ')}`] : []),
     ].join('\n'));
   }
@@ -155,7 +157,7 @@ A protected value flow changed (ADR 0012). For each flow above, add ONE record t
   - it changed what a person sees or does: walk it on a local copy of this commit and commit the gate's record:
       /flow-walk <id>   then   /flow-gate <id> --target <url> --record ${WALKS}
     (if the flow itself changed, update ${FLOWS}/<id>.map.md first: map before building)
-  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md
+  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>[-<HHMM>]-<id>.not-affected.md
       - **Flow:** <id>
       - **Changed:** \`<every file listed above>\`
       - **Reason:** <why the flow is unchanged>

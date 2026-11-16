@@ -372,6 +372,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
+			{/* An offer, not a nag: once, right after the first step (so it is on the first screen and "Do this next" still leads), never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
@@ -379,9 +380,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				onReloadSummary={() => void summary.refetch()}
 				canWrite={canWrite}
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
+				afterFirst={<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />}
 			/>
-			{/* An offer, not a nag: once, below the steps, never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
-			<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 
 			{/* A name that does not resolve has nothing to host. */}

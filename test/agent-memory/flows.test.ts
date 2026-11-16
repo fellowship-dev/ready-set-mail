@@ -4,7 +4,7 @@ import { join } from 'node:path';
 // FlowChad's own map reader (vendored skill, .agents/skills/flow-walk), so the test judges maps the way /flow-walk --map does.
 import { mapResults } from '../../.agents/skills/flow-walk/scripts/flowmap.mjs';
 // The CI check's own record rules (scripts/check-flows.mjs), tested here without git.
-import { coversOf as checkCovers, globMatches, notAffectedProblems, walkRecordProblems } from '../../scripts/check-flows.mjs';
+import { coversOf as checkCovers, globMatches, notAffectedProblems, recordPath, walkRecordProblems } from '../../scripts/check-flows.mjs';
 import { RULES_VERSION } from '../../.agents/skills/flow-gate/scripts/gate.mjs';
 
 // Protected value flows (ADR 0012): every flow tagged `protected` has a map whose value moment is declared and reachable with
@@ -62,7 +62,7 @@ describe('protected value flows', () => {
       });
 
       it('has a walk record with the commit it was walked at', () => {
-        const records = readdirSync(WALKS).filter(f => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${flow.id}\\.md$`).test(f));
+        const records = readdirSync(WALKS).filter(f => recordPath(flow.id).test(`.flowchad/walks/${f}`));
         expect(records.length, `walk record for ${flow.id}`).toBeGreaterThan(0);
         const latest = readFileSync(join(WALKS, records.sort().at(-1)!), 'utf8');
         expect(latest).toMatch(/^- \*\*Commit:\*\* [0-9a-f]{7,40}$/m);
@@ -118,6 +118,13 @@ describe('scripts/check-flows.mjs: which records count', () => {
     expect(notAffectedProblems(na({ Date: '2026-11-01' }), nctx).join()).toMatch(/Date/);
     expect(notAffectedProblems(na({ By: '' }), nctx).join()).toMatch(/By/);
     expect(notAffectedProblems(na(), { ...nctx, flowChanged: true }).join()).toMatch(/walk it/);
+  });
+  it('a record is named <date>-<id> or <date>-<HHMM>-<id>, walk or not-affected, and nothing else', () => {
+    const w = recordPath('buy-fix-one-domain');
+    const n = recordPath('buy-fix-one-domain', '.not-affected.md');
+    for (const f of ['2026-11-16-buy-fix-one-domain.md', '2026-11-16-0726-buy-fix-one-domain.md', '2026-11-16-2359-buy-fix-one-domain.md']) expect(w.test(`.flowchad/walks/${f}`), f).toBe(true);
+    expect(n.test('.flowchad/walks/2026-11-16-0726-buy-fix-one-domain.not-affected.md')).toBe(true);
+    for (const f of ['2026-11-16-2460-buy-fix-one-domain.md', '2026-11-16-726-buy-fix-one-domain.md', '2026-11-16-0726-0727-buy-fix-one-domain.md', '2026-11-16-0726-fix-one-domain.md', '2026-11-16-0726-buy-fix-one-domain.not-affected.md']) expect(w.test(`.flowchad/walks/${f}`), f).toBe(false);
   });
   it('reads covers globs as the shell does', () => {
     expect(globMatches('src/billing/*', 'src/billing/webhook.ts')).toBe(true);

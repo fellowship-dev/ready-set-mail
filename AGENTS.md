@@ -8,7 +8,7 @@
 4. Before designing or changing a screen, map its flow to the value moment (`.flowchad/flows/<id>.map.md`) and shorten it from the value backwards (ADR 0012).
 5. A change to a file on a protected flow (below) needs a new record for that flow in `.flowchad/walks/`, added by the same pull request. CI runs `scripts/check-flows.sh`.
    - The flow changed for the person: walk it on a local copy of the change and commit the gate's record (`/flow-walk <id>`, then `/flow-gate <id> --target <url> --record .flowchad/walks`). It must carry the gate's fields, say PASS (or PASS-WITH-OVERRIDES) and be walked after the base commit.
-   - It did not (a refactor, a log line, a fix nobody on the flow can see): add `.flowchad/walks/<date>-<id>.not-affected.md` with Flow, Changed (every mapped file you touched), Reason, By and Date. The reviewer accepts or rejects the reason.
+   - It did not (a refactor, a log line, a fix nobody on the flow can see): add `.flowchad/walks/<date>-<id>.not-affected.md` (`<date>-<HHMM>-<id>…` when another record of that flow has the same date) with Flow, Changed (every mapped file you touched), Reason, By and Date. The reviewer accepts or rejects the reason.
    - The check proves a record is new, complete and fresh; it cannot prove a walk took place. Review is the check that it did.
 6. When code moves, update these docs in the same change: `test/agent-memory/docs-truth.test.ts` fails when a path or symbol they name is gone, wherever it points.
 
