@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { render } from '../../../src/lifecycle/email/copy';
+import { afterEach, beforeEach, vi } from 'vitest';
+import { firstReport, render, tipFix } from '../../../src/lifecycle/email/copy';
+import { sourceStats, tipFixSources, type SourceStat } from '../../../src/lifecycle/email/analysis';
+import { lifecycleWorld, MON_16_NOV, DAY, recordNamingUs } from './world';
 import { greeting } from '../../../src/lifecycle/email/preferences';
-import { allVariants, DOMAIN_URL, type Variant } from './fixtures';
+import { allVariants, DOMAIN_URL, policyStep, type Variant } from './fixtures';
 
 const variants = allVariants();
 const byName = (name: string): Variant => {
@@ -48,7 +51,6 @@ describe('subject lines', () => {
     'tip fix: with offer': 'One service sending as brightwave-mail.com needs SPF or DKIM',
     'tip next: none to quarantine': 'brightwave-mail.com: every message passed DMARC for two weeks',
     'tip next: quarantine to reject': 'brightwave-mail.com: every message passed DMARC for two weeks',
-    'tip done': 'brightwave-mail.com: nothing to do',
   };
   it.each(Object.entries(expected))('%s', (name, subject) => {
     expect(rendered(name).subject).toBe(subject);
@@ -212,14 +214,18 @@ describe('what each email says is true for its data', () => {
     const dkim = rendered('first report: failing, passed DKIM for another domain').text;
     expect(dkim).toContain('Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed DKIM for sendgrid.net, but not for brightwave-mail.com. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.');
     expect(dkim).not.toContain('p=none');
-    expect(rendered('first report: failing, passed SPF for another domain').text).toContain('They passed SPF for mailer.example, but not for brightwave-mail.com.');
+    const spf = rendered('first report: failing, passed SPF for another domain').text;
+    expect(spf).toContain('They passed SPF for mailer.example, but not for brightwave-mail.com.');
+    expect(spf).not.toContain('If you use that service');
   });
   it('first report: the p=none sentence only when nothing else passed and the stored policy is none', () => {
     const none = rendered('first report: failing, no other pass, policy none').text;
-    expect(none).toContain("If you use that service, it needs SPF or DKIM set up for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.");
+    expect(none).toContain("Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you don't recognise it, there is nothing to do while the policy is p=none.");
+    expect(none).not.toContain('If you use that service');
     expect(none).not.toContain('They passed');
     const quarantine = rendered('first report: failing, no other pass, policy quarantine').text;
-    expect(quarantine).toContain('Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.');
+    expect(quarantine).toContain('Worth a look: 11 messages from 203.0.113.5 did not pass DMARC.');
+    expect(quarantine).not.toContain('If you use that service');
     expect(quarantine).not.toContain('p=none');
     expect(rendered('first report: failing, passed DKIM for another domain').text).not.toContain('p=none');
   });
@@ -333,30 +339,125 @@ describe('what each email says is true for its data', () => {
     expect(r.html.match(/display:inline-block;padding:10px 18px/g)).toHaveLength(1);
     expect(r.html).toContain('>See it on the domain page</a>');
   });
-  it('tip next: none to quarantine', () => {
+  it('tip next: none to quarantine says what the reports show, then the product\'s own words, then the record', () => {
     const t = rendered('tip next: none to quarantine').text;
-    expect(t).toContain("2,480 messages from 3 sources. Its policy is p=none, so mail from brightwave-mail.com that fails DMARC is still delivered.");
-    expect(t).toContain("The next step, when you're ready: approve moving DMARC to p=quarantine. The record, to publish at _dmarc.brightwave-mail.com:\n\n    v=DMARC1; p=quarantine; rua=mailto:rua@rua.readysetmail.com");
+    expect(t).toContain("For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources.");
+    expect(t).toContain('The record this change publishes, at _dmarc.brightwave-mail.com:\n\n    v=DMARC1; p=quarantine; rua=mailto:rua@rua.readysetmail.com');
     expect(t).toContain('Mail that passes DMARC is not affected by this change.');
     expect(t).not.toContain('Moving to p=reject is done in stages');
+    expect(t).not.toContain('approve moving DMARC to');
+  });
+  it('tip next: the step text is the product\'s own, verbatim', () => {
+    for (const [name, policy] of [['tip next: none to quarantine', 'none'], ['tip next: quarantine to reject', 'quarantine']] as const) {
+      expect(rendered(name).text).toContain(policyStep(policy, 2480).step.why);
+    }
   });
   it('tip next: quarantine to reject adds the staging sentence', () => {
     const t = rendered('tip next: quarantine to reject').text;
-    expect(t).toContain('Its policy is p=quarantine, so mail from brightwave-mail.com that fails DMARC is quarantined, usually to spam.');
-    expect(t).toContain('is quarantined, usually to spam.');
-    expect(t).toContain('approve moving DMARC to p=reject');
     expect(t).toContain('    v=DMARC1; p=reject; rua=mailto:rua@rua.readysetmail.com');
     expect(t).toContain('Moving to p=reject is done in stages; the domain page shows each step when the reports support it.');
+    expect(t).not.toContain('approve moving DMARC to');
   });
-  it('tip done: one sentence, then nothing to do', () => {
-    expect(rendered('tip done').text).toContain('brightwave-mail.com is at p=reject, and every message in its reports passed DMARC for the last two weeks (2,480 messages from 3 sources). There is nothing to do. Your weekly summary will say if a source starts failing.');
-    expect(rendered('tip done: one message, one source').text).toContain('(1 message from 1 source)');
+  it('there is no "tip done" email', () => {
+    expect(variants.map((v) => v.mail.kind)).not.toContain('tip_done');
   });
   it('tips carry the off link and the reason; no tip has a second call to action besides the offer link', () => {
-    for (const n of ['tip fix: without offer', 'tip next: none to quarantine', 'tip done']) {
+    for (const n of ['tip fix: without offer', 'tip next: none to quarantine']) {
       const t = rendered(n).text;
-      expect(t).toContain('tips about your domains are on for you.');
+      expect(t).toContain('you turned on tips about your domains.');
       expect(t).toContain('Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN');
     }
+  });
+});
+
+// ── Report-derived text is cleaned before it reaches a subject, text or HTML part ──
+
+describe('injection: whatever a report says, the email says only cleaned words', () => {
+  const evilOrg = `Evil <b>Corp</b> "x"\r\nBcc: victim@example.com${'A'.repeat(3000)}`;
+  const evilName = '<script>alert(1)</script>\r\nX';
+  const evilDomain = 'x.example\r\nSubject: hi';
+  const controls = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+  const base = { domain_id: 7, domain: 'brightwave-mail.com', wk: 0, header_from: 'brightwave-mail.com', spf_domain: null, spf_result: null, messages: 30 } as const;
+  const evilStat = (): SourceStat => sourceStats([{ ...base, source_ip: '203.0.113.9', org: evilOrg, reverse_dns: evilName, base_domain: evilName, dkim_result: 'pass', dkim_domain: evilDomain }])[0];
+  const who = { name: 'Dana Reyes', footer: { why: 'Why.', settingsUrl: null } };
+
+  /** The text and HTML must contain no control character other than the layout's own newlines and tabs, and no raw script tag. */
+  function assertSafe(r: { subject: string; text: string; html: string }) {
+    expect(r.subject).not.toMatch(controls);
+    expect(r.text.replace(/[\n]/g, '')).not.toMatch(/[\p{Cc}]/u);
+    expect(r.html.replace(/[\n\t]/g, '')).not.toMatch(/[\p{Cc}]/u);
+    expect(r.text).not.toContain('\nBcc:');
+    expect(r.text).not.toContain('\nSubject: hi');
+    expect(r.html).not.toContain('<script');
+    expect(r.html).not.toContain('<b>Corp');
+    // Every long run of non-space characters is at most one cleaned word.
+    for (const word of `${r.subject} ${r.text}`.split(/\s+/)) expect(word.length).toBeLessThanOrEqual(120);
+  }
+
+  it('first report: the failing source and its authenticated domain are cleaned and capped', () => {
+    const f = evilStat();
+    const r = render(firstReport({ ...who, items: [{ domain: 'brightwave-mail.com', data: { reporter: 'Google', begin: 1794096000, end: 1794182400, total: 30, passed: 0, sources: 1, failing: f, policy: 'none' } }], domainUrl: null }));
+    assertSafe(r);
+    expect(r.text).toContain('x.example subject: hi');
+    expect(r.text).toContain('…');
+    expect(r.text).not.toContain('A'.repeat(100));
+  });
+  it('first report: a reporter name is cleaned the same way (run.ts cleans it; the copy then only prints it)', async () => {
+    const { clean } = await import('../../../src/lifecycle/email/analysis');
+    const reporter = clean(`Goo\r\nSubject: x<script>${'B'.repeat(500)}`);
+    const r = render(firstReport({ ...who, items: [{ domain: 'brightwave-mail.com', data: { reporter, begin: 1794096000, end: 1794182400, total: 3, passed: 3, sources: 1, failing: null, policy: 'none' } }], domainUrl: null }));
+    assertSafe(r);
+    expect(reporter.length).toBeLessThanOrEqual(80);
+  });
+  it('tip fix: the source label and the other domain are cleaned', () => {
+    const f = { ...evilStat(), failing: 30, messages: 30 };
+    const r = render(tipFix({ ...who, domain: 'brightwave-mail.com', domainUrl: 'https://app.example.test', source: f, offer: null }));
+    assertSafe(r);
+  });
+  it('the spoof-only scenario: SPF pass for an unrelated domain, no DKIM: no "If you use that service", no tip', () => {
+    const [s] = sourceStats([{ ...base, source_ip: '203.0.113.60', org: null, reverse_dns: null, base_domain: null, spf_result: 'pass', spf_domain: 'bulkmailer.example', dkim_result: null, dkim_domain: null }]);
+    expect(tipFixSources([s])).toEqual([]);
+    const t = render(firstReport({ ...who, items: [{ domain: 'brightwave-mail.com', data: { reporter: 'Google', begin: 1794096000, end: 1794182400, total: 30, passed: 0, sources: 1, failing: s, policy: 'none' } }], domainUrl: null })).text;
+    expect(t).toContain('They passed SPF for bulkmailer.example, but not for brightwave-mail.com.');
+    expect(t).not.toContain('If you use that service');
+    expect(t).not.toContain('needs SPF or DKIM');
+  });
+  it('the same with no authentication at all', () => {
+    const [s] = sourceStats([{ ...base, source_ip: '203.0.113.60', org: null, reverse_dns: null, base_domain: null, spf_result: null, spf_domain: null, dkim_result: null, dkim_domain: null }]);
+    expect(tipFixSources([s])).toEqual([]);
+    const t = render(firstReport({ ...who, items: [{ domain: 'brightwave-mail.com', data: { reporter: 'Google', begin: 1794096000, end: 1794182400, total: 30, passed: 0, sources: 1, failing: s, policy: 'none' } }], domainUrl: null })).text;
+    expect(t).not.toContain('If you use that service');
+    expect(t).not.toContain('They passed');
+  });
+  it('a failing source that passed DKIM for sendgrid.net gets the sentence and the tip', () => {
+    const [s] = sourceStats([{ ...base, source_ip: '203.0.113.61', org: null, reverse_dns: null, base_domain: null, spf_result: null, spf_domain: null, dkim_result: 'pass', dkim_domain: 'sendgrid.net' }]);
+    expect(tipFixSources([s])).toHaveLength(1);
+    const t = render(firstReport({ ...who, items: [{ domain: 'brightwave-mail.com', data: { reporter: 'Google', begin: 1794096000, end: 1794182400, total: 30, passed: 0, sources: 1, failing: s, policy: 'none' } }], domainUrl: null })).text;
+    expect(t).toContain('They passed DKIM for sendgrid.net, but not for brightwave-mail.com. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.');
+  });
+
+  describe('through the job (run.ts firstReportData)', () => {
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
+    afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+    it('a hostile reporter name and source in a stored report reach the sent email only cleaned', async () => {
+      const w = await lifecycleWorld();
+      const T0 = MON_16_NOV - 25 * 3600;
+      const setNow = (t: number) => { w.clock.now = t; vi.setSystemTime(t * 1000); };
+      setNow(T0);
+      const D = 'brightwave-mail.com';
+      const id = w.addDomain({ domain: D, createdAt: T0 - 3 * DAY, connectedAt: T0 - 3 * DAY });
+      w.addReport({
+        domain: D, day: T0 - DAY - 3600, storedAt: T0, org: evilOrg, knownAs: `Goo\r\nBcc: victim@example.com<script>${'B'.repeat(500)}`,
+        records: [{ ip: '203.0.113.9', count: 30, spf: ['pass', evilDomain], dkim: ['pass', evilDomain], org: evilOrg, rdns: evilName, base: evilName }],
+      });
+      void id;
+      w.dns.set(D, recordNamingUs());
+      setNow(T0 + 25 * 3600);
+      await w.run();
+      const sent = w.mailer.sent.filter((m) => m.subject.startsWith('First DMARC report'));
+      expect(sent).toHaveLength(1);
+      assertSafe({ subject: sent[0].subject, text: sent[0].text ?? '', html: sent[0].html ?? '' });
+      expect(sent[0].text).not.toContain('If you use that service');
+    });
   });
 });

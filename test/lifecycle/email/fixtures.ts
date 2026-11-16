@@ -1,9 +1,9 @@
 // Every lifecycle email, every variant, with the example data of the spec: Brightwave Studio, owner Dana Reyes, brightwave-mail.com, reporter
 // Google, RFC 5737 addresses only, a fixed clock. Shared by copy.test.ts and the no-remote-resources block of test/email/html-templates.test.ts.
 
-import { dmarcSteps, policyInForce, type InForce, type Policy } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcSteps, policyInForce, type Policy } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import {
-  firstReport, noReports, recordsLive, tipDone, tipFix, tipNext, weeklySummary,
+  firstReport, noReports, recordsLive, tipFix, tipNext, weeklySummary,
   type Footer, type Mail, type SummaryRow, type Who,
 } from '../../../src/lifecycle/email/copy';
 import { summarise, type SourceStat, type SummaryDomain, type Totals } from '../../../src/lifecycle/email/analysis';
@@ -32,12 +32,12 @@ export const severalWho: Who = { name: 'Dana Reyes', footer: { why: 'You get thi
 export const nameless: Who = { name: 'dana@brightwave-mail.com', footer: milestoneFooter };
 const ownerSummary: Who = { name: 'Dana Reyes', footer: { why: 'Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and the weekly summary is on for you.', settingsUrl: SETTINGS_URL, off: { label: 'Turn off the weekly summary', url: OFF_URL } } };
 const adminSummary: Who = { name: 'Dana Reyes', footer: { why: 'Why am I getting this? You are an admin of Brightwave Studio on Ready Set Mail, and you turned the weekly summary on.', settingsUrl: SETTINGS_URL, off: { label: 'Turn off the weekly summary', url: OFF_URL } } };
-const tipWho: Who = { name: 'Dana Reyes', footer: { why: 'Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.', settingsUrl: SETTINGS_URL, off: { label: 'Turn off tips about your domains', url: OFF_URL } } };
+const tipWho: Who = { name: 'Dana Reyes', footer: { why: 'Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.', settingsUrl: SETTINGS_URL, off: { label: 'Turn off tips about your domains', url: OFF_URL } } };
 
-export const src = (p: Partial<SourceStat> & { key: string }): SourceStat => ({ name: null, ips: [], messages: 0, failing: 0, other: null, ...p });
+export const src = (p: Partial<SourceStat> & { key: string }): SourceStat => ({ name: null, ips: [], messages: 0, failing: 0, other: null, mine: null, ...p });
 
 const google = (p: Partial<SourceStat> = {}): SourceStat => src({ key: 'google workspace', name: 'Google Workspace', ips: ['192.0.2.10'], messages: 1000, failing: 0, ...p });
-const sendgrid = (p: Partial<SourceStat> = {}): SourceStat => src({ key: 'sendgrid', name: 'o1.email.sendgrid.net', ips: ['198.51.100.7', '198.51.100.8', '198.51.100.9'], messages: 40, failing: 11, other: { by: 'DKIM', domain: 'sendgrid.net' }, ...p });
+const sendgrid = (p: Partial<SourceStat> = {}): SourceStat => src({ key: 'sendgrid', name: 'o1.email.sendgrid.net', ips: ['198.51.100.7', '198.51.100.8', '198.51.100.9'], messages: 40, failing: 11, other: { by: 'DKIM', domain: 'sendgrid.net' }, mine: 'SendGrid', ...p });
 
 const totals = (total: number, passed: number, reports = 1): Totals => ({ total, passed, reports });
 const first = (o: { total?: number; passed?: number; sources?: number; failing?: SourceStat | null; policy?: string | null; begin?: number; end?: number } = {}) => ({
@@ -45,17 +45,17 @@ const first = (o: { total?: number; passed?: number; sources?: number; failing?:
 });
 
 const domainRow = (p: Partial<SummaryDomain> & { domain: string }): SummaryDomain => ({
-  id: 7, policy: 'none', this: totals(0, 0, 0), last: totals(0, 0, 0), sources: [], lastSources: [], earlierKeys: new Set(), ...p,
+  id: 7, policy: 'none', this: totals(0, 0, 0), last: totals(0, 0, 0), sources: [], lastSources: [], earlierKeys: new Set(), hadHistory: true, ...p,
 });
 
 export interface Variant { name: string; mail: Mail }
 
-export function policyStep(policy: Policy, messages = 1240, domain = DOMAIN): { inForce: InForce; step: ReturnType<typeof dmarcSteps>[number]; target: Policy } {
+export function policyStep(policy: Policy, messages = 1240, domain = DOMAIN): { step: ReturnType<typeof dmarcSteps>[number]; target: Policy } {
   const f = policyInForce(domain, { dmarc_policy: policy, dmarc_p: policy, dmarc_pct: 100, dmarc_sp: null, dmarc_rua: 1 });
   if (f.kind !== 'own') throw new Error(`expected own, got ${f.kind}`);
   const step = dmarcSteps(domain, f, { reportsAddress: true, ruaAddress: RUA, reports: { total: messages, passed: messages, days: 14 } })[0];
   const target: Policy = policy === 'none' ? 'quarantine' : 'reject';
-  return { inForce: f, step, target };
+  return { step, target };
 }
 
 
@@ -72,7 +72,7 @@ export function allVariants(): Variant[] {
   add('first report: all passed', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first() }], domainUrl: DOMAIN_URL }));
   const failingOther = (o: Partial<SourceStat>) => sendgrid(o);
   add('first report: failing, passed DKIM for another domain', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first({ passed: 3, failing: failingOther({ messages: 11, failing: 11, ips: ['198.51.100.7'] }) }) }], domainUrl: DOMAIN_URL }));
-  add('first report: failing, passed SPF for another domain', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first({ passed: 3, failing: failingOther({ messages: 11, failing: 11, ips: ['198.51.100.7'], other: { by: 'SPF', domain: 'mailer.example' } }) }) }], domainUrl: DOMAIN_URL }));
+  add('first report: failing, passed SPF for another domain', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first({ passed: 3, failing: failingOther({ messages: 11, failing: 11, ips: ['198.51.100.7'], other: { by: 'SPF', domain: 'mailer.example' }, mine: null }) }) }], domainUrl: DOMAIN_URL }));
   const nobody = src({ key: '203.0.113.5', name: null, ips: ['203.0.113.5'], messages: 11, failing: 11 });
   add('first report: failing, no other pass, policy none', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first({ passed: 3, failing: nobody, policy: 'none' }) }], domainUrl: DOMAIN_URL }));
   add('first report: failing, no other pass, policy quarantine', firstReport({ ...milestoneWho, items: [{ domain: DOMAIN, data: first({ passed: 3, failing: nobody, policy: 'quarantine' }) }], domainUrl: DOMAIN_URL }));
@@ -136,13 +136,11 @@ export function allVariants(): Variant[] {
   const fixSrc = sendgrid({ messages: 40, failing: 38 });
   add('tip fix: without offer', tipFix({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, source: fixSrc, offer: null }));
   add('tip fix: with offer', tipFix({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, source: fixSrc, offer: { price: '$149', orderUrl: ORDER_URL } }));
-  add('tip fix: SPF, one address', tipFix({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, source: src({ key: 'x', name: null, ips: ['198.51.100.20'], messages: 12, failing: 12, other: { by: 'SPF', domain: 'mailer.example' } }), offer: null }));
+  add('tip fix: SPF, one address', tipFix({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, source: src({ key: 'x', name: null, ips: ['198.51.100.20'], messages: 12, failing: 12, other: { by: 'SPF', domain: 'mailer.example' }, mine: 'Mailgun' }), offer: null }));
   for (const p of ['none', 'quarantine'] as const) {
-    const { inForce, step, target } = policyStep(p);
-    add(`tip next: ${p} to ${target}`, tipNext({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, weeks: { start: WEEK_START - 7 * DAY, end: WEEK.end }, messages: 2480, sources: 3, inForce, step, target, ruaAddress: RUA }));
+    const { step, target } = policyStep(p, 2480);
+    add(`tip next: ${p} to ${target}`, tipNext({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, weeks: { start: WEEK_START - 7 * DAY, end: WEEK.end }, messages: 2480, sources: 3, step, target, ruaAddress: RUA }));
   }
-  add('tip done', tipDone({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, messages: 2480, sources: 3 }));
-  add('tip done: one message, one source', tipDone({ ...tipWho, domain: DOMAIN, domainUrl: DOMAIN_URL, messages: 1, sources: 1 }));
   add('records live: nameless recipient', recordsLive({ ...nameless, items: [{ domain: DOMAIN, seenAt: NOW }], domainUrl: DOMAIN_URL }));
   return out;
 }

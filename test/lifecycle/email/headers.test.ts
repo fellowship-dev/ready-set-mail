@@ -21,7 +21,7 @@ async function weeklyWorld(extra: Record<string, unknown> = {}) {
 }
 
 const isSummary = (m: MailMessage) => /^Week of /.test(m.subject);
-const isTip = (m: MailMessage) => /needs SPF or DKIM|every message passed DMARC|nothing to do/.test(m.subject);
+const isTip = (m: MailMessage) => /needs SPF or DKIM|every message passed DMARC/.test(m.subject);
 
 function expectOneClick(m: MailMessage) {
   const h = m.headers ?? {};
@@ -40,7 +40,9 @@ function expectOneClick(m: MailMessage) {
 
 describe('summary and tips emails', () => {
   it('carry one https List-Unsubscribe URL, the one-click post header, a visible link in HTML and text, and the postal footer', async () => {
-    const w = await weeklyWorld();
+    // Tips are off by default: the instance names them (LIFECYCLE_EMAILS_ON) and the owner turned them on.
+    const w = await weeklyWorld({ LIFECYCLE_EMAILS_ON: 'tips' });
+    w.pref(w.dana, 'tips', true);
     await w.run();
     const summaries = w.mailer.sent.filter(isSummary);
     const tips = w.mailer.sent.filter(isTip);

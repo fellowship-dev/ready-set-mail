@@ -4,7 +4,7 @@
 // Rules for this copy (tested in test/lifecycle/email/copy.test.ts): no emoji; none of the scare words (no "could not be authenticated", "claims to
 // be", "spoof", "attack", "at risk", "exposed", "action needed"); say what is known; dates in UTC; one button-styled link per email.
 
-import { dmarcRecordFor, inForceSentence, type DmarcStep, type InForce, type Policy } from '@ready-set-mail/dns-checks/dmarc-next-step';
+import { dmarcRecordFor, type DmarcStep, type Policy } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { buildLetterHtml, buildLetterText, type LetterBlock } from '../../email/html-templates';
 import { OFFER_NAME, REFUND_RULE } from '../../billing/offer';
 import { OFFER_SUMMARY } from './offer';
@@ -23,7 +23,6 @@ export function render(mail: Mail): Rendered {
 
 const n = (x: number): string => x.toLocaleString('en-US');
 const messages = (x: number): string => `${n(x)} ${x === 1 ? 'message' : 'messages'}`;
-const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
 
 /** Why the person gets this, and the links that go with it. Milestone emails have no off link (transactional). */
 export interface Footer {
@@ -96,10 +95,11 @@ export function firstReport(p: Who & { items: FirstReportItem[]; domainUrl: stri
   } else if (d.failing) {
     const f = d.failing;
     const lead = `Worth a look: ${messages(f.failing)} from ${sourceLabel(f)} did not pass DMARC.`;
-    const need = `If you use that service, it needs SPF or DKIM set up for ${domain}.`;
-    blocks.push(f.other
-      ? `${lead} They passed ${f.other.by} for ${f.other.domain}, but not for ${domain}. ${need}`
-      : `${lead} ${need}${d.policy === 'none' ? " If you don't recognise it, there is nothing to do while the policy is p=none." : ''}`);
+    // Only what is known, unless something shows the owner uses that service (analysis.ts `ownerEvidence`).
+    const seen = f.other ? ` They passed ${f.other.by} for ${f.other.domain}, but not for ${domain}.` : '';
+    blocks.push(f.mine
+      ? `${lead}${seen} If you use that service, it needs SPF or DKIM set up for ${domain}.`
+      : `${lead}${seen}${d.policy === 'none' ? " If you don't recognise it, there is nothing to do while the policy is p=none." : ''}`);
   } else {
     blocks.push(`Worth a look: ${messages(failed)} did not pass DMARC. The domain page lists each source with its numbers.`);
   }
@@ -238,39 +238,19 @@ export function tipFix(p: Who & { domain: string; domainUrl: string; source: Sou
   return { kind: 'tip_fix', subject: `One service sending as ${p.domain} needs SPF or DKIM`, blocks };
 }
 
-/** "Its policy is p=none, so mail from X that fails DMARC is still delivered." The meaning is the rule module's own sentence (inForceSentence); an inherited policy keeps all of it, because where the policy comes from is part of the story. */
-function policySentence(f: InForce): string {
-  const policy = `Its policy is p=${f.policy}${f.pct < 100 ? ` at pct=${f.pct}` : ''}`;
-  const full = inForceSentence(f);
-  const cut = full.lastIndexOf(', so ');
-  return f.kind === 'own' && cut >= 0 ? `${policy}, so ${full.slice(cut + 5)}` : `${policy}. ${full}`;
-}
-
-export function tipNext(p: Who & { domain: string; domainUrl: string; weeks: { start: number; end: number }; messages: number; sources: number; inForce: InForce; step: DmarcStep; target: Policy; ruaAddress: string | null }): Mail {
+export function tipNext(p: Who & { domain: string; domainUrl: string; weeks: { start: number; end: number }; messages: number; sources: number; step: DmarcStep; target: Policy; ruaAddress: string | null }): Mail {
   const record = p.step.record ?? dmarcRecordFor({ policy: p.target, pct: 100 }, p.ruaAddress);
   const at = p.step.recordAt ?? `_dmarc.${p.step.at ?? p.domain}`;
-  const f = p.inForce;
   const blocks: LetterBlock[] = [
     greeting(p.name),
-    `For the last two weeks (${rangeText(p.weeks.start, p.weeks.end)}, UTC), every message in ${p.domain}'s reports passed DMARC: ${messages(p.messages)} from ${p.sources} ${p.sources === 1 ? 'source' : 'sources'}. ${policySentence(f)}`,
-    `The next step, when you're ready: ${lowerFirst(p.step.do)}. The record, to publish at ${at}:`,
+    `For the last two weeks (${rangeText(p.weeks.start, p.weeks.end)}, UTC), every message in ${p.domain}'s reports passed DMARC: ${messages(p.messages)} from ${p.sources} ${p.sources === 1 ? 'source' : 'sources'}.`,
+    // The next step in the product's own words (packages/dns-checks/src/dmarc-next-step.ts): what the reports show, the policy in force, and what else the change touches.
+    p.step.why,
+    `The record this change publishes, at ${at}:`,
     { code: record },
     'Mail that passes DMARC is not affected by this change.',
   ];
   if (p.target === 'reject') blocks.push('Moving to p=reject is done in stages; the domain page shows each step when the reports support it.');
   blocks.push({ cta: { label: `Open ${p.domain}`, url: p.domainUrl } }, ...footer(p.footer));
   return { kind: 'tip_next', subject: `${p.domain}: every message passed DMARC for two weeks`, blocks };
-}
-
-export function tipDone(p: Who & { domain: string; domainUrl: string; messages: number; sources: number }): Mail {
-  return {
-    kind: 'tip_done',
-    subject: `${p.domain}: nothing to do`,
-    blocks: [
-      greeting(p.name),
-      `${p.domain} is at p=reject, and every message in its reports passed DMARC for the last two weeks (${messages(p.messages)} from ${p.sources} ${p.sources === 1 ? 'source' : 'sources'}). There is nothing to do. Your weekly summary will say if a source starts failing.`,
-      { cta: { label: `Open ${p.domain}`, url: p.domainUrl } },
-      ...footer(p.footer),
-    ],
-  };
 }

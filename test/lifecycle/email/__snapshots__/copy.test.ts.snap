@@ -6,15 +6,15 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: all pas
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, all passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Every message passed DMARC: each one was sent by a service that brightwave-mail.com's SPF or DKIM records cover.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
@@ -58,15 +58,15 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: failing
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, 13 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">13</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">13</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 1 message did not pass DMARC. The domain page lists each source with its numbers.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
@@ -110,16 +110,16 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: failing
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, 3 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you don't recognise it, there is nothing to do while the policy is p=none.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
 <p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">You get this because you added brightwave-mail.com to Brightwave Studio on Ready Set Mail.</p>
@@ -145,7 +145,7 @@ Google sent the first DMARC report for brightwave-mail.com. It covers mail Googl
 Messages   Passed DMARC   Did not pass   Sending sources
 14                    3             11                 2
 
-Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.
+Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you don't recognise it, there is nothing to do while the policy is p=none.
 
 Reports from other mail providers will follow, usually once a day each.
 
@@ -162,16 +162,16 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: failing
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, 3 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from 203.0.113.5 did not pass DMARC.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
 <p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">You get this because you added brightwave-mail.com to Brightwave Studio on Ready Set Mail.</p>
@@ -197,7 +197,7 @@ Google sent the first DMARC report for brightwave-mail.com. It covers mail Googl
 Messages   Passed DMARC   Did not pass   Sending sources
 14                    3             11                 2
 
-Worth a look: 11 messages from 203.0.113.5 did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.
+Worth a look: 11 messages from 203.0.113.5 did not pass DMARC.
 
 Reports from other mail providers will follow, usually once a day each.
 
@@ -214,15 +214,15 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: failing
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, 3 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed DKIM for sendgrid.net, but not for brightwave-mail.com. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
@@ -266,16 +266,16 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: failing
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, 3 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed SPF for mailer.example, but not for brightwave-mail.com. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">3</td><td style="padding:6px 2px;text-align:right;">11</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed SPF for mailer.example, but not for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
 <p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">You get this because you added brightwave-mail.com to Brightwave Studio on Ready Set Mail.</p>
@@ -301,7 +301,7 @@ Google sent the first DMARC report for brightwave-mail.com. It covers mail Googl
 Messages   Passed DMARC   Did not pass   Sending sources
 14                    3             11                 2
 
-Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed SPF for mailer.example, but not for brightwave-mail.com. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com.
+Worth a look: 11 messages from o1.email.sendgrid.net (198.51.100.7) did not pass DMARC. They passed SPF for mailer.example, but not for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.
 
 Reports from other mail providers will follow, usually once a day each.
 
@@ -318,16 +318,16 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: one mes
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 1 message, 0 passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">1</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">1</td></tr></table>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 1 message from Example Mailer (203.0.113.9) did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">1</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">1</td></tr></table>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Worth a look: 1 message from Example Mailer (203.0.113.9) did not pass DMARC. If you don't recognise it, there is nothing to do while the policy is p=none.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
 <p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">You get this because you added brightwave-mail.com to Brightwave Studio on Ready Set Mail.</p>
@@ -353,7 +353,7 @@ Google sent the first DMARC report for brightwave-mail.com. It covers mail Googl
 Messages   Passed DMARC   Did not pass   Sending sources
 1                     0              1                 1
 
-Worth a look: 1 message from Example Mailer (203.0.113.9) did not pass DMARC. If you use that service, it needs SPF or DKIM set up for brightwave-mail.com. If you don't recognise it, there is nothing to do while the policy is p=none.
+Worth a look: 1 message from Example Mailer (203.0.113.9) did not pass DMARC. If you don't recognise it, there is nothing to do while the policy is p=none.
 
 Reports from other mail providers will follow, usually once a day each.
 
@@ -370,15 +370,15 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: report 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC report for brightwave-mail.com: 14 messages, all passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Google sent the first DMARC report for brightwave-mail.com. It covers mail Google received from the domain on Sat 14 Nov – Sun 15 Nov (UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;">Did not pass</td><td style="padding:6px 2px;text-align:right;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Did not pass</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Sending sources</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">14</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">2</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Every message passed DMARC: each one was sent by a service that brightwave-mail.com's SPF or DKIM records cover.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">See who sends as brightwave-mail.com</a></p>
@@ -422,15 +422,15 @@ exports[`snapshots: every lifecycle email, text and HTML > first report: several
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>First DMARC reports for 2 domains</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The first DMARC report has arrived for each of these domains:</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Reporter</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed DMARC</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">Google</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">14</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">news.brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">Microsoft</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,200</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Reporter</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed DMARC</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">Google</td><td style="padding:6px 2px;text-align:right;">14</td><td style="padding:6px 2px;text-align:right;">14</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">news.brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">Microsoft</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,200</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Each domain page lists who sends as that domain, with their numbers. Reports from other mail providers will follow, usually once a day each.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open Ready Set Mail</a></p>
 <p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">You get this because you added these domains to Brightwave Studio on Ready Set Mail.</p>
@@ -472,8 +472,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: no longer
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -523,8 +523,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: no longer
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -577,8 +577,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: read fail
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -628,8 +628,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: read fail
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -682,8 +682,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: several d
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for 3 domains</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -762,8 +762,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: still nam
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -813,8 +813,8 @@ exports[`snapshots: every lifecycle email, text and HTML > no reports: still nam
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No DMARC reports yet for brightwave-mail.com</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -867,8 +867,8 @@ exports[`snapshots: every lifecycle email, text and HTML > records live: nameles
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com is set up: reports are on their way</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -912,8 +912,8 @@ exports[`snapshots: every lifecycle email, text and HTML > records live: one dom
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com is set up: reports are on their way</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -957,8 +957,8 @@ exports[`snapshots: every lifecycle email, text and HTML > records live: several
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>2 domains are set up: reports are on their way</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -1006,15 +1006,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: new source, 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, 1,105 messages, 100% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,105</td><td style="padding:6px 2px;text-align:right;">1,105</td><td style="padding:6px 2px;text-align:right;">100%</td><td style="padding:6px 2px;text-align:right;">p=reject</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,105</td><td style="padding:6px 2px;text-align:right;">1,105</td><td style="padding:6px 2px;text-align:right;">100%</td><td style="padding:6px 2px;text-align:right;">p=reject</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">New source on brightwave-mail.com: Mailchimp sent 5 messages, all passed.</li></ul>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1065,15 +1065,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: one domain, 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, 1,240 messages, 97% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">3 reports from senders we do not recognise are not counted.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">New source on brightwave-mail.com: o1.email.sendgrid.net sent 11 messages, 11 did not pass DMARC.</li></ul>
@@ -1127,15 +1127,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: one domain, 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, no reports</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">-</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">-</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">brightwave-mail.com had reports last week and none this week.</li></ul>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1186,15 +1186,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: one domain, 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, 1,100 messages, 100% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,100</td><td style="padding:6px 2px;text-align:right;">1,100</td><td style="padding:6px 2px;text-align:right;">100%</td><td style="padding:6px 2px;text-align:right;">p=reject</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,100</td><td style="padding:6px 2px;text-align:right;">1,100</td><td style="padding:6px 2px;text-align:right;">100%</td><td style="padding:6px 2px;text-align:right;">p=reject</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">1 report from a sender we do not recognise is not counted.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Nothing changed since the week before.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1245,15 +1245,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: one domain, 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, 1,240 messages, 97% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">o1.email.sendgrid.net on brightwave-mail.com started failing: 11 of 11 messages did not pass DMARC.</li></ul>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1304,15 +1304,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: one new sour
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: brightwave-mail.com, 1 message, 0% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 0 sent 1 message, 1 did not pass DMARC.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 1 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 2 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 3 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 4 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 5 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 6 sent 1 message, all passed.</li><li style="margin-bottom:6px;">New source on brightwave-mail.com: Service 7 sent 1 message, all passed.</li><li style="margin-bottom:6px;">and 2 more.</li></ul>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1371,15 +1371,15 @@ exports[`snapshots: every lifecycle email, text and HTML > summary: several doma
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Week of 9–15 Nov: 3 domains, 4,120 messages, 98% passed</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Here is what DMARC reports said about your domains last week (Mon 9 – Sun 15 Nov, UTC).</p>
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">Domain</td><td style="padding:6px 2px;text-align:right;">Messages</td><td style="padding:6px 2px;text-align:right;">Passed</td><td style="padding:6px 2px;text-align:right;">Rate</td><td style="padding:6px 2px;text-align:right;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;padding-left:16px;">news.brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">2,880</td><td style="padding:6px 2px;text-align:right;">2,820</td><td style="padding:6px 2px;text-align:right;">98%</td><td style="padding:6px 2px;text-align:right;">p=quarantine</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-news.example</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">-</td><td style="padding:6px 2px;text-align:right;">not read</td></tr></table>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px;color:#06194b;"><tr style="background:#f7f8fa;font-weight:600;"><td style="padding:6px 2px;word-break:normal;overflow-wrap:normal;">Domain</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Messages</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Passed</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Rate</td><td style="padding:6px 2px;text-align:right;word-break:normal;overflow-wrap:normal;">Policy</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">1,240</td><td style="padding:6px 2px;text-align:right;">1,203</td><td style="padding:6px 2px;text-align:right;">97%</td><td style="padding:6px 2px;text-align:right;">p=none</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;padding-left:16px;">news.brightwave-mail.com</td><td style="padding:6px 2px;text-align:right;">2,880</td><td style="padding:6px 2px;text-align:right;">2,820</td><td style="padding:6px 2px;text-align:right;">98%</td><td style="padding:6px 2px;text-align:right;">p=quarantine</td></tr><tr style="border-bottom:1px solid #d7dce8;"><td style="padding:6px 2px;word-break:break-word;overflow-wrap:anywhere;">brightwave-news.example</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">0</td><td style="padding:6px 2px;text-align:right;">-</td><td style="padding:6px 2px;text-align:right;">not read</td></tr></table>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What changed since the week before:</p>
 <ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;color:#06194b;"><li style="margin-bottom:6px;">New source on brightwave-mail.com: 203.0.113.5 sent 11 messages, 11 did not pass DMARC.</li></ul>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The one thing to do:</p>
@@ -1426,100 +1426,14 @@ Turn off the weekly summary: https://app.example.test/api/email-preferences/off?
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"
 `;
 
-exports[`snapshots: every lifecycle email, text and HTML > tip done > html 1`] = `
-"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com: nothing to do</title></head>
-<body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
-  <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
-    <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
-  </td></tr>
-  <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
-    <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">brightwave-mail.com is at p=reject, and every message in its reports passed DMARC for the last two weeks (2,480 messages from 3 sources). There is nothing to do. Your weekly summary will say if a source starts failing.</p>
-<p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
-<p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
-  </td></tr>
-  <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
-    Ready Set Mail — automated email security monitoring
-  </td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>"
-`;
-
-exports[`snapshots: every lifecycle email, text and HTML > tip done > subject 1`] = `"brightwave-mail.com: nothing to do"`;
-
-exports[`snapshots: every lifecycle email, text and HTML > tip done > text 1`] = `
-"Hi Dana,
-
-brightwave-mail.com is at p=reject, and every message in its reports passed DMARC for the last two weeks (2,480 messages from 3 sources). There is nothing to do. Your weekly summary will say if a source starts failing.
-
-Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
-
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
-
-Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
-Email settings: https://app.example.test/#/w/ws_brightwave/settings"
-`;
-
-exports[`snapshots: every lifecycle email, text and HTML > tip done: one message, one source > html 1`] = `
-"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com: nothing to do</title></head>
-<body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
-  <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
-    <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
-  </td></tr>
-  <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
-    <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">brightwave-mail.com is at p=reject, and every message in its reports passed DMARC for the last two weeks (1 message from 1 source). There is nothing to do. Your weekly summary will say if a source starts failing.</p>
-<p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
-<p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
-  </td></tr>
-  <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
-    Ready Set Mail — automated email security monitoring
-  </td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>"
-`;
-
-exports[`snapshots: every lifecycle email, text and HTML > tip done: one message, one source > subject 1`] = `"brightwave-mail.com: nothing to do"`;
-
-exports[`snapshots: every lifecycle email, text and HTML > tip done: one message, one source > text 1`] = `
-"Hi Dana,
-
-brightwave-mail.com is at p=reject, and every message in its reports passed DMARC for the last two weeks (1 message from 1 source). There is nothing to do. Your weekly summary will say if a source starts failing.
-
-Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
-
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
-
-Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
-Email settings: https://app.example.test/#/w/ws_brightwave/settings"
-`;
-
 exports[`snapshots: every lifecycle email, text and HTML > tip fix: SPF, one address > html 1`] = `
 "<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>One service sending as brightwave-mail.com needs SPF or DKIM</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -1529,7 +1443,7 @@ exports[`snapshots: every lifecycle email, text and HTML > tip fix: SPF, one add
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">This usually means a service you use sends mail as brightwave-mail.com and has not been set up with the domain's DNS yet.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What to do: in that service's settings, find its domain authentication (it gives you DNS records to add) and add them. The next reports will show whether it passes. The domain page lists this source with its numbers.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
+<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
   </td></tr>
   <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
@@ -1555,7 +1469,7 @@ What to do: in that service's settings, find its domain authentication (it gives
 
 Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
 
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
+Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.
 
 Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"
@@ -1567,8 +1481,8 @@ exports[`snapshots: every lifecycle email, text and HTML > tip fix: with offer >
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>One service sending as brightwave-mail.com needs SPF or DKIM</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -1580,7 +1494,7 @@ exports[`snapshots: every lifecycle email, text and HTML > tip fix: with offer >
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Prefer we do it? Fix one domain, $149 per domain: We find every service that sends email as your domain, get each one passing SPF and DKIM, switch on DMARC reporting and send you a written done note you can forward. Moving to reject is a separate follow-on. Until we send the written note that the domain is done, you can ask for the full fee back.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7?order=1" style="color:#525c75;text-decoration:underline;">See it on the domain page</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
+<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
   </td></tr>
   <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
@@ -1610,7 +1524,7 @@ Prefer we do it? Fix one domain, $149 per domain: We find every service that sen
 
 See it on the domain page: https://app.example.test/#/w/ws_brightwave/domains/7?order=1
 
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
+Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.
 
 Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"
@@ -1622,8 +1536,8 @@ exports[`snapshots: every lifecycle email, text and HTML > tip fix: without offe
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>One service sending as brightwave-mail.com needs SPF or DKIM</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
@@ -1633,7 +1547,7 @@ exports[`snapshots: every lifecycle email, text and HTML > tip fix: without offe
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">This usually means a service you use sends mail as brightwave-mail.com and has not been set up with the domain's DNS yet.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">What to do: in that service's settings, find its domain authentication (it gives you DNS records to add) and add them. The next reports will show whether it passes. The domain page lists this source with its numbers.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
+<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
   </td></tr>
   <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
@@ -1659,7 +1573,7 @@ What to do: in that service's settings, find its domain authentication (it gives
 
 Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
 
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
+Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.
 
 Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"
@@ -1671,19 +1585,20 @@ exports[`snapshots: every lifecycle email, text and HTML > tip next: none to qua
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com: every message passed DMARC for two weeks</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources. Its policy is p=none, so mail from brightwave-mail.com that fails DMARC is still delivered.</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The next step, when you're ready: approve moving DMARC to p=quarantine. The record, to publish at _dmarc.brightwave-mail.com:</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources.</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">100% of 2,480 reported messages passed DMARC in the last 14 days, so your senders look ready. brightwave-mail.com's own DMARC record sets p=none, so mail from brightwave-mail.com that fails DMARC is still delivered.</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The record this change publishes, at _dmarc.brightwave-mail.com:</p>
 <pre style="margin:0 0 14px;padding:10px 12px;background:#f7f8fa;border:1px solid #d7dce8;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#06194b;">v=DMARC1; p=quarantine; rua=mailto:rua@rua.readysetmail.com</pre>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Mail that passes DMARC is not affected by this change.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
+<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
   </td></tr>
   <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
@@ -1701,9 +1616,11 @@ exports[`snapshots: every lifecycle email, text and HTML > tip next: none to qua
 exports[`snapshots: every lifecycle email, text and HTML > tip next: none to quarantine > text 1`] = `
 "Hi Dana,
 
-For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources. Its policy is p=none, so mail from brightwave-mail.com that fails DMARC is still delivered.
+For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources.
 
-The next step, when you're ready: approve moving DMARC to p=quarantine. The record, to publish at _dmarc.brightwave-mail.com:
+100% of 2,480 reported messages passed DMARC in the last 14 days, so your senders look ready. brightwave-mail.com's own DMARC record sets p=none, so mail from brightwave-mail.com that fails DMARC is still delivered.
+
+The record this change publishes, at _dmarc.brightwave-mail.com:
 
     v=DMARC1; p=quarantine; rua=mailto:rua@rua.readysetmail.com
 
@@ -1711,7 +1628,7 @@ Mail that passes DMARC is not affected by this change.
 
 Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
 
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
+Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.
 
 Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"
@@ -1723,20 +1640,21 @@ exports[`snapshots: every lifecycle email, text and HTML > tip next: quarantine 
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>brightwave-mail.com: every message passed DMARC for two weeks</title></head>
 <body style="margin:0;padding:0;background:#eff1f6;font-family:Arial,sans-serif;font-size:14px;color:#06194b;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff1f6;">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   <tr><td style="background:#ffffff;padding:16px 24px;border-bottom:3px solid #0647FF;">
     <span style="color:#06194b;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.01em;">readysetmail</span>
   </td></tr>
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Hi Dana,</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources. Its policy is p=quarantine, so mail from brightwave-mail.com that fails DMARC is quarantined, usually to spam.</p>
-<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The next step, when you're ready: approve moving DMARC to p=reject. The record, to publish at _dmarc.brightwave-mail.com:</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources.</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">100% of 2,480 reported messages passed DMARC in the last 14 days, so your senders look ready. brightwave-mail.com's own DMARC record sets p=quarantine, so mail from brightwave-mail.com that fails DMARC is quarantined, usually to spam.</p>
+<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">The record this change publishes, at _dmarc.brightwave-mail.com:</p>
 <pre style="margin:0 0 14px;padding:10px 12px;background:#f7f8fa;border:1px solid #d7dce8;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#06194b;">v=DMARC1; p=reject; rua=mailto:rua@rua.readysetmail.com</pre>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Mail that passes DMARC is not affected by this change.</p>
 <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#06194b;">Moving to p=reject is done in stages; the domain page shows each step when the reports support it.</p>
 <p style="margin:20px 0;"><a href="https://app.example.test/#/w/ws_brightwave/domains/7" style="display:inline-block;padding:10px 18px;border-radius:4px;background:#0647FF;color:#fff;font-size:15px;font-weight:600;text-decoration:none;">Open brightwave-mail.com</a></p>
-<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.</p>
+<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:#525c75;">Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.</p>
 <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#525c75;"><a href="https://app.example.test/api/email-preferences/off?t=TOKEN" style="color:#525c75;text-decoration:underline;">Turn off tips about your domains</a> &middot; <a href="https://app.example.test/#/w/ws_brightwave/settings" style="color:#525c75;text-decoration:underline;">Email settings</a></p>
   </td></tr>
   <tr><td style="padding:12px 24px;background:#f7f8fa;border-top:1px solid #d7dce8;font-size:11px;color:#525c75;text-align:center;">
@@ -1754,9 +1672,11 @@ exports[`snapshots: every lifecycle email, text and HTML > tip next: quarantine 
 exports[`snapshots: every lifecycle email, text and HTML > tip next: quarantine to reject > text 1`] = `
 "Hi Dana,
 
-For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources. Its policy is p=quarantine, so mail from brightwave-mail.com that fails DMARC is quarantined, usually to spam.
+For the last two weeks (2–15 Nov, UTC), every message in brightwave-mail.com's reports passed DMARC: 2,480 messages from 3 sources.
 
-The next step, when you're ready: approve moving DMARC to p=reject. The record, to publish at _dmarc.brightwave-mail.com:
+100% of 2,480 reported messages passed DMARC in the last 14 days, so your senders look ready. brightwave-mail.com's own DMARC record sets p=quarantine, so mail from brightwave-mail.com that fails DMARC is quarantined, usually to spam.
+
+The record this change publishes, at _dmarc.brightwave-mail.com:
 
     v=DMARC1; p=reject; rua=mailto:rua@rua.readysetmail.com
 
@@ -1766,7 +1686,7 @@ Moving to p=reject is done in stages; the domain page shows each step when the r
 
 Open brightwave-mail.com: https://app.example.test/#/w/ws_brightwave/domains/7
 
-Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and tips about your domains are on for you.
+Why am I getting this? You are the owner of Brightwave Studio on Ready Set Mail, and you turned on tips about your domains.
 
 Turn off tips about your domains: https://app.example.test/api/email-preferences/off?t=TOKEN
 Email settings: https://app.example.test/#/w/ws_brightwave/settings"

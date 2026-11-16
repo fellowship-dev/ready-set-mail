@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { WeekSourceRow } from '@ready-set-mail/db';
 import {
-  allPassed, failingSources, noTotals, passRate, quietWeek, sourceKey, sourceLabel, sourceName, sourceStats, summarise, tipFixSources,
+  allPassed, failingSources, noTotals, passRate, quietWeek, sourceKey, sourceLabel, sourceName, sourceStats, summarise, tipFixSources, clean, rowFailsDmarc, ownerEvidence, MAX_WORD,
   type SourceStat, type SummaryDomain, type Totals,
 } from '../../../src/lifecycle/email/analysis';
 
@@ -163,8 +163,9 @@ describe('sourceStats', () => {
   });
 });
 
-const stat = (p: Partial<SourceStat> & { key: string }): SourceStat => ({ name: null, ips: ['192.0.2.1'], messages: 0, failing: 0, other: null, ...p });
+const stat = (p: Partial<SourceStat> & { key: string }): SourceStat => ({ name: null, ips: ['192.0.2.1'], messages: 0, failing: 0, other: null, mine: null, ...p });
 const DKIM = { by: 'DKIM', domain: 'sendgrid.net' } as const;
+const MINE = { mine: 'SendGrid' } as const;
 
 describe('failingSources', () => {
   it('keeps the failing ones, the most failing first, ties by key', () => {
@@ -175,19 +176,22 @@ describe('failingSources', () => {
 
 describe('tipFixSources', () => {
   it('needs at least 10 failing messages', () => {
-    expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 9, other: DKIM })])).toEqual([]);
-    expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 10, other: DKIM })]).map((x) => x.key)).toEqual(['a']);
+    expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 9, other: DKIM, ...MINE })])).toEqual([]);
+    expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 10, other: DKIM, ...MINE })]).map((x) => x.key)).toEqual(['a']);
   });
   it('needs most of its messages to fail (half counts)', () => {
-    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 49, other: DKIM })])).toEqual([]);
-    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 50, other: DKIM })])).toHaveLength(1);
-    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 100, other: DKIM })])).toHaveLength(1);
+    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 49, other: DKIM, ...MINE })])).toEqual([]);
+    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 50, other: DKIM, ...MINE })])).toHaveLength(1);
+    expect(tipFixSources([stat({ key: 'a', messages: 100, failing: 100, other: DKIM, ...MINE })])).toHaveLength(1);
   });
   it('needs a pass for another domain', () => {
     expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 20, other: null })])).toEqual([]);
   });
+  it('needs evidence that the owner uses the service', () => {
+    expect(tipFixSources([stat({ key: 'a', messages: 20, failing: 20, other: DKIM, mine: null })])).toEqual([]);
+  });
   it('lists the most failing first', () => {
-    const t = tipFixSources([stat({ key: 'a', messages: 20, failing: 12, other: DKIM }), stat({ key: 'b', messages: 90, failing: 80, other: { by: 'SPF', domain: 'mailer.example' } })]);
+    const t = tipFixSources([stat({ key: 'a', messages: 20, failing: 12, other: DKIM, ...MINE }), stat({ key: 'b', messages: 90, failing: 80, other: { by: 'SPF', domain: 'mailer.example' }, ...MINE })]);
     expect(t.map((x) => x.key)).toEqual(['b', 'a']);
   });
   it('is empty for no sources', () => {
@@ -218,7 +222,7 @@ describe('totals', () => {
 
 const totals = (total: number, passed: number, reports = 1): Totals => ({ total, passed, reports });
 const dom = (p: Partial<SummaryDomain> & { domain: string }): SummaryDomain => ({
-  id: 1, policy: 'none', this: totals(0, 0, 0), last: totals(0, 0, 0), sources: [], lastSources: [], earlierKeys: new Set(), ...p,
+  id: 1, policy: 'none', this: totals(0, 0, 0), last: totals(0, 0, 0), sources: [], lastSources: [], earlierKeys: new Set(), hadHistory: true, ...p,
 });
 const google = (p: Partial<SourceStat> = {}) => stat({ key: 'google', name: 'Google', messages: 100, ...p });
 
@@ -242,9 +246,23 @@ describe('summarise', () => {
       const f = summarise([dom({ domain: D, this: totals(100, 100), sources: [google(), stat({ key: 'ghost', messages: 0 })], lastSources: [google()] })]);
       expect(f.changes).toEqual([]);
     });
-    it('every source is new on a domain with no earlier history', () => {
-      const f = summarise([dom({ domain: D, this: totals(100, 100), sources: [google()] })]);
-      expect(f.changes.map((c) => c.kind)).toEqual(['new_source']);
+    it('a domain with no earlier history is a silent baseline: no source is new', () => {
+      const f = summarise([dom({ domain: D, hadHistory: false, this: totals(100, 100), sources: [google(), stat({ key: 'bulk', messages: 30, failing: 30 })] })]);
+      expect(f.changes).toEqual([]);
+      expect(f.todo).toBeNull();
+      expect(quietWeek(f)).toBe(false); // it still has counted messages
+    });
+    it('a silent baseline with no messages is a quiet week', () => {
+      expect(quietWeek(summarise([dom({ domain: D, hadHistory: false })]))).toBe(true);
+    });
+    it('with history, a source absent before is new (and a failing one is the thing to do)', () => {
+      const f = summarise([dom({ domain: D, hadHistory: true, this: totals(130, 100), sources: [google(), stat({ key: 'bulk', messages: 30, failing: 30 })], lastSources: [google()] })]);
+      expect(f.changes).toEqual([{ kind: 'new_source', domain: D, source: expect.objectContaining({ key: 'bulk' }) }]);
+      expect(f.todo).toMatchObject({ kind: 'new_source' });
+    });
+    it('a started-failing source is reported even without earlier history beyond last week', () => {
+      const f = summarise([dom({ domain: D, hadHistory: false, this: totals(100, 80), sources: [google({ failing: 20 })], lastSources: [google()] })]);
+      expect(f.changes.map((c) => c.kind)).toEqual(['started_failing']);
     });
   });
 
@@ -329,5 +347,89 @@ describe('summarise', () => {
 
   it('works with no domains', () => {
     expect(summarise([])).toEqual({ domains: [], totals: { total: 0, passed: 0, reports: 0 }, changes: [], todo: null });
+  });
+});
+
+// ── Who the failing source is (ownerEvidence), and what is safe to print ──
+
+describe('rowFailsDmarc', () => {
+  it('is the one decision: aligned DKIM or SPF passes, anything else fails', () => {
+    expect(rowFailsDmarc(pass())).toBe(false);
+    expect(rowFailsDmarc(row({ spf_result: 'pass', spf_domain: D }))).toBe(false);
+    expect(rowFailsDmarc(fail())).toBe(true);
+    expect(rowFailsDmarc(row({ spf_result: 'pass', spf_domain: 'bulkmailer.example' }))).toBe(true);
+  });
+});
+
+describe('mine: evidence that the owner uses the service', () => {
+  const bulk = '203.0.113.60';
+  it('review scenario: an SPF pass for an unrelated domain alone is not evidence, so no tip and no offer', () => {
+    const s = sourceStats([row({ source_ip: bulk, spf_result: 'pass', spf_domain: 'bulkmailer.example', dkim_result: null, messages: 30 })]);
+    expect(s[0]).toMatchObject({ failing: 30, other: { by: 'SPF', domain: 'bulkmailer.example' }, mine: null });
+    expect(tipFixSources(s)).toEqual([]);
+  });
+  it('with no authentication at all there is no evidence either', () => {
+    const s = sourceStats([row({ source_ip: bulk, messages: 30 })]);
+    expect(s[0]).toMatchObject({ failing: 30, other: null, mine: null });
+    expect(tipFixSources(s)).toEqual([]);
+  });
+  it('a DKIM pass for an unknown domain is not evidence', () => {
+    const s = sourceStats([row({ source_ip: bulk, dkim_result: 'pass', dkim_domain: 'bulkmailer.example', messages: 30 })]);
+    expect(s[0]).toMatchObject({ other: { by: 'DKIM' }, mine: null });
+    expect(tipFixSources(s)).toEqual([]);
+  });
+  it('a failing source that passed DKIM for sendgrid.net qualifies for the tip', () => {
+    const s = sourceStats([row({ source_ip: bulk, dkim_result: 'pass', dkim_domain: 'sendgrid.net', messages: 30 })]);
+    expect(s[0].mine).toBe('SendGrid');
+    expect(tipFixSources(s)).toHaveLength(1);
+  });
+  it('an SPF pass for sendgrid.net alone, with an unknown reverse DNS, does not', () => {
+    const s = sourceStats([row({ source_ip: bulk, spf_result: 'pass', spf_domain: 'sendgrid.net', reverse_dns: 'host.unknown.example', messages: 30 })]);
+    expect(s[0]).toMatchObject({ other: { by: 'SPF', domain: 'sendgrid.net' }, mine: null });
+    expect(tipFixSources(s)).toEqual([]);
+  });
+  it('the inventory recognising the reverse DNS does', () => {
+    const s = sourceStats([row({ source_ip: bulk, spf_result: 'pass', spf_domain: 'sendgrid.net', reverse_dns: 'o1.email.sendgrid.net', messages: 30 })]);
+    expect(s[0].mine).toBe('SendGrid');
+    expect(tipFixSources(s)).toHaveLength(1);
+    expect(ownerEvidence(row({ reverse_dns: 'o1.email.sendgrid.net' }))).toBe('SendGrid');
+  });
+  it('a DKIM pass is only evidence when it passed', () => {
+    expect(ownerEvidence(row({ dkim_result: 'fail', dkim_domain: 'sendgrid.net' }))).toBeNull();
+  });
+  it('evidence comes only from failing rows', () => {
+    const s = sourceStats([pass({ source_ip: bulk, reverse_dns: 'o1.email.sendgrid.net', messages: 30 })]);
+    expect(s[0]).toMatchObject({ failing: 0, mine: null });
+  });
+});
+
+describe('clean and report-derived text', () => {
+  const evilOrg = `Evil <b>Corp</b> "x"\r\nBcc: victim@example.com${'A'.repeat(3000)}`;
+  const evilName = '<script>alert(1)</script>\r\nX';
+  const evilDomain = 'x.example\r\nSubject: hi';
+  const controls = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+
+  it('turns every control and format character into a space, collapses spaces, and caps with an ellipsis', () => {
+    expect(clean('a\r\nb\tc\u2028d\u202ee\u200bf   g')).toBe('a b c d e f g');
+    expect(clean(null)).toBe('');
+    expect(clean('x'.repeat(200))).toHaveLength(MAX_WORD);
+    expect(clean('x'.repeat(200)).endsWith('…')).toBe(true);
+    expect(clean('x'.repeat(80))).toBe('x'.repeat(80));
+    expect(clean('abcdef', 4)).toBe('abc…');
+  });
+  it('sourceStats cleans the name, addresses and authenticated domains', () => {
+    const [s] = sourceStats([row({ source_ip: '203.0.113.9', org: evilOrg, reverse_dns: evilName, base_domain: evilName, dkim_result: 'pass', dkim_domain: evilDomain, messages: 20 })]);
+    expect(s.key).not.toMatch(controls); // an identity, not printed (it is not capped: it is part of a claim's period `src:<key>`)
+    for (const v of [s.name ?? '', ...s.ips, s.other?.domain ?? '']) {
+      expect(v).not.toMatch(controls);
+      expect(v.length).toBeLessThanOrEqual(MAX_WORD);
+    }
+    expect(s.name).toMatch(/^Evil <b>Corp<\/b> "x" Bcc: victim@example\.com/);
+    expect(s.name!.endsWith('…')).toBe(true);
+    expect(s.other).toEqual({ by: 'DKIM', domain: 'x.example subject: hi' });
+    const [t] = sourceStats([row({ source_ip: '203.0.113.9', org: null, reverse_dns: null, base_domain: evilName, spf_result: 'pass', spf_domain: evilDomain, messages: 20 })]);
+    expect(t.name).toBe('<script>alert(1)</script> X');
+    expect(t.key).not.toMatch(controls);
+    expect(t.other).toEqual({ by: 'SPF', domain: 'x.example subject: hi' });
   });
 });

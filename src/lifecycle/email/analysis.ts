@@ -7,8 +7,50 @@
 //    alignment). An estimate never exceeds the exact failing total, and when the reporter said nothing failed, no source failed.
 
 import type { WeekSourceRow } from '@ready-set-mail/db';
+import { identifySender } from '@ready-set-mail/dns-checks/sender-providers';
 import { recordAlignment } from '../../analytics/senders';
 import { TIP_MIN_MESSAGES } from './kinds';
+
+/** The longest a report-derived word (a reporter, a source, an authenticated domain) may be in an email. */
+export const MAX_WORD = 80;
+
+/**
+ * Report-derived text is written by whoever sent the report or the mail: before it goes into a subject, a text part or an HTML part, every control
+ * character (CR, LF, tab, the Unicode line and paragraph separators, format characters) becomes a space, runs of spaces collapse, and the
+ * length is capped with an ellipsis. Every such string in the lifecycle emails goes through here (SourceStat is built from it).
+ */
+export function clean(s: string | null | undefined, max = MAX_WORD): string {
+  const flat = (s ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+type Row = WeekSourceRow;
+
+/**
+ * THE one place that decides "this report row did not pass DMARC" for the lifecycle emails (first report, weekly summary, tips). It is the
+ * derivation of the sender inventory (relaxed alignment of the first SPF and first DKIM result). It will be replaced by PR 181's function from
+ * packages/db/src/queries/reports.ts, which reads the report's own verdict; until then nothing else in src/lifecycle/ may derive pass or fail.
+ */
+export const rowFailsDmarc = (r: Row): boolean => {
+  const al = recordAlignment(r);
+  return !(al.spf || al.dkim);
+};
+
+/**
+ * Evidence that a failing source is a service the owner uses, as the name of that service, or null. Only two things count, and an SPF pass
+ * for some other domain is not one of them (it proves nothing: a shared sending service passes SPF for all its customers; see
+ * src/dmarc/reporter-auth.ts, "SPF alone never proves"):
+ *  - the row passed DKIM for the domain of a known sending service (the registry of packages/dns-checks/src/sender-providers.ts), or
+ *  - the sender inventory recognises the source (src/analytics/senders.ts `buildSenders`: its reverse DNS, network or owner is a known sending service).
+ * (A DKIM pass for the owner's own domain family would be aligned, so such a row does not fail.)
+ */
+export function ownerEvidence(r: Row): string | null {
+  if (r.dkim_result === 'pass' && r.dkim_domain) {
+    const p = identifySender({ dkim_domain: r.dkim_domain });
+    if (p) return p.name;
+  }
+  return identifySender({ reverse_dns: r.reverse_dns, base_domain: r.base_domain, org: r.org })?.name ?? null;
+}
 
 export interface SourceStat {
   /** Lowercase `org`, else `base_domain`, else the IP: what "the same source" means across weeks. */
@@ -22,9 +64,11 @@ export interface SourceStat {
   failing: number;
   /** What the failing messages DID pass, for another domain: DKIM first. Null when they passed nothing. */
   other: { by: 'DKIM' | 'SPF'; domain: string } | null;
+  /** The known sending service the failing messages point to (see `ownerEvidence`); null: nothing shows that the owner uses it. */
+  mine: string | null;
 }
 
-export const sourceKey = (r: Pick<WeekSourceRow, 'org' | 'base_domain' | 'source_ip'>): string => (r.org || r.base_domain || r.source_ip).trim().toLowerCase();
+export const sourceKey = (r: Pick<WeekSourceRow, 'org' | 'base_domain' | 'source_ip'>): string => clean(r.org || r.base_domain || r.source_ip, 200).toLowerCase();
 
 /** "Google Workspace (209.85.220.41)", "o1.email.sendgrid.net (192.0.2.7 and 2 more addresses)", or the bare address. */
 export function sourceLabel(s: Pick<SourceStat, 'name' | 'ips'>): string {
@@ -40,21 +84,23 @@ export const sourceName = (s: Pick<SourceStat, 'name' | 'ips'>): string => s.nam
  * than that, and 0 (or an unknown count of 0) means every message passed.
  */
 export function sourceStats(rows: readonly WeekSourceRow[], exactFailed: number | null = null): SourceStat[] {
-  interface Acc { stat: SourceStat; byIp: Map<string, number>; passedFor: Map<string, number>; name: Map<string, number> }
+  interface Acc { stat: SourceStat; byIp: Map<string, number>; passedFor: Map<string, number>; name: Map<string, number>; evidence: Map<string, number> }
   const acc = new Map<string, Acc>();
   for (const r of rows) {
     const key = sourceKey(r);
-    const a = acc.get(key) ?? { stat: { key, name: null, ips: [], messages: 0, failing: 0, other: null }, byIp: new Map(), passedFor: new Map(), name: new Map() };
+    const a = acc.get(key) ?? { stat: { key, name: null, ips: [], messages: 0, failing: 0, other: null, mine: null }, byIp: new Map(), passedFor: new Map(), name: new Map(), evidence: new Map() };
     acc.set(key, a);
     a.stat.messages += r.messages;
-    a.byIp.set(r.source_ip, (a.byIp.get(r.source_ip) ?? 0) + r.messages);
-    const n = r.org || r.reverse_dns || r.base_domain;
+    const ip = clean(r.source_ip, 64);
+    a.byIp.set(ip, (a.byIp.get(ip) ?? 0) + r.messages);
+    const n = clean(r.org || r.reverse_dns || r.base_domain);
     if (n) a.name.set(n, (a.name.get(n) ?? 0) + r.messages);
-    const al = recordAlignment(r);
-    if (al.spf || al.dkim) continue;
+    if (!rowFailsDmarc(r)) continue;
     a.stat.failing += r.messages;
-    const other = r.dkim_result === 'pass' && r.dkim_domain ? (['DKIM', r.dkim_domain] as const) : r.spf_result === 'pass' && r.spf_domain ? (['SPF', r.spf_domain] as const) : null;
-    if (other) a.passedFor.set(`${other[0]}|${other[1].trim().toLowerCase()}`, (a.passedFor.get(`${other[0]}|${other[1].trim().toLowerCase()}`) ?? 0) + r.messages);
+    const other = r.dkim_result === 'pass' && r.dkim_domain ? (['DKIM', clean(r.dkim_domain)] as const) : r.spf_result === 'pass' && r.spf_domain ? (['SPF', clean(r.spf_domain)] as const) : null;
+    if (other) a.passedFor.set(`${other[0]}|${other[1].toLowerCase()}`, (a.passedFor.get(`${other[0]}|${other[1].toLowerCase()}`) ?? 0) + r.messages);
+    const mine = ownerEvidence(r);
+    if (mine) a.evidence.set(mine, (a.evidence.get(mine) ?? 0) + r.messages);
   }
   const top = (m: Map<string, number>) => [...m.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0] ?? null;
   return [...acc.values()].map((a) => {
@@ -66,6 +112,7 @@ export function sourceStats(rows: readonly WeekSourceRow[], exactFailed: number 
       ips: [...a.byIp.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([ip]) => ip),
       failing: exactFailed === null ? a.stat.failing : Math.min(a.stat.failing, Math.max(0, exactFailed)),
       other: passedFor ? { by: by as 'DKIM' | 'SPF', domain } : null,
+      mine: top(a.evidence),
     };
   }).sort((x, y) => y.messages - x.messages || x.key.localeCompare(y.key));
 }
@@ -73,9 +120,9 @@ export function sourceStats(rows: readonly WeekSourceRow[], exactFailed: number 
 /** A source that is failing and, once it passes, stops being one. */
 export const failingSources = (stats: readonly SourceStat[]): SourceStat[] => stats.filter((s) => s.failing > 0).sort((a, b) => b.failing - a.failing || a.key.localeCompare(b.key));
 
-/** Tip (i): sources whose DKIM or SPF passed for another domain while most of their messages did not pass DMARC for this one, at least TIP_MIN_MESSAGES. */
+/** Tip (i): sources with evidence that the owner uses them (`mine`) whose DKIM or SPF passed for another domain while most of their messages did not pass DMARC for this one, at least TIP_MIN_MESSAGES. */
 export function tipFixSources(stats: readonly SourceStat[]): SourceStat[] {
-  return failingSources(stats).filter((s) => s.other && s.failing >= TIP_MIN_MESSAGES && s.failing * 2 >= s.messages);
+  return failingSources(stats).filter((s) => s.other && s.mine && s.failing >= TIP_MIN_MESSAGES && s.failing * 2 >= s.messages);
 }
 
 // ── Weeks ────────────────────────────────────────────────────
@@ -102,6 +149,8 @@ export interface SummaryDomain {
   sources: SourceStat[];
   lastSources: SourceStat[];
   earlierKeys: ReadonlySet<string>;
+  /** A week before this one (of the four read) had counted reports for this domain. Without that there is nothing to compare with: this week is the baseline. */
+  hadHistory: boolean;
 }
 
 export type Change =
@@ -117,7 +166,7 @@ export interface SummaryFacts {
   todo: Change | null;
 }
 
-/** What changed since the week before, per domain. The week's sources are matched to last week's and the four weeks before by key. */
+/** What changed since the week before, per domain. The week's sources are matched to last week's and the four weeks before by key. A domain with no earlier week of reports (the first summary for a workspace, or a domain new to it) is a silent baseline: no "new source". */
 export function summarise(domains: readonly SummaryDomain[]): SummaryFacts {
   const changes: Change[] = [];
   for (const d of domains) {
@@ -126,7 +175,7 @@ export function summarise(domains: readonly SummaryDomain[]): SummaryFacts {
       if (s.messages <= 0) continue;
       const before = lastBy.get(s.key);
       if (before && before.messages > 0 && before.failing === 0 && s.failing > 0) changes.push({ kind: 'started_failing', domain: d.domain, source: s });
-      else if (!before && !d.earlierKeys.has(s.key)) changes.push({ kind: 'new_source', domain: d.domain, source: s });
+      else if (d.hadHistory && !before && !d.earlierKeys.has(s.key)) changes.push({ kind: 'new_source', domain: d.domain, source: s });
     }
     if (d.last.total > 0 && d.this.total === 0) changes.push({ kind: 'no_reports', domain: d.domain });
   }
