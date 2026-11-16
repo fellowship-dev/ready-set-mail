@@ -3,7 +3,7 @@ goal: A person who already holds their free domain creates another workspace: at
 value_moment: The new workspace exists and the person is in it (the workspace is created only once its card is verified)
 # Not protected yet: the dashboard half is built in the next phase of the pull request.
 covers:
-  - web/src/pages/settings/*
+  - web/src/components/CreateWorkspaceDialog.tsx
   - src/workspaces/routes.ts
   - src/billing/plan-workspaces.ts
   - src/billing/routes.ts
@@ -18,13 +18,23 @@ context:
   plan: HOSTED_PLAN=free_one_domain, the person's free domain already used
 steps:
   - action: navigate
-    url: /#/settings
-    expect: Settings with the workspaces list
+    url: /#/
+    expect: The dashboard with the workspace switcher
   - action: click
-    selector: "text=New workspace"
-    expect: Name the workspace; when the person is not yet paying, one screen "Add a card to create more workspaces" with what it means in one sentence
+    selector: "role=button[name=/^Workspace: .*Switch workspace$/]"
+    expect: The switcher menu
+  - action: click
+    selector: "role=menuitem[name='Create workspace']"
+    expect: Name the workspace
+  - action: fill
+    selector: "#workspace-name"
+    value: Client A
+    expect: The name typed
+  - action: click
+    selector: "role=button[name='Create workspace']"
+    expect: Not paying yet - "Add a card to create more workspaces" and what it means in one sentence; the one action is Add a card to continue
   - action: click
     selector: "text=Add a card to continue"
     effect: write
-    expect: Stripe-hosted Checkout in setup mode, then back with the workspace created
+    expect: Stripe-hosted Checkout in setup mode, then back inside the new workspace ("Workspace created")
     first_value: true

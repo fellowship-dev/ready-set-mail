@@ -4,6 +4,7 @@ value_moment: Domain added and billed - the subscription's quantity is raised an
 # Not protected yet: the dashboard half is built in the next phase of the pull request; add it to the protected list (AGENTS.md) when the walk record exists.
 covers:
   - web/src/pages/domains/AddDomainPage.tsx
+  - web/src/components/domain/CloudflareSuggestions.tsx
   - web/src/components/billing/*
   - web/src/pages/settings/BillingSection.tsx
   - src/billing/plan-service.ts
@@ -21,20 +22,19 @@ context:
 steps:
   - action: navigate
     url: /#/add
-    expect: Add domain page
-  - action: type
-    selector: "input"
-    value: second.example.org
-    expect: The name typed
+    expect: Add domain page; the zones of the connected Cloudflare account under "Also in your Cloudflare account"
   - action: click
-    selector: "text=Add domain"
-    expect: Confirm step - what it costs per month, the next invoice's amount and date, the card, subdomains included, cancel any time (or, without a card, Add a card to continue)
+    selector: "role=checkbox[name='quietfield.net']"
+    expect: The zone is ticked
+  - action: click
+    selector: "role=button[name='Add'][exact]"
+    expect: The confirm for that domain - what it costs a month, subdomains included, cancel any time; with no card the one action is Add a card to continue
   - action: click
     selector: "text=Add a card to continue"
     effect: write
-    expect: Stripe-hosted Checkout in setup mode, then back to the same confirm step with the card shown
+    expect: Stripe-hosted Checkout in setup mode, then back to the SAME confirm showing the card and Stripe's first invoice ("$5 now to Visa ···4242, then $5 a month from <date>.")
   - action: click
     selector: "text=Add for $5 a month"
     effect: write
-    expect: The domain list with "Added. $5 a month from today." inline (the proof record comes next when the domain is not proven yet)
+    expect: The domain list with "Added. $5 a month from today." shown above it (no detour, no second page)
     first_value: true
