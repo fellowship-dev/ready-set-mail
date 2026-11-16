@@ -110,13 +110,17 @@ export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purp
 }
 
 /** The hand-off invitation's fixed words (spec H1). Names are cleaned; nothing else the inviter typed can reach it. */
-export function handoffEmail(p: { inviterName: string; inviterEmail: string; workspaceName: string; domain: string; url: string }, footer = ''): { subject: string; text: string; html: string } {
-  const who = cleanName(p.inviterName, 80) || p.inviterEmail;
-  const workspace = cleanName(p.workspaceName, 80) || 'a workspace';
-  const paragraph = `${who} (${p.inviterEmail}) invited you to ${workspace} on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for ${p.domain}.`;
-  const validity = 'The link works for 7 days.';
+export function handoffEmail(p: { inviterName: string; inviterEmail: string; workspaceName: string; domain: string | null; url: string }, footer = ''): { subject: string; text: string; html: string } {
+  // The sender is named by their VERIFIED address. The name they typed is free text: it appears only in the body, once, as what they call
+  // themselves, cut short. The domain and the workspace name appear only when the domain is proven in that workspace (the caller passes null).
+  const calls = cleanName(p.inviterName, 40);
+  const callsLine = calls && calls.toLowerCase() !== p.inviterEmail.toLowerCase() ? ` They call themselves "${calls}".` : '';
+  const what = p.domain ? `for ${p.domain}` : 'for a domain';
+  const workspace = p.domain ? cleanName(p.workspaceName, 80) || 'a workspace' : 'a workspace';
+  const paragraph = `${p.inviterEmail} invited you to ${workspace} on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC ${what}.${callsLine}`;
+  const validity = 'The link works for 7 days. If you do not know them, ignore this email.';
   return {
-    subject: `${who} asked you to finish setting up email for ${p.domain}`,
+    subject: `${p.inviterEmail} asked you to finish setting up email ${what}`,
     text: `${paragraph}\n\n${p.url}\n\n${validity}`,
     html: buildHandoffEmailHtml({ paragraph, validity, url: p.url, footer }),
   };

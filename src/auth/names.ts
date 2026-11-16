@@ -35,6 +35,14 @@ export function defaultWorkspaceName(name: string, email: string): string {
 export const NEW_CLIENT_WORKSPACE = 'New client';
 
 /**
+ * Workspace setting (existing `settings` table, no migration) that says the workspace's NAME is the product's placeholder, not the person's:
+ * set when an agency's first workspace is made, and the only thing that lets the first client domain name it. A workspace that happens to
+ * be called "New client" by its owner has no such row and is never renamed. The row stays while the name was derived from a domain and no
+ * other domain or claim exists (a typo corrected: the name follows), and goes when the owner renames the workspace.
+ */
+export const PLACEHOLDER_NAME_KEY = 'name_is_placeholder';
+
+/**
  * The name of the first workspace a sign-up makes, from what the person said about whose email they are setting up
  * (src/auth/profile.ts):
  *  - "My company's" and "Just looking around": the organization name they typed.

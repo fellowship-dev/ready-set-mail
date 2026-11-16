@@ -14,7 +14,7 @@ import { claimLookups, isUnprovenRow, ProofIncompleteError, workspaceLifecycle, 
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
-import { cleanName, NEW_CLIENT_WORKSPACE } from '../auth/names';
+import { cleanName, PLACEHOLDER_NAME_KEY } from '../auth/names';
 import { loadTenant } from '../tenancy/load';
 import { resolverFor } from '../dns/resolver';
 import { removeAuthRecord, removeHostedRecords } from './remove';
@@ -283,15 +283,20 @@ export async function admitDomain(tenant: TenantContext, domain: string): Promis
 }
 
 /**
- * An agency's first workspace (src/auth/names.ts NEW_CLIENT_WORKSPACE) is named after the first client domain entered in it. Only
- * a workspace still carrying that placeholder name is touched, once; whatever the person named it themselves is never renamed.
- * Never fails the request it rides on.
+ * An agency's first workspace is named after the first client domain entered in it. Only a workspace flagged as carrying the product's
+ * placeholder name (src/auth/names.ts PLACEHOLDER_NAME_KEY) is touched, never one that merely has the same words; the flag stays while
+ * this is still its only domain or claim (a typo'd first domain, removed and replaced, renames it again). Never fails the request it rides on.
  */
 async function nameClientWorkspace(tenant: TenantContext, domain: string): Promise<void> {
   if (getMode(tenant.env) !== 'saas') return;
   try {
-    const lifecycle = workspaceLifecycle(tenant.db);
-    if ((await lifecycle.get(tenant.workspaceId))?.name === NEW_CLIENT_WORKSPACE) await lifecycle.rename(tenant.workspaceId, cleanName(domain));
+    if (!(await tenant.scope.settings.get(PLACEHOLDER_NAME_KEY))) return;
+    const others = [...(await tenant.scope.domains.list()).map(d => d.domain), ...(await tenant.scope.claims.list()).map(c => c.domain)].filter(n => n !== domain);
+    const first = !(await tenant.scope.settings.get('name_from_domain'));
+    if (first || others.length === 0) {
+      await workspaceLifecycle(tenant.db).rename(tenant.workspaceId, cleanName(domain));
+      await tenant.scope.settings.set('name_from_domain', domain);
+    }
   } catch {
     /* the name is a nicety */
   }

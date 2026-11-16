@@ -111,7 +111,7 @@ import { IMPLICIT_WORKSPACE_ID, authLookups, globalQueries, workspaceLifecycle, 
 import { currentUser, passesCsrfCheck } from '../auth/session';
 import { keyedHash } from '../mail/tokens';
 import { getMode } from '../tenancy/mode';
-import { MAX_HANDOFFS_PER_DAY, MAX_OPEN_HANDOFFS, deleteHandoff, handoffsOf, saveHandoff } from '../team/handoff';
+import { MAX_HANDOFFS_PER_ACCOUNT_PER_DAY, MAX_HANDOFFS_PER_DAY, MAX_OPEN_HANDOFFS, deleteHandoff, handoffsOf, saveHandoff } from '../team/handoff';
 import { sendHandoffEmail } from '../auth/mail';
 import { baseUrl } from '../auth/config';
 import { d1RateLimitStorage } from '../auth/rate-limit';
@@ -280,16 +280,30 @@ async function sendHandoff(
     const inv = await tenant.scope.team.getInvite(h.token);
     if (inv && !inv.used_at && inv.expires_at > Math.floor(Date.now() / 1000)) open++;
   }
+  // Who may be written to. The email carries the sender's verified address and, only for a domain this workspace has PROVEN, its name. Until
+  // some domain here is proven, an address outside the sender's own email domain is refused: nothing in the workspace shows yet that its owner
+  // controls anything, and the email is a message from us to a stranger. (A sender on a free-mail domain can still reach that domain's other
+  // addresses; what arrives names no domain and no free text, only their verified address.)
+  const proven = (d: { verified_via?: string | null; proof_lost_at?: number | null }) => d.verified_via !== 'legacy' && !d.proof_lost_at;
+  const held = await tenant.scope.domains.list();
+  const workspaceProven = held.some(proven);
+  const sameOrg = email.split('@')[1] === actor.email.toLowerCase().split('@')[1];
+  if (!workspaceProven && !sameOrg) {
+    return Response.json({ error: "You can hand setup to someone at your own email domain now. To hand it to anyone else, verify a domain in this workspace first.", code: 'handoff_needs_proven_domain' }, { status: 403 });
+  }
+  const namedDomain = held.some(d => d.domain === domain && proven(d)) ? domain : null;
   if (open >= MAX_OPEN_HANDOFFS) return Response.json({ error: `${MAX_OPEN_HANDOFFS} hand-offs are already waiting. Revoke one or wait for it to be accepted.`, code: 'handoff_limit' }, { status: 429 });
   if (!(await d1RateLimitStorage(env.DB).consume(`handoff:${tenant.workspaceId}`, { window: 86400, max: MAX_HANDOFFS_PER_DAY })).allowed) return Response.json({ error: 'Too many invitations today. Try again tomorrow.', code: 'handoff_limit' }, { status: 429 });
+
+  if (!(await d1RateLimitStorage(env.DB).consume(`handoff-account:${actor.id}`, { window: 86400, max: MAX_HANDOFFS_PER_ACCOUNT_PER_DAY })).allowed) return Response.json({ error: 'Too many invitations today. Try again tomorrow.', code: 'handoff_limit' }, { status: 429 });
 
   const token = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   await tenant.scope.team.insertInvite({ token, email, role: 'admin', invited_by: actor.email, expires_at: now + 7 * 24 * 3600 });
   await saveHandoff(env, { token, workspaceId: tenant.workspaceId, domain, inviterName: actor.name, inviterEmail: actor.email, email, sentAt: now });
-  const workspaceName = (await workspaceLifecycle(env.DB).get(tenant.workspaceId))?.name ?? '';
+  const workspaceName = namedDomain ? ((await workspaceLifecycle(env.DB).get(tenant.workspaceId))?.name ?? '') : '';
   const url = `${baseUrl(env, new URL(request.url).origin)}/#/invite/${token}`;
-  if (!(await sendHandoffEmail(env, email, { inviterName: actor.name, inviterEmail: actor.email, workspaceName, domain, url }))) {
+  if (!(await sendHandoffEmail(env, email, { inviterName: actor.name, inviterEmail: actor.email, workspaceName, domain: namedDomain, url }))) {
     await tenant.scope.team.revokeInvite(token);
     await deleteHandoff(env, token);
     return Response.json({ error: "We couldn't send the invitation just now. Try again in a minute.", code: 'handoff_not_sent' }, { status: 503 });

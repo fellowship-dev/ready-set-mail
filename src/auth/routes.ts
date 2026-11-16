@@ -355,7 +355,7 @@ async function proveAddress(env: Env, userId: string, email: string, passwordHas
   await dropAttemptsOf(env, userId);
   await globalQueries(db).sessions.revokeAll(userId);
   // The sign-up's own answers (S2), held with the attempt this code just consumed, are applied here and nowhere else: once.
-  await resetUnprovenNames(db, userId, email, profile?.name, profile ? firstWorkspaceName(profile, profile.name, email) : undefined);
+  await resetUnprovenNames(db, userId, email, profile?.name, profile ? firstWorkspaceName(profile, profile.name, email) : undefined, profile?.whose_email === 'clients');
   if (profile) await applyProfile(env, userId, profile);
   await rotateDeviceEpoch(env, userId);
   await clearSigninFailures(env, email);

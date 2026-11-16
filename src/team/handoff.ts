@@ -12,6 +12,8 @@ export const HANDOFF_KEEP_SECONDS = 30 * 86400;
 /** Most hand-offs waiting at once per workspace, and sent per day: a hand-off emails a person who has no account. */
 export const MAX_OPEN_HANDOFFS = 5;
 export const MAX_HANDOFFS_PER_DAY = 10;
+/** And per ACCOUNT per day, across every workspace it owns: a second workspace must not be a second allowance. */
+export const MAX_HANDOFFS_PER_ACCOUNT_PER_DAY = 10;
 
 export interface Handoff {
   token: string;

@@ -155,6 +155,7 @@ export async function handleWorkspaceRoutes(
     const name = await readName(request);
     if (name instanceof Response) return name;
     await lifecycle.rename(id, name);
+    await deps.db.prepare("DELETE FROM settings WHERE workspace_id = ?1 AND key IN ('name_is_placeholder', 'name_from_domain')").bind(id).run(); // a name the owner chose is theirs
     audit(id, { action: 'workspace.renamed', resource_type: 'workspace', resource_id: id, resource_name: name, before_value: { name: workspace.name }, after_value: { name } });
     return json({ ok: true, id, name });
   }
