@@ -72,7 +72,7 @@ describe('OverviewPage: one row per domain that answers "am I done?"', () => {
 
 		const bare = await row('bare.org');
 		expect(within(bare).getByText('Needs attention')).toBeInTheDocument();
-		expect(within(bare).getByText('Public DNS shows no SPF and no DMARC record, so receivers cannot verify mail from bare.org.')).toBeInTheDocument();
+		expect(within(bare).getByText('Public DNS shows no SPF record at bare.org and no DMARC record, so receivers get no instruction for mail from bare.org that fails.')).toBeInTheDocument();
 		expect(within(bare).getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level 0 of 2: Delivering');
 		expect(within(bare).getByRole('link', { name: 'Publish an SPF record for bare.org' })).toHaveAttribute('href', '/domains/3/setup/2');
 		expect(within(bare).getByText('you or your DNS manager:')).toBeInTheDocument();

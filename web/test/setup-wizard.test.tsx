@@ -124,7 +124,7 @@ describe('DNS lookup failures are not missing records', () => {
 		const row = (await screen.findAllByText('Lookup failed', { selector: 'span' }))[1]?.closest('li') as HTMLElement;
 		expect(row).toHaveAttribute('data-status', 'error');
 		expect(within(row).getByText(/SERVFAIL/)).toBeInTheDocument();
-		expect(screen.queryByText(/No SPF record found/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/No SPF record at/)).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Apply via Cloudflare/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
 
@@ -135,7 +135,8 @@ describe('DNS lookup failures are not missing records', () => {
 
 	it('SPF: a successful lookup that finds nothing is "no record" and offers the editor', async () => {
 		renderApp(<Wizard />, { route: '/domains/7/setup/2', routes: routes({ status: status({ spf: { record: null, lookup_count: null, flattening_active: false } }) }) });
-		expect(await screen.findByText(/No SPF record found/)).toBeInTheDocument();
+		expect(await screen.findByText(/No SPF record at example.com. Without one, receivers have no list of servers allowed to send mail whose return-path is example.com/)).toBeInTheDocument();
+		expect(screen.queryByText(/any server can claim/)).not.toBeInTheDocument();
 		expect(screen.getByRole('combobox')).toBeInTheDocument();
 	});
 

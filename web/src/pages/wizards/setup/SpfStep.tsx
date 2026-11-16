@@ -141,7 +141,7 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 				<p className="text-sm text-ink-2">
 					{spf.record
 						? 'SPF tells receiving mail servers which services may send email for your domain. Pick the providers you use; we pre-selected what we found in your current record.'
-						: 'No SPF record found. Without SPF, any server can claim to send email as you. Pick your email providers below to create one.'}
+						: `No SPF record at ${status.domain}. Without one, receivers have no list of servers allowed to send mail whose return-path is ${status.domain}. Pick your email providers below to create one.`}
 				</p>
 			)}
 

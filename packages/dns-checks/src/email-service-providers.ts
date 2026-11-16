@@ -72,10 +72,22 @@ export function findUnsignedSpfProviders(detectedSelectors: { name: string }[], 
 	});
 }
 
-/** Deduplicated DKIM selector prefixes worth probing, plus the generic ones not tied to an ESP. */
+/** Generic selectors not tied to a sender. */
+const GENERIC_DKIM_SELECTORS = ['default', 'dkim', 'mail'];
+
+/**
+ * Selectors long probed by the free checker that no provider above claims (senders and mailbox providers seen in the field, not yet
+ * named in this registry). Moving one to a provider entry changes nothing: the probed list is the union, in `getAllDkimSelectors`.
+ */
+const UNATTRIBUTED_DKIM_SELECTORS = ['k2', 'k3', 'mte1', 'email', 'amazonses', 'pm-bounces', 'mxvault', 'zmail', 'sendgrid', 'mailgun', 'krs', 'scph0120', 'cm', 'everlytickey1', 'shopify'];
+
+/**
+ * THE list of DKIM selectors worth probing, deduplicated: every provider's, the generic ones and the unattributed ones. The public
+ * checker, the agent report (`COMMON_DKIM_SELECTORS` in ./dkim) and the dashboard's DKIM check all probe exactly this list.
+ */
 export function getAllDkimSelectors(): string[] {
 	const all = new Set<string>();
 	for (const p of [...SPF_PROVIDERS, ...DKIM_ONLY_PROVIDERS]) for (const sel of p.dkimSelectors ?? []) all.add(sel);
-	for (const generic of ['default', 'dkim', 'mail']) all.add(generic);
+	for (const sel of [...GENERIC_DKIM_SELECTORS, ...UNATTRIBUTED_DKIM_SELECTORS]) all.add(sel);
 	return [...all];
 }

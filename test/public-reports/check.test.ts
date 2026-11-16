@@ -331,13 +331,20 @@ describe("DKIM", () => {
     expect(r.selectors[0].findings.map((x) => x.code)).toContain("dkim-revoked");
   });
 
-  it("scans all 36 package selectors and is honest when none are found", async () => {
+  it("scans all 44 package selectors (36 before the one selector list added the registry's other eight, cf-bounce among them) and is honest when none are found", async () => {
     const dns = installFakeDns({});
     const r = await checkDkim("example.com");
-    expect(COMMON_DKIM_SELECTORS).toHaveLength(36);
-    expect(r).toMatchObject({ state: "no-record", mode: "scan", scanned: 36, foundCount: 0 });
-    expect(dns.names()).toHaveLength(36);
+    expect(COMMON_DKIM_SELECTORS).toHaveLength(44);
+    expect(r).toMatchObject({ state: "no-record", mode: "scan", scanned: 44, foundCount: 0 });
+    expect(dns.names()).toHaveLength(44);
     expect(r.findings[0].message).toMatch(/does not prove DKIM is missing/);
+  });
+
+  it("B10: the scan finds Cloudflare's cf-bounce key at the sending name", async () => {
+    installFakeDns({ "cf-bounce._domainkey.app.example.com/TXT": txt(`v=DKIM1; k=rsa; p=${key2048}`) });
+    const r = await checkDkim("app.example.com");
+    expect(r.foundCount).toBe(1);
+    expect(r.selectors.filter((x) => x.state === "found").map((x) => x.selector)).toEqual(["cf-bounce"]);
   });
 
   it("finds a key during a scan, and flags an incomplete scan", async () => {
@@ -362,7 +369,7 @@ describe("DKIM", () => {
 });
 
 describe("resolver limits", () => {
-  it("never has more than 8 DoH requests in flight (DKIM scan fires 36 probes)", async () => {
+  it("never has more than 8 DoH requests in flight (DKIM scan fires 44 probes, 36 before the one selector list)", async () => {
     let inFlight = 0;
     let peak = 0;
     setDnsTimeoutMs(1000);
@@ -374,7 +381,7 @@ describe("resolver limits", () => {
       return { ok: true, status: 200, headers: { get: () => null }, text: async () => "", json: async () => ({ Status: 3 }) };
     }) as never);
     const r = await checkDkim("example.com");
-    expect(r.scanned).toBe(36);
+    expect(r.scanned).toBe(44);
     expect(peak).toBeLessThanOrEqual(8);
     expect(peak).toBeGreaterThan(1);
   });

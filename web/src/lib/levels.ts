@@ -1,6 +1,6 @@
 import type { Finding, Level } from '@ready-set-mail/ui';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
-import { dkimCarriesDmarc, noSpfAtName, noSpfNeededAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
+import { noSpfAtName, noSpfNeededAtName, spfNotNeededAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
 import { dmarcBreakLabel, dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
 import { formatPercent, timeAgo } from './format';
 import type { DomainCheckSummary } from './types';
@@ -39,7 +39,7 @@ const DKIM_HEALTHY = 0.95;
 
 const NOT_CHECKED_DETAIL = 'The overview has no stored result for this yet. The domain page reads it live from DNS.';
 
-type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dmarc_p' | 'dmarc_sp' | 'domain' | 'dkim_aligned_pass' | 'aligned_total'>> & {
+type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dmarc_p' | 'dmarc_sp' | 'domain' | 'from_messages' | 'from_dkim_aligned' | 'from_spf_at_name' | 'from_unjudged'>> & {
 	/** SPF DNS lookups at the last read (RFC 7208 allows 10). */
 	spf_lookup_count?: number | null;
 	/** pct= of the DMARC record that applies at the last read (100 when the record has none). */
@@ -60,9 +60,9 @@ export function assessDomain(
 	const hasSpf = !!s.spf_record;
 	const spf = hasSpf ? spfFinding(s.spf_lookup_count) : null;
 	const spfUnknown = !hasSpf && nullMeans === 'unknown';
-	// No SPF record at this name is not a fault when reports show DKIM alignment carrying DMARC: SPF is judged at each message's
-	// return-path domain, which for a sending service with its own bounce subdomain is another name (RFC 9989 section 3.2.4).
-	const spfNotNeeded = !hasSpf && !spfUnknown && dkimCarriesDmarc(s);
+	// No SPF record at this name is not a fault when the reports show none of its mail used the name as its SPF (return-path) domain and
+	// all of it passed on aligned DKIM (RFC 9989 section 3.2.4); otherwise the ladder applies as before.
+	const spfNotNeeded = !hasSpf && !spfUnknown && spfNotNeededAtName(s);
 	const spfWorks = (hasSpf && !spf!.broken) || spfNotNeeded;
 	const policy = s.dmarc_policy;
 	const enforcing = policy === 'quarantine' || policy === 'reject';
@@ -82,7 +82,7 @@ export function assessDomain(
 
 	const findings: Finding[] = [];
 	if (spf) findings.push({ status: spf.status, label: spf.label, ...(spf.detail ? { detail: spf.detail } : {}) });
-	else if (spfNotNeeded) findings.push({ status: 'pass', label: 'No SPF record at this name, and none is needed', detail: noSpfNeededAtName(s.domain ?? 'this name', Math.round(((s.dkim_aligned_pass ?? 0) / (s.aligned_total ?? 1)) * 100)) });
+	else if (spfNotNeeded) findings.push({ status: 'pass', label: 'No SPF record at this name, and none is needed', detail: noSpfNeededAtName(s.domain ?? 'this name', s) });
 	else if (spfUnknown) findings.push({ status: 'unknown', label: 'SPF not checked yet', detail: NOT_CHECKED_DETAIL });
 	else findings.push({ status: 'missing', label: 'SPF record', detail: noSpfAtName(s.domain ?? 'this name') });
 

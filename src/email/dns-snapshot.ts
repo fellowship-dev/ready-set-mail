@@ -35,8 +35,8 @@ export function dmarcFactsFromLookup(l: DmarcLookup): DmarcFacts | undefined {
   if (l.record && broken) return { policy: null, issue: broken.issue, inherited_from, ...governingTags(l.record.raw) };
   if (!l.record?.valid) return { policy: null, issue: 'invalid', inherited_from, ...none };
   // The stored facts describe a name that exists (a monitored domain that does not resolve is shown as such before any policy),
-  // so `sp=` applies to an inherited name here, never `np=`; the one rule is `effectivePolicy` (RFC 9989 section 4.10.1).
-  return { policy: effectivePolicy(l, true).policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
+  // so `sp=` applies to an inherited name here, never `np=`, and an invalid `np=` is read as absent (the stored facts have no issue kind for it, and a schema change for it is not made); the one rule is `effectivePolicy` (RFC 9989 section 4.10.1).
+  return { policy: effectivePolicy(l, true, { invalidNp: 'ignore' }).policy, issue: null, inherited_from, ...governingTags(l.record.raw) };
 }
 
 /**

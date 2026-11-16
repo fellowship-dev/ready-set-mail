@@ -47,12 +47,19 @@ function dmarcFindings(domain: string, record: DmarcRecord, eff: EffectivePolicy
     out.push(f("fail", "dmarc-invalid", `The DMARC record is not valid: ${record.issues.map(quoteValues).join("; ")}. Receivers will ignore it.`));
     return out;
   }
+  // A record with an sp= or np= that is not a policy is not applied as written (RFC 9989 section 4.10.1): p=none with a valid rua=, no DMARC without.
+  if (eff.status === "broken" && eff.invalidTag === "np") {
+    const sentence = effectivePolicySentence(domain, eff) ?? "";
+    if (!eff.policy) return [f("fail", "dmarc-invalid", `The DMARC record is not valid: its np= value is not a policy. ${sentence}`)];
+    out.push(f("warn", "dmarc-invalid-np", sentence));
+  }
   // The policy of THIS name: its own p=, or the organizational domain's sp= / np= / p= (RFC 9989 section 4.10.1).
   const policy = eff.policy ?? record.policy;
   const [severity, effect] = POLICY_EFFECT[policy] ?? POLICY_EFFECT.none;
   const tag = eff.tag ?? "p";
-  const label = tag === "p" ? `p=${policy}` : `${tag}=${policy}`;
-  const lead = tag === "p" ? "Policy is" : `The policy that applies to ${domain} is`;
+  const asNone = eff.status === "broken" && eff.invalidTag === "np";
+  const label = asNone ? "p=none (record not applied as written)" : tag === "p" ? `p=${policy}` : `${tag}=${policy}`;
+  const lead = tag === "p" || asNone ? "Policy is" : `The policy that applies to ${domain} is`;
   out.push(f(severity as Severity, `dmarc-policy-${policy}`, `${lead} ${label}: ${effect}`));
 
   if (record.rua.length === 0) {

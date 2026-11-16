@@ -42,6 +42,8 @@ export const SINGLE: Single[] = [
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
   // Consolidated in the subdomain slice: the five sites that took the last two labels now call `organizationalDomain`.
   { concept: 'Registrable domain (never "last two labels")', signature: /slice\(-2\)\.join\('\.'\)/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  // The DKIM selectors to probe are listed once (the registry); `COMMON_DKIM_SELECTORS` is derived from it. Two selectors only the old second list held are the signature.
+  { concept: 'DKIM selector list', signature: /['"](?:everlytickey1|scph0120)['"]/, owners: ['packages/dns-checks/src/email-service-providers.ts'] },
   // `hasCname` is how a dangling CNAME (NXDOMAIN with a CNAME in the answer) counts as an existing name: one rule, `nameExists`.
   { concept: 'Name existence (NXDOMAIN with a CNAME exists)', signature: /\.hasCname\b/, owners: ['packages/dns-checks/src/name-exists.ts'] },
 ];

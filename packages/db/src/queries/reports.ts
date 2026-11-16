@@ -124,11 +124,14 @@ export interface DomainCheckSummary {
 	spf_total: number;
 	spf_pass: number;
 	/**
-	 * Messages whose DKIM aligned with the From domain (the receiver's policy_evaluated, 0017) and the messages that carry that
-	 * verdict at all (reports stored before 0017 carry none). The share says whether DKIM alignment alone carries DMARC.
+	 * What the reports say about the mail sent AS this name (header_from equal to the domain), from the receiver's own verdict (0017):
+	 * the messages, those whose DKIM aligned, those whose SPF domain (the return-path) was this name itself, and those stored before the
+	 * verdict was kept. Evidence for whether a missing SPF record at the name matters (`spfNotNeededAtName`).
 	 */
-	dkim_aligned_pass?: number;
-	aligned_total?: number;
+	from_messages?: number;
+	from_dkim_aligned?: number;
+	from_spf_at_name?: number;
+	from_unjudged?: number;
 	mta_sts_enabled: number; // 0 or 1
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
@@ -214,8 +217,10 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			COALESCE(rr.dkim_pass, 0) AS dkim_pass,
 			COALESCE(rr.total, 0)     AS spf_total,
 			COALESCE(rr.spf_pass, 0)  AS spf_pass,
-			COALESCE(rr.dkim_aligned_pass, 0) AS dkim_aligned_pass,
-			COALESCE(rr.aligned_total, 0)     AS aligned_total,
+			COALESCE(rr.from_messages, 0)     AS from_messages,
+			COALESCE(rr.from_dkim_aligned, 0) AS from_dkim_aligned,
+			COALESCE(rr.from_spf_at_name, 0)  AS from_spf_at_name,
+			COALESCE(rr.from_unjudged, 0)     AS from_unjudged,
 			COALESCE(m.enabled, 0)    AS mta_sts_enabled,
 			m.mode                    AS mta_sts_mode
 		FROM domains d
@@ -230,10 +235,13 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 				SUM(r.count) AS total,
 				SUM(CASE WHEN r.dkim_result = 'pass' THEN r.count ELSE 0 END) AS dkim_pass,
 				SUM(CASE WHEN r.spf_result  = 'pass' THEN r.count ELSE 0 END) AS spf_pass,
-				SUM(CASE WHEN r.dkim_aligned = 1 THEN r.count ELSE 0 END) AS dkim_aligned_pass,
-				SUM(CASE WHEN r.dkim_aligned IS NOT NULL OR r.spf_aligned IS NOT NULL THEN r.count ELSE 0 END) AS aligned_total
+				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) THEN r.count ELSE 0 END) AS from_messages,
+				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND r.dkim_aligned = 1 THEN r.count ELSE 0 END) AS from_dkim_aligned,
+				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND lower(r.spf_domain) = lower(dd.domain) THEN r.count ELSE 0 END) AS from_spf_at_name,
+				SUM(CASE WHEN lower(r.header_from) = lower(dd.domain) AND r.dkim_aligned IS NULL THEN r.count ELSE 0 END) AS from_unjudged
 			FROM report_records r
 			JOIN aggregate_reports a ON a.id = r.report_id AND a.workspace_id = ${A}
+			JOIN domains dd ON dd.id = a.domain_id
 			WHERE r.workspace_id = ${A} AND a.date_begin >= ${since} AND ${C('a')}
 			GROUP BY a.domain_id
 		) rr ON rr.domain_id = d.id

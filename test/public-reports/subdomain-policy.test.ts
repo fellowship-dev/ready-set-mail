@@ -64,3 +64,20 @@ describe('B4: no SPF record at a name', () => {
     expect(m).toContain('app.example.com');
   });
 });
+
+describe('C: an invalid np=', () => {
+  it('with a valid rua= the name is under p=none, said so, and the record is not called strict', async () => {
+    installFakeDns({ '_dmarc.example.com/TXT': txt('v=DMARC1; p=reject; np=bogus; rua=mailto:r@example.com'), 'app.example.com/A': A });
+    const r = await checkDmarc('app.example.com');
+    expect(r.grade).toBe('monitoring');
+    const f = findings(r);
+    expect(f['dmarc-invalid-np']?.message).toContain('invalid np= value, so receivers act as if it said p=none');
+    expect(f['dmarc-policy-none']?.message).toContain('p=none (record not applied as written)');
+  });
+  it('without a valid rua= the checker says the record is not valid and grades nothing', async () => {
+    installFakeDns({ '_dmarc.example.com/TXT': txt('v=DMARC1; p=reject; np=bogus'), 'app.example.com/A': A });
+    const r = await checkDmarc('app.example.com');
+    expect(r.grade).toBe('missing');
+    expect(findings(r)['dmarc-invalid']?.severity).toBe('fail');
+  });
+});

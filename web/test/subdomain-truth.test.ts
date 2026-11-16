@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { noSpfAtName } from '@ready-set-mail/dns-checks/spf-identity';
 import { assessDomain } from '../src/lib/levels';
 import { domainVerdict } from '../src/lib/verdict';
 import { explain, failingMailFate, failLabel, isFailing, type AuthSource, type NamePolicy } from '../src/lib/reports';
@@ -91,23 +92,47 @@ describe('B4: no SPF record at the name', () => {
 		expect(JSON.stringify(spf.detail)).toContain('return-path');
 		expect(JSON.stringify(spf.detail)).not.toContain('Receivers cannot tell which servers may send for you');
 	});
-	it('when DKIM alignment carries DMARC in the reports, no SPF record at the name is not a fault and does not pull the level down', () => {
-		const a = assessDomain({ ...base, aligned_total: 100, dkim_aligned_pass: 100 });
+	const evidence = { from_messages: 100, from_dkim_aligned: 100, from_spf_at_name: 0, from_unjudged: 0 };
+	it('when the reports show none of its mail used the name as its SPF domain and all of it passed on aligned DKIM, no SPF record is not a fault and does not pull the level down', () => {
+		const a = assessDomain({ ...base, ...evidence });
 		expect(a.level).toBe(2);
 		expect(a.findings[0]).toMatchObject({ status: 'pass', label: 'No SPF record at this name, and none is needed' });
+		expect(String(a.findings[0]!.detail)).toBe('No SPF record at app.example.com. In the reports of the last 30 days all 100 messages sent as app.example.com passed DMARC on DKIM that aligns with it, and none used app.example.com as its SPF (return-path) domain, so SPF was checked at other names and none is needed here for that mail.');
 		expect(a.next).toBeNull();
 	});
-	it('reports stored before the receiver\'s verdict was kept prove nothing: the level stays where the ladder puts it', () => {
-		expect(assessDomain({ ...base, aligned_total: 0, dkim_aligned_pass: 0 }).level).toBe(0);
+	it.each([
+		['some of its mail used the name as its SPF domain', { ...evidence, from_spf_at_name: 1 }],
+		['some of its mail did not align on DKIM', { ...evidence, from_dkim_aligned: 99 }],
+		['some reports carry no verdict (stored before 0017)', { ...evidence, from_unjudged: 5 }],
+		['no mail was sent as the name', { ...evidence, from_messages: 0, from_dkim_aligned: 0 }],
+	])('the ladder applies as before when %s', (_why, e) => {
+		const a = assessDomain({ ...base, ...e });
+		expect(a.level).toBe(0);
+		expect(a.findings[0]!.status).toBe('missing');
 	});
 	it('the domain verdict stops calling it "no SPF record" when DKIM alignment carries DMARC', () => {
 		const now = 1_800_000_000;
-		const summary = { ...base, dns_checked_at: now, domain_id: 1, dns_check_attempted_at: now, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 100, fail_messages: 0, aligned_total: 100, dkim_aligned_pass: 100, dmarc_pct: 100, dmarc_p: 'reject', dmarc_sp: null, dmarc_rua: 1, spf_lookup_count: null };
+		const summary = { ...base, dns_checked_at: now, domain_id: 1, dns_check_attempted_at: now, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 100, fail_messages: 0, ...evidence, dmarc_pct: 100, dmarc_p: 'reject', dmarc_sp: null, dmarc_rua: 1, spf_lookup_count: null };
 		const v = domainVerdict({ id: 1, domain: 'app.example.com', rua_address: 'rua@example.net' }, summary as never, { total: 100, passed: 100, failed: 0, passRate: 100, days: 30 }, null, now);
 		expect(v.sentence).not.toMatch(/no SPF record/i);
 		expect(v.status).not.toBe('attention');
-		const without = domainVerdict({ id: 1, domain: 'app.example.com', rua_address: 'rua@example.net' }, { ...summary, aligned_total: 0, dkim_aligned_pass: 0 } as never, { total: 100, passed: 100, failed: 0, passRate: 100, days: 30 }, null, now);
+		const without = domainVerdict({ id: 1, domain: 'app.example.com', rua_address: 'rua@example.net' }, { ...summary, from_spf_at_name: 3 } as never, { total: 100, passed: 100, failed: 0, passRate: 100, days: 30 }, null, now);
 		expect(without.sentence).toContain('Public DNS shows no SPF record at app.example.com');
 		expect(without.sentence).toContain('return-path');
+	});
+});
+
+describe('D: no sentence says a From-only name needs SPF', () => {
+	it('the shared sentence names the return-path and never "allowed to send as"', () => {
+		const t = noSpfAtName('app.example.com');
+		expect(t).toContain('return-path');
+		expect(t).not.toMatch(/allowed to send as|any server can claim/);
+	});
+	it('the verdict for a name with no SPF and no DMARC does not claim mail cannot be verified', () => {
+		const now = 1_800_000_000;
+		const s = { domain_id: 1, domain: 'bare.org', dmarc_policy: null, spf_record: null, dns_checked_at: now, dns_check_attempted_at: now, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null };
+		const v = domainVerdict({ id: 1, domain: 'bare.org', rua_address: 'r@x.net' }, s as never, null, null, now);
+		expect(v.sentence).not.toMatch(/cannot verify/);
+		expect(v.sentence).toContain('no SPF record at bare.org');
 	});
 });

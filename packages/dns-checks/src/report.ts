@@ -91,7 +91,11 @@ export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'provider
   if (r.dmarc.status === 'none') { reasons.push('No DMARC record'); nextSteps.push('Publish _dmarc TXT "v=DMARC1; p=none; rua=mailto:…" to start monitoring.'); }
   else if (r.dmarc.status === 'multiple') { reasons.push('Multiple DMARC records: DMARC does not apply'); nextSteps.push('Remove duplicate _dmarc TXT records.'); }
   else if (!r.dmarc.record?.valid) { reasons.push(`DMARC record invalid: ${r.dmarc.record?.issues.join('; ')}`); nextSteps.push('Fix the DMARC record syntax.'); }
-  else {
+  else if (r.dmarc.effective.status === 'broken' && r.dmarc.effective.invalidTag === 'np') {
+    // np= is not a policy: the record is not applied as written (RFC 9989 section 4.10.1), whatever its p= says.
+    reasons.push(effectivePolicySentence(r.domain, r.dmarc.effective) ?? 'DMARC record has an invalid np=');
+    nextSteps.push('Fix np= in the DMARC record, or remove it.');
+  } else {
     const eff = r.dmarc.effective;
     const how = r.dmarc.inherited ? effectivePolicySentence(r.domain, eff) : null;
     reasons.push(`DMARC ${eff.policy ?? 'none'}${r.dmarc.record.pct < 100 ? ` at ${r.dmarc.record.pct}%` : ''}${how ? ` (${how.replace(/\.$/, '')})` : ''}`);

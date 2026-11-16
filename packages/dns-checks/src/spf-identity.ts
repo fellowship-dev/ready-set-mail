@@ -17,22 +17,32 @@ export const NO_SPF_NEXT_STEP = 'If any service sends mail with this name as its
 /** What a published SPF record at the name proves: that servers it lists may send with this name as the return-path, nothing more. */
 export const SPF_AT_NAME_PROVES = 'An SPF record at a name lists the servers allowed to send mail whose return-path (MAIL FROM) is that name. It says nothing about mail that uses another return-path domain.';
 
-/** The share of reported mail whose DKIM must align with the From domain for DKIM alone to carry DMARC (the same share the DKIM level finding calls healthy). */
-export const DKIM_CARRIES_SHARE = 0.95;
-
-/**
- * DKIM alignment carries DMARC for this name: reports carry the receiver's verdict (`aligned_total` messages do) and
- * `dkim_aligned_pass` of them aligned on DKIM. Then a missing SPF record at the name is not a fault: whatever return-path the mail
- * uses, DMARC passes on DKIM. False without that evidence (no reports, or reports stored before the verdict was kept).
- */
-export function dkimCarriesDmarc(s: { aligned_total?: number | null; dkim_aligned_pass?: number | null }): boolean {
-  const total = s.aligned_total ?? 0;
-  return total > 0 && (s.dkim_aligned_pass ?? 0) / total >= DKIM_CARRIES_SHARE;
+/** What the stored reports say about the mail sent AS a name (its From domain), from the receivers' own alignment verdicts. */
+export interface FromEvidence {
+  /** Messages in the window with this name as the From domain. */
+  from_messages?: number | null;
+  /** Of those, messages whose DKIM aligned with the name (policy_evaluated dkim = pass). */
+  from_dkim_aligned?: number | null;
+  /** Of those, messages whose SPF domain (the return-path) was the name itself. */
+  from_spf_at_name?: number | null;
+  /** Of those, messages stored before the receiver's verdict was kept (nothing can be said about them). */
+  from_unjudged?: number | null;
 }
 
-/** No SPF record at `name`, and none is needed: reports show DKIM aligning with `name` on `pct`% of reported mail. */
-export function noSpfNeededAtName(name: string, pct: number): string {
-  return `No SPF record at ${name}, and none is needed for DMARC: DKIM aligns with ${name} on ${pct}% of reported mail. SPF is checked at each message's return-path domain, not at ${name}.`;
+/**
+ * A missing SPF record at the From name is not a fault when the reports show it is not used: every counted message sent as the name
+ * passed DMARC on aligned DKIM, and none of them used the name as its SPF (return-path) domain, so SPF was evaluated elsewhere
+ * (RFC 7208 section 3, RFC 9989 section 3.2.4). Needs at least one message and a verdict for each; anything else leaves the ladder as it is.
+ */
+export function spfNotNeededAtName(s: FromEvidence): boolean {
+  const total = s.from_messages ?? 0;
+  return total > 0 && (s.from_dkim_aligned ?? 0) === total && (s.from_spf_at_name ?? 0) === 0 && (s.from_unjudged ?? 0) === 0;
+}
+
+/** No SPF record at `name`, and none is needed: the reports show where SPF was evaluated instead. Says exactly what the evidence shows. */
+export function noSpfNeededAtName(name: string, e: FromEvidence): string {
+  const n = (e.from_messages ?? 0).toLocaleString('en-US');
+  return `No SPF record at ${name}. In the reports of the last 30 days all ${n} ${e.from_messages === 1 ? 'message' : 'messages'} sent as ${name} passed DMARC on DKIM that aligns with it, and none used ${name} as its SPF (return-path) domain, so SPF was checked at other names and none is needed here for that mail.`;
 }
 
 /** The short next step for a name with no SPF record (a one-line slot). */

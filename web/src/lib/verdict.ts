@@ -1,7 +1,7 @@
 import { STATUS_RANK, statusRank, type Level, type StatusKind } from '@ready-set-mail/ui';
 import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
-import { dkimCarriesDmarc, noSpfAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
+import { spfNotNeededAtName, noSpfAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
 import { hasReportAddress } from './dmarc-record';
 import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
@@ -219,9 +219,9 @@ function coreVerdict(
 
 	function statedVerdict(): Core {
 		// What public DNS shows that is wrong, most basic first (the setup wizard's order: SPF, then DMARC).
-		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF and no DMARC record, so receivers cannot verify mail from ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
-		// A missing SPF record at the name is a fault only if mail is sent with it as the return-path; DKIM alignment in the reports settles it.
-		if (!hasSpf && !dkimCarriesDmarc(sum)) return { status: 'attention', level, sentence: `Public DNS shows ${noSpfAtName(name).replace(/^No SPF record/, 'no SPF record')}`, evidence: null, checked, next: { label: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), who: WHO.dns, to: setup(2) } };
+		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF record at ${name} and no DMARC record, so receivers get no instruction for mail from ${name} that fails.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
+		// A missing SPF record at the name is a fault only if mail is sent with it as the return-path; the reports settle it (spfNotNeededAtName).
+		if (!hasSpf && !spfNotNeededAtName(sum)) return { status: 'attention', level, sentence: `Public DNS shows ${noSpfAtName(name).replace(/^No SPF record/, 'no SPF record')}`, evidence: null, checked, next: { label: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), who: WHO.dns, to: setup(2) } };
 		if (!policy) {
 			// A broken record: the one sentence every surface uses (packages/dns-checks/src/dmarc-problem.ts).
 			const broken = issue ? storedDmarcBreak(sum) : null;

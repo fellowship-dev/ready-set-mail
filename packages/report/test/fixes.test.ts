@@ -30,6 +30,17 @@ describe('fixes (test_fixes.py)', () => {
     expect(f.dnsHostLabel).toBe('your DNS host');
   });
 
+  it('D: the missing-SPF text never says a name needs SPF to send: SPF is checked at the return-path domain', () => {
+    for (const rec of [makeRec('app.acme.dev', { providers: [GOOGLE] }), makeRec('app.acme.dev', { providers: [M365], mx: ['found', ['x.mail.protection.outlook.com']] }), makeRec('app.acme.dev')]) {
+      const f = fx(rec, 'spf-missing');
+      expect(f.why).toContain('return-path (MAIL FROM) is app.acme.dev');
+      expect(f.why).toContain('no SPF record is needed here and DMARC can pass on DKIM alone');
+      expect(f.why).not.toContain('allowed to send as');
+    }
+    const out = build(makeRec('app.acme.dev'), CHECKED);
+    expect(out.findings.find(x => x.id === 'spf-missing')!.recommendation).toContain('at app.acme.dev listing every service that sends mail with app.acme.dev as its return-path');
+  });
+
   it('Google Workspace MX with no SPF yields the Google entry; an unknown provider the generic entry, not exact', () => {
     const g = fx(makeRec('acme.dev', { providers: [GOOGLE] }), 'spf-missing');
     expect(g.records[0].value).toBe('v=spf1 include:_spf.google.com ~all');

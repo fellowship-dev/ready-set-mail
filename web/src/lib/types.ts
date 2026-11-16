@@ -314,9 +314,11 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   dkim_pass: number;
   spf_total: number;
   spf_pass: number;
-  /** Messages whose DKIM aligned with the From domain (the receiver's own verdict) and the messages that carry that verdict (0017). */
-  dkim_aligned_pass?: number;
-  aligned_total?: number;
+  /** What the reports say about the mail sent AS this domain (0017): messages, DKIM-aligned, SPF domain equal to the name, and unjudged. */
+  from_messages?: number;
+  from_dkim_aligned?: number;
+  from_spf_at_name?: number;
+  from_unjudged?: number;
   mta_sts_enabled: number; // 0 | 1
   mta_sts_mode: string | null;
   /** SPF DNS lookups at the last refresh; null: not counted. */

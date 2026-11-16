@@ -105,3 +105,29 @@ describe('B4: an SPF record is judged at the return-path domain, not at the From
     expect(r.grade.nextSteps.join(' ')).toContain('return-path');
   });
 });
+
+describe('C: an invalid np= breaks the record like an invalid sp= (RFC 9989 section 4.10.1)', () => {
+  it('with a valid rua= receivers act as p=none, for the name that exists too', async () => {
+    const l = await lookupDmarc(fakeResolver(PARENT(`v=DMARC1; p=reject; np=bogus; ${RUA}`)), 'mail.example.com');
+    expect(l.effective).toMatchObject({ status: 'broken', policy: 'none', tag: 'np', invalidTag: 'np', at: 'example.com' });
+  });
+  it('without a valid rua= the record is ignored: no policy applies', async () => {
+    const l = await lookupDmarc(fakeResolver(PARENT('v=DMARC1; p=reject; np=bogus')), 'mail.example.com');
+    expect(l.effective).toMatchObject({ status: 'broken', policy: null, tag: null, invalidTag: 'np' });
+  });
+  it('the agent report grades it monitoring (level 1) and says why, never "DMARC reject"', async () => {
+    const r = await run(PARENT(`v=DMARC1; p=reject; np=bogus; ${RUA}`), 'mail.example.com');
+    expect(r.grade.level).toBe(1);
+    expect(r.grade.reasons.join(' ')).toContain('invalid np= value, so receivers act as if it said p=none');
+    expect(r.grade.nextSteps.join(' ')).toContain('Fix np=');
+  });
+  it('the agent report counts it as no usable DMARC without a valid rua=', async () => {
+    const r = await run(PARENT('v=DMARC1; p=reject; np=bogus'), 'mail.example.com');
+    expect(r.grade.level).toBe(0);
+    expect(r.grade.reasons.join(' ')).toContain('ignore it, because it has no valid rua=');
+  });
+  it('a valid np= is unaffected', async () => {
+    const l = await lookupDmarc(fakeResolver(PARENT(`v=DMARC1; p=reject; np=quarantine; ${RUA}`)), 'mail.example.com');
+    expect(l.effective).toMatchObject({ status: 'applies', policy: 'reject', tag: 'p', invalidTag: null });
+  });
+});

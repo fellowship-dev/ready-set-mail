@@ -2,6 +2,7 @@
 // presence: finding nothing among common selectors does NOT mean the domain has no DKIM.
 
 import { normalizeName, type Resolver } from './doh';
+import { getAllDkimSelectors } from './email-service-providers';
 
 export interface DkimRecord {
   raw: string;
@@ -85,13 +86,8 @@ export async function lookupDkim(resolver: Resolver, domain: string, selector: s
     : { status: 'none', selector, name, record: null, txt: r.records };
 }
 
-/** Selectors commonly published by major senders / mailbox providers. */
-export const COMMON_DKIM_SELECTORS: readonly string[] = [
-  'default', 'google', 'selector1', 'selector2', 'k1', 'k2', 'k3', 's1', 's2',
-  'mandrill', 'mte1', 'resend', 'dkim', 'mail', 'smtp', 'email',
-  'amazonses', 'pm', 'pm-bounces', 'mxvault', 'zoho', 'zmail', 'sendgrid', 'smtpapi',
-  'mailgun', 'krs', 'scph0120', 'protonmail', 'protonmail2', 'protonmail3', 'fm1', 'fm2', 'fm3', 'cm', 'everlytickey1', 'shopify',
-];
+/** Selectors commonly published by major senders / mailbox providers: the one list in ./email-service-providers (`getAllDkimSelectors`). */
+export const COMMON_DKIM_SELECTORS: readonly string[] = getAllDkimSelectors();
 
 export interface DkimScan {
   found: DkimLookup[];
