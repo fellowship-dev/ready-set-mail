@@ -119,6 +119,7 @@ describe('B4: no SPF record at the name', () => {
 		const summary = { ...base, dns_checked_at: now, domain_id: 1, dns_check_attempted_at: now, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 100, fail_messages: 0, ...evidence, dmarc_pct: 100, dmarc_p: 'reject', dmarc_sp: null, dmarc_rua: 1, spf_lookup_count: null };
 		const v = domainVerdict({ id: 1, domain: 'app.example.com', rua_address: 'rua@example.net' }, summary as never, { total: 100, passed: 100, failed: 0, passRate: 100, days: 30 }, null, now);
 		expect(v.sentence).not.toMatch(/no SPF record/i);
+		expect(v.sentence).not.toMatch(/shows SPF/); // there is none at this name
 		expect(v.status).not.toBe('attention');
 		const without = domainVerdict({ id: 1, domain: 'app.example.com', rua_address: 'rua@example.net' }, { ...summary, from_spf_at_name: 3 } as never, { total: 100, passed: 100, failed: 0, passRate: 100, days: 30 }, null, now);
 		expect(without.sentence).toContain('Public DNS shows no SPF record at app.example.com');

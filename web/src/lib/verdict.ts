@@ -225,7 +225,7 @@ function coreVerdict(
 		if (!policy) {
 			// A broken record: the one sentence every surface uses (packages/dns-checks/src/dmarc-problem.ts).
 			const broken = issue ? storedDmarcBreak(sum) : null;
-			const sentence = broken ? dmarcBreakSentence(at, broken) : 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.';
+			const sentence = broken ? dmarcBreakSentence(at, broken) : `Public DNS shows ${hasSpf ? 'SPF but ' : ''}no DMARC record, so receivers get no instruction for mail that fails.`;
 			return { ...dmarcNext(), level, sentence, evidence: null, checked };
 		}
 		const lookups = s.spf_lookup_count ?? null;
@@ -235,7 +235,8 @@ function coreVerdict(
 
 		const force = dmarcForce();
 		const inForce = force.kind === 'own' || force.kind === 'inherited' ? inForceSentence(force) : null;
-		const sentence = inForce ? `Public DNS shows SPF. ${inForce}` : `Public DNS shows SPF and DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}.`;
+		// No SPF record here is only reached when the reports show it is not needed: never say DNS "shows SPF" then.
+		const sentence = inForce ? (hasSpf ? `Public DNS shows SPF. ${inForce}` : inForce) : `Public DNS shows ${hasSpf ? 'SPF and ' : ''}DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}.`;
 		return { ...dmarcNext(), level, sentence, evidence, checked };
 	}
 
