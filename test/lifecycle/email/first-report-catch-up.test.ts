@@ -3,7 +3,7 @@
 // date_end) is at most FIRST_REPORT_CATCHUP_SECONDS (3 days) before the run: created_at >= run - 3 days. After that, never.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { storeReport } from '../../../src/dmarc/store-report';
-import { FIRST_REPORT_CATCHUP_SECONDS } from '../../../src/lifecycle/email/kinds';
+import { FIRST_REPORT_CATCHUP_SECONDS, FIRST_REPORT_EMAIL_LEGACY_UNTIL } from '../../../src/lifecycle/email/kinds';
 import { DAY, MON_16_NOV, lifecycleWorld, recordNamingUs, BASE, WS, type World } from './world';
 
 const D = 'brightwave-mail.com';
@@ -36,7 +36,7 @@ describe.each(['seen-by-app', 'seen-by-job', 'none'] as const)('first-report cat
   it('(a) the 0 11 run 25 h later sends it once, to the verified owner, with that report\'s numbers and the public origin', async () => {
     const { w, id } = await owner(milestone);
     expect(claim(w)).toEqual([]);
-    await w.run({ schedule: 'daily' });
+    await w.run();
     const sent = firstReports(w);
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toBe('dana@brightwave-mail.com');
@@ -49,23 +49,24 @@ describe.each(['seen-by-app', 'seen-by-job', 'none'] as const)('first-report cat
 
   it('(b) a second 0 11 run the same day, and every later one, send nothing more', async () => {
     const { w } = await owner(milestone);
-    await w.run({ schedule: 'daily' });
-    await w.run({ schedule: 'daily' });
-    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run({ schedule: 'daily' }); }
+    await w.run();
+    await w.run();
+    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run(); }
     expect(firstReports(w)).toHaveLength(1);
   });
 
   it('(e) no records-live and no no-reports email goes to this owner: a report exists', async () => {
     const { w } = await owner(milestone);
-    await w.run({ schedule: 'daily' });
-    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run({ schedule: 'daily' }); }
-    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report'))).toEqual([]);
-    expect((w.rows('SELECT kind FROM lifecycle_sends') as Array<{ kind: string }>).map((r) => r.kind)).toEqual(['first_report']);
+    await w.run();
+    for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run(); }
+    // (The weekly summaries are another matter: the daily run sends those too.)
+    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report') && !s.startsWith('Week of'))).toEqual([]);
+    expect((w.rows("SELECT kind FROM lifecycle_sends WHERE kind != 'summary'") as Array<{ kind: string }>).map((r) => r.kind)).toEqual(['first_report']);
   });
 
   it('(c) a SECOND counted report through the intake path (storeReport) sends no first-report email', async () => {
     const { w, id } = await owner(milestone);
-    await w.run({ schedule: 'daily' });
+    await w.run();
     expect(firstReports(w)).toHaveLength(1);
     const waited: Promise<unknown>[] = [];
     const report = {
@@ -94,7 +95,7 @@ describe('(d) the window: created_at >= run time - 3 days (when the report was S
     setNow(w, MON_16_NOV);
     w.addDomain({ domain: D });
     w.addReport({ domain: D, day: MON_16_NOV - dayAgo - DAY, storedAt: MON_16_NOV - storedAgo, records: [google] });
-    await w.run({ schedule: 'daily' });
+    await w.run();
     return firstReports(w).length;
   };
   it('is 3 days', () => expect(FIRST_REPORT_CATCHUP_SECONDS).toBe(3 * DAY));
@@ -108,5 +109,56 @@ describe('(d) the window: created_at >= run time - 3 days (when the report was S
   it('the report\'s own date does not matter: an old report stored just now is sent, a recent one stored long ago is not', async () => {
     expect(await run(60, 30 * DAY)).toBe(1);
     expect(await run(FIRST_REPORT_CATCHUP_SECONDS + 1, 0)).toBe(0);
+  });
+});
+
+describe('(f) the legacy instant: the catch-up is only for a first report stored before the real-time email existed', () => {
+  const utc = (day: number, h: number, m = 0, sec = 0) => Date.UTC(2026, 10, day, h, m, sec) / 1000;
+  const nextDay = (d: number) => utc(d, 11);
+
+  it('is 2026-11-16 12:06:00 UTC (09:06 in Chile)', () => {
+    expect(new Date(FIRST_REPORT_EMAIL_LEGACY_UNTIL * 1000).toISOString()).toBe('2026-11-16T12:06:00.000Z');
+  });
+
+  /** One proven domain, one counted report stored at `storedAt`, no email for it; then a daily run on each of the days given. */
+  async function story(storedAt: number, runDays: number[]) {
+    const w = await lifecycleWorld();
+    w.clock.now = storedAt;
+    w.addDomain({ domain: D, createdAt: storedAt - 2 * DAY, connectedAt: storedAt - 2 * DAY });
+    const reportId = w.addReport({ domain: D, day: utc(15, 0), storedAt, records: [google, sendgrid] });
+    w.dns.set(D, recordNamingUs());
+    for (const d of runDays) { w.clock.now = nextDay(d); await w.run(); }
+    return { w, reportId };
+  }
+
+  it('the owner: a first counted report stored 2026-11-16 10:52 UTC gets exactly one first-report email on the next 11:00 run, and none on the later ones', async () => {
+    const { w } = await story(utc(16, 10, 52), [17]);
+    expect(firstReports(w)).toHaveLength(1);
+    expect(firstReports(w)[0].to).toBe('dana@brightwave-mail.com');
+    expect(claim(w)).toHaveLength(1);
+    for (const d of [18, 19, 20, 21]) { w.clock.now = nextDay(d); await w.run(); }
+    expect(firstReports(w)).toHaveLength(1);
+  });
+
+  it('a report stored 2026-11-16 13:00 UTC (after the legacy instant) gets nothing from the catch-up, on any of several daily runs; no claim is written', async () => {
+    const { w } = await story(utc(16, 13), [16, 17, 18, 19]);
+    expect(firstReports(w)).toEqual([]);
+    expect(claim(w)).toEqual([]);
+  });
+
+  it('the boundary: stored one second before the instant is caught up, at the instant or later is not', async () => {
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL - 1, [17])).w)).toHaveLength(1);
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL, [17])).w)).toEqual([]);
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL + 1, [17])).w)).toEqual([]);
+  });
+
+  it('the real-time path still works for a report stored after the instant: one email, then the daily runs add none', async () => {
+    const { w, reportId } = await story(utc(16, 13), [16]);
+    w.clock.now = utc(16, 13, 0, 5);
+    await w.realtimeFirstReport(1, reportId);
+    expect(firstReports(w)).toHaveLength(1);
+    expect(claim(w)).toHaveLength(1);
+    for (const d of [17, 18, 19]) { w.clock.now = nextDay(d); await w.run(); }
+    expect(firstReports(w)).toHaveLength(1);
   });
 });

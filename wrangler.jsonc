@@ -75,9 +75,9 @@
 
 	// Crons (what each does: docs/self-hosting.md#scheduled-jobs):
 	//   0 8 * * *  — daily DNS monitor check
-	//   0 9 * * 1  — weekly DMARC digest email (Mondays 9am UTC; self-host: the hosted service sends its weekly summary at 0 11)
+	//   0 9 * * 1  — weekly DMARC digest email on self-host (Mondays 9am UTC); nothing on the hosted service, whose weekly summary and tips run at 0 11
 	//   0 10 * * * — daily SPF flatten refresh
-	//   0 11 * * * — hosted only: lifecycle emails (src/lifecycle/email/) and product analytics' daily step; nothing on self-host
+	//   0 11 * * * — hosted only: lifecycle emails (src/lifecycle/email/: milestones, the weekly summary and, when enabled, tips) and product analytics' daily step; nothing on self-host
 	//   0 4 * * *  — daily data lifecycle: retry Cloudflare revocations, then retention sweeps (own invocation: src/cron.ts)
 	"triggers": {
 		"crons": ["0 8 * * *", "0 9 * * 1", "0 10 * * *", "0 11 * * *", "0 4 * * *"]

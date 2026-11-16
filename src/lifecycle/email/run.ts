@@ -28,14 +28,14 @@ import { provenDomainIds } from '../../domains/ownership';
 import { getMode } from '../../tenancy/mode';
 import type { TenantContext } from '../../tenancy/context';
 import {
-  allPassed, failingSources, noTotals, quietWeek, sourceStats, summarise, tipFixSources,
+  allPassed, clean, failingSources, noTotals, quietWeek, sourceStats, summarise, tipFixSources,
   type SourceStat, type SummaryDomain, type Totals,
 } from './analysis';
 import * as copy from './copy';
 import type { Mail, Footer, Who } from './copy';
 import {
-  FIRST_REPORT_CATCHUP_SECONDS, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN, MAX_PER_RECIPIENT_PER_RUN,
-  NO_REPORT_AFTER_SECONDS, stopped, TIP_INTERVAL_SECONDS, type LifecycleKind,
+  FIRST_REPORT_CATCHUP_SECONDS, FIRST_REPORT_EMAIL_LEGACY_UNTIL, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
+  MAX_LIVE_READS_PER_WORKSPACE, MAX_PER_RECIPIENT_PER_RUN, NO_REPORT_AFTER_SECONDS, stopped, switchOf, TIP_INTERVAL_SECONDS, tipsEnabled, type LifecycleKind,
 } from './kinds';
 import { markRecordsLive } from './milestones';
 import { cachedOfferPrice } from './offer';
@@ -50,12 +50,15 @@ export interface Budget {
   sends: number;
   /** Emails each person has had in this invocation. */
   byUser: Map<string, number>;
-  /** DNS reads left: watching domains for their records going live, the no-report checks, and the live check before a tip. */
+  /** DNS reads left in the whole invocation, by kind: watching domains for their records going live, the no-report checks, and the live check before a tip. */
   liveReads: number;
   noReportReads: number;
   tipReads: number;
+  /** Reads each workspace has made in this invocation, by kind: no workspace takes more than MAX_LIVE_READS_PER_WORKSPACE of each. */
+  byWorkspace: Map<string, Record<ReadKind, number>>;
 }
-export const newBudget = (): Budget => ({ sends: MAX_LIFECYCLE_SENDS_PER_RUN, byUser: new Map(), liveReads: MAX_LIVE_READS_PER_RUN, noReportReads: MAX_LIVE_READS_PER_RUN, tipReads: MAX_LIVE_READS_PER_RUN });
+export type ReadKind = 'liveReads' | 'noReportReads' | 'tipReads';
+export const newBudget = (): Budget => ({ sends: MAX_LIFECYCLE_SENDS_PER_RUN, byUser: new Map(), liveReads: MAX_LIVE_READS_PER_RUN, noReportReads: MAX_LIVE_READS_PER_RUN, tipReads: MAX_LIVE_READS_PER_RUN, byWorkspace: new Map() });
 
 export interface LifecycleDeps {
   /** Milliseconds; default Date.now. */
@@ -99,6 +102,24 @@ const log = (what: string, detail: string) => console.log(`[lifecycle] ${what}: 
 const hasClaim = (w: W, userId: string, domainId: number, kind: LifecycleKind, period: string) =>
   w.sends.some((s) => s.user_id === userId && s.domain_id === domainId && s.kind === kind && s.period === period);
 const tipsSince = (w: W, userId: string) => w.sends.filter((s) => s.user_id === userId && s.kind.startsWith('tip_') && s.created_at > w.now - TIP_INTERVAL_SECONDS).length;
+/** May this workspace make one more DNS read of this kind? Takes it when it may: the invocation's cap and the workspace's own cap both hold. */
+function takeRead(w: W, kind: ReadKind): boolean {
+  const mine = w.budget.byWorkspace.get(w.tenant.workspaceId) ?? { liveReads: 0, noReportReads: 0, tipReads: 0 };
+  if (w.budget[kind] <= 0 || mine[kind] >= MAX_LIVE_READS_PER_WORKSPACE) return false;
+  mine[kind]++;
+  w.budget[kind]--;
+  w.budget.byWorkspace.set(w.tenant.workspaceId, mine);
+  return true;
+}
+/** Domains least recently read first (never read first), then the oldest. */
+const leastRecentlyRead = <T extends { id: number; created_at: number }>(w: W, ds: T[]): T[] =>
+  [...ds].sort((a, b) => (w.milestones.get(a.id)?.dns_read_at ?? 0) - (w.milestones.get(b.id)?.dns_read_at ?? 0) || a.created_at - b.created_at || a.id - b.id);
+/** The read happened: remember when, for the order above (and for the next run's fairness across workspaces). */
+async function noteRead(w: W, domainId: number): Promise<void> {
+  w.milestones.set(domainId, { ...(w.milestones.get(domainId) ?? { domain_id: domainId, records_live_at: null, live_seen_by: null, policy_seen: null, policy_seen_at: null }), dns_read_at: w.now });
+  await w.q.milestones.markRead(domainId, w.now).catch(() => undefined);
+}
+
 const budgetLeft = (w: W, userId: string) => w.budget.sends > 0 && (w.budget.byUser.get(userId) ?? 0) < MAX_PER_RECIPIENT_PER_RUN;
 
 interface Attempt {
@@ -114,7 +135,7 @@ interface Attempt {
 
 /** Claim, send, settle. True when an email went out. Never throws. */
 async function attempt(w: W, a: Attempt): Promise<boolean> {
-  if (stopped(w.env, a.kind) || !budgetLeft(w, a.to.userId)) return false;
+  if (stopped(w.env, a.kind) || (switchOf(a.kind) === 'tips' && !tipsEnabled(w.env)) || !budgetLeft(w, a.to.userId)) return false;
   const won: number[] = [];
   const key = (domainId: number, period: string) => ({ userId: a.to.userId, domainId, kind: a.kind, period });
   try {
@@ -189,17 +210,19 @@ async function milestone<T>(w: W, kind: 'records_live' | 'first_report' | 'no_re
 
 const readDmarc = (w: W, domain: string): Promise<DmarcLookup> => (w.deps.readDmarc ?? ((d: string) => lookupDmarc(resolverFor(w.env), d)))(domain);
 
-/** Look at the domains that are waiting to be seen live (connected, added within 30 days, no milestone yet): at most MAX_LIVE_READS_PER_RUN reads per run. */
+const isLive = (m: MilestoneRow | undefined): boolean => !!m && m.records_live_at !== null;
+
+/** Look at the domains that are waiting to be seen live (connected, added within 30 days, no sight yet), least recently read first, within the read budget. */
 async function watchForLive(w: W): Promise<void> {
-  const waiting = w.domains.filter((d) => !w.milestones.has(d.id) && w.now - d.created_at <= LIVE_WATCH_SECONDS).sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+  const waiting = leastRecentlyRead(w, w.domains.filter((d) => !isLive(w.milestones.get(d.id)) && w.now - d.created_at <= LIVE_WATCH_SECONDS));
   for (const d of waiting) {
-    if (w.budget.liveReads <= 0) break;
-    w.budget.liveReads--;
+    if (!takeRead(w, 'liveReads')) break;
     let facts;
-    try { facts = dmarcFactsFromLookup(await readDmarc(w, d.domain)); } catch { continue; }
+    try { facts = dmarcFactsFromLookup(await readDmarc(w, d.domain)); } catch { facts = undefined; }
+    await noteRead(w, d.id);
     if (!facts || !sendsReportsHere(d.rua_address, facts)) continue;
     if (await markRecordsLive(w.tenant, d.id, 'job', w.now)) recordsSeenLive(w.tenant, w.ctx, d, 'daily'); // the analytics event, once, like the daily read it replaces while that job is held
-    w.milestones.set(d.id, { domain_id: d.id, records_live_at: w.now, live_seen_by: 'job' });
+    w.milestones.set(d.id, { ...w.milestones.get(d.id)!, records_live_at: w.now, live_seen_by: 'job' });
   }
 }
 
@@ -227,13 +250,14 @@ async function firstReportData(w: W, d: DomainRow, reportId: number): Promise<co
   if (!report || report.domain_id !== d.id) return null;
   const stats = sourceStats(await w.q.reports.reportSources(reportId), report.fail_count);
   return {
-    reporter: report.reporter_known_as || report.org_name, begin: report.date_begin, end: report.date_end,
+    reporter: clean(report.reporter_known_as || report.org_name), begin: report.date_begin, end: report.date_end,
     total: report.total_count, passed: report.pass_count, sources: stats.length, failing: failingSources(stats)[0] ?? null, policy: d.dmarc_policy,
   };
 }
 
 async function sendFirstReports(w: W, only?: { domainId: number; reportId: number }): Promise<void> {
-  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : await w.q.reports.firstCountedSince(w.now - FIRST_REPORT_CATCHUP_SECONDS);
+  // The catch-up is only for a first report stored before PR 182's real-time email existed on this service: one stored later already got that email (and no claim says so).
+  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : (await w.q.reports.firstCountedSince(w.now - FIRST_REPORT_CATCHUP_SECONDS)).filter((f) => f.created_at < FIRST_REPORT_EMAIL_LEGACY_UNTIL);
   const items: Item<copy.FirstReportData>[] = [];
   for (const f of found) {
     const d = w.domains.find((x) => x.id === f.domain_id);
@@ -249,7 +273,7 @@ async function sendFirstReports(w: W, only?: { domainId: number; reportId: numbe
 
 async function sendNoReports(w: W): Promise<void> {
   const items: Item<{ liveAt: number; check: copy.LiveCheck }>[] = [];
-  for (const d of w.domains) {
+  for (const d of leastRecentlyRead(w, w.domains)) {
     const m = w.milestones.get(d.id);
     if (!m?.records_live_at || w.now - m.records_live_at < NO_REPORT_AFTER_SECONDS || w.now - m.records_live_at > LIVE_WATCH_SECONDS) continue;
     if (!milestoneRecipients(w.people, w.adders.get(d.id) ?? new Set(), w.requireVerified).some((r) => !hasClaim(w, r.userId, d.id, 'no_reports', 'once'))) continue;
@@ -260,10 +284,10 @@ async function sendNoReports(w: W): Promise<void> {
       if (!stored.counted) log('no-report email skipped', `domain ${d.id} receives reports that are not counted`);
       continue;
     }
-    if (w.budget.noReportReads <= 0) break;
-    w.budget.noReportReads--;
+    if (!takeRead(w, 'noReportReads')) break;
     let lookup: DmarcLookup | null = null;
     try { lookup = await readDmarc(w, d.domain); } catch { lookup = null; }
+    await noteRead(w, d.id);
     const facts = lookup ? dmarcFactsFromLookup(lookup) : undefined;
     const check: copy.LiveCheck = !facts ? { outcome: 'failed' } : sendsReportsHere(d.rua_address, facts) ? { outcome: 'names_us' } : { outcome: 'does_not', record: lookup?.record?.raw ?? null, address: d.rua_address };
     items.push({ domain: d, data: { liveAt: m.records_live_at, check } });
@@ -326,13 +350,13 @@ function tableRows(items: Array<{ domain: string; messages: number; passed: numb
 async function sendSummaries(w: W): Promise<void> {
   const week = lastCompleteWeek(w.now);
   const period = isoWeekId(week.start);
-  const due = preferenceRecipients(w.people, w.prefs, 'summary', w.env).filter((r) => !hasClaim(w, r.userId, 0, 'summary', period));
+  const due = preferenceRecipients(w.people, w.prefs, 'summary').filter((r) => !hasClaim(w, r.userId, 0, 'summary', period));
   if (due.length === 0 || stopped(w.env, 'summary') || !w.base) return;
   const data = await loadWeeks(w);
   const sums: SummaryDomain[] = [];
   for (const d of w.domains) {
     const t = totalsOf(data, d.id);
-    const base = { id: d.id, domain: d.domain, policy: d.dmarc_policy, this: t[4], last: t[3] };
+    const base = { id: d.id, domain: d.domain, policy: d.dmarc_policy, this: t[4], last: t[3], hadHistory: t.slice(0, 4).some((x) => x.total > 0) };
     if (t[4].total === 0) { sums.push({ ...base, sources: [], lastSources: [], earlierKeys: new Set() }); continue; }
     const by = await weekSources(w, data, d, [0, 1, 2, 3, 4]);
     sums.push({ ...base, sources: by.get(4) ?? [], lastSources: by.get(3) ?? [], earlierKeys: new Set([0, 1, 2].flatMap((k) => (by.get(k) ?? []).filter((s) => s.messages > 0).map((s) => s.key))) });
@@ -369,22 +393,43 @@ function liveFacts(d: DomainRow, lookup: DmarcLookup): StoredDmarc | null {
   return { dmarc_policy: f.policy, dmarc_issue: f.issue, dmarc_inherited_from: f.inherited_from, dmarc_pct: f.pct ?? null, dmarc_p: f.p ?? null, dmarc_sp: f.sp ?? null, dmarc_rua: sendsReportsHere(d.rua_address, f) ? 1 : 0 };
 }
 
-type PolicyTip =
-  | { kind: 'tip_next'; period: string; inForce: InForce; step: DmarcStep; target: Policy }
-  | { kind: 'tip_done'; period: 'reject'; inForce: InForce };
+interface PolicyTip { period: string; step: DmarcStep; target: Policy }
 
-/** What the rule module says about a domain whose last two weeks were clean: the next step, or that there is none. Null: neither tip is true. */
+/** What the rule module says about a domain whose last two weeks were clean: the next step, or null when it proposes none (including p=reject at pct=100, where there is nothing to say). */
 function policyTip(d: DomainRow, facts: StoredDmarc, two: { total: number; passed: number }): PolicyTip | null {
   const f = policyInForce(d.domain, facts);
   if (f.kind !== 'own' && f.kind !== 'inherited') return null;
-  if (f.policy === 'reject' && f.pct >= 100) return { kind: 'tip_done', period: 'reject', inForce: f };
-  if (f.policy !== 'none' && f.policy !== 'quarantine') return null;
+  if (f.policy !== 'none' && f.policy !== 'quarantine' && !(f.policy === 'reject' && f.pct < 100)) return null;
   const step = dmarcSteps(d.domain, f, { reportsAddress: true, ruaAddress: d.rua_address, reports: { total: two.total, passed: two.passed, days: 14 } })[0];
   if (!step || (step.key !== 'tighten' && step.key !== 'pct')) return null;
   // The policy the step moves to is read from the step's own words (`p=quarantine`, `sp=reject`); a pct step keeps the policy.
   const target = step.key === 'pct' ? f.policy : (/\b(?:s?p)=(quarantine|reject)\b/.exec(step.do)?.[1] as Policy | undefined);
   if (!target) return null;
-  return { kind: 'tip_next', period: `policy:${f.policy}:${f.pct}`, inForce: f, step, target };
+  return { period: `policy:${f.policy}:${f.pct}`, step, target };
+}
+
+/**
+ * The policy a domain has, as the key the milestone table keeps (null: nothing to say yet, the record was not read in full). A change of this key
+ * is "the policy changed": the two clean weeks a tip needs are counted from the moment the current key was first seen.
+ */
+function policyKey(d: DomainRow, facts: StoredDmarc): string | null {
+  const f = policyInForce(d.domain, facts);
+  if (f.kind === 'own' || f.kind === 'inherited') return `p=${f.p};sp=${f.sp ?? ''};pct=${f.pct}`;
+  return f.kind === 'none' || f.kind === 'broken' ? f.kind : null;
+}
+
+/**
+ * Every run records the policy it sees for each domain (from what the daily refresh stored: no DNS read), with the time it was first seen at that
+ * value. Nothing stored says when a policy was changed, so a domain is judged only after two full weeks since it was first seen as it is now.
+ */
+async function observePolicies(w: W): Promise<void> {
+  for (const d of w.domains) {
+    const key = policyKey(d, storedFacts(d));
+    if (!key || w.milestones.get(d.id)?.policy_seen === key) continue;
+    if (await w.q.milestones.observePolicy(d.id, key, w.now).catch(() => false)) {
+      w.milestones.set(d.id, { ...(w.milestones.get(d.id) ?? { domain_id: d.id, records_live_at: null, live_seen_by: null, dns_read_at: null }), policy_seen: key, policy_seen_at: w.now });
+    }
+  }
 }
 
 /** The offer paragraph's conditions: billing on, a price already cached (never a Stripe call per email), a postal address, and no order on the domain. */
@@ -399,11 +444,11 @@ async function offerFor(w: W, d: DomainRow): Promise<copy.OfferParagraph | null>
   return { price, orderUrl: appUrl(w.base!, w.tenant.workspaceId, `/domains/${d.id}`) };
 }
 
-interface Tip { kind: 'tip_fix' | 'tip_next' | 'tip_done'; domain: DomainRow; period: string; build: (to: Recipient, footer: Footer) => Mail }
+interface Tip { kind: 'tip_fix' | 'tip_next'; domain: DomainRow; period: string; build: (to: Recipient, footer: Footer) => Mail }
 
 async function sendTips(w: W): Promise<void> {
-  if (stopped(w.env, 'tip_fix') || !w.base) return;
-  const eligible = preferenceRecipients(w.people, w.prefs, 'tips', w.env).filter((r) => tipsSince(w, r.userId) === 0);
+  if (stopped(w.env, 'tip_fix') || !tipsEnabled(w.env) || !w.base) return;
+  const eligible = preferenceRecipients(w.people, w.prefs, 'tips').filter((r) => tipsSince(w, r.userId) === 0);
   if (eligible.length === 0) return;
   const data = await loadWeeks(w);
   const week = data.week;
@@ -424,22 +469,31 @@ async function sendTips(w: W): Promise<void> {
   for (const d of w.domains) {
     const t = totalsOf(data, d.id);
     if (!allPassed(t[3]) || !allPassed(t[4])) continue;
+    // Two FULL weeks of reports after the policy last changed: both weeks start after the moment the current policy was first seen.
+    const m = w.milestones.get(d.id);
+    const key = policyKey(d, storedFacts(d));
+    if (!key || m?.policy_seen !== key || m.policy_seen_at === null || m.policy_seen_at > twoWeeks.start) continue;
     const two = { total: t[3].total + t[4].total, passed: t[3].passed + t[4].passed };
     const first = policyTip(d, storedFacts(d), two);
     if (!first) continue;
-    lazy.push({ kind: first.kind, domain: d, expand: async () => {
+    lazy.push({ kind: 'tip_next', domain: d, expand: async () => {
       // The stored policy may be a day or more old (the daily DNS refresh is not always running), and a tip must never advise what the person already did: read it now.
-      if (w.budget.tipReads <= 0) return [];
-      w.budget.tipReads--;
+      if (!takeRead(w, 'tipReads')) return [];
       let tip: PolicyTip | null = null;
-      try { const f = liveFacts(d, await readDmarc(w, d.domain)); tip = f ? policyTip(d, f, two) : null; } catch { tip = null; }
+      try {
+        const f = liveFacts(d, await readDmarc(w, d.domain));
+        await noteRead(w, d.id);
+        const live = f ? policyKey(d, f) : null;
+        if (f && live && live !== key) {
+          // It changed since the last look: the two weeks start again from now.
+          if (await w.q.milestones.observePolicy(d.id, live, w.now).catch(() => false)) w.milestones.set(d.id, { ...w.milestones.get(d.id)!, policy_seen: live, policy_seen_at: w.now });
+        } else tip = f ? policyTip(d, f, two) : null;
+      } catch { tip = null; }
       if (!tip) return [];
       const sources = new Set([...(await weekSources(w, data, d, [3, 4])).values()].flatMap((stats) => stats.filter((x) => x.messages > 0).map((x) => x.key))).size;
       const url = appUrl(w.base!, w.tenant.workspaceId, `/domains/${d.id}`);
-      const build = (to: Recipient, footer: Footer): Mail => tip!.kind === 'tip_done'
-        ? copy.tipDone({ name: to.name, footer, domain: d.domain, domainUrl: url, messages: two.total, sources })
-        : copy.tipNext({ name: to.name, footer, domain: d.domain, domainUrl: url, weeks: twoWeeks, messages: two.total, sources, inForce: tip!.inForce, step: tip!.step, target: tip!.target, ruaAddress: d.rua_address });
-      return [{ kind: tip.kind, domain: d, period: tip.period, build }];
+      const build = (to: Recipient, footer: Footer): Mail => copy.tipNext({ name: to.name, footer, domain: d.domain, domainUrl: url, weeks: twoWeeks, messages: two.total, sources, step: tip!.step, target: tip!.target, ruaAddress: d.rua_address });
+      return [{ kind: 'tip_next', domain: d, period: tip.period, build }];
     } });
   }
   if (lazy.length === 0) return;
@@ -455,7 +509,7 @@ async function sendTips(w: W): Promise<void> {
       const off = await preferenceOffUrl(w.env, to.userId, w.tenant.workspaceId, 'tips');
       if (!off) break;
       const footer: Footer = {
-        why: to.role === 'owner' ? `Why am I getting this? You are the owner of ${w.workspaceName} on Ready Set Mail, and tips about your domains are on for you.` : `Why am I getting this? You are an admin of ${w.workspaceName} on Ready Set Mail and you turned tips about your domains on.`,
+        why: to.role === 'owner' ? `Why am I getting this? You are the owner of ${w.workspaceName} on Ready Set Mail, and you turned on tips about your domains.` : `Why am I getting this? You are an admin of ${w.workspaceName} on Ready Set Mail and you turned tips about your domains on.`,
         settingsUrl: appUrl(w.base, w.tenant.workspaceId, '/settings'), off: { label: 'Turn off tips about your domains', url: off },
       };
       await attempt(w, { kind: tip.kind, to, claims: [{ domainId: tip.domain.id, period: tip.period }], offUrl: off, build: () => tip.build(to, footer) });
@@ -490,20 +544,20 @@ async function load(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: Lifec
 }
 
 /**
- * Which cron expression runs which part: the milestones in the daily `0 11 * * *` branch, the weekly summary and the tips in the weekly
- * `0 9 * * 1` branch (src/cron.ts; docs/hosted.md has the table). 'both': everything, for a caller that has no cron (tests).
+ * The parts, in the order of importance (when the invocation's budget runs out, the milestones were sent first). All of them run in the daily
+ * `0 11 * * *` branch of src/cron.ts. The weekly summary and the tips are for the last complete ISO week and are claimed by that week, so the
+ * Monday run sends them and a later daily run of the same ISO week catches up a Monday that did not run, once. `observe` writes the policy
+ * history the tips judge by, every day.
  */
-export type Schedule = 'daily' | 'weekly' | 'both';
-const PARTS: ReadonlyArray<readonly [string, Exclude<Schedule, 'both'>, (w: W) => Promise<void>]> = [
-  ['watch', 'daily', watchForLive], ['records live', 'daily', sendRecordsLive], ['first report', 'daily', (x) => sendFirstReports(x)],
-  ['no reports', 'daily', sendNoReports], ['summary', 'weekly', sendSummaries], ['tips', 'weekly', sendTips],
+const PARTS: ReadonlyArray<readonly [string, (w: W) => Promise<void>]> = [
+  ['watch', watchForLive], ['records live', sendRecordsLive], ['first report', (x) => sendFirstReports(x)], ['no reports', sendNoReports],
+  ['observe', observePolicies], ['summary', sendSummaries], ['tips', sendTips],
 ];
 
 /**
  * The lifecycle work of one workspace (hosted only). Each part is on its own: one failing never stops the next, and nothing here throws.
- * The order is the order of importance: when the invocation's budget runs out, the milestones were sent first.
  */
-export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps = {}, schedule: Schedule = 'both'): Promise<void> {
+export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, budget: Budget, deps: LifecycleDeps = {}): Promise<void> {
   if (!hostedEnabled(tenant.env)) return;
   let w: W | null;
   try {
@@ -513,8 +567,7 @@ export async function runLifecycleForWorkspace(tenant: TenantContext, ctx: Ctx, 
     return;
   }
   if (!w) return;
-  const parts = PARTS.filter(([, runs]) => schedule === 'both' || runs === schedule);
-  for (const [name, , part] of parts) {
+  for (const [name, part] of PARTS) {
     if (budget.sends <= 0) break;
     try { await part(w); } catch (e) { console.error(`[lifecycle] ${name} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'error'); }
   }

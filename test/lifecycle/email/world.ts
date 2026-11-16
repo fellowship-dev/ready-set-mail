@@ -5,7 +5,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { parseDmarcRecord, type DmarcLookup } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../../../src/index';
 import { TenantContext } from '../../../src/tenancy/context';
-import { newBudget, runLifecycleForWorkspace, type Budget, type LifecycleDeps, type Schedule } from '../../../src/lifecycle/email/run';
+import { newBudget, runLifecycleForWorkspace, sendFirstReportNow, type Budget, type LifecycleDeps } from '../../../src/lifecycle/email/run';
 import { fakeMailer, type FakeMailer } from '../../funnel/world';
 import { HOSTED_ENV } from '../../hosted/world';
 
@@ -69,15 +69,17 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
   };
   const deps: LifecycleDeps = { now: () => clock.now * 1000, mailer, readDmarc };
 
-  const tenant = () => new TenantContext({ env, workspaceId: WS, mode: 'saas', settings: {} });
+  const tenant = (workspaceId: string = WS) => new TenantContext({ env, workspaceId, mode: 'saas', settings: {} });
   let budget: Budget = newBudget();
   const ctxFake = { waitUntil: (p: Promise<unknown>) => { void p.catch(() => {}); } } as unknown as ExecutionContext;
-  /** One run (a new invocation, so a new budget): both halves, unless `schedule` says which cron branch it is (`daily` 0 11 * * *, `weekly` 0 9 * * 1). */
-  const run = async (opts: { budget?: Budget; schedule?: Schedule } = {}) => {
+  /** One run (a new invocation, so a new budget): every part, as the `0 11 * * *` cron branch runs them. */
+  const run = async (opts: { budget?: Budget } = {}) => {
     budget = opts.budget ?? newBudget();
-    await runLifecycleForWorkspace(tenant(), ctxFake, budget, deps, opts.schedule);
+    await runLifecycleForWorkspace(tenant(), ctxFake, budget, deps);
     await new Promise((r) => setTimeout(r, 0));
   };
+  /** The real-time first-report email (src/notifications/first-report.ts calls this when a counted report is stored). */
+  const realtimeFirstReport = async (domainId: number, reportId: number) => { await sendFirstReportNow(tenant(), ctxFake, domainId, reportId, deps); await new Promise((r) => setTimeout(r, 0)); };
   /** Jump to a later day at 11:00 UTC. */
   const at = (days: number, hour = 11) => { clock.now = Math.floor(MON_16_NOV / DAY) * DAY + days * DAY + hour * 3600; };
 
@@ -89,12 +91,20 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
   const dana = addUser({ id: 'u_dana', email: 'dana@brightwave-mail.com', name: 'Dana Reyes', role: 'owner' });
 
   let nextDomain = 1;
-  const addDomain = (d: { domain: string; createdAt?: number; policy?: string | null; pct?: number | null; rua?: string; via?: string; connectedAt?: number | null; dmarcRua?: number | null; addedBy?: string | null; p?: string | null }) => {
+  const addDomain = (d: { domain: string; createdAt?: number; policy?: string | null; pct?: number | null; rua?: string; via?: string; connectedAt?: number | null; dmarcRua?: number | null; addedBy?: string | null; p?: string | null; workspaceId?: string }) => {
+    const ws = d.workspaceId ?? WS;
     const id = nextDomain++;
     const policy = d.policy === undefined ? 'none' : d.policy;
     sql.prepare('INSERT INTO domains (id, domain, rua_address, workspace_id, verified_via, created_at, dmarc_policy, dmarc_pct, dmarc_p, dmarc_rua, reports_connected_at, dns_checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, d.domain, d.rua === undefined ? RUA : d.rua, WS, d.via ?? 'txt', d.createdAt ?? clock.now - 2 * DAY, policy, policy ? (d.pct ?? 100) : null, policy ? (d.p ?? policy) : null, d.dmarcRua === undefined ? 1 : d.dmarcRua, d.connectedAt === undefined ? clock.now - 2 * DAY : d.connectedAt, clock.now - DAY);
-    if (d.addedBy !== null) sql.prepare("INSERT INTO audit_log (actor_id, actor_email, actor_type, action, resource_type, resource_id, resource_name, workspace_id) VALUES (?, 'x', 'user', 'domain.add', 'domain', ?, ?, ?)").run(d.addedBy ?? dana, String(id), d.domain, WS);
+      .run(id, d.domain, d.rua === undefined ? RUA : d.rua, ws, d.via ?? 'txt', d.createdAt ?? clock.now - 2 * DAY, policy, policy ? (d.pct ?? 100) : null, policy ? (d.p ?? policy) : null, d.dmarcRua === undefined ? 1 : d.dmarcRua, d.connectedAt === undefined ? clock.now - 2 * DAY : d.connectedAt, clock.now - DAY);
+    if (d.addedBy !== null) sql.prepare("INSERT INTO audit_log (actor_id, actor_email, actor_type, action, resource_type, resource_id, resource_name, workspace_id) VALUES (?, 'x', 'user', 'domain.add', 'domain', ?, ?, ?)").run(d.addedBy ?? dana, String(id), d.domain, ws);
+    return id;
+  };
+
+  /** Another hosted workspace, owned by Dana (a verified owner), for the tests of what is shared between workspaces. */
+  const addWorkspace = (id: string) => {
+    sql.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)').run(id, `Workspace ${id}`);
+    sql.prepare('INSERT INTO memberships (workspace_id, user_id, role) VALUES (?, ?, ?)').run(id, dana, 'owner');
     return id;
   };
 
@@ -117,7 +127,7 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
   };
 
   return {
-    db, sql, env, rows, clock, mailer, dns, reads, deps, tenant, run, at, addUser, addDomain, addReport, dana, ctx: ctxFake,
+    db, sql, env, rows, clock, mailer, dns, reads, deps, tenant, run, realtimeFirstReport, at, addUser, addDomain, addWorkspace, addReport, dana, ctx: ctxFake,
     get budget() { return budget; },
     sends: () => rows('SELECT user_id, domain_id, kind, period, state FROM lifecycle_sends ORDER BY created_at, kind, domain_id'),
     /** Everything sent so far as (day offset from Mon 16 Nov, kind-ish, subject), for the walk tests. */
