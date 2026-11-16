@@ -395,6 +395,9 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 		const card = await dayCard();
 		expect(within(card).getByRole('heading', { name: "Waiting for the report address in example.com's DMARC record" })).toBeInTheDocument();
 		expect(within(card).getByRole('link', { name: 'See what to add' })).toHaveAttribute('href', '/domains/1');
+		// What the domain page really shows first: the Connect reports panel, and the record once the domain is connected (not "the exact record" at once).
+		expect(within(card).getByText(/The domain page has Connect reports, which shows the exact record to add once the domain is connected/)).toBeInTheDocument();
+		expect(within(card).queryByText(/The domain page shows the exact record/)).toBeNull();
 		expect(within(card).queryByText('Your first reports are on their way')).toBeNull();
 	});
 

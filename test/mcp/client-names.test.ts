@@ -1,4 +1,4 @@
-// What a self-registered app may call itself (ADR 0015, src/mcp/client-names.ts): a name is a claim, so look-alikes, "verified" claims and the names of
+// What a self-registered app may call itself (ADR 0022, src/mcp/client-names.ts): a name is a claim, so look-alikes, "verified" claims and the names of
 // well-known assistants never reach a person as the app's identity.
 import { describe, expect, it } from 'vitest';
 import { describedName, isReservedName, mixesScripts, RESERVED_APP_NAMES, skeleton, vetClientName } from '../../src/mcp/client-names';

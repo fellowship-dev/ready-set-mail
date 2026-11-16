@@ -1,4 +1,4 @@
-// Open registration's guard rails (ADR 0015): the per-address and whole-instance daily budgets, the ceiling on stored apps, how long an app nobody approved
+// Open registration's guard rails (ADR 0022): the per-address and whole-instance daily budgets, the ceiling on stored apps, how long an app nobody approved
 // is kept, the clean-up that keeps the store from filling, and the audit entry for each of them. The first half runs in workerd, the second simulates days.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetApprovedClient, handleRegistration, REGISTRATION_DEFAULTS, registrationLimits, sweepUnusedClients } from '../../src/mcp/registration';

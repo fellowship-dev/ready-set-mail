@@ -1,5 +1,5 @@
 // What an agent and its person meet, end to end in workerd: discovery, the 401 challenge, registration (vetted), consent, the token, /mcp, the list
-// of approved agents, last use, revoke. ADR 0015. The real clients differ from these only in who sends the requests.
+// of approved agents, last use, revoke. ADR 0022. The real clients differ from these only in who sends the requests.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GOOD, ORIGIN, startRuntime, type Installation } from './runtime';
 
@@ -90,7 +90,7 @@ describe('registration is vetted before the library stores anything', () => {
   for (const name of ['<img src=x onerror=alert(1)>', 'a & b', 'https://evil.example/login', 'visit www.evil.example', 'x'.repeat(81), 'two\nlines', 'bidi \u202Eevil', 42, '\u0421laude', 'Claude (official) \u2713 Verified by Anthropic', 'Verified assistant', 'Trusted \u2705']) {
    await refused({ ...GOOD, client_name: name }, 'invalid_client_metadata');
   }
-  // A missing or blank name is stored as none; a name that is, or contains, a famous one is accepted but withheld (ADR 0015); any other is kept, tidied.
+  // A missing or blank name is stored as none; a name that is, or contains, a famous one is accepted but withheld (ADR 0022); any other is kept, tidied.
   for (const [given, stored] of [[undefined, undefined], ['   ', undefined], ['  Claude   Code  ', undefined], ['Cursor (laptop)', undefined], ['Claude', undefined], ['  My   agent ', 'My agent']] as const) {
    const r = await app.register({ ...GOOD, client_name: given });
    expect(r.status).toBe(201);

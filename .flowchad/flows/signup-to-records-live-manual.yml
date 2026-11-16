@@ -62,3 +62,20 @@ steps:
     effect: write
     expect: Domain proven (found by itself, or by Verify); the dashboard's first-day card says it is waiting for the report address in DMARC, with the way to add it, and flips to the first reports are on their way when public DNS shows it
     first_value: true
+  # The tail after the value step: what the first-day card's "See what to add" leads to (the same screens the setup wizard opens), walked on the branch that put Connect reports on them.
+  - action: click
+    selector: "text=See what to add"
+    expect: The domain page - no DMARC record found, then Connect reports (the action is in the first screen at 375x812 and 1440x900), then Do this next
+  - action: click
+    selector: "text=Open the DMARC step"
+    expect: The DMARC step - the record to publish and its Copy record come first (first screen at 375x812), then where to add it and why
+  - action: click
+    selector: "text=Connect reports"
+    effect: write
+    expect: Reports connected for this domain - the record to publish now carries the shared report address (only for a workspace HOSTED_CONNECT_REPORTS admits)
+  - action: click
+    selector: "text=Continue"
+    expect: The Reports step - Connected, record not published yet, with Check again beside the status (first screen at 375x812), the record to publish below
+  - action: click
+    selector: "text=Check again"
+    expect: After the record is added at the DNS host - Published, waiting for the first report

@@ -1,4 +1,4 @@
-// The redirect address rule of open registration (ADR 0015): https, or http only on this computer. An authorization code is sent to a registered address,
+// The redirect address rule of open registration (ADR 0022): https, or http only on this computer. An authorization code is sent to a registered address,
 // so an http address that is not loopback would send it across the network in clear text, and a look-alike of a loopback name would send it to someone else.
 import { describe, expect, it } from 'vitest';
 import { redirectProblem } from '../../src/mcp/registration';

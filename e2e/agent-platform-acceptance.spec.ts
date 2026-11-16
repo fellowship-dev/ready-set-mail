@@ -94,7 +94,7 @@ test('operator enrollment, finite product access, revocation and responsive repo
   }
 });
 
-// ── An assistant connects end to end (ADR 0015). The real clients differ from this only in who sends the requests. ──
+// ── An assistant connects end to end (ADR 0022). The real clients differ from this only in who sends the requests. ──
 const SHOTS = process.env.E2E_SHOTS_DIR;
 async function shot(page: import('@playwright/test').Page, name: string) {
   if (!SHOTS) return;

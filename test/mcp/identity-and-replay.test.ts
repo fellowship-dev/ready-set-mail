@@ -1,4 +1,4 @@
-// Who an app is told to be, and what happens to a refresh token used twice, in workerd (ADR 0015): a self-registered name is never the identity a person is
+// Who an app is told to be, and what happens to a refresh token used twice, in workerd (ADR 0022): a self-registered name is never the identity a person is
 // shown, a client document is fetched without following redirects, an approval link carries the person through sign-in, and a refresh token replayed after it
 // was replaced ends the connection.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

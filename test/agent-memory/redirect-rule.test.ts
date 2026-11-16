@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 // A guard on the SOURCE of the redirect rule (the behaviour is in test/mcp/redirect-problem.test.ts): an `http:` redirect address may only pass through
 // `isLoopbackHost`, and that function may name nothing but this computer. A change that lets http through for another host, or widens "this computer",
-// fails here before anyone reads a diff. ADR 0015.
+// fails here before anyone reads a diff. ADR 0022.
 const source = readFileSync(join(__dirname, '../../src/mcp/registration.ts'), 'utf8');
 const body = (name: string) => { const start = source.indexOf(`function ${name}`); expect(start, `function ${name}`).toBeGreaterThan(-1); return source.slice(start, source.indexOf('\n}\n', start) + 2); };
 

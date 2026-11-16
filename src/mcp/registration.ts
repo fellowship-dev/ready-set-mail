@@ -1,5 +1,5 @@
 // Open app registration (RFC 7591), the part this product adds around the OAuth library. It is off unless MCP_DCR_ENABLED=1
-// (ADR 0015); the hosted service turns it on. Everything that makes it safe to switch on lives here, in one place:
+// (ADR 0022); the hosted service turns it on. Everything that makes it safe to switch on lives here, in one place:
 //   - what a registration may say (name, redirect addresses, public clients only), checked BEFORE the library stores anything;
 //   - how many may arrive: a per-address budget per minute (src/mcp/rate-limit.ts), a per-address budget per day, a whole-instance budget per day
 //     that one address cannot use up, and a ceiling on stored apps that evicts the oldest unapproved app instead of refusing;

@@ -50,6 +50,15 @@ export const SINGLE: Single[] = [
     signature: /\bRESERVED_APP_NAMES\b|['"]Visual Studio Code['"]|['"]Anthropic['"]/,
     owners: ['src/mcp/client-names.ts'],
   },
+  {
+    concept: 'Writing our report address into a DMARC record (hosted)',
+    // the splice that puts an address into a rua= list, and the review and apply that carry it (ADR 0020): a new caller is a second way to write it
+    signature: /\b(?:withReportAddress|reviewReportRecord|applyReportRecord)\(/,
+    owners: [
+      'src/hosted/report-address.ts', 'src/hosted/report-address-routes.ts', 'src/onboarding/dmarc-plan.ts', 'src/onboarding/plan.ts', 'src/onboarding/routes.ts',
+      'packages/dns-checks/src/dmarc-rua.ts',
+    ],
+  },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];

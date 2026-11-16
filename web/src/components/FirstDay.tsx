@@ -139,7 +139,7 @@ function FirstDayBody({ state, email, emailCheck, workspaceId, onSeen }: { state
 			}
 			return (
 				<Frame title={`Waiting for the report address in ${state.domain}'s DMARC record`}>
-					<p className="max-w-prose text-sm text-ink-2">Reports can only arrive once its DMARC record names our reporting address. {state.viaCloudflare ? 'Cloudflare is connected, so we can prepare the change and you press Apply.' : 'The domain page shows the exact record. When it is in public DNS this page notices by itself.'}</p>
+					<p className="max-w-prose text-sm text-ink-2">Reports can only arrive once its DMARC record names our reporting address. {state.viaCloudflare ? 'Cloudflare is connected, so we can prepare the change and you press Apply.' : 'The domain page has Connect reports, which shows the exact record to add once the domain is connected. When it is in public DNS this page notices by itself.'}</p>
 					<Button asChild>
 						<Link to={state.viaCloudflare ? REVIEW_PATH : `/domains/${state.domainId}`}>{state.viaCloudflare ? 'Review the change' : 'See what to add'}</Link>
 					</Button>
