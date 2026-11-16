@@ -6,6 +6,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { useHosted, useSession } from '../../lib/session';
 import { cleanName } from '../../lib/names';
 import { hashFor, workspaceStore } from '../../lib/workspace';
+import { setupPathFor } from '../../lib/handoff';
 import { CodeForm, CodeStep, needsCode, type CodeRequired } from './CodeStep';
 import { AuthLayout, Field } from './AuthLayout';
 import { PasswordInput } from './PasswordInput';
@@ -18,6 +19,10 @@ interface InviteInfo {
 	role: string;
 	workspace_id: string;
 	workspace_name: string | null;
+	/** Who asked, by name (null: they have none; the address is shown). */
+	inviter_name?: string | null;
+	/** Set when this invite hands the setup of one domain to the invitee (spec H1). */
+	handoff?: { domain: string; inviter_name: string };
 	/** The email already has a login: accepting adds a membership, no password form. */
 	user_exists: boolean;
 	signed_in_as: string | null;
@@ -56,12 +61,13 @@ export function InvitePage() {
 		}
 	}
 
-	async function joined(workspaceId?: string) {
+	async function joined(workspaceId?: string, handoffDomain?: string) {
 		await signedIn();
 		// The new login's first workspace is the one they were invited to.
 		if (workspaceId) workspaceStore.remember(workspaceId);
 		else workspaceStore.forget();
-		navigate('/', { replace: true });
+		// A hand-off lands on that domain's first screen (S4); an ordinary invite on the dashboard. No profile questions either way.
+		navigate(handoffDomain ? setupPathFor(handoffDomain) : '/', { replace: true });
 	}
 
 	if (pending) {
@@ -70,8 +76,8 @@ export function InvitePage() {
 				email={pending.email}
 				purpose="invite"
 				onSubmit={async (code) => {
-					const res = await api<{ workspace_id?: string }>('/api/auth/code', { method: 'POST', body: { code } });
-					await joined(res.workspace_id);
+					const res = await api<{ workspace_id?: string; handoff_domain?: string }>('/api/auth/code', { method: 'POST', body: { code } });
+					await joined(res.workspace_id, res.handoff_domain);
 				}}
 				onResend={async () => {
 					const res = await request();
@@ -111,9 +117,17 @@ export function InvitePage() {
 	}
 	const info = invite.data;
 	const workspaceLabel = cleanName(info.workspace_name) || 'a workspace';
-	const description = (
+	const inviter = cleanName(info.handoff?.inviter_name ?? info.inviter_name) || info.invited_by;
+	const article = info.role === 'admin' ? 'an' : 'a';
+	const roleName = `${info.role.charAt(0).toUpperCase()}${info.role.slice(1)}`;
+	// Fixed wording (spec I1): a hand-off says what to finish, an ordinary invite says the role. Nothing the inviter typed is in it but their name.
+	const description = info.handoff ? (
 		<>
-			<strong>{info.invited_by}</strong> invited you to join <strong>{workspaceLabel}</strong> on Ready Set Mail as <Badge variant="brand">{info.role}</Badge>
+			{inviter} asked you to finish setting up email authentication for <span className="font-mono [overflow-wrap:anywhere]">{info.handoff.domain}</span>. You'll join as an admin.
+		</>
+	) : (
+		<>
+			{inviter} invited you as {article} <Badge variant="brand">{roleName}</Badge>.
 		</>
 	);
 
@@ -121,12 +135,17 @@ export function InvitePage() {
 
 	return (
 		<AuthLayout
-			title="You are invited"
+			title={info.handoff ? `Join ${workspaceLabel} on Ready Set Mail` : 'You are invited'}
 			description={description}
 		>
 			<p className="rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-sm" aria-label="Invited email">
 				{info.email}
 			</p>
+			{info.handoff ? null : (
+				<p className="text-sm text-ink-2">
+					Workspace: <strong className="font-semibold text-ink-1">{workspaceLabel}</strong>
+				</p>
+			)}
 			<form onSubmit={submit} className="space-y-4">
 				{hosted ? (
 					<Field id="password" label="Choose a password" hint={`At least 8 characters. We'll email ${info.email} a 6-digit code to confirm it.`}>
@@ -161,12 +180,13 @@ function ExistingUser({ info, token, description, signOut }: { info: InviteInfo;
 	const navigate = useNavigate();
 	const [error, setError] = useState('');
 	const accept = useMutation({
-		mutationFn: () => api<{ workspace_id: string }>(`/api/invites/${token}`, { method: 'POST', body: {} }),
+		mutationFn: () => api<{ workspace_id: string; handoff_domain?: string }>(`/api/invites/${token}`, { method: 'POST', body: {} }),
 		onSuccess: async (res) => {
 			await qc.invalidateQueries({ queryKey: ['workspaces'] });
 			workspaceStore.remember(res.workspace_id);
-			window.location.hash = hashFor(res.workspace_id);
-			navigate(hashFor(res.workspace_id).slice(1), { replace: true });
+			const to = hashFor(res.workspace_id, res.handoff_domain ? setupPathFor(res.handoff_domain) : '/');
+			window.location.hash = to;
+			navigate(to.slice(1), { replace: true });
 		},
 		onError: (e) => setError(errorMessage(e)),
 	});
@@ -174,10 +194,15 @@ function ExistingUser({ info, token, description, signOut }: { info: InviteInfo;
 	const mine = signedInAs === info.email.toLowerCase();
 
 	return (
-		<AuthLayout title="You are invited" description={description}>
+		<AuthLayout title={info.handoff ? `Join ${cleanName(info.workspace_name) || 'a workspace'} on Ready Set Mail` : 'You are invited'} description={description}>
 			<p className="rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-sm" aria-label="Invited email">
 				{info.email}
 			</p>
+			{info.handoff ? null : (
+				<p className="text-sm text-ink-2">
+					Workspace: <strong className="font-semibold text-ink-1">{cleanName(info.workspace_name) || 'a workspace'}</strong>
+				</p>
+			)}
 			{mine ? (
 				<>
 					<p className="text-sm text-ink-2">You are signed in as this address. Accepting adds the workspace to the ones you already have.</p>

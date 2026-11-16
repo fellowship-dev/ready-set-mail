@@ -254,6 +254,58 @@ const justNow = () => Math.floor(Date.now() / 1000) - 600;
 const dayCard = () => screen.findByTestId('first-day');
 const before = (a: HTMLElement, b: HTMLElement) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
+describe('OverviewPage: no red on day one', () => {
+	const newDomain = (extra = {}) => domain(1, 'example.com', { created_at: justNow(), dmarc_policy: null, rua_address: '', ...extra });
+	const bare = { dmarc_policy: null, spf_record: null, dmarc_rua: 0, ...checked };
+	const routes = (d: Record<string, unknown>, sum: Record<string, unknown>, st: object = noReports) => ({ 'GET /api/domains': { domains: [d] }, 'GET /api/domains/1/check-summary': summary(1, 'example.com', sum), 'GET /api/domains/1/stats': st });
+
+	it('a new domain with nothing published is "waiting for reports": neutral state, what is missing is "to fix after reports", no red, no "Not yet."', async () => {
+		renderOverview({ routes: routes(newDomain(), bare) });
+		const r = await row('example.com');
+		expect(r).toHaveAttribute('data-status', 'gathering');
+		expect(within(r).queryByText('Needs attention')).toBeNull();
+		expect(within(r).getByText('Waiting for reports. To fix after reports: SPF is not published and DMARC is not published.')).toBeInTheDocument();
+		expect(within(r).getByText('Next: nothing to do.')).toBeInTheDocument();
+		expect(r.querySelector('.text-danger')).toBeNull();
+		const answer = screen.getByTestId('am-i-done');
+		expect(answer).toHaveTextContent('Waiting for the first reports on example.com.');
+		expect(answer.textContent).not.toMatch(/^Not yet/);
+		expect(screen.queryByText('Needs attention')).toBeNull();
+	});
+
+	it('the same domain after its first 72 hours, still with no report, says what it said before (the domain page and the row agree again)', async () => {
+		renderOverview({ routes: routes(domain(1, 'example.com', { dmarc_policy: null }), bare) });
+		const r = await row('example.com');
+		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
+		expect(screen.getByTestId('am-i-done').textContent).toMatch(/^Not yet/);
+	});
+
+	it('once a report has arrived the real verdict is back, whatever the age', async () => {
+		renderOverview({ routes: routes(newDomain(), { ...bare, dmarc_policy: 'none', spf_record: null }, stats(40)) });
+		const r = await row('example.com');
+		expect(within(r).queryByText('Waiting for reports. To fix after reports', { exact: false })).toBeNull();
+	});
+
+	it('real failures keep their words on day one: a name that does not resolve, DNS checks that fail', async () => {
+		renderOverview({ routes: routes(newDomain(), { ...bare, dns_check_status: 'nxdomain', dns_last_good_status: 'nxdomain' }) });
+		const r = await row('example.com');
+		expect(r).not.toHaveAttribute('data-status', 'gathering');
+		expect(within(r).queryByText(/Waiting for reports/)).toBeNull();
+	});
+
+	it('a proof that lapsed is not day-one neutral', async () => {
+		renderOverview({ routes: routes(newDomain({ verified_via: 'legacy', proof_lost_at: justNow() }), bare) });
+		await screen.findByTestId('proof-lost-1');
+		expect(screen.queryByText(/Waiting for the first reports/)).toBeNull();
+	});
+
+	it('the first-day card is neutral too', async () => {
+		renderOverview({ routes: routes(newDomain(), bare) });
+		const card = await dayCard();
+		expect(card.querySelector('.text-danger, [role="alert"]')).toBeNull();
+	});
+});
+
 describe('OverviewPage: the first day (D1), where the stepper used to be', () => {
 	it('the old "Get to your first answer" stepper is gone', async () => {
 		renderOverview({ routes: { 'GET /api/domains': { domains: [] } } });
@@ -363,7 +415,7 @@ describe('OverviewPage: the first day (D1), where the stepper used to be', () =>
 
 	// One rule for the order: what blocks progress or needs the person comes before the first-day card.
 	it('a domain that needs attention is listed before the card', async () => {
-		renderOverview({ routes: routesFor({ created_at: justNow(), dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
+		renderOverview({ routes: routesFor({ dmarc_policy: null }, { dmarc_policy: null, spf_record: null, ...checked, dmarc_rua: 0 }) });
 		const r = await row('example.com');
 		expect(within(r).getByText('Needs attention')).toBeInTheDocument();
 		const card = await dayCard();

@@ -38,7 +38,7 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 			await expect(page.getByTestId('dns-result')).toContainText(`${DOMAIN}:`);
 			await expect(page.getByRole('button', { name: "I'll add the records myself" })).toBeVisible();
 			await expect(page.getByText(/can't be connected/i)).toHaveCount(0);
-			await expect(page.getByText('Hand setup to a teammate')).toHaveCount(0);
+			await expect(page.getByRole('link', { name: 'Hand setup to a teammate →' })).toBeVisible(); // the owner may hand it on
 			await fits(page);
 			await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 			await connectWithToken(page);

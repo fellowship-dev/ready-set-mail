@@ -142,6 +142,25 @@ export function buildCodeEmailHtml(p: CodeEmailHtmlParams): string {
   return htmlLayout(`${p.code} is your Ready Set Mail code`, body, { color: DEFAULT_BRAND_COLOR }, p.footer || 'Ready Set Mail');
 }
 
+// ── Hand setup to a teammate ──────────────────────────────────
+
+export interface HandoffEmailHtmlParams {
+  /** The one fixed paragraph, with the names filled in. */
+  paragraph: string;
+  /** "The link works for 7 days." */
+  validity: string;
+  url: string;
+  footer: string;
+}
+
+/** The hand-off invitation: the same wordmark layout as the code email, one fixed paragraph and one button. No free text. */
+export function buildHandoffEmailHtml(p: HandoffEmailHtmlParams): string {
+  const body = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${esc(p.paragraph)}</p>
+    <p style="margin:0 0 16px;"><a href="${esc(p.url)}" style="display:inline-block;padding:12px 20px;border-radius:4px;background:${DEFAULT_BRAND_COLOR};color:#fff;font-size:16px;font-weight:600;text-decoration:none;">Open Ready Set Mail</a></p>
+    <p style="margin:0;font-size:14px;line-height:1.5;color:${c['ink-2']};">${esc(p.validity)}</p>`;
+  return htmlLayout('Finish setting up email', body, { color: DEFAULT_BRAND_COLOR }, p.footer || 'Ready Set Mail');
+}
+
 // ── Weekly digest ─────────────────────────────────────────────
 
 function domainSection(

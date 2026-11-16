@@ -15,6 +15,7 @@ import { useCheckSummary } from './lib/domain-queries';
 import { useDomains } from './lib/queries';
 import { AuthPage } from './pages/auth/AuthPage';
 import { ReviewPage } from './pages/setup/ReviewPage';
+import { HandOffPage } from './pages/setup/HandOffPage';
 import { OwnerSetupPage } from './pages/setup/OwnerSetupPage';
 import { ForgotPage } from './pages/auth/ForgotPage';
 import { InvitePage } from './pages/auth/InvitePage';
@@ -193,6 +194,7 @@ function AppRoutes() {
 				<Route path="setup" element={<Wizard><SetupWizardPage /></Wizard>} />
 				<Route path="setup/cloudflare" element={<Wizard><CloudflareWizardPage /></Wizard>} />
 				<Route path="setup/review" element={<Wizard><ReviewPage /></Wizard>} />
+				<Route path="setup/hand-off" element={<Wizard><HandOffPage /></Wizard>} />
 				<Route path="cloudflare/connect" element={<Wizard><ConnectCloudflarePage /></Wizard>} />
 				<Route path="onboarding" element={<Navigate to="/setup" replace />} />
 				<Route path="domains/:id/setup" element={<WizardFor render={() => <SetupWizardPage />} />} />

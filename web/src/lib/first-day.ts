@@ -5,6 +5,7 @@
  */
 import { hasReportAddress } from './dmarc-record';
 import type { Domain, DomainCheckSummary } from './types';
+import type { DomainVerdict, ReportTotals } from './verdict';
 
 /** Days after which "no reports yet" stops being normal and says what to check. */
 export const QUIET_AFTER_DAYS = 3;
@@ -57,4 +58,47 @@ export function firstDay(i: FirstDayInput): FirstDay | null {
 	const now = i.now ?? Math.floor(Date.now() / 1000);
 	if (now - d.created_at >= QUIET_AFTER_DAYS * 86400) return { kind: 'quiet', domain: d.domain, domainId: d.id, readAt: s.dns_checked_at };
 	return { kind: 'live', domain: d.domain, readAt: s.dns_checked_at };
+}
+
+
+/** A domain's first day, for what the overview says about it: 72 hours from when it was added. */
+export const DAY_ONE_SECONDS = 72 * 3600;
+
+const joinList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+
+/**
+ * "No red on day one" (owner's rule): until a domain's first report arrives, and for its first 72 hours, the overview row says it is
+ * waiting for reports. What is missing is "to fix after reports", in the neutral state, never "Needs attention" or red.
+ * Only the overview row and its sentence change; the domain page's own "Do this next" is computed elsewhere and untouched.
+ *
+ * Real failures keep their words: a name that does not resolve, DNS checks that fail, a proof that lapsed, a domain whose facts could not
+ * be read. Anything already neutral (Unknown, gathering, verified) stays as it is.
+ */
+export function dayOneVerdict(
+	v: DomainVerdict,
+	domain: Pick<Domain, 'created_at' | 'verified_via' | 'proof_lost_at'>,
+	s: DomainCheckSummary | null | undefined,
+	totals: ReportTotals | null | undefined,
+	now = Math.floor(Date.now() / 1000),
+): DomainVerdict {
+	if (!s || !totals || totals.total > 0) return v;
+	if (v.status !== 'attention' && v.status !== 'improve' && v.status !== 'approval') return v;
+	if (now - domain.created_at >= DAY_ONE_SECONDS || unprovenRow(domain)) return v;
+	if (s.dns_check_status === 'failed' || s.dns_check_status === 'nxdomain' || s.dns_last_good_status === 'nxdomain' || s.dmarc_issue) return v;
+	const missing = [!s.spf_record ? 'SPF' : null, !s.dmarc_policy ? 'DMARC' : null].filter((x): x is string => !!x);
+	return {
+		...v,
+		status: 'gathering',
+		sentence: missing.length > 0 ? `Waiting for reports. To fix after reports: ${joinList(missing.map((m) => `${m} is not published`))}.` : 'Waiting for reports. They usually arrive within a day or two.',
+		evidence: null,
+		next: { label: 'Nothing to do yet', who: 'Nobody' },
+	};
+}
+
+const unprovenRow = (d: Pick<Domain, 'verified_via' | 'proof_lost_at'>) => d.verified_via === 'legacy' || !!d.proof_lost_at;
+
+/** The workspace sentence while every domain is on its first day: no "Not yet" and nothing to fix yet. Null when any domain is not. */
+export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict | null; dayOne: boolean }>): string | null {
+	if (rows.length === 0 || rows.some((r) => !r.verdict || !r.dayOne)) return null;
+	return rows.length === 1 ? `Waiting for the first reports on ${rows[0]!.name}. They usually arrive within a day or two.` : `Waiting for the first reports on ${rows.length} new domains. They usually arrive within a day or two.`;
 }

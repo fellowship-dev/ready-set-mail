@@ -374,6 +374,23 @@ report totals, the domain's age): waiting for proof; waiting for the report addr
 reports, the server's reason, DNS still checked daily); the first reports (once, then the normal overview). "Test a real email" opens the Email check where
 it can work. What blocks progress (a domain waiting for proof, a Cloudflare connection that stopped, a domain that needs action) still comes first.
 
+#### Hand setup to a teammate
+
+An owner (only an owner can invite an admin) can hand a domain's setup to a teammate from S4 or C2: `#/setup/hand-off?domain=…` asks for "Their work email" and calls
+the ordinary `POST /api/team/invite` with `role: "admin"` and `handoff_domain`. Nothing new in the schema: the invite is the existing one (7 days, the same member
+check, claim and accept paths); what it carries beyond that is one `verifications` row `invite-handoff:<invite token>` (workspace, the domain's name, who asked, where it
+was sent; kept 30 days so the inviter's dashboard can say where it stands). The domain must be this workspace's own (a domain or a claim waiting for proof), at most
+5 hand-offs wait at once and 10 are sent a day per workspace, the invite is revoked and nothing is kept when the email is refused (the answer is then 503, never "sent"),
+and it is hosted only. The invitation is fixed wording with the inviter's cleaned name and address, the workspace and domain: subject "<name> asked you to finish setting up
+email for <domain>", HTML and text in the code email's wordmark layout, one button, Reply-To `MAIL_REPLY_TO` when set.
+
+The invitee (I1): `GET /api/invites/:token` adds `handoff: { domain, inviter_name }` (and `inviter_name` for every invite); the page says "<name> asked you to finish setting up
+email authentication for <domain>. You'll join as an admin." (an ordinary invite: "<name> invited you as an Admin."), a password, the emailed code, then
+`#/setup?domain=<domain>`: S4 for that domain, no profile questions. `POST /api/auth/code` (and the one-click accept for someone who already has a login) answers
+`handoff_domain` for it. The inviter's dashboard (H2): `GET /api/team/handoffs` (owner, admin) lists them with when the teammate joined; the card "<email> is finishing setup"
+replaces the first-day card until the records are live, with "Resend invitation" (`POST /api/team/handoffs/:id/resend`, owner only; the old link stops working) until they
+join and "Finish it myself". No email is sent to the inviter when the records go live (that is a slice-2 email), so the card does not say one will be.
+
 **Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
 button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to
 `https://readysetmail.com` in hosted mode). The acceptance is stored on the account when the code proves the address

@@ -10,11 +10,13 @@ import { ProofLostList, isUnproven } from '../../components/domain/ProofLost';
 import { WaitingClaims } from '../../components/domain/WaitingClaims';
 import { DomainRow } from '../../components/domain/DomainRow';
 import { FirstDayCard, firstReportSeen } from '../../components/FirstDay';
+import { HandoffCard } from '../../components/HandoffCard';
+import { useHandoffs } from '../../lib/handoff';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
-import { firstDay } from '../../lib/first-day';
+import { dayOneAnswer, dayOneVerdict, firstDay } from '../../lib/first-day';
 import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains } from '../../lib/queries';
@@ -87,7 +89,7 @@ function AddDomainButton() {
 
 export function OverviewPage() {
 	const qc = useQueryClient();
-	const { canWrite, me, status } = useSession();
+	const { canWrite, me, status, role } = useSession();
 	const removed = (useLocation().state as RemovedState | null)?.removed;
 	const imported = (useLocation().state as { imported?: ImportedNote } | null)?.imported;
 	const list = useDomains();
@@ -136,17 +138,20 @@ export function OverviewPage() {
 		// Per domain, as the server decides it (report_connect in the same batch): the domain page reads the same row.
 		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(s) });
 	});
+	// Day one: until the first report, a new domain is "waiting for reports", not red (dayOneVerdict). The domain page keeps its own rules.
+	const shownVerdicts = verdicts.map((v, i) => (v ? dayOneVerdict(v, domains[i]!, summaryOf(domains[i]!), totals[i]) : v));
+	const dayOneRows = shownVerdicts.map((v, i) => !!v && v !== verdicts[i]);
 	const retry = batch.isError ? () => void batch.refetch() : undefined;
-	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: verdicts[i] ?? null, retry }]));
+	const byId = new Map(domains.map((d, i) => [d.id, { domain: d, verdict: shownVerdicts[i] ?? null, retry }]));
 
 	// Most urgent first, a subdomain right under its parent. Until every row is known the order stays as listed,
 	// so rows do not jump while they load.
-	const settled = verdicts.every(Boolean);
+	const settled = shownVerdicts.every(Boolean);
 	const rank = (d: Domain) => statusRank(byId.get(d.id)?.verdict?.status ?? 'unknown');
 	// Every domain has a row at any depth (a sub-subdomain under its nearest listed ancestor).
 	const ordered = domainRows(domains, settled ? rank : () => 0);
 
-	const answer = workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: verdicts[i] ?? null })), waiting);
+	const answer = (waiting === 0 ? dayOneAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null, dayOne: dayOneRows[i] ?? false }))) : null) ?? workspaceAnswer(domains.map((d, i) => ({ name: d.domain, verdict: shownVerdicts[i] ?? null })), waiting);
 	async function exportPdf() {
 		setExporting(true);
 		try {
@@ -180,13 +185,18 @@ export function OverviewPage() {
 	const empty = domains.length === 0 && claims.length === 0;
 	// One rule for the order: whatever blocks progress or needs the person comes before "Get to your first answer": a Cloudflare connection that
 	// stopped, a domain waiting for proof (above), and a domain whose status says someone must act.
-	const needsAttention = verdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
+	const needsAttention = shownVerdicts.some((v) => v?.status === 'attention' || v?.status === 'approval');
 	// The first day (D1): the domain the first run was about, from what the server knows. Where the old stepper stood, with the same rule for order.
 	const focus = focusDomainOf(domains, me?.workspace_id ?? null);
 	const dayState = canWrite
 		? firstDay({ domain: focus, claims, summary: focus ? summaryOf(focus) : undefined, arrivedSeen: firstReportSeen(me?.workspace_id ?? null), applied: reviewOutcome(me?.workspace_id ?? null) === 'applied' })
 		: null;
-	const stepper = dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
+	// H2: while a teammate finishes this domain (until its records are live), their progress replaces the first-day card.
+	const handoffs = useHandoffs(canWrite && hostedMode);
+	const focusName = focus?.domain ?? claims.find((c) => c.status === 'pending')?.domain;
+	const handoff = focusName ? (handoffs.data ?? []).filter((h) => h.domain === focusName).sort((a, b) => b.sent_at - a.sent_at)[0] : undefined;
+	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
+	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
 		<div className="space-y-6">

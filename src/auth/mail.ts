@@ -16,7 +16,8 @@ import { forWorkspace, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import type { AuthEnv } from './config';
 import { CODE_MINUTES, type CodePurpose } from './codes';
 import { mailFooter } from './legal';
-import { buildCodeEmailHtml } from '../email/html-templates';
+import { buildCodeEmailHtml, buildHandoffEmailHtml } from '../email/html-templates';
+import { cleanName } from './names';
 
 /** The platform's sender: the implicit workspace's from_email (set by the setup wizard), else derived from its base domain. */
 export async function senderAddress(env: AuthEnv): Promise<string | undefined> {
@@ -106,6 +107,24 @@ export function codeEmailHtml(env: AuthEnv, code: string, purpose: CodePurpose, 
 export async function sendCodeEmail(env: AuthEnv, to: string, code: string, purpose: CodePurpose, origin: string, from: string | null): Promise<boolean> {
   const replyTo = codeReplyTo(env);
   return send(env, 'code', to, codeSubject(code), codeEmailText(code, purpose, origin, from, replyTo), { html: codeEmailHtml(env, code, purpose, origin, from, replyTo), ...(replyTo ? { replyTo } : {}) });
+}
+
+/** The hand-off invitation's fixed words (spec H1). Names are cleaned; nothing else the inviter typed can reach it. */
+export function handoffEmail(p: { inviterName: string; inviterEmail: string; workspaceName: string; domain: string; url: string }, footer = ''): { subject: string; text: string; html: string } {
+  const who = cleanName(p.inviterName, 80) || p.inviterEmail;
+  const workspace = cleanName(p.workspaceName, 80) || 'a workspace';
+  const paragraph = `${who} (${p.inviterEmail}) invited you to ${workspace} on Ready Set Mail as an admin, to finish setting up SPF, DKIM and DMARC for ${p.domain}.`;
+  const validity = 'The link works for 7 days.';
+  return {
+    subject: `${who} asked you to finish setting up email for ${p.domain}`,
+    text: `${paragraph}\n\n${p.url}\n\n${validity}`,
+    html: buildHandoffEmailHtml({ paragraph, validity, url: p.url, footer }),
+  };
+}
+
+export async function sendHandoffEmail(env: AuthEnv, to: string, p: Parameters<typeof handoffEmail>[0]): Promise<boolean> {
+  const m = handoffEmail(p, mailFooter(env));
+  return send(env, 'hand-off', to, m.subject, m.text, { html: m.html, ...(codeReplyTo(env) ? { replyTo: codeReplyTo(env)! } : {}) });
 }
 
 export const SIGNUP_NOTICE_SUBJECT = 'Someone tried to create a Ready Set Mail account with your email';

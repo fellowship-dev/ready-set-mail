@@ -75,8 +75,8 @@ describe('S4 variants', () => {
 		expect(screen.queryByText(/Hand setup to a teammate/)).toBeNull();
 	});
 
-	it('the hand-off link is hidden behind one constant until item 9 exists', () => {
-		expect(HAND_OFF_ENABLED).toBe(false);
+	it('the hand-off link is on (H1, H2 and I1 exist), and not before a domain is entered', () => {
+		expect(HAND_OFF_ENABLED).toBe(true);
 	});
 
 	it('the button names the domain, lower-cased and trimmed', async () => {

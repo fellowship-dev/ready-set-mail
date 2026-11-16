@@ -35,6 +35,7 @@ import {
 import { mailReady, requestedFrom, sendCodeEmail, senderAddress, sendSigninAlert, sendSignupNotice } from './mail';
 import { legal, legalStatus } from './legal';
 import { helpUrl } from '../funnel/config';
+import { handoffOf } from '../team/handoff';
 import { emailCheckAvailable } from '../hosted/config';
 import { hostedServiceUrl } from '../hosted-service';
 
@@ -706,7 +707,7 @@ export async function handleAuthRoute(
       action: 'auth.email_verified', resource_type: 'user', resource_id: userId, resource_name: attempt.email,
       meta: { ip, password: 'chosen', code: 'email', ...(attempt.terms ? { terms: attempt.terms } : {}) },
     });
-    let joined: { workspace_id: string; workspace_name: string | null } | null = null;
+    let joined: { workspace_id: string; workspace_name: string | null; handoff_domain?: string } | null = null;
     if (attempt.purpose === 'invite' && attempt.invite) {
       // The code proved the invited address: the invite is accepted now, as the verified account.
       const invite = await authLookups(env.DB).inviteByToken(attempt.invite);
@@ -714,7 +715,8 @@ export async function handleAuthRoute(
         const team = forWorkspace(env.DB, invite.workspace_id).team;
         if (await team.claimInvite(invite.token)) {
           await team.addMember(userId, invite.role === 'admin' ? 'admin' : 'member');
-          joined = { workspace_id: invite.workspace_id, workspace_name: (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null };
+          const carried = await handoffOf(env, invite.token);
+          joined = { workspace_id: invite.workspace_id, workspace_name: (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null, ...(carried ? { handoff_domain: carried.domain } : {}) };
           auditUser(env, ctx, userId, {
             actor_id: userId, actor_email: attempt.email, actor_type: 'user',
             action: 'auth.invite_accepted', resource_type: 'user', resource_id: userId, resource_name: attempt.email,
@@ -864,11 +866,16 @@ export async function handleAuthRoute(
     const workspaceName = (await workspaceLifecycle(env.DB).get(invite.workspace_id))?.name ?? null;
     // Hosted: an account still waiting for its code is not an existing login; the invitee confirms the address here.
     const hasLogin = !!existingUser && (!isSaas(env) || !!existingUser.email_verified);
+    const handoff = await handoffOf(env, invite.token);
     if (method === 'GET') {
       // Lets the page offer "sign in to accept" instead of a password form. The token holder is the invitee.
       const me = hasLogin ? await currentUser(request, env, ctx).catch(() => null) : null;
       return json({
+        // A hand-off ("finish setting up this domain"): the page says so, in fixed words, and lands on that domain's first screen.
+        ...(handoff ? { handoff: { domain: handoff.domain, inviter_name: handoff.inviterName } } : {}),
         email: invite.email, invited_by: invite.invited_by, role: invite.role,
+        // Who asked, by name when they have one (the page says "<name> invited you as an Admin").
+        inviter_name: cleanName((await globalQueries(env.DB).users.byEmail(invite.invited_by.toLowerCase()))?.name ?? '') || null,
         workspace_id: invite.workspace_id, workspace_name: workspaceName,
         user_exists: hasLogin,
         signed_in_as: me?.email ?? null,
@@ -891,7 +898,7 @@ export async function handleAuthRoute(
         resource_type: 'user', resource_id: me.id, resource_name: me.email,
         after_value: { email: me.email, role: invite.role, invited_by: invite.invited_by, existing_user: true },
       }, invite.workspace_id);
-      return json({ ok: true, workspace_id: invite.workspace_id, workspace_name: workspaceName }, 200);
+      return json({ ok: true, workspace_id: invite.workspace_id, workspace_name: workspaceName, ...(handoff ? { handoff_domain: handoff.domain } : {}) }, 200);
     }
 
     if (await limited(env, request)) return err('Too many requests — try again later', 429);

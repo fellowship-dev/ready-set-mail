@@ -8,16 +8,14 @@ import { hostOf, isCloudflareHost, type DnsHost, type DnsHostProvider } from './
 import type { OnboardingStatus } from './types';
 
 /**
- * "Not the one setting this up? Hand setup to a teammate →" (spec H1). The link, and the screens behind it, are built in a
- * later step of this work (item 9). Until then it stays hidden: flip this, and nothing else, when H1, H2 and I1 exist.
+ * "Not the one setting this up? Hand setup to a teammate →" (spec H1). The link is only shown while H1, H2 and I1 all exist (they do);
+ * turn this off and it disappears from S4 and C2, nothing else changes. It is shown to owners only: only an owner can invite an admin.
  */
-export const HAND_OFF_ENABLED = false;
+export const HAND_OFF_ENABLED = true;
 
 /** Where the first-run screens are. The URL holds the step. */
 export const SETUP_PATH = '/setup';
 export const REVIEW_PATH = '/setup/review';
-/** Where H1 "Hand setup to a teammate" will live (item 9). Nothing links here while HAND_OFF_ENABLED is false. */
-export const HAND_OFF_PATH = '/setup/hand-off';
 
 // ── What public DNS says, in one line ───────────────────────────
 

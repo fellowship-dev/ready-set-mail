@@ -240,7 +240,7 @@ describe('invite', () => {
 			},
 		});
 		const user = userEvent.setup();
-		expect(await screen.findByText('boss@example.com')).toBeInTheDocument();
+		expect(await screen.findByText(/boss@example\.com invited you as a/)).toBeInTheDocument();
 		expect(screen.getByLabelText('Invited email')).toHaveTextContent('new@example.com');
 		await user.type(screen.getByLabelText('Your name'), 'New Person');
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');

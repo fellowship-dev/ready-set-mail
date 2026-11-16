@@ -12,8 +12,9 @@ import { DOMAIN_PATTERN } from '../wizards/setup/DomainStep';
 import { INVALID_DOMAIN_TEXT, domainErrorMessage } from '../../lib/domain-errors';
 import { normalizeDomainInput } from '../../lib/domain-input';
 import { useDnsHost } from '../../lib/dns-host';
-import { dnsFromPreview, dnsFromStatus, HAND_OFF_ENABLED, HAND_OFF_PATH, hostSentence, REVIEW_PATH, rememberFocusDomain, resultLine, setupChoice, type PublicDns } from '../../lib/first-run';
-import { keys, useDomainClaims } from '../../lib/queries';
+import { dnsFromPreview, dnsFromStatus, HAND_OFF_ENABLED, hostSentence, REVIEW_PATH, rememberFocusDomain, resultLine, setupChoice, type PublicDns } from '../../lib/first-run';
+import { keys, useDomainClaims, useDomains } from '../../lib/queries';
+import { handoffPath } from '../../lib/handoff';
 import { useSession } from '../../lib/session';
 import { clearSignupDomainIf, readSignupDomain } from '../../lib/signup-intent';
 import type { AddDomainResult, Domain, DomainClaim, OnboardingStatus, PendingDomainResult } from '../../lib/types';
@@ -30,8 +31,8 @@ type Entered = { name: string; claim: DomainClaim; domain?: undefined } | { name
  *
  * Self-host never shows this screen: its first run is the home-base setup (SetupWizardPage).
  */
-export function SetupDomain() {
-	const { me, canWrite } = useSession();
+export function SetupDomain({ focus }: { focus?: string } = {}) {
+	const { me, canWrite, role } = useSession();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const workspace = me?.workspace_id ?? null;
@@ -47,11 +48,20 @@ export function SetupDomain() {
 
 	// Back on a later visit: the claim made earlier is still here, with its result and choice.
 	const waiting = (claims.data ?? []).filter((c) => c.status === 'pending');
+	const domains = useDomains();
 	useEffect(() => {
-		if (entered || waiting.length === 0) return;
+		if (entered) return;
+		// Someone finishing a hand-off (or "Finish it myself"): the screen opens on that domain, added or still waiting for proof.
+		if (focus) {
+			const held = (domains.data ?? []).find((d) => d.domain === focus);
+			if (held) return setEntered({ name: held.domain, domain: held });
+			const claim = waiting.find((c) => c.domain === focus);
+			if (claim) return setEntered({ name: claim.domain, claim });
+		}
+		if (waiting.length === 0) return;
 		const first = waiting.find((c) => c.domain === checker) ?? waiting[0]!;
 		setEntered({ name: first.domain, claim: first });
-	}, [entered, waiting, checker]);
+	}, [entered, waiting, checker, focus, domains.data]);
 
 	const add = useMutation({
 		mutationFn: (domain: string) => api<AddDomainResult | PendingDomainResult>('/api/domains', { method: 'POST', body: { domain } }),
@@ -166,10 +176,10 @@ export function SetupDomain() {
 						</button>
 					</p>
 				) : null}
-				{HAND_OFF_ENABLED ? (
+				{HAND_OFF_ENABLED && entered && role === 'owner' ? (
 					<p>
 						Not the one setting this up?{' '}
-						<Link to={HAND_OFF_PATH} className="text-brand-ink underline underline-offset-4">
+						<Link to={handoffPath(entered.name)} className="text-brand-ink underline underline-offset-4">
 							Hand setup to a teammate →
 						</Link>
 					</p>

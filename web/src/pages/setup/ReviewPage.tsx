@@ -6,9 +6,10 @@ import { LoadError } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { clearProgress, useCfConnections } from '../../lib/cloudflare';
 import { applyStep, fetchPlan, firstCheck, markWizardState, pendingWrites, type DnsPlan, type PlanWrite } from '../../lib/dns-plan';
-import { HAND_OFF_ENABLED, HAND_OFF_PATH, focusDomainOf, markReviewDone } from '../../lib/first-run';
+import { HAND_OFF_ENABLED, focusDomainOf, markReviewDone } from '../../lib/first-run';
 import { invalidateDomain } from '../../lib/domain-queries';
 import { useDomainClaims, useDomains } from '../../lib/queries';
+import { handoffPath } from '../../lib/handoff';
 import { useSession } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 
@@ -70,7 +71,7 @@ function Change({ w }: { w: PlanWrite }) {
  * Nothing is written until Apply. A visit with nothing to change says so and leaves.
  */
 export function ReviewPage() {
-	const { me, canWrite } = useSession();
+	const { me, canWrite, role } = useSession();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const workspace = me?.workspace_id ?? null;
@@ -242,10 +243,10 @@ export function ReviewPage() {
 								Also in {accountName ?? 'your Cloudflare account'}: {more} more {plural(more, 'domain', 'domains')}, added and watched. Nothing was written to {plural(more, 'it', 'them')}.
 							</p>
 						) : null}
-						{HAND_OFF_ENABLED ? (
+						{HAND_OFF_ENABLED && role === 'owner' ? (
 							<p>
 								Not the one setting this up?{' '}
-								<Link to={HAND_OFF_PATH} className="text-brand-ink underline underline-offset-4">
+								<Link to={handoffPath(domain.domain)} className="text-brand-ink underline underline-offset-4">
 									Hand setup to a teammate →
 								</Link>
 							</p>

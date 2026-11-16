@@ -75,7 +75,7 @@ describe('C2: what will be written', () => {
 		expect(screen.getByText('Also in Brightwave Studio: 4 more domains, added and watched. Nothing was written to them.')).toBeInTheDocument();
 		// nothing here is for pasting
 		expect(screen.queryByRole('button', { name: /copy/i })).toBeNull();
-		expect(screen.queryByText(/Hand setup to a teammate/)).toBeNull();
+		expect(screen.getByRole('link', { name: 'Hand setup to a teammate →' })).toHaveAttribute('href', '/setup/hand-off?domain=brightwave-mail.com'); // owner, hosted
 	});
 
 	it('a new record says it is new, starts the policy where the server starts it, and counts as one change', async () => {
