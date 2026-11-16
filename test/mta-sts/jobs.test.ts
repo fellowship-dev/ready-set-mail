@@ -93,11 +93,12 @@ describe('refreshMtaStsHosted', () => {
     const w = await mtaWorld();
     await active(w);
     await w.mta(w.A.token, 'POST', 2);
-    w.db.sqlite.prepare('UPDATE mta_sts_config SET last_checked_at = ? WHERE domain_id = 1').run(now() - 100);
-    w.db.sqlite.prepare('UPDATE mta_sts_config SET last_checked_at = ? WHERE domain_id = 2').run(now() - 5000);
+    const t = now(); // once: a second boundary between two reads is not the job's doing
+    w.db.sqlite.prepare('UPDATE mta_sts_config SET last_checked_at = ? WHERE domain_id = 1').run(t - 100);
+    w.db.sqlite.prepare('UPDATE mta_sts_config SET last_checked_at = ? WHERE domain_id = 2').run(t - 5000);
     expect(await refreshMtaStsHosted(w.env, undefined, 1)).toMatchObject({ visited: 1 });
-    expect(w.row(2).last_checked_at).toBeGreaterThan(now() - 100);
-    expect(w.row(1).last_checked_at).toBe(now() - 100);
+    expect(w.row(2).last_checked_at).toBeGreaterThan(t - 100);
+    expect(w.row(1).last_checked_at).toBe(t - 100);
     // never-checked rows come first of all
     w.db.sqlite.prepare('UPDATE mta_sts_config SET last_checked_at = NULL WHERE domain_id = 1').run();
     await refreshMtaStsHosted(w.env, undefined, 1);
