@@ -22,7 +22,7 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	const preview = usePaidPreview(domains, { enabled: owner });
 	const [problem, setProblem] = useState<string | null>(null);
 	const [declined, setDeclined] = useState(false);
-	const [waiting, setWaiting] = useState<{ action_url: string | null; added: string[] } | null>(null);
+	const [waiting, setWaiting] = useState<{ action_url: string | null; added: string[]; charged: number | null } | null>(null);
 	const sending = useRef(false);
 	const opened = useRef(false);
 	const p = preview.data ?? null;
@@ -38,7 +38,7 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 			void qc.invalidateQueries({ queryKey: billingKeys.all });
 			void qc.invalidateQueries({ queryKey: keys.domains });
 			if (r.payment) {
-				setWaiting({ action_url: r.payment.action_url, added: r.added.map((a) => a.domain) });
+				setWaiting({ action_url: r.payment.action_url, added: r.added.map((a) => a.domain), charged: p && p.plan_starts ? p.charge_now : null });
 				if (r.payment.action_url && !opened.current) { opened.current = true; window.open(r.payment.action_url, '_blank', 'noopener,noreferrer'); }
 				return;
 			}
@@ -69,7 +69,7 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	// The confirm waits for the bank: it is done when the server says the plan has started (the page polls the plan).
 	useEffect(() => {
 		// Done when the plan has STARTED (Stripe says paid), not merely when no payment is pending: the cached plan is the one from before the click.
-		if (waiting && plan && plan.name === 'payg' && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null }, p && p.plan_starts ? p.charge_now : null);
+		if (waiting && plan && plan.name === 'payg' && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null }, waiting.charged);
 	}, [waiting, plan?.pending]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	useEffect(() => { if (p && !p.needs_confirm && p.reason === 'free') onFree?.(); }, [p?.reason]); // eslint-disable-line react-hooks/exhaustive-deps

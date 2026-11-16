@@ -96,10 +96,10 @@ test('a second domain: confirm, add a card, back to the same confirm, one click;
 		await addCardOnStripe(page);
 
 		// Back on the SAME confirm, now with the card and Stripe's own first invoice; one click.
-		await expect(page.getByText(/^\$5 now to Visa ···4242, then \$5 a month from [A-Z][a-z]{2} \d{1,2}\.$/)).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText(/^\$5 now, then \$5 a month from [A-Z][a-z]{2} \d{1,2}\. Card Visa ···4242\.$/)).toBeVisible({ timeout: 30_000 });
 		expect(stripe.fake.state.subscriptions.size).toBe(0); // looking charged nothing and made nothing
-		await page.getByRole('button', { name: 'Add for $5 a month' }).dblclick();
-		await expect(page.getByText('Added. $5 a month from today.')).toBeVisible({ timeout: 60_000 });
+		await page.getByRole('button', { name: 'Pay $5 and add' }).dblclick();
+		await expect(page.getByText('Added. $5 paid now, then $5 a month.')).toBeVisible({ timeout: 60_000 });
 		await expect(page).toHaveURL(new RegExp(`#/w/${ws}$`)); // the domain list, no detour
 		expect(quantities(stripe)).toEqual([1]);
 		expect([...stripe.fake.state.invoices.values()].filter((i) => i.billing_reason === 'subscription_create' && i.amount_paid === 500)).toHaveLength(1);
@@ -182,8 +182,8 @@ test('a renewal that fails: the plan says so, adding is paused, the card is the 
 		await page.getByRole('button', { name: 'Add', exact: true }).click();
 		await page.getByRole('button', { name: 'Add a card to continue' }).click();
 		await addCardOnStripe(page);
-		await page.getByRole('button', { name: 'Add for $5 a month' }).click();
-		await expect(page.getByText('Added. $5 a month from today.')).toBeVisible({ timeout: 60_000 });
+		await page.getByRole('button', { name: 'Pay $5 and add' }).click();
+		await expect(page.getByText('Added. $5 paid now, then $5 a month.')).toBeVisible({ timeout: 60_000 });
 		const sub = [...stripe.fake.state.subscriptions.values()][0]!;
 		stripe.fake.setCardBehavior(sub.customer, 'decline');
 		stripe.fake.advancePeriod(sub.id);
@@ -214,14 +214,18 @@ test('a card that needs the bank at the first payment: the domain is pending unt
 		await expect(page.getByText('Save a card (session')).toBeVisible({ timeout: 30_000 });
 		await page.getByRole('link', { name: 'Card that needs authentication' }).click();
 		const popup = context.waitForEvent('page', { timeout: 30_000 }).catch(() => null);
-		await page.getByRole('button', { name: 'Add for $5 a month' }).click({ timeout: 30_000 });
-		await expect(page.getByText("Waiting for your bank's confirmation").first()).toBeVisible({ timeout: 60_000 });
+		await page.getByRole('button', { name: 'Pay $5 and add' }).click({ timeout: 30_000 });
+		await expect(page.getByText("Waiting for your bank's confirmation")).toBeVisible({ timeout: 60_000 });
 		await popup;
 		expect(inst.d1("SELECT COUNT(*) AS n FROM domains WHERE payment_pending_at IS NOT NULL")).toEqual([{ n: 1 }]);
 		expect(inst.d1('SELECT status FROM workspace_subscriptions')).toEqual([{ status: 'incomplete' }]);
 		const invoice = [...stripe.fake.state.invoices.values()][0]!;
+		// ONE alert for the wait, with the way back to the bank's page and the way out
+		await expect(page.getByText("Waiting for your bank's confirmation")).toHaveCount(1);
+		await expect(page.getByRole('link', { name: /Try again/ })).toHaveCount(1);
+		await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
 		stripe.fake.completeInvoiceAction(invoice.id, 'succeed');
-		await expect(page.getByText('Added. $5 a month from today.')).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText('Added. $5 paid now, then $5 a month.')).toBeVisible({ timeout: 60_000 });
 		await expect.poll(() => inst.d1("SELECT COUNT(*) AS n FROM domains WHERE payment_pending_at IS NOT NULL")[0]!.n, { timeout: 30_000 }).toBe(0);
 		expect(inst.d1('SELECT status FROM workspace_subscriptions')).toEqual([{ status: 'active' }]);
 		void ws;
