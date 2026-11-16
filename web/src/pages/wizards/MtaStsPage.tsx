@@ -18,7 +18,7 @@ import { MX_READING, RECORD_READING, maxAgeWords, mtaStsExplainer, stateSentence
 import { useDomain } from '../../lib/queries';
 import type { MtaStsDisableResult, MtaStsStatus, MtaStsVerifyResult } from '../../lib/types';
 
-const SETUP_STATES = ['creating', 'waiting_records', 'waiting_certificate', 'waiting_txt'];
+const SETUP_STATES = ['creating', 'waiting_records', 'waiting_certificate', 'waiting_policy', 'waiting_txt'];
 /** While a setup waits for DNS or a certificate the page looks again by itself, for this long. */
 const AUTO_CHECK_MS = 30_000;
 const AUTO_CHECK_FOR_MS = 30 * 60_000;

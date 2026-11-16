@@ -160,7 +160,7 @@ export interface SpfFlatStatus {
 
 /** GET /api/domains/:id/mta-sts (docs/mta-sts.md). */
 export type MtaStsUnavailable = 'hosted_records' | 'unproven' | 'not_configured' | 'not_allowed' | 'ceiling' | 'zone_subdomain' | 'needs_cloudflare' | 'reports_domain_missing';
-export type MtaStsState = 'creating' | 'waiting_records' | 'waiting_certificate' | 'waiting_txt' | 'active';
+export type MtaStsState = 'creating' | 'waiting_records' | 'waiting_certificate' | 'waiting_policy' | 'waiting_txt' | 'active';
 export type MtaStsVia = 'cloudflare' | 'manual';
 
 export interface MtaStsRecord {
@@ -211,7 +211,15 @@ export interface MtaStsReport {
   sts_successful_sessions: number | null;
   sts_failed_sessions: number | null;
   failure_types: string[];
+  /** Only a counted report (authenticated, from a known reporter) is evidence for enforce; `reporter` of an uncounted one is its authenticated organisation or "unverified sender". */
+  counted?: boolean;
 }
+
+/** The last fetch of the policy URL: the only source of "served". `ok` is null until it was fetched once; `reason` and `message` are set when it failed. */
+export interface MtaStsServed { ok: boolean | null; checked_at: number | null; reason: string | null; message: string | null; action: 'check_now' | 'fix_record' | null; url: string }
+
+/** A policy being taken down the RFC 8461 section 8.3 way (a lost proof, a removed or an evicted domain). */
+export interface MtaStsRetiring { retiring: true; reason: 'lost_proof' | 'removed' | 'evicted'; enforced: boolean; until: number; message: string }
 
 export interface MtaStsStatus {
   available: boolean;
@@ -227,18 +235,24 @@ export interface MtaStsStatus {
   summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null;
   reports: MtaStsReport[];
   enforce: { ready: boolean; allowed: boolean; reasons: string[] } | null;
+  /** The evidence rule in one sentence, the sentence about domains without reports, and how many reports in the last 30 days are evidence or not; `verifiable` false: this server cannot tell who sent a report. */
+  evidence?: { rule: string; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null;
   disable: { allowed: boolean; after: number | null; reason: string | null } | null;
   max_age: number;
+  served?: MtaStsServed | null;
+  /** The one notice of a setup that was stopped after 7 days. */
+  setup_expired?: { notice: string; at: number | null } | null;
+  retiring?: MtaStsRetiring | null;
 }
 
 export type MtaStsCheckState = 'ok' | 'pending' | 'missing' | 'wrong' | 'error' | 'not_applicable';
 export interface MtaStsCheck {
-  key: 'policy_host' | 'certificate' | 'tls_rpt' | 'policy_id';
+  key: 'policy_host' | 'certificate' | 'policy_fetch' | 'tls_rpt' | 'policy_id';
   label: string;
   state: MtaStsCheckState;
   detail: string | null;
 }
-export interface MtaStsVerifyResult { ok: boolean; state: MtaStsState; checks: MtaStsCheck[]; notice: string | null; last_error: string | null }
+export interface MtaStsVerifyResult { ok: boolean; state: MtaStsState; checks: MtaStsCheck[]; served: MtaStsServed; notice: string | null; last_error: string | null }
 export interface MtaStsDisableResult { ok: boolean; kept: Array<{ type: string; name: string; reason: string }>; operator: 'none' | 'removed' | 'pending'; message: string }
 
 export interface AuditLogEntry {

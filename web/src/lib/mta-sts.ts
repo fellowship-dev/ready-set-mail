@@ -47,6 +47,7 @@ export function stateSentence(state: MtaStsState, mode: 'testing' | 'enforce'): 
 		case 'creating': return 'Setting up the policy server and the records.';
 		case 'waiting_records': return 'Waiting for the DNS records you add at your DNS host.';
 		case 'waiting_certificate': return 'Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.';
+		case 'waiting_policy': return 'Waiting for the policy file to be reachable. Check now looks again.';
 		case 'waiting_txt': return 'Waiting for the last record, the one that tells senders a policy exists.';
 		case 'active': return mode === 'enforce'
 			? 'Enforcing: senders must use an encrypted connection, or they do not deliver.'
