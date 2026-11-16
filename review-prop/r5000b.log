@@ -1,0 +1,170 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:2:69). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.6 [39m[90m/workspace/ready-set-mail/review-prop[39m
+
+[90mstdout[2m | prop.test.ts[2m > [22m[2mPR 189 flattening property test (reviewer)[2m > [22m[2mflattened record evaluates like the original for random senders
+[22m[39m{
+ "stats": {
+  "cases": 20000,
+  "ok": 17947,
+  "refused": 2053,
+  "evals": 2635548,
+  "wider": 469,
+  "narrower": 231,
+  "other": 58,
+  "overLimit": 0,
+  "overBytes": 0,
+  "overVoid": 96454,
+  "origErr": 0
+ },
+ "refusedKinds": {
+  "too_large": 2013,
+  "no_addresses": 28,
+  "include_unresolved": 12
+ },
+ "firstFailures": [
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "other",
+   "ip": "10.0.3.162",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "other",
+   "ip": "10.0.0.65",
+   "orig": "fail",
+   "flat": "neutral",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "narrower",
+   "ip": "10.0.2.214",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "narrower",
+   "ip": "10.0.2.82",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most-unbounded",
+   "kind": "other",
+   "ip": "10.0.1.108",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  }
+ ]
+}
+
+ [31m❯[39m prop.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 49649[2mms[22m[39m
+[31m     [31m×[31m flattened record evaluates like the original for random senders[39m[33m 49648[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m prop.test.ts[2m > [22mPR 189 flattening property test (reviewer)[2m > [22mflattened record evaluates like the original for random senders
+[31m[1mAssertionError[22m: expected 400 to be +0 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 400[39m
+
+[36m [2m❯[22m prop.test.ts:[2m283:29[22m[39m
+    [90m281|[39m     writeFileSync(process.env.PROP_OUT ?? 'prop-result.json', JSON.str…
+    [90m282|[39m     console.log(JSON.stringify({ stats, refusedKinds, firstFailures: f…
+    [90m283|[39m     [34mexpect[39m(failures[33m.[39mlength)[33m.[39m[34mtoBe[39m([34m0[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m284|[39m   }[33m,[39m [34m1_800_000[39m)[33m;[39m
+    [90m285|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m   Start at [22m 18:49:52
+[2m   Duration [22m 49.86s[2m (transform 73ms, setup 0ms, import 92ms, tests 49.65s, environment 0ms)[22m
+

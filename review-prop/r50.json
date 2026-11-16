@@ -1,0 +1,306 @@
+{
+ "stats": {
+  "cases": 200,
+  "ok": 185,
+  "refused": 15,
+  "evals": 26936,
+  "wider": 0,
+  "narrower": 6,
+  "other": 7,
+  "overLimit": 0,
+  "overBytes": 0,
+  "overVoid": 0,
+  "origErr": 0
+ },
+ "refusedKinds": {
+  "too_large": 15
+ },
+ "failures": [
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "other",
+   "ip": "10.0.3.162",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "other",
+   "ip": "10.0.0.65",
+   "orig": "fail",
+   "flat": "neutral",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "narrower",
+   "ip": "10.0.2.214",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "default",
+   "kind": "narrower",
+   "ip": "10.0.2.82",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most-unbounded",
+   "kind": "other",
+   "ip": "10.0.1.108",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most-unbounded",
+   "kind": "other",
+   "ip": "10.0.3.116",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most-unbounded",
+   "kind": "other",
+   "ip": "10.0.0.187",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most-unbounded",
+   "kind": "narrower",
+   "ip": "10.0.2.82",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most",
+   "kind": "narrower",
+   "ip": "10.0.2.159",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most",
+   "kind": "other",
+   "ip": "10.0.1.185",
+   "orig": "fail",
+   "flat": "neutral",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "most",
+   "kind": "narrower",
+   "ip": "10.0.2.82",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "tight",
+   "kind": "other",
+   "ip": "10.0.3.116",
+   "orig": "neutral",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  },
+  {
+   "seed": 48,
+   "mode": "tight",
+   "kind": "narrower",
+   "ip": "10.0.2.82",
+   "orig": "pass",
+   "flat": "fail",
+   "root": "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test",
+   "flatRecord": "v=spf1 ~ip4:10.0.0.7 -mx:p0.prov.test -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all",
+   "tree": {
+    "p0.prov.test": [
+     "v=spf1 -mx -exists:%{i}._e.%{d} ip4:10.0.2.143/24 ?all"
+    ],
+    "p1.prov.test": [
+     "v=spf1 ?ip4:10.0.3.189 ip6:2001:db8:69::/48 ip4:10.0.1.74 +all",
+     "google-site-verification=xyz"
+    ],
+    "customer.test": [
+     "v=spf1 ~ip4:10.0.0.7 redirect=p0.prov.test"
+    ]
+   }
+  }
+ ]
+}
