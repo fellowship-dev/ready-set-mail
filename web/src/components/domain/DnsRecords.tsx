@@ -224,7 +224,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			<CheckResult status={status} title="SPF record" summary={note ?? 'Published.'}>
 				<div className="space-y-2">
 					<RecordBlock record={{ type: 'TXT', name: domain.domain, value: spf.record }} />
-					{spf.flattening_active ? <p className="text-ink-2">SPF flattening is active for this domain.</p> : null}
+					{spf.flattening_active ? <p className="text-ink-2">SPF flattening is on for this domain.</p> : null}
 				</div>
 			</CheckResult>
 		);

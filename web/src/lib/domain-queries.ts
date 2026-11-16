@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { api } from './api';
+import { api, ApiError } from './api';
 import type { DomainCheckSummary, DomainClaim, DomainStats, FailingSource, MtaStsStatus, OnboardingStatus, SpfFlatStatus, WizardState } from './types';
 
 /** GET /api/domains/:id/dns-check. `error` is set when the lookup itself failed: that is not "no record". */
@@ -121,7 +121,17 @@ export const useDnsCheck = (id: number) => useQuery({ queryKey: domainKeys.dnsCh
 export const useOnboardingStatus = (id: number) =>
 	useQuery({ queryKey: domainKeys.onboarding(id), queryFn: () => api<OnboardingResult>(`/api/domains/${id}/onboarding-status`) });
 export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`) });
-export const useSpfFlatten = (id: number) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`) });
+/** `enabled` false: the add-on is not available here, so nothing is asked. A 404 is "no tool for this domain" (the add-on went away and nothing is on), not an error to show. */
+export const useSpfFlatten = (id: number, enabled = true) =>
+	useQuery({
+		queryKey: domainKeys.spf(id),
+		queryFn: () =>
+			api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`).catch((e: unknown): SpfFlatStatus => {
+				if (e instanceof ApiError && e.status === 404) return { available: false, config: null, lookup_count: null };
+				throw e;
+			}),
+		enabled,
+	});
 export const useMtaSts = (id: number) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`) });
 export const useMonitorSubs = (id: number) =>
 	useQuery({ queryKey: domainKeys.monitorSubs(id), queryFn: () => api<{ subs: MonitorSub[] }>(`/api/domains/${id}/monitor-subs`).then((r) => r.subs) });

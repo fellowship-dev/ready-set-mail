@@ -64,7 +64,7 @@ export function SpfStep(props: StepProps) {
 			<StepCard title="SPF record" badge={<SeverityBadge severity="info" />}>
 				{status.spf.record ? <TxtRecord title="Current record" value={status.spf.record} /> : null}
 				<Alert variant="info" title="SPF flattening is active">
-					Editing is disabled because the next flattening run would overwrite your changes. Disable flattening on the domain page to edit the record by hand.
+					Ready Set Mail manages this record while flattening is on, so it cannot be edited here. Turn flattening off on the domain page to edit it by hand.
 				</Alert>
 				<StepNav onNext={onNext} onSkip={onSkip} showSkip={false} />
 			</StepCard>

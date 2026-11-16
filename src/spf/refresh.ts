@@ -118,6 +118,8 @@ export interface SpfPreview {
   problem: SpfProblemOut | null;
   /** The original needs at most 10 lookups and fits 450 bytes: flattening is not needed. */
   within_limits: boolean;
+  /** Flattening is on: the record in Cloudflare right now (for the review after an outside edit); null when it could not be read. */
+  live: string | null;
 }
 
 export async function previewSpf(tenant: TenantContext, domain: { id: number; domain: string }, deps: SpfDeps = {}): Promise<SpfPreview> {
@@ -126,16 +128,20 @@ export async function previewSpf(tenant: TenantContext, domain: { id: number; do
   let original = row?.canonical_record ?? null;
   if (!original) {
     const txt = await resolver.txt(domain.domain);
-    if (txt.status === 'error' || txt.truncated) return { original: null, flat: null, problem: { kind: 'include_unresolved', message: `We could not read the SPF record of ${domain.domain} (${txt.error ?? 'the answer was cut short'}).` }, within_limits: false };
+    if (txt.status === 'error' || txt.truncated) return { original: null, flat: null, problem: { kind: 'include_unresolved', message: `We could not read the SPF record of ${domain.domain} (${txt.error ?? 'the answer was cut short'}).` }, within_limits: false, live: null };
     const spf = txt.records.filter(r => /^v=spf1(\s|$)/i.test(r.trim()));
     original = spf.length === 1 ? spf[0]!.trim() : null;
-    if (spf.length > 1) return { original: null, flat: null, problem: { kind: 'include_unresolved', message: `${domain.domain} publishes more than one SPF record, so there is nothing to flatten yet.` }, within_limits: false };
+    if (spf.length > 1) return { original: null, flat: null, problem: { kind: 'include_unresolved', message: `${domain.domain} publishes more than one SPF record, so there is nothing to flatten yet.` }, within_limits: false, live: null };
   }
-  if (!original) return { original: null, flat: null, problem: null, within_limits: false };
+  if (!original) return { original: null, flat: null, problem: null, within_limits: false, live: null };
   const asWritten = await flattenFromSource(domain.domain, original, resolver, { inline: 'most', maxBytes: Number.MAX_SAFE_INTEGER, maxLookups: Number.MAX_SAFE_INTEGER });
   const within = asWritten.ok && asWritten.flat.lookupsBefore <= 10 && new TextEncoder().encode(original).length <= 450;
   const res = await flattenFromSource(domain.domain, original, resolver, { inline: within ? 'most' : 'fewest' });
-  return { original, flat: res.ok ? res.flat : null, problem: res.ok ? null : refusal(res.problems[0]!), within_limits: within };
+  let live: string | null = null;
+  if (spfIsOn(row)) {
+    try { const r = await (deps.target ?? cloudflareTarget(tenant, domain.domain)).read(); live = 'found' in r && r.found ? r.content : null; } catch { live = null; }
+  }
+  return { original, flat: res.ok ? res.flat : null, problem: res.ok ? null : refusal(res.problems[0]!), within_limits: within, live };
 }
 
 // ── Turning on ──────────────────────────────────────────────

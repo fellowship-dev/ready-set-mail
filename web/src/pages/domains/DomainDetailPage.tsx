@@ -35,7 +35,7 @@ import type { StatusKind } from '@ready-set-mail/ui';
 import { formatNumber } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
 import { hasReportAddress } from '../../lib/dmarc-record';
-import { useHosted, useSession } from '../../lib/session';
+import { useAddOns, useHosted, useSession } from '../../lib/session';
 import type { Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
 import { inForceSentence, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
@@ -272,7 +272,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const spfTool = useSpfFlatten(domain.id);
+	const spfAddOn = useAddOns().spf_flattening; // SPF flattening is an add-on: where it is not available nothing is asked and no step links to it
+	const spfTool = useSpfFlatten(domain.id, spfAddOn);
 	const mtaTool = useMtaSts(domain.id);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
@@ -311,6 +312,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// A listed parent whose own record does not cover this name: a public suffix (gov.uk above www.gov.uk).
 	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
 	const actionInput = {
+		spfFlattening: spfAddOn,
 		domain,
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
@@ -336,7 +338,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const selectors = onboarding.data?.dkim.selectors.length;
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
-	const toolsShown = !(spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
+	const toolsShown = !((!spfAddOn || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config);
 	const failing = sources.data?.length ?? 0;
 
 	return (

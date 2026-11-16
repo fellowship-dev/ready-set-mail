@@ -326,3 +326,17 @@ describe('follow-ups after review', () => {
 		expect(none.some((a) => a.status === 'attention')).toBe(false);
 	});
 });
+
+describe('the next step toward SPF flattening is an add-on', () => {
+	const over = { onboarding: onboarding({ spf: { record: 'v=spf1 include:a.example -all', lookup_count: 14, flattening_active: false } }), summary: summary({ ...passing(99), spf_lookup_count: 14 }) };
+	const lookups = (o: Partial<ActionInput>) => domainActions(input({ ...over, ...o })).find((a) => a.key === 'spf-lookups');
+	it('links to the wizard where the workspace has it (the default)', () => {
+		expect(lookups({})).toMatchObject({ to: '/domains/1/spf-flatten', cta: 'Open SPF flattening', writes: true });
+	});
+	it('says the same thing and links nowhere where it is not available', () => {
+		const a = lookups({ spfFlattening: false })!;
+		expect(a.do).toBe('Bring SPF down to 10 DNS lookups or fewer');
+		expect(a.to).toBeUndefined();
+		expect(a.cta).toBeUndefined();
+	});
+});

@@ -1951,7 +1951,7 @@ async function _handleApi(
         if (method !== 'GET') return err('method not allowed', 405);
         const p = await previewSpf(tenant, domain);
         return json({
-          original: p.original, within_limits: p.within_limits, problem: p.problem,
+          original: p.original, within_limits: p.within_limits, problem: p.problem, live: p.live,
           flat: p.flat && { record: p.flat.record, bytes: p.flat.bytes, ip_count: p.flat.ipCount, inlined: p.flat.inlined, kept_includes: p.flat.keptIncludes, lookups_before: p.flat.lookupsBefore, lookups_after: p.flat.lookupsAfter },
         });
       }

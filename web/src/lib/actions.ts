@@ -41,6 +41,8 @@ export interface DomainAction {
 }
 
 export interface ActionInput {
+	/** SPF flattening is available to this workspace (an add-on): without it no step links to it. Default true. */
+	spfFlattening?: boolean;
 	domain: Pick<Domain, 'id' | 'domain' | 'rua_address'>;
 	/** Undefined while loading, null when the request failed. */
 	dns: DnsCheck | null | undefined;
@@ -124,7 +126,7 @@ export function domainActions(input: ActionInput): DomainAction[] {
 		if (!spf.record) {
 			out.push({ key: 'spf-missing', status: 'attention', do: 'Publish an SPF record that lists the services that send your mail', why: `Without it, receivers cannot tell which servers may send as ${name}.`, who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
 		} else if (spf.lookup_count !== null && spfLookupJudgement(spf.lookup_count).level === 'over') {
-			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true });
+			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, ...(input.spfFlattening === false ? {} : { to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true }) });
 		}
 	}
 

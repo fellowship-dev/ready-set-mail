@@ -205,16 +205,16 @@ describe('DomainDetailPage', () => {
 	it('disabling an SPF flattening tool asks first', async () => {
 		const { calls } = page({
 			routes: routes({
-				'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: 1, ip_count: 12, lookup_count: 3 }, lookup_count: 3 },
-				'DELETE /api/domains/1/spf-flatten': { ok: true },
+				'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, original_record: 'v=spf1 include:a.example -all', flattened_record: 'v=spf1 ip4:192.0.2.1 -all', previous_record: null, ip_count: 12, lookups_before: 3, lookups_after: 0, last_changed_at: 1, last_refreshed_at: Math.floor(Date.now() / 1000), problem: null }, lookup_count: 3 },
+				'DELETE /api/domains/1/spf-flatten': undefined,
 			}),
 		});
 		await open('DNS tools');
-		const disable = await screen.findByRole('button', { name: 'Disable' });
+		const disable = await screen.findByRole('button', { name: 'Turn off' });
 		await waitFor(() => expect(disable).toBeEnabled());
 		await userEvent.click(disable);
 		expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
-		await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Disable' }));
+		await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn off' }));
 		await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/domains/1/spf-flatten')).toBe(true));
 	});
 });
