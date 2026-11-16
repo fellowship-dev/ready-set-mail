@@ -447,6 +447,32 @@ describe('the URL holds the step, and the server state picks the screen', () => 
 	});
 });
 
+describe('S1 from the checker: the link\'s domain is named, never asked for, and kept for S4', () => {
+	it('says in one line which domain the sign-up sets up, in place of the general line', async () => {
+		const { captureSignupIntent, readSignupDomain } = await import('../src/lib/signup-intent');
+		expect(captureSignupIntent({ pathname: '/', search: '', hash: '#/signup?domain=Harbor-Lane.org&src=report' })).toBe('#/signup');
+		const { calls } = flow({ routes: { 'POST /api/auth/signup': SENT } });
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
+		expect(screen.getByText((_, el) => el?.tagName === 'P' && el.textContent === "You're setting up harbor-lane.org.")).toBeInTheDocument();
+		expect(screen.queryByText("Check and fix your domain's SPF, DKIM and DMARC.")).toBeNull();
+		expect(screen.queryByLabelText(/domain/i)).toBeNull(); // known, so not asked
+		const user = userEvent.setup();
+		await user.type(screen.getByLabelText('Work email'), EMAIL);
+		await user.type(screen.getByLabelText('Password', { exact: true }), 'long-enough-1');
+		await user.click(screen.getByRole('button', { name: 'Continue' }));
+		await waitFor(() => expect(calls.some((c) => c.path === '/api/auth/signup')).toBe(true));
+		// S4 reads the same entry (SetupDomain, DomainStep): still there, now tied to the address that signed up.
+		expect(readSignupDomain()).toBe('harbor-lane.org');
+		expect(JSON.parse(localStorage.getItem('ia_signup_domain')!).email).toBe(EMAIL);
+	});
+
+	it('a cold sign-up keeps the general line', async () => {
+		flow();
+		expect(await screen.findByText("Check and fix your domain's SPF, DKIM and DMARC.")).toBeInTheDocument();
+		expect(screen.queryByText(/You're setting up/)).toBeNull();
+	});
+});
+
 describe('S1 carries where the sign-up came from (analytics, categories only)', () => {
 	it('src and from_checker go with the sign-up request; the domain itself is never in it', async () => {
 		const { captureVisit, __resetVisitForTests } = await import('../src/lib/signup-source');
