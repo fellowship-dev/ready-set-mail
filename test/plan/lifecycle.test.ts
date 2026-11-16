@@ -3,6 +3,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { planWorld, json, rows, type PlanWorld } from './world';
 import { runBillingJob } from '../../src/billing/reconcile';
+import { subFacts } from '../../src/billing/plan-service';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -63,7 +64,9 @@ describe('the confirm\'s numbers come from Stripe', () => {
     const res = await json(await w.api(w.owner, 'GET', '/api/billing/domains/preview?domain=three.example.net'));
     expect(res).toMatchObject({ needs_confirm: true, plan_starts: false, charge_now: 0, then: null, next_invoice: { currency: 'usd' } });
     expect(res.next_invoice.amount_due).toBeGreaterThanOrEqual(500 * 2); // the next domain's part of this period plus its next period, plus the first domain's next period
-    expect(res.next_invoice.date).toBeGreaterThan(0);
+    // the day is the end of the current period (the item's), not next_payment_attempt, which real Stripe sets an hour later
+    const periodEnd = ([...w.fake.state.subscriptionItems.values()][0] as any).current_period_end;
+    expect(res.next_invoice.date).toBe(periodEnd);
     expect(itemQty(w)).toEqual([1]);
     expect(w.fake.calls.slice(calls).every((c: any) => c.method === 'GET' || c.path === '/v1/invoices/create_preview')).toBe(true);
   });
@@ -179,6 +182,45 @@ describe('cancelling in the portal', () => {
     await w.fake.flush();
     expect(w.ws(ws).plan).toBe('free');
     expect(rows(w.db, 'SELECT COUNT(*) AS n FROM domains WHERE paused_at IS NOT NULL')[0].n).toBe(1);
+  });
+});
+
+describe('the operator moves the lookup key to a new price', () => {
+  const moveKey = (w: PlanWorld) => {
+    const old = w.fake.state.prices.get('price_fake_extra_monthly') as any;
+    old.lookup_key = null; // as Stripe does when the key is transferred
+    w.fake.seedPrice({ id: 'price_new_monthly', lookup_key: 'rsm_extra_domain_monthly', unit_amount: 600, currency: 'usd', type: 'recurring', product: 'rsm_extra_domain', metadata: { app: 'ready-set-mail', offer: 'extra-domain' }, recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } });
+    w.db.sqlite.prepare('DELETE FROM billing_price_cache').run();
+  };
+
+  it('a renewal failure on a subscription of the OLD price still marks the payment problem (its stored price is ours)', async () => {
+    const { w, subId, ws } = await ready();
+    moveKey(w);
+    w.fake.setCardBehavior([...w.fake.state.customers.keys()].find((id) => w.fake.state.customers.get(id)?.metadata?.workspace_id === ws)!, 'decline');
+    w.fake.advancePeriod(subId);
+    await w.fake.flush();
+    expect(w.sub(ws)).toMatchObject({ status: 'past_due', price_id: 'price_fake_extra_monthly' });
+    expect((await view(w)).payment_problem).toBe(true);
+  });
+
+  it('a lapse on the old price is applied: all domains of a workspace without the allowance are paused', async () => {
+    const { w, subId, ws } = await ready();
+    moveKey(w);
+    w.fake.setCardBehavior([...w.fake.state.customers.keys()].find((id) => w.fake.state.customers.get(id)?.metadata?.workspace_id === ws)!, 'decline');
+    w.fake.advancePeriod(subId);
+    w.fake.exhaustRetries(subId, { to: 'canceled' });
+    await w.fake.flush();
+    expect(w.ws(ws).plan).toBe('free');
+    expect((await view(w)).lapsed).toBe(true);
+  });
+
+  it('a subscription with no row (being adopted) is recognised as ours by its lookup key, its product or its metadata, and a stranger\'s price is not', () => {
+    const sub = (price: Record<string, unknown>) => subFacts({ id: 'sub_1', status: 'active', customer: 'cus_1', metadata: { workspace_id: 'ws_1' }, items: { data: [{ id: 'si_1', quantity: 1, price: { id: 'price_x', ...price } }] } } as any);
+    expect(sub({ lookup_key: 'rsm_extra_domain_yearly' }).priceIsOurs).toBe(true);
+    expect(sub({ lookup_key: null, product: 'rsm_extra_domain' }).priceIsOurs).toBe(true);
+    expect(sub({ lookup_key: null, product: 'prod_x', metadata: { app: 'ready-set-mail', offer: 'extra-domain' } }).priceIsOurs).toBe(true);
+    expect(sub({ lookup_key: 'something_else', product: 'prod_x', metadata: {} }).priceIsOurs).toBe(false);
+    expect(sub({ lookup_key: null, product: { id: 'prod_x' } }).priceIsOurs).toBe(false);
   });
 });
 

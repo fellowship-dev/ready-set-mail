@@ -428,7 +428,7 @@ describe('subscriptions', () => {
     const r = (await api(fake, 'GET', '/v1/prices', 'lookup_keys[]=rsm_extra_domain_monthly&lookup_keys[]=rsm_extra_domain_yearly')).json;
     expect(r.data).toHaveLength(2);
     expect(r.data.find((p: { id: string }) => p.id === 'price_fake_extra_monthly')).toMatchObject({
-      lookup_key: 'rsm_extra_domain_monthly', unit_amount: 500, currency: 'usd', type: 'recurring', billing_scheme: 'per_unit', product: 'prod_fake_extra',
+      lookup_key: 'rsm_extra_domain_monthly', unit_amount: 500, currency: 'usd', type: 'recurring', billing_scheme: 'per_unit', product: 'rsm_extra_domain', metadata: { app: 'ready-set-mail', offer: 'extra-domain' },
       recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
     });
     expect(r.data.find((p: { id: string }) => p.id === 'price_fake_extra_yearly')).toMatchObject({ unit_amount: 5000, recurring: { interval: 'year', interval_count: 1, usage_type: 'licensed' } });
@@ -663,7 +663,7 @@ describe('subscriptions', () => {
     const pv = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, subscription: sub.id, 'subscription_details[items][0][id]': item.id, 'subscription_details[items][0][quantity]': '3' })).json;
     expect(pv).toMatchObject({
       id: null, object: 'invoice', status: 'draft', currency: 'usd', customer: cust, billing_reason: 'upcoming',
-      period_end: item.current_period_end, next_payment_attempt: item.current_period_end,
+      period_end: item.current_period_end, next_payment_attempt: item.current_period_end + 3600, // real: an hour after period_end
       parent: { type: 'subscription_details', subscription_details: { subscription: sub.id } },
     });
     expect(pv).not.toHaveProperty('subscription');

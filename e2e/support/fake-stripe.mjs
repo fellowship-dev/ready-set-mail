@@ -176,7 +176,7 @@ export function createFakeStripe(opts = {}) {
     for (const [pid, key, amount, interval] of [['price_fake_extra_monthly', 'rsm_extra_domain_monthly', 500, 'month'], ['price_fake_extra_yearly', 'rsm_extra_domain_yearly', 5000, 'year']]) {
       seedPrice({
         id: pid, lookup_key: key, unit_amount: amount, currency: 'usd', type: 'recurring', active: true, billing_scheme: 'per_unit',
-        product: 'prod_fake_extra', nickname: 'Extra domain', // GUESS: real prices carry nickname null and the name lives on the product; the fake keeps it here for line descriptions
+        product: 'rsm_extra_domain', metadata: { app: 'ready-set-mail', offer: 'extra-domain', unit: 'per domain' }, nickname: 'Extra domain', // real (sandbox A): product id 'rsm_extra_domain', this metadata; the nickname is the operator's (theirs was the lookup key), the fake keeps a readable one for line descriptions
         recurring: { interval, interval_count: 1, usage_type: 'licensed' },
       });
     }
@@ -289,7 +289,7 @@ export function createFakeStripe(opts = {}) {
     pi.payment_method = pmId;
     if (inv.attempt_count !== undefined) inv.attempt_count += 1;
     if (behavior === 'ok') { markPaid(inv, pi); return { outcome: 'paid', pi }; }
-    if (inv.attempt_count !== undefined) inv.next_payment_attempt = sec() + 3 * 86400; // GUESS: a fixed 3 day dunning step
+    if (inv.attempt_count !== undefined) inv.next_payment_attempt = sec() + 2 * 86400; // real (sandbox A): the first retry is two days after the failed renewal, then about every two days to day 14
     if (behavior === 'decline') {
       pi.status = 'requires_payment_method';
       pi.last_payment_error = { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_method: pmId ? clone(state.paymentMethods.get(pmId)) : null };
@@ -409,7 +409,7 @@ export function createFakeStripe(opts = {}) {
     return {
       id: lid, object: 'line_item', amount, currency: item.price.currency, description, quantity, metadata: {}, period,
       pricing: { type: 'price_details', price_details: { price: item.price.id, product: item.price.product }, unit_amount_decimal: String(item.price.unit_amount) },
-      parent: { type: 'subscription_item_details', subscription_item_details: { subscription: sub?.id ?? null, subscription_item: item.id ?? null, proration, proration_details: { credited_items: null }, invoice_item: null } }, // GUESS: proration_details.credited_items is null (credit notes are not modelled)
+      parent: { type: 'subscription_item_details', subscription_item_details: { subscription: sub?.id ?? null, subscription_item: item.id ?? null, proration, proration_details: { credited_items: null }, invoice_item: null } }, // GUESS: real proration credit lines of a preview carry credited_items { invoice, invoice_line_items }; the app reads neither
     };
   }
   function recurringLine(sub, item, qty, period, lid) {
@@ -436,7 +436,7 @@ export function createFakeStripe(opts = {}) {
       description: null, metadata: {}, payment_settings: {}, hosted_invoice_url: null, subtotal: 0, total: 0, amount_due: 0, amount_paid: 0, amount_remaining: 0,
       status_transitions: { finalized_at: null, paid_at: null, voided_at: null, marked_uncollectible_at: null }, payments: [],
       billing_reason: reason, attempt_count: 0, next_payment_attempt: null,
-      period_start: item.current_period_start, period_end: item.current_period_end, // GUESS: the invoice period mirrors the subscription's current period
+      period_start: item.current_period_start, period_end: item.current_period_end, // a renewal invoice is moved to the period that just ended by advancePeriod (real); a preview's period_end is the current period's end (real)
       parent: { type: 'subscription_details', subscription_details: { subscription: sub.id, metadata: clone(sub.metadata) } },
       _lines: lines,
     });
@@ -464,6 +464,7 @@ export function createFakeStripe(opts = {}) {
   }
   const endSub = (sub, at = sec()) => {
     sub.status = 'canceled'; sub.ended_at = at; if (!sub.canceled_at) sub.canceled_at = at;
+    if (sub.status === 'canceled' && sub._dunning) sub.cancellation_details = { ...(sub.cancellation_details ?? {}), reason: 'payment_failed' };
     queue('customer.subscription.deleted', subOut(sub));
   };
 
@@ -504,7 +505,7 @@ export function createFakeStripe(opts = {}) {
     mergeMeta(sub.metadata, form.metadata);
     state.subscriptions.set(sub.id, sub);
     const item = base('si', 'subscription_item', {
-      subscription: sub.id, price: clone(price), quantity: qty, metadata: {}, current_period_start: start, current_period_end: end, discounts: [], tax_rates: [], billing_thresholds: null, // GUESS: item fields beyond id/price/quantity/period mirror the real object loosely
+      subscription: sub.id, price: clone(price), quantity: qty, metadata: {}, created: sec(), current_period_start: start, current_period_end: end, current_trial: null, discounts: [], tax_rates: [], billing_thresholds: null, // real item keys (sandbox A); `plan` (the legacy copy) is not modelled
     });
     state.subscriptionItems.set(item.id, item);
     const inv = createSubInvoice(sub, 'subscription_create', [recurringLine(sub, item, qty, { start, end }, id('il'))]);
@@ -559,7 +560,7 @@ export function createFakeStripe(opts = {}) {
       const start = first.current_period_end; const end = addInterval(start, first.price.recurring.interval, first.price.recurring.interval_count);
       lines = [...clone(sub._prorations), ...fresh, recurringLine(sub, first, qty, { start, end }, lid())];
       period = { start: first.current_period_start, end: first.current_period_end };
-      reason = 'upcoming'; nextAttempt = first.current_period_end;
+      reason = 'upcoming'; nextAttempt = first.current_period_end + 3600; // real: about an hour after period_end (finalization delay)
     } else {
       if (!req[0]) throw bad('Missing required param: subscription_details[items].', 'parameter_missing', 'subscription_details');
       const price = state.prices.get(need(req[0], 'price'));
@@ -610,9 +611,11 @@ export function createFakeStripe(opts = {}) {
     const end = addInterval(start, item.price.recurring.interval, item.price.recurring.interval_count);
     const lines = [...sub._prorations, recurringLine(sub, item, item.quantity, { start, end }, id('il'))];
     sub._prorations = [];
-    // GUESS: the period moves on whether or not the renewal is paid (as in real Stripe, where an unpaid renewal leaves the subscription past_due in the new period)
+    // The period moves on whether or not the renewal is paid (real, sandbox A: an unpaid renewal leaves the subscription past_due in the new period)
+    const oldStart = item.current_period_start; const oldEnd = item.current_period_end;
     item.current_period_start = start; item.current_period_end = end;
     const inv = createSubInvoice(sub, 'subscription_cycle', lines);
+    inv.period_start = oldStart; inv.period_end = oldEnd; // real: the renewal invoice's own period is the one that just ended; its new recurring line is for the next
     sub.latest_invoice = inv.id;
     runSubInvoice(inv, o.card);
     if (inv.status === 'paid') queue('customer.subscription.updated', subOut(sub), previous);
@@ -628,7 +631,7 @@ export function createFakeStripe(opts = {}) {
     chargeInvoice(inv, o.card);
     return result(sub);
   };
-  /** Dunning gave up: the subscription becomes unpaid, or is canceled (the open invoice stays open, GUESS). */
+  /** Dunning gave up: the subscription becomes unpaid, or is canceled (the open invoice stays open with no next attempt: real, sandbox A: canceled on day 16, `cancellation_details.reason` payment_failed). */
   fake.exhaustRetries = (subId, o = {}) => {
     const sub = subFor(subId);
     const to = o.to ?? 'canceled';
@@ -636,7 +639,7 @@ export function createFakeStripe(opts = {}) {
     if (sub.status !== 'past_due') throw new Error(`fake-stripe: subscription ${subId} is ${sub.status}, not past_due`);
     const inv = state.invoices.get(sub.latest_invoice);
     if (inv) { inv.next_payment_attempt = null; inv.auto_advance = false; }
-    if (to === 'canceled') endSub(sub);
+    if (to === 'canceled') { sub._dunning = true; endSub(sub); }
     else { sub.status = 'unpaid'; queue('customer.subscription.updated', subOut(sub), { status: 'past_due' }); }
     return result(sub);
   };

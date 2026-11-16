@@ -37,17 +37,19 @@ type Ctx = ExecutionContext | undefined;
 
 // ── Stripe objects, read defensively (a subscription is only trusted after the checks in `ours`) ──
 
-interface SubFacts { id: string; status: string; customerId: string | null; workspaceId: string | null; itemId: string | null; priceId: string | null; quantity: number | null; periodEnd: number | null; cancelAtPeriodEnd: boolean; canceledAt: number | null }
+interface SubFacts { id: string; status: string; customerId: string | null; workspaceId: string | null; itemId: string | null; priceId: string | null; priceIsOurs: boolean; quantity: number | null; periodEnd: number | null; cancelAtPeriodEnd: boolean; canceledAt: number | null }
 
 export function subFacts(sub: StripeObject): SubFacts {
   const items = (sub.items as { data?: Array<Record<string, unknown>> } | undefined)?.data ?? [];
   const item = items[0];
-  const price = item?.price as { id?: unknown } | string | undefined;
+  const price = item?.price as { id?: unknown; lookup_key?: unknown; product?: unknown; metadata?: Record<string, unknown> } | string | undefined;
+  const p = typeof price === 'object' && price ? price : null;
   const meta = (sub.metadata ?? {}) as Record<string, unknown>;
   // API 2025-09-30.clover keeps the period on the item; older shapes on the subscription itself.
   const end = (item?.current_period_end ?? sub.current_period_end) as unknown;
   return {
     id: sub.id, status: String(sub.status ?? ''), customerId: idOf(sub.customer), workspaceId: typeof meta.workspace_id === 'string' ? meta.workspace_id : null,
+    priceIsOurs: !!p && (p.lookup_key === 'rsm_extra_domain_monthly' || p.lookup_key === 'rsm_extra_domain_yearly' || idOf(p.product) === OUR_PRODUCT || (p.metadata?.app === 'ready-set-mail' && p.metadata?.offer === 'extra-domain')),
     itemId: typeof item?.id === 'string' ? item.id : null, priceId: typeof price === 'string' ? price : typeof price?.id === 'string' ? price.id : null,
     quantity: typeof item?.quantity === 'number' ? item.quantity : null, periodEnd: typeof end === 'number' ? end : null,
     cancelAtPeriodEnd: sub.cancel_at_period_end === true || (typeof sub.cancel_at === 'number' && sub.cancel_at > 0),
@@ -55,9 +57,18 @@ export function subFacts(sub: StripeObject): SubFacts {
   };
 }
 
-/** Is this subscription one WE made for THIS workspace: its customer, its metadata and one of our two prices all agree. */
-export async function isOurs(d: BillingDeps, f: SubFacts, workspaceId: string, customerId: string | null): Promise<boolean> {
+/** The product the extra-domain prices hang on (docs/billing.md, "Stripe setup"). */
+const OUR_PRODUCT = 'rsm_extra_domain';
+
+/**
+ * Is this subscription one WE made for THIS workspace: its customer and its metadata agree, and its price is ours. The price is ours when it is the one
+ * we created the subscription with (stored on the row: the operator moves the lookup key to a new price when the price changes, and the old subscriptions
+ * keep their old price), or one of the two the lookup keys resolve to now, or, with no row to say (a subscription being adopted), a price that is
+ * recognisably ours (our lookup key, our product, or our price metadata).
+ */
+export async function isOurs(d: BillingDeps, f: SubFacts, workspaceId: string, customerId: string | null, storedPriceId: string | null = null): Promise<boolean> {
   if (!customerId || f.customerId !== customerId || f.workspaceId !== workspaceId || !f.itemId || !f.priceId) return false;
+  if (storedPriceId) { if (storedPriceId === f.priceId) return true; } else if (f.priceIsOurs) return true;
   for (const interval of ['month', 'year'] as const) {
     try { if ((await resolvePlanPrice(d.db, d.stripe, interval, { now: () => d.now() * 1000 })).price_id === f.priceId) return true; } catch (e) { if (!(e instanceof PriceMisconfiguredError)) throw e; }
   }
@@ -455,9 +466,9 @@ export async function applySubscription(d: BillingDeps, subscriptionId: string, 
   const customerId = f.customerId ?? opts.customerHint ?? null;
   const workspaceId = customerId ? await billingLookups(d.db).workspaceByCustomer(customerId) : null;
   if (!workspaceId) { console.warn(`[billing] subscription ${f.id.slice(0, 12)} ignored: unknown_customer`); return 'unknown_workspace'; }
-  if (!(await isOurs(d, f, workspaceId, customerId))) { console.warn(`[billing] subscription ${f.id.slice(0, 12)} ignored: foreign_subscription`); return 'foreign'; }
   const q = forWorkspace(d.db, workspaceId).plan;
   const row = await q.subscription.get();
+  if (!(await isOurs(d, f, workspaceId, customerId, row?.stripe_subscription_id === f.id ? row.price_id : null))) { console.warn(`[billing] subscription ${f.id.slice(0, 12)} ignored: foreign_subscription`); return 'foreign'; }
   if (row && row.stripe_subscription_id !== f.id) return 'stale'; // an older subscription of this workspace (one that lapsed, or was replaced)
   if (!row) {
     // Ours, but the row was never written (a crash between Stripe and the database): adopt a live one.
@@ -552,13 +563,20 @@ export async function cancelPlanForDelete(d: BillingDeps, workspaceId: string): 
 // ── What Settings → Billing and the confirm steps show ──────
 
 export interface MoneyView { amount: number; currency: string; interval: PlanInterval }
+/**
+ * The date of the next invoice of a subscription, from Stripe's preview: its `period_end`, the end of the current period (the item's `current_period_end`).
+ * Not `next_payment_attempt`: on a real preview that is about an hour later (Stripe's finalization delay), which can name the next day.
+ */
+export function previewDate(inv: StripeObject, fallback: number | null): number | null {
+  return typeof inv.period_end === 'number' ? inv.period_end : fallback;
+}
+
 export interface NextInvoice { amount_due: number; currency: string; date: number | null }
 
 async function nextInvoiceOf(d: BillingDeps, sub: SubscriptionRow, customerId: string): Promise<NextInvoice | null> {
   try {
     const inv = await d.stripe.upcomingInvoice({ customerId, subscriptionId: sub.stripe_subscription_id });
-    const date = (inv.next_payment_attempt ?? inv.period_end) as unknown; // GUESS: the preview's date of the next charge
-    return { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? 'usd'), date: typeof date === 'number' ? date : sub.current_period_end };
+    return { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? 'usd'), date: previewDate(inv, sub.current_period_end) };
   } catch { return null; }
 }
 
@@ -672,8 +690,7 @@ export async function previewPaidAdd(d: BillingDeps, ws: Ws, domains: string[], 
   if (sub && st.subscriptionState === 'active' && st.customerId) {
     try {
       const inv = await d.stripe.previewInvoice({ customerId: st.customerId, subscriptionId: sub.stripe_subscription_id, itemId: sub.stripe_item_id, quantity: target });
-      const date = (inv.next_payment_attempt ?? inv.period_end) as unknown; // GUESS: the preview's date of the next charge
-      return { ...base, needs_confirm: true, unit_price, reason: 'paid', next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? price.currency), date: typeof date === 'number' ? date : sub.current_period_end } };
+        return { ...base, needs_confirm: true, unit_price, reason: 'paid', next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? price.currency), date: previewDate(inv, sub.current_period_end) } };
     } catch { return { ...base, needs_confirm: true, unit_price, reason: 'paid', preview_failed: true }; }
   }
   // No subscription (or a lapsed one): this creates it, and a quantity above 0 is charged now.
@@ -699,8 +716,7 @@ export async function previewRemoval(d: BillingDeps, ws: Ws, domainId: number): 
   try { const p = await planPrice(d, interval); unit_price = { amount: p.amount, currency: p.currency, interval }; } catch { /* no amount */ }
   try {
     const inv = await d.stripe.previewInvoice({ customerId: st.customerId, subscriptionId: sub.stripe_subscription_id, itemId: sub.stripe_item_id, quantity: target });
-    const date = (inv.next_payment_attempt ?? inv.period_end) as unknown;
-    return { billable: true, unit_price, next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? 'usd'), date: typeof date === 'number' ? date : sub.current_period_end } };
+    return { billable: true, unit_price, next_invoice: { amount_due: Number(inv.amount_due ?? inv.total ?? 0), currency: String(inv.currency ?? 'usd'), date: previewDate(inv, sub.current_period_end) } };
   } catch { return { billable: true, unit_price, next_invoice: null }; }
 }
 
