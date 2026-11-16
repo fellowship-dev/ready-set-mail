@@ -1,7 +1,7 @@
 name: Hosted owner adds a second domain on Pay as you go
 goal: The workspace owner adds a domain beyond the free one, sees what it costs and when it is billed, confirms once, and lands on the domain list with the domain added
-value_moment: Domain added and billed - the subscription's quantity is raised and the list says "Added. $5 a month from today."
-# Not protected yet: the dashboard half is built in the next phase of the pull request; add it to the protected list (AGENTS.md) when the walk record exists.
+value_moment: Domain added and billed - the subscription is started or its quantity raised (server-side, under the workspace lease) and the list says "Added. $5 paid now, then $5 a month."
+# Not protected yet: add it to the protected list (AGENTS.md) when the owner has walked it on the hosted instance.
 covers:
   - web/src/pages/domains/AddDomainPage.tsx
   - web/src/components/domain/CloudflareSuggestions.tsx
@@ -27,14 +27,14 @@ steps:
     selector: "role=checkbox[name='quietfield.net']"
     expect: The zone is ticked
   - action: click
-    selector: "role=button[name='Add'][exact]"
+    selector: "role=button[name='Add 1: $5 a month']"
     expect: The confirm for that domain - what it costs a month, subdomains included, cancel any time; with no card the one action is Add a card to continue
   - action: click
     selector: "text=Add a card to continue"
     effect: write
-    expect: Stripe-hosted Checkout in setup mode, then back to the SAME confirm showing the card and Stripe's first invoice ("$5 now to Visa ···4242, then $5 a month from <date>.")
+    expect: Stripe-hosted Checkout in setup mode, then back to the SAME confirm showing the card and Stripe's first invoice ("$5 now, then $5 a month from <date>. Card Visa ···4242.", button "Pay $5 and add")
   - action: click
-    selector: "text=Add for $5 a month"
+    selector: "text=Pay $5 and add"
     effect: write
-    expect: The domain list with "Added. $5 a month from today." shown above it (no detour, no second page)
+    expect: The domain list with "Added. $5 paid now, then $5 a month." shown above it (no detour, no second page)
     first_value: true

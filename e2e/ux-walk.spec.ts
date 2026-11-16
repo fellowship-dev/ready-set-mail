@@ -21,7 +21,7 @@ const flows: Record<string, unknown> = {};
 const problems: string[] = [];
 let part = 'walk';
 /** Each walk starts clean (a failed test restarts the worker, which would otherwise carry one walk's numbers into the next file). */
-const begin = (name: string) => { part = name; for (const k of Object.keys(measures)) delete measures[k]; for (const k of Object.keys(flows)) delete flows[k]; problems.length = 0; };
+const begin = (name: string, page?: Page) => { current = page ?? null; part = name; for (const k of Object.keys(measures)) delete measures[k]; for (const k of Object.keys(flows)) delete flows[k]; problems.length = 0; };
 const save = () => writeFileSync(join(DIR, `measures-${part}.json`), JSON.stringify({ measures, flows, problems }, null, 2));
 
 /** One flow, counted the way the gate counts: the screens the person sees, their clicks, the fields they type, the pages left to Stripe. */
@@ -65,9 +65,24 @@ async function shot(page: Page, state: string, o: { at?: Locator; primary?: Loca
 	save();
 }
 
+let current: Page | null = null;
+let renewalNeedsBank = false;
+/** The hosted invoice page is Stripe's https address; the fake's own address is plain http, which the app rightly does not offer as a link: show the states that carry that link with one. */
+const INVOICE_PAGE = 'https://invoice.stripe.com/i/acct_test/walk';
+async function withInvoiceLink(page: Page) {
+	await page.route('**/api/billing', async (route) => {
+		if (route.request().method() !== 'GET') return route.continue();
+		const res = await route.fetch();
+		const b = await res.json();
+		if (b?.plan?.pending && !b.plan.pending.action_url) b.plan.pending.action_url = INVOICE_PAGE;
+		if (renewalNeedsBank && b?.plan && !b.plan.action_required_url) b.plan.action_required_url = INVOICE_PAGE;
+		await route.fulfill({ response: res, json: b });
+	});
+}
+
 /** A step that must not stop the walk: what could not be done is a finding, listed in measures.json and in the test's failure. */
 async function step(name: string, fn: () => Promise<void>) {
-	try { await fn(); } catch (e) { problems.push(`${name}: ${String((e as Error).message).replace(/\x1b\[[0-9;]*m/g, '').split('\n').slice(0, 3).join(' ')}`); save(); }
+	try { await fn(); } catch (e) { await current?.screenshot({ path: join(DIR, `problem-${part}-${name.replace(/\W+/g, '-')}.png`) }).catch(() => undefined); problems.push(`${name}: ${String((e as Error).message).replace(/\x1b\[[0-9;]*m/g, '').split('\n').slice(0, 3).join(' ')}`); save(); }
 }
 
 const billingOf = (page: Page) => page.getByRole('region', { name: 'Billing' });
@@ -75,10 +90,11 @@ const settings = async (page: Page, inst: Instance, ws: string) => { await page.
 const FAKE_AUTH = { authorization: 'Bearer rk_test_e2eplankey0123456789', 'stripe-version': '2025-09-30.clover', 'content-type': 'application/x-www-form-urlencoded' };
 
 test('walk 1: the paid domain, the renewal that fails, the bank at renewal, the lapse, the member', async ({ page, browser }) => {
-	begin('walk1');
+	begin('walk1', page);
 	const { stripe, inst, stop } = await world(8861);
 	try {
 		const ws = await ownerWithFreeDomain(page, inst);
+		await withInvoiceLink(page);
 		await step('billing-free', async () => { await settings(page, inst, ws); await shot(page, 'billing-free', { at: billingOf(page), primary: billingOf(page).getByRole('button', { name: 'Start pay as you go' }), words: billingOf(page) }); });
 
 		// 1. a second domain, no card: the list, the confirm, Stripe, the SAME confirm showing the card, one click.
@@ -156,18 +172,20 @@ test('walk 1: the paid domain, the renewal that fails, the bank at renewal, the 
 		await step('action required', async () => {
 			stripe.fake.setCardBehavior(sub.customer, 'requires_action');
 			stripe.fake.advancePeriod(sub.id);
+			renewalNeedsBank = true;
 			await settings(page, inst, ws); await page.reload();
 			await expect(page.getByText('Your bank needs you to confirm the payment.')).toBeVisible({ timeout: 30_000 });
 			await shot(page, 'billing-action-required', { at: billingOf(page), primary: billingOf(page).getByRole('link', { name: /Confirm the payment/ }), words: billingOf(page) });
 			const inv = [...stripe.fake.state.invoices.values()].filter((i: any) => i.status !== 'paid').at(-1);
 			if (inv) stripe.fake.completeInvoiceAction(inv.id, 'succeed');
 			stripe.fake.setCardBehavior(sub.customer, 'ok');
+			renewalNeedsBank = false;
 		});
 
 		// 8. the lapse after a declined card: free again, the other domains paused, the card said to be the problem.
 		await step('lapsed declined', async () => {
 			stripe.fake.setCardBehavior(sub.customer, 'decline');
-			stripe.fake.advancePeriod(sub.id);
+			if (stripe.fake.state.subscriptions.get(sub.id).status === 'active') stripe.fake.advancePeriod(sub.id);
 			(stripe.fake as any).exhaustRetries(sub.id, { to: 'canceled' });
 			await settings(page, inst, ws); await page.reload();
 			await expect(billingOf(page).getByText(/Pay as you go ended because a payment did not go through/)).toBeVisible({ timeout: 30_000 });
@@ -189,7 +207,7 @@ test('walk 1: the paid domain, the renewal that fails, the bank at renewal, the 
 });
 
 test('walk 2: a second workspace, not eligible and eligible; a workspace that pays from its first minute', async ({ page }) => {
-	begin('walk2');
+	begin('walk2', page);
 	const { inst, stop } = await world(8862);
 	try {
 		await signUp(page, inst, OWNER);
@@ -226,8 +244,8 @@ test('walk 2: a second workspace, not eligible and eligible; a workspace that pa
 			await f3b.click(page.getByRole('button', { name: /^Workspace: .*Switch workspace$/ })); await f3b.click(page.getByRole('menuitem', { name: 'Create workspace' }));
 			f3b.screen('Create workspace');
 			await shot(page, 'create-workspace-eligible', { primary: page.getByRole('button', { name: 'Create workspace' }), words: page.getByRole('dialog') });
-			await f3b.type(page.getByLabel('Workspace name'), 'Client B');
-			await f3b.click(page.getByRole('button', { name: 'Create workspace' }));
+			await f3b.type(page.getByRole('dialog').getByLabel('Workspace name'), 'Client B');
+			await f3b.click(page.getByRole('dialog').getByRole('button', { name: 'Create workspace' }));
 			f3b.screen('The new workspace');
 			await expect.poll(() => inst.d1("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Client B'")[0]!.n, { timeout: 30_000 }).toBe(1);
 		});
@@ -241,7 +259,7 @@ test('walk 2: a second workspace, not eligible and eligible; a workspace that pa
 });
 
 test('walk 3: the grandfather choice, the transfer refusal, the free-plan limit notice', async ({ page, browser }) => {
-	begin('walk3');
+	begin('walk3', page);
 	const { inst, stop } = await world(8863);
 	try {
 		const ws = await ownerWithFreeDomain(page, inst);
@@ -278,10 +296,11 @@ test('walk 3: the grandfather choice, the transfer refusal, the free-plan limit 
 });
 
 test('walk 4: the first payment that waits for the bank; cancelling at the period end; the plan that ended', async ({ page }) => {
-	begin('walk4');
+	begin('walk4', page);
 	const { stripe, inst, stop } = await world(8864);
 	try {
 		const ws = await ownerWithFreeDomain(page, inst);
+		await withInvoiceLink(page);
 		const f6 = new Flow('6 first payment needs the bank');
 		await step('bank-pending', async () => {
 			await f6.click(page.getByRole('checkbox', { name: 'quietfield.net' }));

@@ -1,7 +1,7 @@
 name: Hosted owner creates a second workspace
 goal: A person who already holds their free domain creates another workspace: at once when they already pay, otherwise after adding a card, and lands in the new workspace
 value_moment: The new workspace exists and the person is in it (the workspace is created only once its card is verified)
-# Not protected yet: the dashboard half is built in the next phase of the pull request.
+# Not protected yet: add it to the protected list (AGENTS.md) when the owner has walked it on the hosted instance.
 covers:
   - web/src/components/CreateWorkspaceDialog.tsx
   - src/workspaces/routes.ts

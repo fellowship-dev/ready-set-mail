@@ -78,7 +78,8 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 		<Card>
 			<CardContent className="space-y-3 py-4">
 				<h3 className="text-base font-semibold tracking-tight">{title}</h3>
-				{body}
+				{/* Starting the plan is its own step: the Free sentences would only repeat what the step says. */}
+				{owner && starting && !payg ? null : body}
 				{owner && starting && !payg ? <StartPlan plan={plan} billing={billing} onCancel={() => { setStarting(false); strip('plan'); }} onStarted={() => { setStarting(false); strip('plan'); void qc.invalidateQueries({ queryKey: billingKeys.all }); }} /> : null}
 				{portal.isError ? <Alert variant="danger" title="That did not work">{errorMessage(portal.error)}</Alert> : null}
 			</CardContent>

@@ -46,7 +46,7 @@ export function BillingSection() {
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">
-								<Row label="Card">{b.card ? cardLine(b.card) : b.card_on_file ? 'A card is on file.' : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}{declined ? <> {WORDS.declinedCard}</> : null}</Row>
+								<Row label="Card">{b.card ? cardLine(b.card) : b.card_on_file ? 'A card is on file.' : b.card_unavailable ? 'We could not read the card just now.' : 'No card on file.'}{declined ? <span className="block text-ink-1">{WORDS.declinedCard}</span> : null}</Row>
 								{b.can_manage ? <Row label="Billing email">{b.billing_email ?? <span className="text-ink-2">The owner's email address, once a card is added.</span>}</Row> : null}
 							</dl>
 						</CardContent>

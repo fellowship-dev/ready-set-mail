@@ -294,7 +294,8 @@ describe('Settings → Billing: one portal button, plain facts', () => {
 	it('lapsed after a declined card: the fact "This card was declined." sits beside the card and the one action there is Update your card', async () => {
 		section(plan({ lapsed: true, paused_domains: 1, resume_by_starting: true, card_declined: true }));
 		await screen.findByText(/Pay as you go ended because a payment did not go through/);
-		expect(screen.getByText(/ending 4242.*This card was declined\./)).toBeTruthy();
+		const fact = screen.getByText(/ending 4242/).closest('dd')!;
+		expect(fact.textContent).toMatch(/ending 4242.*This card was declined\./); // the card and the fact, side by side
 		expect(portalish().map((x) => x.textContent)).toEqual(['Update your card']);
 		// starting again is still possible, but it is not the primary action while the card is the problem
 		expect(screen.getByRole('button', { name: 'Start pay as you go again' })).toBeTruthy();
