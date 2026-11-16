@@ -5,7 +5,7 @@ import { useState, type ReactNode } from 'react';
 import { Section } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { downloadFile } from '../../lib/download';
-import { useSession } from '../../lib/session';
+import { useHosted, useSession } from '../../lib/session';
 import { Field } from '../auth/AuthLayout';
 import { DeleteButton, LeaveButton, useCurrentWorkspace } from './WorkspaceSection';
 
@@ -33,6 +33,7 @@ function DangerRow({ title, children, action }: { title: string; children: React
 /** Export the workspace's data (owners); leave or delete the open workspace; delete your own account (everyone signed in as a user). */
 export function DangerZone() {
 	const { me, role } = useSession();
+	const hosted = useHosted();
 	const { current, others, goElsewhere } = useCurrentWorkspace();
 	if (!me?.user) return null;
 	const canLeave = others.length > 0;
@@ -50,7 +51,7 @@ export function DangerZone() {
 				</DangerRow>
 			) : null}
 			<DangerRow title="Delete my account" action={<DeleteAccount email={me.user.email} />}>
-				Removes your login, sessions, API keys and memberships, and any workspace only you belong to (with its domains, reports and Cloudflare access). If you are the only owner of a workspace that has
+				Removes your login, sessions, {hosted ? 'agent connections' : 'API keys'} and memberships, and any workspace only you belong to (with its domains, reports and Cloudflare access). If you are the only owner of a workspace that has
 				other members, transfer ownership first.
 			</DangerRow>
 		</Section>

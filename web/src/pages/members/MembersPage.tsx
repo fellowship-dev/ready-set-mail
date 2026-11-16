@@ -25,7 +25,7 @@ import { useState, type FormEvent } from 'react';
 import { ListSkeleton, LoadError, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
-import { useSession } from '../../lib/session';
+import { useHosted, useSession } from '../../lib/session';
 import { useWorkspaces } from '../../lib/workspaces';
 import type { Role } from '../../lib/types';
 import { Field } from '../auth/AuthLayout';
@@ -115,6 +115,7 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 	});
 
 	const workspaceId = useSession().me?.workspace_id;
+	const hosted = useHosted();
 	const [handing, setHanding] = useState(false);
 	const transfer = useMutation({
 		mutationFn: () => api(`/api/workspaces/${workspaceId}/transfer-ownership`, { method: 'POST', body: { user_id: member.id } }),
@@ -198,7 +199,7 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 					<DialogHeader>
 						<DialogTitle>Remove {member.email}?</DialogTitle>
 						<DialogDescription>
-							They lose access immediately, and their API keys stop working. This cannot be undone.
+							{removalEndsNote(hosted)}
 							{member.other_workspaces === 0 ? ` This is the only workspace ${member.email} belongs to, so removing them also deletes their login: they would have to sign up again.` : ''}
 						</DialogDescription>
 					</DialogHeader>
@@ -216,6 +217,10 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 		</li>
 	);
 }
+
+/** What removing someone ends, per mode: hosted has agents they connected and no key screen; self-host has API keys. */
+export const removalEndsNote = (hosted: boolean): string =>
+	hosted ? 'They lose access immediately, and any agents they connected stop working. This cannot be undone.' : 'They lose access immediately, and their API keys stop working. This cannot be undone.';
 
 /** What this form does about email, true on both modes: it sends nothing. (Handing a domain's setup to a teammate, hosted, is another invite with its own screen, and is emailed.) */
 export const INVITE_NOT_EMAILED = 'This invite is not emailed: you get a one-time link to pass on. It expires in 7 days.';

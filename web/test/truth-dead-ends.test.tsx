@@ -180,11 +180,31 @@ describe('Members', () => {
 			expect(dialog.getByText(/This is the only workspace member@example\.com belongs to, so removing them also deletes their login: they would have to sign up again\./)).toBeInTheDocument();
 		});
 
+		it('names what ends per mode: agents hosted (no key screen), API keys self-hosted', async () => {
+			for (const [mode, say, not] of [['saas', /any agents they connected stop working/, /API key/], ['self-host', /their API keys stop working/, /agents/]] as const) {
+				const r = renderApp(<MembersPage />, { role: 'owner', status: { mode }, routes: { 'GET /api/team': team('o1') } });
+				await userEvent.setup().click(await screen.findByRole('button', { name: 'Remove member@example.com' }));
+				const dialog = within(await screen.findByRole('dialog'));
+				expect(dialog.getByText(say)).toBeInTheDocument();
+				expect(dialog.queryByText(not)).toBeNull();
+				r.unmount();
+			}
+		});
+
 		it('says nothing of the kind when they have another workspace to keep their login for', async () => {
 			const dialog = await open('admin@example.com', { m1: 0, a1: 2 });
-			expect(dialog.getByText(/They lose access immediately, and their API keys stop working\./)).toBeInTheDocument();
+			expect(dialog.getByText(/They lose access immediately/)).toBeInTheDocument();
 			expect(document.body.textContent).not.toMatch(/deletes their login/);
 		});
+	});
+});
+
+describe('Settings: delete my account names what exists in the mode', () => {
+	it.each([['saas', /agent connections/, /API keys/], ['self-host', /API keys/, /agent connections/]] as const)('%s', async (mode, say, not) => {
+		const { DangerZone } = await import('../src/pages/settings/DangerZone');
+		renderApp(<DangerZone />, { status: { mode }, routes: { 'GET /api/workspaces': { workspaces: [] } } });
+		expect(await screen.findByText(say)).toBeInTheDocument();
+		expect(document.body.textContent).not.toMatch(not);
 	});
 });
 
