@@ -271,7 +271,9 @@ answers are held with the pending attempt (below) and applied by the right code:
 (else the email address, as before). The first workspace is named from the fork answer: "My company's" and "Just looking around"
 use the organization name; "My clients'" (an agency or IT provider) keeps the organization name as the agency's own name on the
 account (`/api/me` `agency_name`, the workspace switcher's heading) and calls the first workspace "New client" until the first
-client domain is entered in it, when it is renamed to that domain (once, only while it still carries that placeholder). Without
+client domain is entered in it, when it is renamed to that domain (once, only while it is flagged as carrying the placeholder: the `name_is_placeholder` workspace setting, so a workspace someone
+named "New client" is never renamed; the flag stays while that domain is the workspace's only domain or claim, so a typo corrected
+renames it again, and it goes when the owner renames the workspace). Without
 S2's answers (the API skipped them) the old rule applies: the email's domain, or "My workspace" for free mail. Invited people are
 never asked. Names are stored and shown without control or invisible format characters, at most 80 characters (the organization
 name is bounded by the same number because it becomes a workspace name).

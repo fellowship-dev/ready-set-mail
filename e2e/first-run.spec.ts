@@ -38,6 +38,15 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 			await expect(page.getByTestId('dns-result')).toContainText(`${DOMAIN}:`);
 			await expect(page.getByRole('button', { name: "I'll add the records myself" })).toBeVisible();
 			await expect(page.getByText(/can't be connected/i)).toHaveCount(0);
+			// Wide screens: the result on the left, the choice on the right, side by side (one column on a phone)
+			const resultBox = (await page.getByTestId('dns-result').boundingBox())!;
+			const choiceBox = (await page.getByTestId('s4-choice').boundingBox())!;
+			if (width >= 1024) {
+				expect(choiceBox.x).toBeGreaterThan(resultBox.x + resultBox.width - 1);
+				expect(choiceBox.width).toBeLessThan(width / 2);
+			} else {
+				expect(choiceBox.y).toBeGreaterThan(resultBox.y);
+			}
 			await expect(page.getByRole('link', { name: 'Hand setup to a teammate →' })).toBeVisible(); // the owner may hand it on
 			await fits(page);
 			await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
@@ -59,6 +68,11 @@ for (const [width, height, port] of [[375, 812, 8836], [1440, 900, 8837]] as con
 			// Public DNS (not the fake) does not show the record, and the card says exactly that rather than promising reports.
 			await expect(page.getByRole('heading', { name: `Written to Cloudflare: waiting for public DNS to show ${DOMAIN}'s new record` })).toBeVisible({ timeout: 60_000 });
 			await expect(page.getByText('first reports are on their way', { exact: false })).toHaveCount(0);
+			// The one useful action is on the first screen of the first-day dashboard
+			const open = (await page.getByRole('link', { name: `Open ${DOMAIN}` }).boundingBox())!;
+			expect(open.y + open.height).toBeLessThanOrEqual(height);
+			const card = (await page.getByTestId('first-day').boundingBox())!;
+			expect(card.y).toBeLessThan(height / 2); // the card is the first thing on the page
 			await expect(page.getByRole('region', { name: 'Get to your first answer' })).toHaveCount(0);
 			await fits(page);
 			// A reload stays on the dashboard: the review is done, so it does not come back.

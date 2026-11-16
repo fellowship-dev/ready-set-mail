@@ -66,7 +66,7 @@ export function SignupAbout({ pending }: { pending: Pending }) {
 
 	return (
 		<AuthLayout title="Tell us about yourself" description={<>Setting up the account for <span className="[overflow-wrap:anywhere]">{pending.email}</span></>}>
-			<form onSubmit={submit} className="space-y-4" noValidate>
+			<form onSubmit={submit} className="space-y-3" noValidate>
 				<Field id="name" label="Your name">
 					<Input
 						id="name"
@@ -94,12 +94,12 @@ export function SignupAbout({ pending }: { pending: Pending }) {
 					/>
 					{errors.organization ? <FieldError id="organization-error">{errors.organization}</FieldError> : null}
 				</Field>
-				<fieldset className="space-y-2" aria-describedby={errors.whose_email ? 'whose-email-error' : undefined}>
+				<fieldset className="space-y-1.5" aria-describedby={errors.whose_email ? 'whose-email-error' : undefined}>
 					<legend className="text-sm font-medium leading-none text-ink-1">Whose email are you setting up?</legend>
 					{/* The group is focusable for the error's sake; the radios keep the real focus order. */}
-					<div id="whose-email-group" tabIndex={-1} role="radiogroup" aria-label="Whose email are you setting up?" aria-required="true" aria-invalid={errors.whose_email ? true : undefined} className="space-y-2 outline-none">
+					<div id="whose-email-group" tabIndex={-1} role="radiogroup" aria-label="Whose email are you setting up?" aria-required="true" aria-invalid={errors.whose_email ? true : undefined} className="space-y-1.5 outline-none">
 						{WHOSE_EMAIL_OPTIONS.map((o) => (
-							<RadioCard key={o.value} name="whose-email" value={o.value} checked={whose === o.value} onChange={(v) => setWhose(v as WhoseEmail)} title={o.title} />
+							<RadioCard key={o.value} name="whose-email" value={o.value} checked={whose === o.value} onChange={(v) => setWhose(v as WhoseEmail)} title={o.title} compact />
 						))}
 					</div>
 					{errors.whose_email ? <FieldError id="whose-email-error">{errors.whose_email}</FieldError> : null}

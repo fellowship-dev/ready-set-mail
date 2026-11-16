@@ -5,7 +5,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { bindSignupDomainToEmail } from '../../lib/signup-intent';
 import { useSession } from '../../lib/session';
-import { EMAIL_PATTERN, screenFor, setPendingSignup, SIGNUP_PATH, stepOfPath, usePendingSignup, type PendingSignup } from '../../lib/signup';
+import { EMAIL_PATTERN, readSignupEmail, rememberSignupEmail, screenFor, setPendingSignup, SIGNUP_PATH, stepOfPath, usePendingSignup, type PendingSignup } from '../../lib/signup';
 import { PageSkeleton } from '../../components/states';
 import { AuthLayout, Field } from './AuthLayout';
 import { needsCode } from './CodeStep';
@@ -43,13 +43,16 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 	const { status } = useSession();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
-	const [email, setEmail] = useState('');
+	// A sign-up that ended (its code expired while S2 was open, or the tab came back later): S1 says so and keeps the address.
+	const [expiredFor] = useState(() => readSignupEmail());
+	const [email, setEmail] = useState(expiredFor ?? '');
 	const [password, setPassword] = useState('');
 	const [errors, setErrors] = useState<{ email?: string; password?: string; form?: string }>({});
 	const [busy, setBusy] = useState(false);
 	const check = useHumanCheck(status?.turnstile_site_key, { execution: 'execute', appearance: 'interaction-only', size: 'flexible' });
 	useEffect(() => {
-		document.getElementById('email')?.focus();
+		document.getElementById(expiredFor ? 'password' : 'email')?.focus();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	async function submit(e: FormEvent<HTMLFormElement>) {
@@ -69,6 +72,7 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 			if (status?.turnstile_site_key && !token) return setErrors({ form: 'The human check did not pass. Try again.' });
 			const res = await api<unknown>('/api/auth/signup', { method: 'POST', body: { email: email.trim(), password, ...(token ? { cf_turnstile_token: token } : {}) } });
 			if (!needsCode(res)) return setErrors({ form: 'Something went wrong. Try again.' });
+			rememberSignupEmail(email);
 			setPendingSignup(qc, { pending: true, email: res.email, step: 'about', expires_in: (res as { expires_in?: number }).expires_in ?? 600, lifetime_seconds: (res as { expires_in?: number }).expires_in });
 			navigate(SIGNUP_PATH.about);
 		} catch (err) {
@@ -83,6 +87,11 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 	return (
 		<AuthLayout title="Create your account" description="Check and fix your domain's SPF, DKIM and DMARC.">
 			<form onSubmit={submit} className="space-y-4" noValidate>
+				{expiredFor ? (
+					<Alert variant="warning" data-testid="signup-expired">
+						Your sign-up for {expiredFor} timed out, so its code no longer works. Enter your password again and we'll send a new code.
+					</Alert>
+				) : null}
 				<Field id="email" label="Work email">
 					<Input
 						id="email"

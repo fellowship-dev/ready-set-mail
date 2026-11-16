@@ -106,7 +106,7 @@ test('hosted, a plan that covers fewer domains than there are zones: the list, t
 	}
 });
 
-test('hosted, a domain waiting for proof is first on the overview, and connecting Cloudflare verifies it with no click', async ({ page }) => {
+test('hosted, a domain waiting for proof is on the overview (after the first-day card), and connecting Cloudflare verifies it with no click', async ({ page }) => {
 	const inst = await startInstance({ mode: 'hosted', port: 8817, tokenKey: true, dohNs: CF_NS });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
@@ -119,7 +119,8 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 		const firstDay = page.getByRole('heading', { name: 'Waiting for the DNS record that proves harbor-lane.org' });
 		await expect(waiting).toBeVisible();
 		await expect(firstDay).toBeVisible();
-		expect((await waiting.boundingBox())!.y).toBeLessThan((await firstDay.boundingBox())!.y);
+		// the first-day card is the first thing on the page; the proof block follows it
+		expect((await firstDay.boundingBox())!.y).toBeLessThan((await waiting.boundingBox())!.y);
 
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).first().click();
 		await expect(page).toHaveURL(/setup\/cloudflare/);

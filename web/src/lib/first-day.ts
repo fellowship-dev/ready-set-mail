@@ -20,7 +20,7 @@ export type FirstDay =
 	/** Waiting for the DMARC record to name our report address. */
 	| { kind: 'records'; domain: string; domainId: number; viaCloudflare: boolean; /** The change was written to Cloudflare from the review: the record is there, public DNS has not shown it yet. */ applied: boolean }
 	/** Records live, no report yet. */
-	| { kind: 'live'; domain: string; readAt: number | null }
+	| { kind: 'live'; domain: string; domainId: number; readAt: number | null }
 	/** Records live and nothing after QUIET_AFTER_DAYS days. */
 	| { kind: 'quiet'; domain: string; domainId: number; readAt: number | null }
 	/** The first reports are in. Shown once. */
@@ -57,7 +57,7 @@ export function firstDay(i: FirstDayInput): FirstDay | null {
 	if (s.dmarc_rua !== 1 || !hasReportAddress(d.rua_address)) return { kind: 'records', domain: d.domain, domainId: d.id, viaCloudflare: !!d.cf_account_id, applied: !!i.applied };
 	const now = i.now ?? Math.floor(Date.now() / 1000);
 	if (now - d.created_at >= QUIET_AFTER_DAYS * 86400) return { kind: 'quiet', domain: d.domain, domainId: d.id, readAt: s.dns_checked_at };
-	return { kind: 'live', domain: d.domain, readAt: s.dns_checked_at };
+	return { kind: 'live', domain: d.domain, domainId: d.id, readAt: s.dns_checked_at };
 }
 
 

@@ -8,6 +8,7 @@ import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
 import { PlanLimitNotice, planLimitOf, type PlanLimit } from '../PlanLimitNotice';
 import { clearProgress, connectCloudflarePath, useCfConnections } from '../../lib/cloudflare';
 import { hostOf, isCloudflareHost, safeHelpUrl, useDnsHost, type DnsHostProvider } from '../../lib/dns-host';
+import { useDnsPoll } from '../../lib/poll';
 import { useSession } from '../../lib/session';
 import { ClaimPreview } from './ClaimPreview';
 import { ProofRecord } from './ProofRecord';
@@ -58,16 +59,21 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const refresh = () => qc.invalidateQueries({ queryKey: ['domains'] });
 
 	const verify = useMutation({
-		mutationFn: () => api<{ domain: Domain; resumed?: boolean }>(`/api/domains/claims/${claim.id}/verify`, { method: 'POST' }),
+		// `silent`: the automatic look while this card is open (it says nothing when the record is not there yet).
+		mutationFn: (_silent?: boolean) => api<{ domain: Domain; resumed?: boolean }>(`/api/domains/claims/${claim.id}/verify`, { method: 'POST' }),
 		onSuccess: async (res) => {
 			await refresh();
 			// `resumed`: the workspace already had the domain, so this press verified nothing new.
 			if (onVerified) onVerified(res.domain, { resumed: res.resumed === true });
 			else navigate(`/domains/${res.domain.id}`);
 		},
-		onError: (e) => {
+		onError: (e, silent) => {
 			const atLimit = planLimitOf(e);
 			if (atLimit) return setLimit(atLimit);
+			if (silent) {
+				if (e instanceof ApiError && e.status === 409) void refresh();
+				return;
+			}
 			setError(verifyFailure(e));
 			setWaiting(notVisibleYet(e));
 			setFailures((n) => n + 1);
@@ -98,6 +104,8 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 	const [manual, setManual] = useState(false);
 	const showRecord = !lost && (!cloudflareFirst || manual);
 	const connectPrimary = cloudflareFirst && !covering && !manual;
+	// With the record on screen, the page looks for it itself (every 15 s for 10 minutes while open, then every minute) and moves on when it is there.
+	useDnsPoll(() => verify.mutateAsync(true), showRecord && canWrite && session.canWrite && !verify.isSuccess, claim.id);
 	const helpUrl = onCloudflare ? null : safeHelpUrl(provider);
 	const unknownHost = !dnsHost.isPending && !provider;
 	const connect = () => {
@@ -175,7 +183,7 @@ export function ClaimCard({ claim, onVerified, onRemoved, canWrite = true, previ
 					Remove
 				</Button>
 			</div>
-			{!lost && !connectPrimary ? <p className="text-sm text-ink-2">{showRecord ? 'Usually a minute or two.' : 'Usually a few seconds.'}</p> : null}
+			{!lost && !connectPrimary ? <p className="text-sm text-ink-2">{showRecord ? 'Usually a minute or two. We look for it ourselves every 15 seconds while this page is open.' : 'Usually a few seconds.'}</p> : null}
 			{!lost && preview ? <ClaimPreview claimId={claim.id} domain={claim.domain} lazy={preview === 'lazy'} compact /> : null}
 		</div>
 	);

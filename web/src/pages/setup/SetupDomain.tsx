@@ -1,7 +1,7 @@
 import { Alert, Button, FieldError, FieldHint, Input, Label, Skeleton } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { ClaimCard } from '../../components/domain/ClaimCard';
 import { PlanLimitNotice, planLimitOf } from '../../components/PlanLimitNotice';
 import { DomainRefusalHelp } from '../../components/TalkToMax';
@@ -45,6 +45,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 	const [entered, setEntered] = useState<Entered | null>(null);
 	const claims = useDomainClaims();
 	const [removeError, setRemoveError] = useState('');
+	const didNotConnect = !!(useLocation().state as { cfDidNotConnect?: boolean } | null)?.cfDidNotConnect;
 	const autoChecked = useRef(false);
 	const heading = useRef<HTMLHeadingElement>(null);
 
@@ -139,7 +140,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 	const field = agency ? "Client's domain" : 'Domain';
 
 	return (
-		<div className="mx-auto max-w-xl space-y-6" data-testid="setup-domain">
+		<div className="mx-auto max-w-xl space-y-6 lg:max-w-5xl" data-testid="setup-domain">
 			{!entered ? (
 				claims.isPending && !add.isPending ? (
 					<Skeleton className="h-40 w-full" role="status" aria-label="Checking for a domain you started with" />
@@ -155,6 +156,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 						<Skeleton className="h-5 w-3/4" role="status" aria-label={`Reading public DNS for ${checker}`} />
 					</div>
 				) : (
+					<div className="lg:grid lg:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] lg:gap-16">
 					<form onSubmit={submit} className="space-y-4" noValidate>
 						<h1 ref={heading} className="text-2xl font-semibold tracking-tight">{title}</h1>
 						<div className="space-y-1.5">
@@ -187,9 +189,19 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 							</p>
 						) : null}
 					</form>
+					{/* Wide screens only: what comes next, so the page is not one narrow column in an empty field. */}
+					<aside aria-label="What happens next" className="space-y-3 rounded-lg border border-line bg-surface-1 p-5 text-sm text-ink-2 max-lg:hidden sm:p-6">
+						<h2 className="text-base font-semibold text-ink-1">What happens next</h2>
+						<ol className="list-decimal space-y-2 pl-5">
+							<li>We read the domain's SPF, DKIM and DMARC from public DNS. Nothing in its DNS changes.</li>
+							<li>You choose how to set it up, by who hosts its DNS.</li>
+							<li>You see every record before anything is written.</li>
+						</ol>
+					</aside>
+					</div>
 				)
 			) : (
-				<Entered entered={entered} removeError={removeError} onNotThis={() => void notThisDomain()} onVerified={() => navigate('/')} heading={heading} />
+				<Entered entered={entered} removeError={removeError} didNotConnect={didNotConnect} onNotThis={() => void notThisDomain()} onVerified={() => navigate('/')} heading={heading} />
 			)}
 			<div className="space-y-2 text-sm text-ink-2">
 				{lookingAround ? (
@@ -213,7 +225,7 @@ export function SetupDomain({ focus }: { focus?: string } = {}) {
 }
 
 /** The result and the choice for the domain just entered. */
-function Entered({ entered, removeError, onNotThis, onVerified, heading }: { entered: Entered; removeError: string; onNotThis: () => void; onVerified: () => void; heading: React.RefObject<HTMLHeadingElement | null> }) {
+function Entered({ entered, removeError, didNotConnect, onNotThis, onVerified, heading }: { entered: Entered; removeError: string; didNotConnect: boolean; onNotThis: () => void; onVerified: () => void; heading: React.RefObject<HTMLHeadingElement | null> }) {
 	const { canWrite, me } = useSession();
 	const navigate = useNavigate();
 	const qc = useQueryClient();
@@ -257,7 +269,8 @@ function Entered({ entered, removeError, onNotThis, onVerified, heading }: { ent
 	};
 
 	return (
-		<div className="space-y-5">
+		<div className="space-y-5 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start lg:gap-x-16 lg:gap-y-5 lg:space-y-0" data-testid="s4-columns">
+			<div className="space-y-5">
 			{/* Focus lands on the headline so a screen reader hears the change. */}
 			<h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none [overflow-wrap:anywhere]">
 				{hostPending || doesNotExist ? name : hostSentence(name, choice, host.data)}
@@ -279,6 +292,8 @@ function Entered({ entered, removeError, onNotThis, onVerified, heading }: { ent
 				{dnsLoading ? <Skeleton className="h-5 w-3/4" role="status" aria-label="Reading public DNS" /> : dns ? <p className="max-w-prose text-base text-ink-1 [overflow-wrap:anywhere]">{resultLine(name, dns)}</p> : <p className="text-sm text-ink-2">We couldn't read public DNS for {name} just now. You can still set it up.</p>}
 			</div>
 
+			</div>
+			<div className="space-y-5 lg:rounded-lg lg:border lg:border-line lg:bg-surface-1 lg:p-6" data-testid="s4-choice">
 			{doesNotExist ? (
 				<p className="text-sm">
 					<button type="button" className="text-brand-ink underline underline-offset-4" onClick={onNotThis}>
@@ -306,6 +321,7 @@ function Entered({ entered, removeError, onNotThis, onVerified, heading }: { ent
 							? `Cloudflare is connected for ${name}. We prepare the changes; you see every record before anything is written.`
 							: "Connect Cloudflare and we'll prepare the changes. You see every record before anything is written."}
 					</p>
+					{didNotConnect ? <Alert variant="warning" data-testid="cf-did-not-connect">Cloudflare didn't connect, so nothing changed. Try again, or add the records yourself.</Alert> : null}
 					{verifyError ? <Alert variant="warning">{verifyError}</Alert> : null}
 					{startError ? <FieldError>{startError}</FieldError> : null}
 					<div className="flex flex-col gap-2 sm:flex-row">
@@ -324,6 +340,7 @@ function Entered({ entered, removeError, onNotThis, onVerified, heading }: { ent
 					</div>
 				</div>
 			)}
+			</div>
 		</div>
 	);
 }

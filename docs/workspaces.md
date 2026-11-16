@@ -25,7 +25,7 @@ A **workspace** holds domains, reports, members, Cloudflare connections and (lat
 
 **Who can create workspaces**
 
-* Hosted (`MODE=saas`): any signed-in user; every sign-up also gets a workspace of its own, named with the organization name given on sign-up (an agency's first workspace is "New client" until its first client domain is entered, then named after that domain; the agency's name heads the workspace switcher).
+* Hosted (`MODE=saas`): any signed-in user; every sign-up also gets a workspace of its own, named with the organization name given on sign-up (an agency's first workspace carries the placeholder name "New client", flagged by the `name_is_placeholder` workspace setting, until its first client domain is entered, then it is named after that domain; a workspace you name yourself is never renamed; the agency's name heads the workspace switcher).
 * Self-host: **only the instance owner**, the owner of the default workspace (`ws_default`). Anyone else gets `403 instance_owner_required`. (Letting every invited member create a workspace would hand each of them an owner role somewhere, and, below, a way to the server's Cloudflare token.) It is aimed at agencies and consultants who manage several organisations' domains from one install.
 
 **Cloudflare in a self-hosted workspace**

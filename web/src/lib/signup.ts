@@ -37,8 +37,9 @@ export function stepOfPath(pathname: string): SignupStep {
 /** Where the server's state says this person should be, or null when no attempt is waiting (S1). */
 export const screenFor = (p: PendingSignup | undefined): SignupStep => (p && p.pending ? p.step : 'form');
 
-export function usePendingSignup() {
+export function usePendingSignup(enabled = true) {
 	return useQuery({
+		enabled,
 		queryKey: SIGNUP_PENDING_KEY,
 		queryFn: () => api<PendingSignup>('/api/auth/signup/pending'),
 		// The attempt lives a few minutes and changes with every screen: always ask, never reuse.
@@ -46,6 +47,33 @@ export function usePendingSignup() {
 		gcTime: 0,
 		retry: false,
 	});
+}
+
+const EMAIL_KEY = 'rsm_signup_email';
+/**
+ * The address of the sign-up in progress, kept in this tab only (never the password): when the attempt ends while the page is open or
+ * the tab comes back later, S1 can say so and keep the email. Cleared when the code is right or the person starts over.
+ */
+export function rememberSignupEmail(email: string): void {
+	try {
+		sessionStorage.setItem(EMAIL_KEY, email.trim());
+	} catch {
+		/* private mode: S1 just opens empty */
+	}
+}
+export function readSignupEmail(): string | null {
+	try {
+		return sessionStorage.getItem(EMAIL_KEY) || null;
+	} catch {
+		return null;
+	}
+}
+export function forgetSignupEmail(): void {
+	try {
+		sessionStorage.removeItem(EMAIL_KEY);
+	} catch {
+		/* ignore */
+	}
 }
 
 export const WHOSE_EMAIL_OPTIONS: ReadonlyArray<{ value: WhoseEmail; title: string }> = [

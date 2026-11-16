@@ -89,7 +89,7 @@ export function FirstDayCard({ state, email, emailCheck, workspaceId, onSeen }: 
 			if (state.applied) {
 				return (
 					<Frame title={`Written to Cloudflare: waiting for public DNS to show ${state.domain}'s new record`}>
-						<p className="max-w-prose text-sm text-ink-2">DNS changes can take a few minutes to show up. We read it again every day, and every time you open the domain. Reports can only start once public DNS shows the report address.</p>
+						<p className="max-w-prose text-sm text-ink-2">DNS changes can take a few minutes to show up. We look again every 15 seconds while this page is open.</p>
 						<Button asChild variant="secondary" size="sm">
 							<Link to={`/domains/${state.domainId}`}>Open {state.domain}</Link>
 						</Button>
@@ -99,7 +99,7 @@ export function FirstDayCard({ state, email, emailCheck, workspaceId, onSeen }: 
 			}
 			return (
 				<Frame title={`Waiting for the report address in ${state.domain}'s DMARC record`}>
-					<p className="max-w-prose text-sm text-ink-2">Reports can only arrive once its DMARC record names our reporting address. {state.viaCloudflare ? 'Cloudflare is connected, so we can prepare the change and you press Apply.' : 'The domain page shows the exact record.'}</p>
+					<p className="max-w-prose text-sm text-ink-2">Reports can only arrive once its DMARC record names our reporting address. {state.viaCloudflare ? 'Cloudflare is connected, so we can prepare the change and you press Apply.' : 'The domain page shows the exact record. When it is in public DNS this page notices by itself.'}</p>
 					<Button asChild>
 						<Link to={state.viaCloudflare ? REVIEW_PATH : `/domains/${state.domainId}`}>{state.viaCloudflare ? 'Review the change' : 'See what to add'}</Link>
 					</Button>
@@ -118,6 +118,9 @@ export function FirstDayCard({ state, email, emailCheck, workspaceId, onSeen }: 
 			return (
 				<Frame title="Your first reports are on their way">
 					<p className="max-w-prose text-sm text-ink-2">Mail providers send DMARC reports about once a day. {email ? `We'll email ${email} when the first one arrives.` : "We'll email you when the first one arrives."}</p>
+					<Button asChild variant="secondary" size="sm">
+						<Link to={`/domains/${state.domainId}`}>Open {state.domain}</Link>
+					</Button>
 					<ul className="space-y-2" aria-label="Where things stand">
 						<Row mark="done" title="Report address in DMARC" detail={state.readAt ? `seen in public DNS ${timeAgo(state.readAt)}` : 'seen in public DNS'} />
 						<Row mark="next" title="First report" detail="usually within 24 to 48 hours" />

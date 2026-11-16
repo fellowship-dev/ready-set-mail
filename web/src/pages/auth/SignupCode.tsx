@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
-import { setPendingSignup, SIGNUP_PATH, SIGNUP_PENDING_KEY, type PendingSignup } from '../../lib/signup';
+import { forgetSignupEmail, setPendingSignup, SIGNUP_PATH, SIGNUP_PENDING_KEY, type PendingSignup } from '../../lib/signup';
 import { AuthLayout } from './AuthLayout';
 import { codeDigits, CODE_MINUTES, needsCode } from './CodeStep';
 import { useHumanCheck } from './Turnstile';
@@ -14,11 +14,12 @@ type Pending = Extract<PendingSignup, { pending: true }>;
 /** "Wrong address? Start over": the server drops the attempt (and its answers), and nothing is waiting any more. */
 export async function startOver(qc: QueryClient): Promise<void> {
 	await api('/api/auth/signup/cancel', { method: 'POST', body: {} }).catch(() => {});
+	forgetSignupEmail();
 	setPendingSignup(qc, { pending: false });
 }
 
 /** The words for a refused code (the server's own wording names a different path for sign-in). */
-function refusal(err: unknown): string {
+export function refusal(err: unknown): string {
 	const code = err instanceof ApiError ? (err.body as { code?: string } | undefined)?.code : undefined;
 	if (code === 'code_wrong') return "That code isn't right. Check the latest email.";
 	if (code === 'code_expired') return 'That code has expired. Send a new code.';
@@ -30,11 +31,20 @@ function refusal(err: unknown): string {
  * S3, "Check your inbox". One input (not six boxes: paste, autofill and screen readers keep working): numeric keypad, the
  * browser's one-time-code autofill, spaces and hyphens ignored, and the sixth digit submits on its own, with the button as the
  * fallback. Resending and the bot check hide behind "Not seeing it?"; the check is not on the page before that.
+ *
+ * One screen for every hosted code that confirms an address: sign-up (SignupCode) and an invitation (InvitePage). What differs is passed in:
+ * what a right code does, how a new one is asked for, and whether "Wrong address? Start over" makes sense (not for an invited address).
  */
-export function SignupCode({ pending }: { pending: Pending }) {
-	const { status, signedIn } = useSession();
-	const qc = useQueryClient();
-	const navigate = useNavigate();
+export function CodeScreen({ email, minutes, onSubmit, onResend, onStartOver }: {
+	email: string;
+	minutes: number;
+	/** A right code: do what follows. Throw to show the refusal. */
+	onSubmit: (code: string) => Promise<void>;
+	/** Ask for a new code. Resolve false when the screen has been left (nothing to announce). */
+	onResend: (token: string | null) => Promise<boolean | void>;
+	onStartOver?: () => Promise<void>;
+}) {
+	const { status } = useSession();
 	const [code, setCode] = useState('');
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
@@ -44,7 +54,6 @@ export function SignupCode({ pending }: { pending: Pending }) {
 	const check = useHumanCheck(status?.turnstile_site_key, { execution: 'execute', appearance: 'interaction-only', size: 'flexible' });
 	const input = useRef<HTMLInputElement>(null);
 	const submitted = useRef('');
-	const minutes = Math.max(1, Math.round((pending.lifetime_seconds ?? CODE_MINUTES * 60) / 60));
 
 	useEffect(() => {
 		input.current?.focus();
@@ -56,10 +65,7 @@ export function SignupCode({ pending }: { pending: Pending }) {
 		setError('');
 		setBusy(true);
 		try {
-			await api('/api/auth/code', { method: 'POST', body: { code: value } });
-			qc.removeQueries({ queryKey: SIGNUP_PENDING_KEY });
-			await signedIn();
-			navigate('/', { replace: true });
+			await onSubmit(value);
 		} catch (err) {
 			setError(refusal(err));
 			submitted.current = '';
@@ -81,20 +87,13 @@ export function SignupCode({ pending }: { pending: Pending }) {
 		try {
 			const token = await check.run();
 			if (status?.turnstile_site_key && !token) throw new Error('The human check did not pass. Try again.');
-			const res = await api<unknown>('/api/auth/signup/resend', { method: 'POST', body: token ? { cf_turnstile_token: token } : {} });
-			if (!needsCode(res)) throw new Error('Something went wrong. Try again.');
+			if ((await onResend(token ?? null)) === false) return;
 			setResend('sent');
 			setCode('');
 			submitted.current = '';
 			setError('');
 			input.current?.focus();
 		} catch (err) {
-			if (err instanceof ApiError && err.status === 410) {
-				// The attempt ended: nothing is waiting any more, so start again at S1.
-				setPendingSignup(qc, { pending: false });
-				navigate(SIGNUP_PATH.form, { replace: true });
-				return;
-			}
 			setResendError(errorMessage(err));
 			setResend('idle');
 		} finally {
@@ -103,7 +102,7 @@ export function SignupCode({ pending }: { pending: Pending }) {
 	}
 
 	return (
-		<AuthLayout title="Check your inbox" description={<>We sent a 6-digit code to <span className="[overflow-wrap:anywhere]">{pending.email}</span>. It's valid for {minutes} minutes.</>}>
+		<AuthLayout title="Check your inbox" description={<>We sent a 6-digit code to <span className="[overflow-wrap:anywhere]">{email}</span>. It's valid for {minutes} minutes.</>}>
 			<form
 				className="space-y-4"
 				noValidate
@@ -157,20 +156,54 @@ export function SignupCode({ pending }: { pending: Pending }) {
 						{resendError ? <Alert variant="danger" className="text-left">{resendError}</Alert> : null}
 					</div>
 				) : null}
-				<p className="text-ink-2">
-					Wrong address?{' '}
-					<button
-						type="button"
-						className="text-brand-ink underline underline-offset-4"
-						onClick={async () => {
-							await startOver(qc);
-							navigate(SIGNUP_PATH.form, { replace: true });
-						}}
-					>
-						Start over
-					</button>
-				</p>
+				{onStartOver ? (
+					<p className="text-ink-2">
+						Wrong address?{' '}
+						<button type="button" className="text-brand-ink underline underline-offset-4" onClick={() => void onStartOver()}>
+							Start over
+						</button>
+					</p>
+				) : null}
 			</div>
 		</AuthLayout>
+	);
+}
+
+/** S3 of the sign-up: a right code opens the session and goes to the app; "Send a new code" is the pending attempt's own resend. */
+export function SignupCode({ pending }: { pending: Pending }) {
+	const { signedIn } = useSession();
+	const qc = useQueryClient();
+	const navigate = useNavigate();
+	const minutes = Math.max(1, Math.round((pending.lifetime_seconds ?? CODE_MINUTES * 60) / 60));
+	return (
+		<CodeScreen
+			email={pending.email}
+			minutes={minutes}
+			onSubmit={async (value) => {
+				await api('/api/auth/code', { method: 'POST', body: { code: value } });
+				forgetSignupEmail();
+				qc.removeQueries({ queryKey: SIGNUP_PENDING_KEY });
+				await signedIn();
+				navigate('/', { replace: true });
+			}}
+			onResend={async (token) => {
+				try {
+					const res = await api<unknown>('/api/auth/signup/resend', { method: 'POST', body: token ? { cf_turnstile_token: token } : {} });
+					if (!needsCode(res)) throw new Error('Something went wrong. Try again.');
+				} catch (err) {
+					if (err instanceof ApiError && err.status === 410) {
+						// The attempt ended: nothing is waiting any more, so start again at S1.
+						setPendingSignup(qc, { pending: false });
+						navigate(SIGNUP_PATH.form, { replace: true });
+						return false;
+					}
+					throw err;
+				}
+			}}
+			onStartOver={async () => {
+				await startOver(qc);
+				navigate(SIGNUP_PATH.form, { replace: true });
+			}}
+		/>
 	);
 }

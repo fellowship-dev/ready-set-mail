@@ -1,14 +1,16 @@
 import { Alert, Button, Checkbox, FieldError, Input, Label } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, Navigate, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
 import { TalkToMax } from '../../components/TalkToMax';
 import { CodeStep, needsCode, type CodeRequired } from './CodeStep';
 import { SignupFlow } from './SignupFlow';
+import { screenFor, SIGNUP_PATH, usePendingSignup } from '../../lib/signup';
 import { AuthLayout, Field } from './AuthLayout';
 import { useHumanCheck } from './Turnstile';
 import { PasswordInput } from './PasswordInput';
+import { PageSkeleton } from '../../components/states';
 import { HostedAlternative } from '../../components/HostedAlternative';
 
 const PROVIDER_LABELS: Record<string, string> = { github: 'GitHub', google: 'Google' };
@@ -37,6 +39,9 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	/** Set when the server emailed a code and waits for it. */
 	const [pending, setPending] = useState<CodeRequired | null>(null);
 	const check = useHumanCheck(status?.turnstile_site_key);
+	// Hosted, coming back to the app root in the middle of a sign-up (a closed tab, the logo, a bookmark): resume it where it stands, not "Sign in".
+	const resumable = status?.mode === 'saas' && status.signup_open && !creating;
+	const pendingSignup = usePendingSignup(!!resumable);
 
 	if (!status) return null;
 	// Older servers said signin_available: false when hosted bot protection was missing. Current servers always let existing
@@ -50,6 +55,8 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 		);
 	}
 	const hosted = status.mode === 'saas';
+	if (resumable && pendingSignup.isPending) return <AuthLayout title="Loading…"><PageSkeleton label="Loading" /></AuthLayout>;
+	if (resumable && pendingSignup.data?.pending) return <Navigate to={SIGNUP_PATH[screenFor(pendingSignup.data)]} replace />;
 	// The installer-proof screen is self-host only: the hosted service never asks a registrant for one.
 	const mode: Mode = !status.configured && !hosted ? 'setup' : creating && status.signup_open ? 'signup' : 'signin';
 	// Hosted sign-up is its own three screens (SignupFlow), each with its own address; the URL holds the step.

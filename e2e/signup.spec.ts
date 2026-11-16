@@ -41,6 +41,10 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 			await expect(page.getByText('dana@brightwave-mail.com')).toBeVisible();
 			await expect.poll(() => mailedCodes(inst).length).toBeGreaterThan(before);
 			await fitsTheWindow(page);
+			// The whole of S2, Continue included, is on the first screen (the role select stays)
+			await expect(page.getByLabel('What is your role? (optional)')).toBeVisible();
+			const cont = await page.getByRole('button', { name: 'Continue' }).boundingBox();
+			expect(cont!.y + cont!.height).toBeLessThanOrEqual(height);
 			// A reload comes back to S2; so does asking for S1 while the attempt waits
 			await page.reload();
 			await expect(page.getByRole('heading', { name: 'Tell us about yourself' })).toBeVisible();
@@ -76,7 +80,9 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 			await page.getByLabel('6-digit code').pressSequentially(wrong);
 			await expect(page.getByText("That code isn't right. Check the latest email.")).toBeVisible();
 			await page.getByLabel('6-digit code').fill(`${right.slice(0, 3)} ${right.slice(3)}`);
-			await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
+			// S4 knows the domain from the checker: it checks it on arrival and names it, with "Not this domain?" (no field to fill)
+			await expect(page.getByText(/^Domain: harbor-lane\.org/)).toContainText('Not this domain?', { timeout: 30_000 });
+			await expect(page.getByLabel('Domain', { exact: true })).toHaveCount(0);
 
 			// The account and the first workspace took the answers
 			const me = (await (await page.request.get(`${inst.url}/api/me`)).json()) as { user: { name: string; email: string }; whose_email: string; agency_name?: string };

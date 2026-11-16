@@ -80,7 +80,11 @@ describe('1. one password, typed once, confirmed by an emailed code', () => {
 		expect(screen.queryByLabelText('Your name')).not.toBeInTheDocument();
 		await user.type(screen.getByLabelText('Choose a password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Accept invite' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		// the same screen as sign-up's S3, not the older code screen
+		expect(await screen.findByRole('heading', { name: 'Check your inbox' })).toBeInTheDocument();
+		expect(screen.getByText(/We sent a 6-digit code to/)).toHaveTextContent('new@example.com');
+		expect(screen.getByLabelText('6-digit code')).toHaveAttribute('autocomplete', 'one-time-code');
+		expect(screen.queryByText('Start over')).toBeNull(); // an invited address is fixed
 		expect(calls.find((c) => c.method === 'POST' && c.path === '/api/invites/t1')?.body).toEqual({ password: 'long-enough-1' });
 	});
 });

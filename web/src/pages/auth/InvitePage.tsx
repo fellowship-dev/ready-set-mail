@@ -7,7 +7,8 @@ import { useHosted, useSession } from '../../lib/session';
 import { cleanName } from '../../lib/names';
 import { hashFor, workspaceStore } from '../../lib/workspace';
 import { setupPathFor } from '../../lib/handoff';
-import { CodeForm, CodeStep, needsCode, type CodeRequired } from './CodeStep';
+import { CODE_MINUTES, CodeForm, needsCode, type CodeRequired } from './CodeStep';
+import { CodeScreen } from './SignupCode';
 import { AuthLayout, Field } from './AuthLayout';
 import { PasswordInput } from './PasswordInput';
 import { TermsAgreement } from './LegalLinks';
@@ -71,10 +72,11 @@ export function InvitePage() {
 	}
 
 	if (pending) {
+		// The same screen as sign-up's S3. An invited address is fixed, so there is no "Start over".
 		return (
-			<CodeStep
+			<CodeScreen
 				email={pending.email}
-				purpose="invite"
+				minutes={Math.round(CODE_MINUTES)}
 				onSubmit={async (code) => {
 					const res = await api<{ workspace_id?: string; handoff_domain?: string }>('/api/auth/code', { method: 'POST', body: { code } });
 					await joined(res.workspace_id, res.handoff_domain);

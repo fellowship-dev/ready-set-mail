@@ -15,9 +15,11 @@ import { useHandoffs } from '../../lib/handoff';
 import { ReportsNotConnected, useWorkspaceReportsNotConnected } from '../../components/ReportsNotConnected';
 import { ListSkeleton, LoadError, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { errorMessage } from '../../lib/api';
-import { domainKeys, fetchStats, fetchSummary, useDomainSummaries } from '../../lib/domain-queries';
+import { domainKeys, fetchStats, fetchSummary, invalidateDomain, useDomainSummaries } from '../../lib/domain-queries';
 import { DAY_ONE_SECONDS, dayOneAnswer, dayOneVerdict, firstDay, onFirstDay } from '../../lib/first-day';
 import { focusDomainOf, reviewOutcome } from '../../lib/first-run';
+import { useDnsPoll } from '../../lib/poll';
+import { firstCheck } from '../../lib/dns-plan';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains } from '../../lib/queries';
 import { useHosted, useSession } from '../../lib/session';
@@ -193,6 +195,17 @@ export function OverviewPage() {
 		: null;
 	// H2: while a teammate finishes this domain (until its records are live), their progress replaces the first-day card.
 	const handoffs = useHandoffs(canWrite && hostedMode);
+	// Waiting for the report address to show in public DNS: look again by itself (15 s for 10 minutes while this page is open, then every minute)
+	// and the card changes when it is there. Reading public DNS changes nothing in anyone's DNS.
+	useDnsPoll(
+		async () => {
+			if (!focus) return;
+			await firstCheck([focus.id]);
+			await invalidateDomain(qc, focus.id);
+		},
+		dayState?.kind === 'records' && !!focus,
+		focus?.id,
+	);
 	const focusName = focus?.domain ?? claims.find((c) => c.status === 'pending')?.domain;
 	const handoff = focusName ? (handoffs.data ?? []).filter((h) => h.domain === focusName).sort((a, b) => b.sent_at - a.sent_at)[0] : undefined;
 	const recordsLive = dayState && ['live', 'quiet', 'arrived', 'reports_off'].includes(dayState.kind);
@@ -201,6 +214,7 @@ export function OverviewPage() {
 	// On a domain's first day an attention row does not bring "Not yet." back as the headline; later it does.
 	const focusFirstDay = !!focus && Math.floor(Date.now() / 1000) - focus.created_at < DAY_ONE_SECONDS;
 	const headline = cardSpeaks && waiting === 0 && (focusFirstDay || !needsAttention) && domains.length > 0 && /^Not yet/.test(answer) ? `Getting ${focusName ?? 'your domain'} set up.` : answer;
+	const handoffOpen = !!handoff && !recordsLive;
 	const stepper = handoff && !recordsLive ? <HandoffCard handoff={handoff} state={dayState} canResend={role === 'owner'} /> : dayState ? <FirstDayCard state={dayState} email={me?.user?.email} emailCheck={status?.email_check !== false} workspaceId={me?.workspace_id ?? null} /> : null;
 
 	return (
@@ -249,7 +263,8 @@ export function OverviewPage() {
 					{/* What blocks progress comes first: a domain waiting for proof, a Cloudflare connection that stopped working. */}
 					<ProofLostList domains={domains} canWrite={canWrite} />
 					{canWrite ? <CloudflareAttention /> : null}
-					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain))} canWrite={canWrite} />
+					{/* While a teammate finishes a domain, the hand-off card says where it stands and is the one thing about it: no proof block or Connect button for the same domain beside it. */}
+					<WaitingClaims claims={claims.filter((c) => !domains.some((d) => isUnproven(d) && d.domain === c.domain) && !(handoffOpen && c.domain === handoff?.domain))} canWrite={canWrite} />
 
 					{empty && !canWrite ? (
 						<EmptyState

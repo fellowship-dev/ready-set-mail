@@ -66,7 +66,11 @@ describe('the emailed code', () => {
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
 		await user.click(screen.getByRole('button', { name: 'Accept invite' }));
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
+		// the same screen as sign-up's S3, not the older code screen
+		expect(await screen.findByRole('heading', { name: 'Check your inbox' })).toBeInTheDocument();
+		expect(screen.getByText(/We sent a 6-digit code to/)).toHaveTextContent('new@example.com');
+		expect(screen.getByLabelText('6-digit code')).toHaveAttribute('autocomplete', 'one-time-code');
+		expect(screen.queryByText('Start over')).toBeNull(); // an invited address is fixed
 	});
 
 	it('an unverified cookie session (403 on /api/me) lands on sign-in, not an error', async () => {

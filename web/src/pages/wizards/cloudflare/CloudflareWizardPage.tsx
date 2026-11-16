@@ -20,7 +20,7 @@ import {
 	type CfWizardProgress,
 } from '../../../lib/cloudflare';
 import { fetchPlan, markWizardState, pendingWrites } from '../../../lib/dns-plan';
-import { REVIEW_PATH, isAgency, reviewDone } from '../../../lib/first-run';
+import { REVIEW_PATH, SETUP_PATH, isAgency, reviewDone } from '../../../lib/first-run';
 import { useDomainClaims } from '../../../lib/queries';
 import { useHosted, useSession } from '../../../lib/session';
 import { ConnectStep } from './ConnectStep';
@@ -59,6 +59,11 @@ export function CloudflareWizardPage() {
 	}, []);
 
 	useEffect(() => writeProgress(workspace, progress), [workspace, progress]);
+
+	// Hosted: a consent that was cancelled or failed goes back to S4, where the domain, the choice and "I'll add the records myself" are, with the plain sentence.
+	useEffect(() => {
+		if (hosted && returnError) navigate(SETUP_PATH, { replace: true, state: { cfDidNotConnect: true } });
+	}, [hosted, returnError, navigate]);
 
 	const go = useCallback((step: CfStepKey, extra: Partial<CfWizardProgress> = {}) => setProgress((p) => ({ ...p, ...extra, step })), []);
 

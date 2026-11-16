@@ -18,7 +18,10 @@ const ABOUT_PENDING: PendingSignup = { pending: true, email: EMAIL, step: 'about
 const PROFILE = { name: 'Dana Whitfield', organization: 'Brightwave Studio', whose_email: 'company' as const };
 const CODE_PENDING: PendingSignup = { pending: true, email: EMAIL, step: 'code', expires_in: 500, lifetime_seconds: 600, profile: PROFILE };
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+	localStorage.clear();
+	sessionStorage.clear();
+});
 
 function Where() {
 	return <output data-testid="where">{useLocation().pathname}</output>;
