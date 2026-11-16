@@ -13,8 +13,8 @@ import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useInvalidateDomain } from '../../lib/domain-queries';
-import { formatDateTime } from '../../lib/format';
-import { MX_READING, RECORD_READING, maxAgeWords, mtaStsExplainer, stateSentence } from '../../lib/mta-sts';
+import { formatDate, formatDateTime } from '../../lib/format';
+import { EVIDENCE_SENTENCE, maxAgeWords, mtaStsExplainer, policyUrl, stateSentence } from '../../lib/mta-sts';
 import { useDomain } from '../../lib/queries';
 import type { MtaStsDisableResult, MtaStsStatus, MtaStsVerifyResult } from '../../lib/types';
 
@@ -126,11 +126,32 @@ export function MtaStsPage() {
 		const s = q.data;
 		const c = s.config;
 		if (!c) {
-			body = s.available ? <Preview s={s} name={name} busy={enable.isPending} error={enable.isError ? errorMessage(enable.error) : null} onEnable={() => enable.mutate()} onRetry={() => void q.refetch()} /> : <Unavailable s={s} name={name} back={back} />;
+			body = (
+				<>
+					{s.retiring ? <Retiring r={s.retiring} /> : null}
+					{s.setup_expired ? (
+						<Alert variant="info" title="Setup was stopped">
+							<p>{s.setup_expired.notice}</p>
+							<div className="mt-2">
+								<WriteButton variant="secondary" size="sm" loading={dismiss.isPending} onClick={() => dismiss.mutate()}>
+									Dismiss
+								</WriteButton>
+							</div>
+						</Alert>
+					) : null}
+					{s.available ? <Preview s={s} name={name} busy={enable.isPending} error={enable.isError ? errorMessage(enable.error) : null} onEnable={() => enable.mutate()} onRetry={() => void q.refetch()} /> : <Unavailable s={s} name={name} back={back} />}
+				</>
+			);
 		} else {
 			const setup = SETUP_STATES.includes(c.state);
+			const served = s.served ?? null;
+			const unreachable = !setup && served?.ok === false;
+			const isServed = !setup && served?.ok === true; // served is the last fetch of the policy URL and nothing else
+			const unproved = !setup && served?.ok == null; // a row from before the fetch existed: not looked at yet
 			const checksAllOk = !!checked && checked.checks.every((k) => k.state === 'ok' || k.state === 'not_applicable');
 			const manualRecords = s.records.filter((r) => r.add_now);
+			const canEnforce = !!s.enforce?.allowed && !unreachable;
+			const primaryIsEnforce = !!s.enforce && isServed; // the primary action once the policy is served; before that it is Check now
 			body = (
 				<>
 					<Section
@@ -143,6 +164,8 @@ export function MtaStsPage() {
 						}
 					>
 						<p className="text-sm text-ink-1">{stateSentence(c.state, c.mode)}</p>
+						{isServed ? <StatusDot status="ok" label={`Served at ${policyUrl(name ?? '')}`} /> : null}
+						{unreachable ? <Alert variant="warning" title="The policy cannot be reached">{served?.message}</Alert> : null}
 						{c.last_error ? <Alert variant="warning" title="The last check had a problem">{c.last_error}</Alert> : null}
 						{c.notice ? (
 							<Alert variant="info" title="Something changed">
@@ -160,89 +183,76 @@ export function MtaStsPage() {
 								<RecordList records={manualRecords} copyable label="Records to add" />
 							</div>
 						) : null}
-						{checked && checked.checks.length > 0 ? (
-							setup || !checksAllOk ? <CheckList checks={checked.checks} /> : <StatusDot status="ok" label="All the setup checks are in place." />
-						) : null}
+						{checked && checked.checks.length > 0 && (setup || unreachable || unproved || !checksAllOk) ? <CheckList checks={checked.checks} /> : null}
 						{check.isError ? <Alert variant="danger" title="Could not check">{errorMessage(check.error)}</Alert> : null}
-						<div className="flex flex-wrap items-center gap-3">
-							<WriteButton variant={setup ? 'primary' : 'secondary'} loading={check.isPending} onClick={() => check.mutate()}>
-								Check now
-							</WriteButton>
-							<span className="text-sm text-ink-2">{c.last_checked_at ? `Last checked ${formatDateTime(c.last_checked_at)}.` : 'Not checked yet.'}</span>
-						</div>
-					</Section>
-
-					<Section title="TLS reports, last 30 days">
-						{s.summary && s.reports.length > 0 ? (
-							<p className="text-sm text-ink-2">
-								{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions under this policy, from {s.summary.report_count} {s.summary.report_count === 1 ? 'report' : 'reports'}.
-							</p>
-						) : null}
-						<ReportList reports={s.reports} />
-					</Section>
-
-					<Section title="Details">
-						<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_minmax(0,1fr)]">
-							<dt className="font-medium text-ink-2">Mode</dt>
-							<dd>{c.mode === 'enforce' ? 'Enforce' : 'Testing'}</dd>
-							<dt className="font-medium text-ink-2">MX hosts</dt>
-							<dd>
-								<MxList hosts={c.mx_host_list} />
-								<p className="mt-1 text-xs text-ink-2">{MX_READING} The policy lists exactly these; a change is picked up daily.</p>
-							</dd>
-							<dt className="font-medium text-ink-2">Policy</dt>
-							<dd className="font-mono [overflow-wrap:anywhere]">{s.policy_host_status ? `https://${s.policy_host_status.hostname}/.well-known/mta-sts.txt` : null}</dd>
-							<dt className="font-medium text-ink-2">Cached by senders</dt>
-							<dd>Up to {maxAgeWords(c.max_age)}.</dd>
-						</dl>
-						{checked && !setup && checksAllOk ? (
-							<Disclosure title="What was checked" summary={`The setup checks of ${formatDateTime(c.last_checked_at ?? Math.floor(Date.now() / 1000))}, line by line.`}>
-								<CheckList checks={checked.checks} />
-							</Disclosure>
-						) : null}
-						<Disclosure title="The three records" summary="Their names and values, as Ready Set Mail writes them or asks you to.">
-							<div className="space-y-3">
-								<p className="text-sm text-ink-2">{RECORD_READING}</p>
-								<RecordList records={s.records} copyable={c.via === 'manual'} label="The three records" />
+						{/* Check now and the time of the last check are for a setup that is still waiting and for a policy that cannot be reached; once the fetch passes they go. */}
+						{setup || unreachable || unproved ? (
+							<div className="flex flex-wrap items-center gap-3">
+								<WriteButton variant="primary" loading={check.isPending} onClick={() => check.mutate()}>
+									Check now
+								</WriteButton>
+								{c.last_checked_at ? <span className="text-sm text-ink-2">Last checked {formatDateTime(c.last_checked_at)}.</span> : null}
 							</div>
-						</Disclosure>
+						) : null}
 					</Section>
 
 					{s.enforce ? (
 						<Section title="Enforce">
-							<p className="text-sm text-ink-2">Enforce makes senders refuse to deliver when they cannot use an encrypted connection. It is only safe once the reports show they can.</p>
-							{s.enforce.allowed ? null : (
-								<div>
-									<p className="text-sm font-medium text-ink-1">Not yet:</p>
-									<ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-ink-2">
+							<WriteButton variant={primaryIsEnforce ? 'primary' : 'secondary'} disabled={!canEnforce} onClick={() => setDialog('enforce')}>
+								Switch to enforce
+							</WriteButton>
+							{canEnforce ? null : (
+								<>
+									<ul aria-label="Not yet" className="list-disc space-y-1 pl-5 text-sm text-ink-2">
 										{s.enforce.reasons.map((r) => (
 											<li key={r}>{r}</li>
 										))}
 									</ul>
-								</div>
+									<p className="text-sm text-ink-2">
+										{EVIDENCE_SENTENCE} {s.evidence?.no_reports_note ?? 'A domain that receives no TLS reports can never switch to enforce.'}
+									</p>
+								</>
 							)}
-							<WriteButton variant={s.enforce.allowed ? 'primary' : 'secondary'} disabled={!s.enforce.allowed} onClick={() => setDialog('enforce')}>
-								Switch to enforce
-							</WriteButton>
 						</Section>
-					) : (
+					) : !setup ? (
 						<Section title="Enforce">
-							<p className="text-sm text-ink-2">Senders must use an encrypted connection, or they do not deliver. If a reason comes up to relax that, go back to testing: it is always allowed.</p>
 							<WriteButton variant="secondary" onClick={() => setDialog('testing')}>
 								Switch to testing
 							</WriteButton>
 						</Section>
+					) : null}
+
+					{setup ? null : (
+						<Section title="TLS reports, last 30 days">
+							{s.summary && s.reports.length > 0 ? (
+								<p className="text-sm text-ink-2">
+									{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions, from {s.summary.report_count} {s.summary.report_count === 1 ? 'report' : 'reports'}.
+								</p>
+							) : null}
+							<ReportList reports={s.reports} />
+							{s.evidence && s.evidence.uncounted_reports > 0 ? (
+								<p className="text-xs text-ink-2">
+									{s.evidence.uncounted_reports} {s.evidence.uncounted_reports === 1 ? 'report is' : 'reports are'} from other senders and not counted.
+								</p>
+							) : null}
+						</Section>
 					)}
 
-					<Section title="Turn off">
-						<p className="text-sm text-ink-2">
-							Removes the policy and the records Ready Set Mail wrote. Senders that already fetched the policy may keep it for up to {maxAgeWords(c.max_age)}.
-						</p>
-						{s.disable && !s.disable.allowed ? <p className="text-sm text-ink-1">{s.disable.reason}</p> : null}
-						<WriteButton variant="danger" disabled={!!s.disable && !s.disable.allowed} onClick={() => setDialog('off')}>
+					<Disclosure title="Show records">
+						<div className="space-y-3">
+							<RecordList records={s.records} copyable={c.via === 'manual'} label="The three records" />
+							<p className="text-sm text-ink-2">
+								MX hosts in the policy: <span className="font-mono [overflow-wrap:anywhere]">{c.mx_host_list.join(', ')}</span>. Senders keep it up to {maxAgeWords(c.max_age)}.
+							</p>
+						</div>
+					</Disclosure>
+
+					<div className="space-y-2">
+						{s.disable && !s.disable.allowed ? <p className="text-sm text-ink-2">{s.disable.reason}</p> : null}
+						<WriteButton variant="secondary" disabled={!!s.disable && !s.disable.allowed} onClick={() => setDialog('off')}>
 							Turn off MTA-STS
 						</WriteButton>
-					</Section>
+					</div>
 
 					<ConfirmDialog
 						open={dialog === 'enforce'}
@@ -292,6 +302,15 @@ export function MtaStsPage() {
 	);
 }
 
+/** A policy being taken down (a lost proof, a removed or an evicted domain): what senders may still do, and until when. */
+function Retiring({ r }: { r: NonNullable<MtaStsStatus['retiring']> }) {
+	return (
+		<Alert variant="info" title="MTA-STS is being switched off">
+			<p>{r.message.replace(/^MTA-STS is being switched off\. /, '')} Until {formatDate(r.until)}.</p>
+		</Alert>
+	);
+}
+
 function Unavailable({ s, name, back }: { s: MtaStsStatus; name: string | null; back: string }) {
 	return (
 		<Section title={`MTA-STS is not available${name ? ` for ${name}` : ''}`}>
@@ -307,19 +326,15 @@ function Unavailable({ s, name, back }: { s: MtaStsStatus; name: string | null; 
 function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus; name: string | null; busy: boolean; error: string | null; onEnable: () => void; onRetry: () => void }) {
 	const mx = s.mx_preview;
 	const manual = s.via === 'manual';
-	const where = name ? ` for ${name}` : '';
 	return (
 		<Section title="Turn it on">
 			<div className="space-y-2">
 				<h3 className="text-sm font-semibold text-ink-1">Your mail servers</h3>
 				{mx.status === 'ok' ? (
-					<>
-						<p className="text-sm text-ink-2">We found these MX hosts for {name ?? 'your domain'} just now. {MX_READING}</p>
-						<MxList hosts={mx.hosts} />
-					</>
+					<MxList hosts={mx.hosts} />
 				) : mx.status === 'none' ? (
 					<Alert variant="warning" title="No mail servers found">
-						<p>{name ?? 'This domain'} has no MX records, so there is no mail server to protect. Add MX records at your DNS host first.</p>
+						<p>{name ?? 'This domain'} has no MX records. Add them at your DNS host first.</p>
 						<div className="mt-2">
 							<Button variant="secondary" size="sm" onClick={onRetry}>
 								Look again
@@ -340,9 +355,7 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 
 			{mx.status === 'ok' ? (
 				<>
-					<p className="text-sm text-ink-2">
-						It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected.
-					</p>
+					<p className="text-sm text-ink-2">It starts in testing mode: mail is delivered as before and nothing is rejected.</p>
 					{error ? <Alert variant="danger" title="Could not turn it on">{error}</Alert> : null}
 					<div>
 						<WriteButton loading={busy} onClick={onEnable}>
@@ -352,13 +365,16 @@ function Preview({ s, name, busy, error, onEnable, onRetry }: { s: MtaStsStatus;
 				</>
 			) : null}
 
-			<div className="space-y-2">
-				<h3 className="text-sm font-semibold text-ink-1">The records</h3>
-				<p className="text-sm text-ink-2">
-					{manual ? `After you turn it on, add these three records at your DNS host${where}.` : `Turning it on writes these three records in your Cloudflare zone${where}.`} {RECORD_READING}
-				</p>
-				<RecordList records={s.records} copyable={manual} label="Records" />
-			</div>
+			{manual ? (
+				<div className="space-y-2">
+					<p className="text-sm text-ink-2">After you turn it on, add these records at your DNS host.</p>
+					<RecordList records={s.records} copyable label="Records" />
+				</div>
+			) : (
+				<Disclosure title="Show records">
+					<RecordList records={s.records} copyable={false} label="Records" />
+				</Disclosure>
+			)}
 		</Section>
 	);
 }

@@ -46,21 +46,21 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   const reasons: string[] = [];
   const reports = allReports.filter((r) => r.reporter_tier === 'counted');
   if (cfg.mode === 'enforce') return { ready: false, reasons: ['It is already enforcing.'] };
-  if (cfg.state !== 'active') reasons.push('Setup is not finished: the policy host or one of the DNS records is not confirmed yet.');
+  if (cfg.state !== 'active') reasons.push('Setup is not finished.');
 
   const inTesting = cfg.mode_changed_at ? now - cfg.mode_changed_at : 0;
   if (inTesting < ENFORCE_AFTER_SECONDS) {
     const left = Math.max(1, Math.ceil((ENFORCE_AFTER_SECONDS - inTesting) / 86400));
-    reasons.push(`It has been in testing for ${Math.floor(inTesting / 86400)} of the ${days(ENFORCE_AFTER_SECONDS)} days senders need to report: ${left} more ${left === 1 ? 'day' : 'days'}.`);
+    reasons.push(`In testing for ${Math.floor(inTesting / 86400)} of ${days(ENFORCE_AFTER_SECONDS)} days: ${left} more.`);
   }
 
   const published = cfg.policy_published_at;
   const since = Math.max(now - EVIDENCE_WINDOW_SECONDS, published ?? 0);
-  if (published === null) reasons.push('The current policy id is not published in DNS yet, so no report can be about it.');
+  if (published === null) reasons.push('The policy id is not published yet.');
   else if (!reports.some((r) => r.date_end > published && (r.sts_success ?? 0) > 0)) {
     reasons.push(opts.verifiable === false
-      ? 'This server cannot tell who sent a TLS report yet (AUTHSERV_ID and AUTHSERV_HEADER are not set), so no report can count.'
-      : 'No verified TLS report has arrived yet for the current policy with successful sessions: senders have not shown they can deliver with TLS.');
+      ? 'This server cannot tell who sent a report (AUTHSERV_ID and AUTHSERV_HEADER are not set), so none counts.'
+      : 'No verified TLS report has arrived yet for this policy.');
   }
   const failed = new Set<string>();
   let unexplained = 0;
@@ -70,7 +70,7 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
     blocking.forEach((t) => failed.add(t));
     if ((r.sts_failure ?? 0) > 0 && blocking.length === 0 && parseTypes(r.sts_failure_types).length === 0) unexplained++;
   }
-  if (failed.size) reasons.push(`Senders reported TLS failures in the last ${days(EVIDENCE_WINDOW_SECONDS)} days: ${[...failed].sort().join(', ')}.`);
+  if (failed.size) reasons.push(`TLS failures in the last ${days(EVIDENCE_WINDOW_SECONDS)} days: ${[...failed].sort().join(', ')}.`);
   if (unexplained) reasons.push(`${unexplained} ${unexplained === 1 ? 'report counts' : 'reports count'} failed sessions without saying why.`);
 
   const stored = splitHosts(cfg.mx_hosts);

@@ -3,11 +3,10 @@ import type { MtaStsCheckState, MtaStsState, MtaStsStatus, MtaStsUnavailable } f
 
 /** The one plain sentence of what MTA-STS is, said first on every state of the page. */
 export const mtaStsExplainer = (domain: string | null): string =>
-	`MTA-STS asks other mail servers to use an encrypted connection (TLS: the lock that keeps mail private on its way) when they deliver mail to ${domain ?? 'your domain'}, and to send you a report on how it went.`;
+	`MTA-STS asks other mail servers to encrypt delivery to ${domain ?? 'your domain'} and to report how it went.`;
 
-/** MX, CNAME and TXT get their plain reading once, where the records are listed. */
-export const MX_READING = 'MX hosts are the servers that receive your mail.';
-export const RECORD_READING = 'A CNAME record points one name at another; a TXT record holds a line of text that other servers read.';
+/** The evidence rule, in one sentence (ADR 0021): the server's own sentence for the rule says the same; this is the short one the page shows. */
+export const EVIDENCE_SENTENCE = 'Only reports signed by a known sender, like Google or Microsoft, count.';
 
 export const policyUrl = (domain: string): string => `https://mta-sts.${domain}/.well-known/mta-sts.txt`;
 
@@ -46,12 +45,12 @@ export function stateSentence(state: MtaStsState, mode: 'testing' | 'enforce'): 
 	switch (state) {
 		case 'creating': return 'Setting up the policy server and the records.';
 		case 'waiting_records': return 'Waiting for the DNS records you add at your DNS host.';
-		case 'waiting_certificate': return 'Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.';
-		case 'waiting_policy': return 'Waiting for the policy file to be reachable. Check now looks again.';
+		case 'waiting_certificate': return 'Waiting for the certificate. This takes a few minutes.';
+		case 'waiting_policy': return 'Waiting for the policy file to be reachable.';
 		case 'waiting_txt': return 'Waiting for the last record, the one that tells senders a policy exists.';
 		case 'active': return mode === 'enforce'
-			? 'Enforcing: senders must use an encrypted connection, or they do not deliver.'
-			: 'Testing: senders deliver as before and report problems with encryption. Nothing is rejected.';
+			? 'Enforcing: senders that cannot encrypt do not deliver.'
+			: 'Testing: mail is delivered as before and problems are reported.';
 	}
 }
 

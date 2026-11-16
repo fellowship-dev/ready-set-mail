@@ -163,7 +163,7 @@ describe('self-host: TLS reports are authenticated before they can count', () =>
     expect(view.reports[0]).toMatchObject({ counted: false });
     expect(view.evidence).toMatchObject({ counted_reports: 0, uncounted_reports: 1, verifiable: false });
     expect(view.enforce.allowed).toBe(false);
-    expect(view.enforce.reasons.join(' ')).toMatch(/cannot tell who sent a TLS report/);
+    expect(view.enforce.reasons.join(' ')).toMatch(/cannot tell who sent a report/);
   });
 
   it('with AUTHSERV_* set: 50 passing reports from a stranger do not unlock it, 50 failing ones do not block it, one from Google does unlock it', async () => {

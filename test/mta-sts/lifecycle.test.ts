@@ -274,7 +274,7 @@ describe('modes', () => {
     expect(res.status).toBe(422);
     const body = await w.json(res);
     expect(body).toMatchObject({ code: 'mta_sts_not_ready' });
-    expect(body.reasons.join(' ')).toMatch(/days senders need to report/);
+    expect(body.reasons.join(' ')).toMatch(/In testing for 0 of 7 days: 7 more\./);
     expect(body.reasons.join(' ')).toMatch(/No verified TLS report has arrived yet/);
     expect(w.row(1).mode).toBe('testing');
 

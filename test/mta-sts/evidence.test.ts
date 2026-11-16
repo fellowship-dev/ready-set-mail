@@ -22,7 +22,7 @@ describe('enforceReadiness', () => {
   it('names the days still to wait (CHANGELOG 1.2.0: 7 days in testing)', () => {
     const r = enforceReadiness(cfg({ mode_changed_at: NOW - 2 * DAY }), [report()], MX, NOW);
     expect(r.ready).toBe(false);
-    expect(r.reasons).toEqual(['It has been in testing for 2 of the 7 days senders need to report: 5 more days.']);
+    expect(r.reasons).toEqual(['In testing for 2 of 7 days: 5 more.']);
   });
 
   it('needs setup finished', () => {
@@ -31,7 +31,7 @@ describe('enforceReadiness', () => {
 
   it('needs a report AFTER the current policy id was published, with successful sessions', () => {
     const none = enforceReadiness(cfg(), [], MX, NOW);
-    expect(none.reasons).toEqual([expect.stringMatching(/No verified TLS report has arrived yet for the current policy/)]);
+    expect(none.reasons).toEqual([expect.stringMatching(/No verified TLS report has arrived yet for this policy/)]);
     // a report that ended before the policy was published says nothing about it
     expect(enforceReadiness(cfg(), [report({ date_end: NOW - 11 * DAY })], MX, NOW).ready).toBe(false);
     // failures only, no success

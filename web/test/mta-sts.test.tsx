@@ -33,8 +33,10 @@ const base = (o: Record<string, unknown> = {}): MtaStsStatus => ({
 const cert = (active: boolean) => ({ kind: 'saas_hostname', hostname: `mta-sts.${DOMAIN}`, route: true, certificate: { status: active ? 'active' : 'pending', ssl_status: active ? 'active' : 'pending_validation', active } });
 const report = (o: Record<string, unknown> = {}) => ({ id: 1, reporter: 'Google', period_start: NOW - 2 * 86400, period_end: NOW - 86400, received_at: NOW - 86000, successful_sessions: 50, failed_sessions: 4, sts_successful_sessions: 45, sts_failed_sessions: 3, failure_types: ['certificate-expired'], ...o });
 
-const NOT_YET = ['It has been in testing for 5 of the 7 days senders need to report: 2 more days.', 'No TLS report has arrived yet for the current policy with successful sessions: senders have not shown they can deliver with TLS.'];
-const testing = (o: Record<string, unknown> = {}) => base({ config: config(), policy_host_status: cert(true), records: records({ written: true, id: '20261116155117' }), summary: { total_success: 0, total_failure: 0, report_count: 0, sts_success: 0, sts_failure: 0 }, enforce: { ready: false, allowed: false, reasons: NOT_YET }, disable: { allowed: true, after: null, reason: null }, ...o });
+const NOT_YET = ['In testing for 5 of 7 days: 2 more.', 'No verified TLS report has arrived yet for this policy.'];
+const SERVED = { ok: true, checked_at: NOW - 60, reason: null, message: null, action: null, url: `https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt` };
+const EVIDENCE = { rule: 'x', no_reports_note: 'A domain that receives no TLS reports can never switch to enforce.', counted_reports: 0, uncounted_reports: 0, verifiable: true };
+const testing = (o: Record<string, unknown> = {}) => base({ config: config(), policy_host_status: cert(true), records: records({ written: true, id: '20261116155117' }), summary: { total_success: 0, total_failure: 0, report_count: 0, sts_success: 0, sts_failure: 0 }, enforce: { ready: false, allowed: false, reasons: NOT_YET }, disable: { allowed: true, after: null, reason: null }, served: SERVED, evidence: EVIDENCE, ...o });
 
 function page(status: MtaStsStatus | (() => unknown), extra: Record<string, unknown> = {}, role: 'owner' | 'member' = 'owner') {
 	return renderApp(
@@ -70,44 +72,47 @@ describe('MTA-STS page: not available', () => {
 
 describe('MTA-STS page: before it is on', () => {
 	it('says what it is, the MX hosts found, the exact records it writes in Cloudflare, and one action', async () => {
-		const waiting = testing({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), enforce: { ready: false, allowed: false, reasons: ['Setup is not finished: the policy host or one of the DNS records is not confirmed yet.'] } });
+		const waiting = testing({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), enforce: { ready: false, allowed: false, reasons: ['Setup is not finished.'] }, served: null });
 		let on = false;
 		const { calls } = page(() => (on ? waiting : base()), { 'POST /api/domains/1/mta-sts': () => { on = true; return waiting; } });
-		expect(await screen.findByText(/asks other mail servers to use an encrypted connection \(TLS: the lock that keeps mail private on its way\) when they deliver mail to example\.com, and to send you a report on how it went/i)).toBeInTheDocument();
+		expect(await screen.findByText('MTA-STS asks other mail servers to encrypt delivery to example.com and to report how it went.')).toBeInTheDocument();
 		expect(screen.getByRole('list', { name: 'MX hosts' })).toHaveTextContent('mx.example.com');
-		expect(screen.getByText(/MX hosts are the servers that receive your mail/)).toBeInTheDocument();
-		expect(screen.getAllByText(/in your Cloudflare zone/)).toHaveLength(1); // said once
-		expect(screen.getByText(/Turning it on writes these three records in your Cloudflare zone for example\.com\./)).toBeInTheDocument();
-		expect(screen.getByText(/A CNAME record points one name at another; a TXT record holds a line of text/)).toBeInTheDocument();
+		// no definitions of MX, CNAME and TXT; the records Cloudflare writes are behind "Show records"
+		expect(screen.queryByText(/MX hosts are the servers/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/A CNAME record points one name at another/)).not.toBeInTheDocument();
+		const disclosure = screen.getByRole('button', { name: 'Show records' });
+		expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+		await userEvent.click(disclosure);
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getByText(`mta-sts.${DOMAIN}`)).toBeInTheDocument();
 		expect(within(list).getByText(TARGET)).toBeInTheDocument();
 		expect(within(list).getByText(`_smtp._tls.${DOMAIN}`)).toBeInTheDocument();
 		expect(within(list).getByText(/v=TLSRPTv1;/)).toBeInTheDocument();
 		expect(within(list).getByText(`_mta-sts.${DOMAIN}`)).toBeInTheDocument();
+		expect(within(list).queryByText(/Proxied|DNS only/)).not.toBeInTheDocument(); // no per-record notes
 		expect(within(list).queryByRole('button', { name: /^Copy/ })).not.toBeInTheDocument(); // nothing to paste: it is written for you
-		expect(screen.getByText(/It starts in testing mode: senders still deliver your mail as before and report problems; nothing is rejected/)).toBeInTheDocument();
+		expect(screen.getByText('It starts in testing mode: mail is delivered as before and nothing is rejected.')).toBeInTheDocument();
 		// the action comes before the records, so it is on the first screen on a phone
 		expect(screen.getByRole('button', { name: 'Turn on in testing mode' }).compareDocumentPosition(screen.getByRole('list', { name: 'Records' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		const buttons = screen.getAllByRole('button').filter((b) => /Turn on|Enable/.test(b.textContent ?? ''));
 		expect(buttons.map((b) => b.textContent)).toEqual(['Turn on in testing mode']);
 
 		await userEvent.click(buttons[0]!);
-		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeInTheDocument();
+		expect(await screen.findByText('Waiting for the certificate. This takes a few minutes.')).toBeInTheDocument();
 		expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/domains/1/mta-sts']);
 		expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument();
 	});
 
 	it('by hand: the records are for you to add after turning it on, each copyable', async () => {
 		page(base({ via: 'manual' }));
-		expect(await screen.findByText(/After you turn it on, add these three records at your DNS host for example\.com/)).toBeInTheDocument();
+		expect(await screen.findByText('After you turn it on, add these records at your DNS host.')).toBeInTheDocument();
 		const list = screen.getByRole('list', { name: 'Records' });
 		expect(within(list).getAllByRole('button', { name: /^Copy/ }).length).toBeGreaterThanOrEqual(6);
 	});
 
 	it('no MX records: says so and offers no action; a failed lookup is not "none" and can be tried again', async () => {
 		const first = page(base({ mx_preview: { status: 'none', hosts: [], error: null } }));
-		expect(await screen.findByText(/has no MX records, so there is no mail server to protect/)).toBeInTheDocument();
+		expect(await screen.findByText(/has no MX records\. Add them at your DNS host first/)).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Turn on/ })).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Look again' })).toBeInTheDocument(); // add the MX records, then look again
 		first.unmount();
@@ -144,8 +149,7 @@ describe('MTA-STS page: setting up', () => {
 			{ key: 'policy_id', label: 'The policy id is published', state: 'missing', detail: 'Published last, once the certificate is active.' },
 		] };
 		const { calls } = page(base({ config: config({ state: 'waiting_certificate', policy_published_at: null, last_checked_at: null }), policy_host_status: cert(false), records: records({ written: true }) }), { 'POST /api/domains/1/mta-sts/verify': verify });
-		expect(await screen.findByText('Waiting for the certificate for the policy server. This usually takes a few minutes; if it takes longer than an hour, Check now says which record is missing.')).toBeInTheDocument();
-		expect(screen.getByText('Not checked yet.')).toBeInTheDocument();
+		expect(await screen.findByText('Waiting for the certificate. This takes a few minutes.')).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Check now' }));
 		const list = await screen.findByRole('list', { name: 'Setup checks' });
 		expect(within(list).getByText('In place')).toBeInTheDocument();
@@ -156,17 +160,38 @@ describe('MTA-STS page: setting up', () => {
 		expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/mta-sts/verify')).toBe(true);
 	});
 
-	it('when every check is in place and it is active, one line says so and the list is kept under Details', async () => {
+	it('once the policy is served and every check is in place, Check now and the time of the last check are gone', async () => {
 		const ok = (key: string, label: string) => ({ key, label, state: 'ok', detail: null });
 		let checked = false;
 		page(() => (checked ? testing({ config: config({ last_checked_at: NOW }) }) : base({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), records: records({ written: true }) })), {
-			'POST /api/domains/1/mta-sts/verify': () => { checked = true; return { ok: true, state: 'active', notice: null, last_error: null, checks: [ok('policy_host', 'a'), ok('certificate', 'b'), ok('tls_rpt', 'c'), ok('policy_id', 'd')] }; },
+			'POST /api/domains/1/mta-sts/verify': () => { checked = true; return { ok: true, state: 'active', notice: null, last_error: null, served: SERVED, checks: [ok('policy_host', 'a'), ok('certificate', 'b'), ok('tls_rpt', 'c'), ok('policy_id', 'd')] }; },
 		});
 		await userEvent.click(await screen.findByRole('button', { name: 'Check now' }));
-		expect(await screen.findByText('All the setup checks are in place.')).toBeInTheDocument();
-		expect(screen.getByText('Testing: senders deliver as before and report problems with encryption. Nothing is rejected.')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /What was checked/ })).toBeInTheDocument();
-		expect(screen.getByRole('list', { name: 'Setup checks', hidden: true })).toHaveTextContent('In place');
+		expect(await screen.findByText('Testing: mail is delivered as before and problems are reported.')).toBeInTheDocument();
+		expect(screen.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/Last checked/)).not.toBeInTheDocument();
+	});
+
+	it('a policy that cannot be reached says so with the one action, and is not "served"', async () => {
+		const served = { ok: false, checked_at: NOW - 60, reason: 'certificate', action: 'check_now', message: `The policy at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt cannot be reached yet. A new certificate takes a few minutes after the CNAME resolves; choose Check now to look again.`, url: 'u' };
+		page(testing({ served }));
+		expect(await screen.findByText(/cannot be reached yet/)).toBeInTheDocument();
+		expect(screen.queryByText(/^Served at/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Switch to enforce' })).toBeDisabled();
+	});
+
+	it('a setup stopped after 7 days says how to restart', async () => {
+		page(base({ setup_expired: { notice: 'Setup was not finished within 7 days, so it was stopped. Turn it on again to restart.', at: NOW } }));
+		expect(await screen.findByText('Setup was not finished within 7 days, so it was stopped. Turn it on again to restart.')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Turn on in testing mode' })).toBeInTheDocument();
+	});
+
+	it('a policy being retired says what senders may still do, and until when', async () => {
+		page(base({ available: false, unavailable_reason: 'unproven', unavailable_message: 'Prove that you own this domain first: MTA-STS publishes a policy under its name.', via: null, records: [], retiring: { retiring: true, reason: 'lost_proof', enforced: true, until: NOW + 7 * 86400, message: 'MTA-STS is being switched off. Senders that already fetched the enforce policy may refuse to deliver to mail servers that are not in it for up to 7 days.' } }));
+		expect(await screen.findByText(/may refuse to deliver to mail servers that are not in it for up to 7 days\. Until /)).toBeInTheDocument();
+		expect(screen.getByText('MTA-STS is being switched off')).toBeInTheDocument();
 	});
 
 	it('by hand, waiting for your records: the records to add are shown with copy buttons', async () => {
@@ -183,20 +208,24 @@ describe('MTA-STS page: setting up', () => {
 describe('MTA-STS page: testing', () => {
 	it('before any report: the empty state, and enforce is off with the server\'s reasons listed', async () => {
 		page(testing());
-		expect(await screen.findByText('Testing: senders deliver as before and report problems with encryption. Nothing is rejected.')).toBeInTheDocument();
+		expect(await screen.findByText('Testing: mail is delivered as before and problems are reported.')).toBeInTheDocument();
 		expect(screen.getByText('No TLS report yet')).toBeInTheDocument();
 		expect(screen.getByText('Senders usually send one a day after they deliver mail to you.')).toBeInTheDocument();
-		expect(screen.getByText(`https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
-		expect(screen.getByText('Up to 1 day.')).toBeInTheDocument();
+		expect(screen.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
 		const enforce = screen.getByRole('button', { name: 'Switch to enforce' });
 		expect(enforce).toBeDisabled();
 		for (const r of NOT_YET) expect(screen.getByText(r)).toBeInTheDocument();
+		// the evidence rule and the one thing about domains without reports, one sentence each
+		expect(screen.getByText(/Only reports signed by a known sender, like Google or Microsoft, count\. A domain that receives no TLS reports can never switch to enforce\./)).toBeInTheDocument();
+		// served: Switch to enforce is the primary action
+		expect(enforce.className).toMatch(/bg-brand|primary/);
 	});
 
 	it('with reports: the table of the last 30 days, the totals, and the notice that can be dismissed', async () => {
 		const { calls } = page(testing({
 			reports: [report(), report({ id: 2, reporter: 'Microsoft', successful_sessions: 10, failed_sessions: 0, sts_successful_sessions: null, sts_failed_sessions: null, failure_types: [] })],
 			summary: { total_success: 60, total_failure: 4, report_count: 2, sts_success: 45, sts_failure: 3 },
+			evidence: { ...EVIDENCE, counted_reports: 2, uncounted_reports: 3 },
 			config: config({ notice: 'Your MX hosts changed (now: mx.example.com, mx2.example.com); the policy lists them under a new id.', notice_at: NOW - 3600 }),
 		}), { 'PATCH /api/domains/1/mta-sts': {} });
 		const reports = await screen.findByTestId('tls-reports');
@@ -208,10 +237,10 @@ describe('MTA-STS page: testing', () => {
 		expect(within(rows[0]).getByText('3')).toBeInTheDocument();
 		expect(within(rows[0]).getByText("your mail server's certificate has expired")).toBeInTheDocument();
 		expect(within(rows[1]).getByText('10')).toBeInTheDocument(); // an old row shows its totals
-		expect(within(reports).getByText(/Reports received before this page counted MTA-STS sessions separately/)).toBeInTheDocument();
-		expect(screen.getByText(/45 successful and 3 failed sessions under this policy, from 2 reports/)).toBeInTheDocument();
+		expect(screen.getByText(/45 successful and 3 failed sessions, from 2 reports/)).toBeInTheDocument();
 		expect(screen.queryByText('No TLS report yet')).not.toBeInTheDocument();
 
+		expect(screen.getByText('3 reports are from other senders and not counted.')).toBeInTheDocument();
 		expect(screen.getByText(/Your MX hosts changed \(now: mx\.example\.com, mx2\.example\.com\)/)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
 		await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ dismiss_notice: true }));
@@ -222,7 +251,7 @@ describe('MTA-STS page: testing', () => {
 		const { calls } = page(() => testing({ config: config({ mode }), enforce: mode === 'testing' ? { ready: true, allowed: true, reasons: [] } : null }), { 'PATCH /api/domains/1/mta-sts': ({ body }: any) => { mode = body.mode; return { ok: true }; } });
 		const b = await screen.findByRole('button', { name: 'Switch to enforce' });
 		expect(b).toBeEnabled();
-		expect(screen.queryByText('Not yet:')).not.toBeInTheDocument();
+		expect(screen.queryByRole('list', { name: 'Not yet' })).not.toBeInTheDocument();
 		await userEvent.click(b);
 		const dlg = await screen.findByRole('dialog');
 		expect(within(dlg).getByText(/will not deliver the mail/)).toBeInTheDocument();
@@ -237,7 +266,7 @@ describe('MTA-STS page: enforcing and turning off', () => {
 
 	it('enforce: switch to testing is offered, turning off is blocked with the server\'s sentence', async () => {
 		page(enforced());
-		expect(await screen.findByText('Enforcing: senders must use an encrypted connection, or they do not deliver.')).toBeInTheDocument();
+		expect(await screen.findByText('Enforcing: senders that cannot encrypt do not deliver.')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Switch to testing' })).toBeEnabled();
 		expect(screen.queryByRole('button', { name: 'Switch to enforce' })).not.toBeInTheDocument();
 		expect(screen.getByText('Switch to testing first. Senders keep the enforce policy for up to 1 day; you can disable it after that.')).toBeInTheDocument();
@@ -306,5 +335,35 @@ describe('the DNS tools card', () => {
 	it('cardState is a pure reading of the server\'s state: a setup in progress is never "Testing"', () => {
 		expect(cardState(base({ config: config({ state: 'waiting_txt', mode: 'enforce' }) })).state).toBe('setting_up');
 		expect(cardState(testing()).state).toBe('testing');
+	});
+});
+
+/** Visible words, counted the way the walk's measure does: in the main content, hidden parts (a closed disclosure) left out. */
+const visibleWords = (root: HTMLElement) => {
+	const clone = root.cloneNode(true) as HTMLElement;
+	clone.querySelectorAll('[hidden], script, style, [aria-hidden="true"]').forEach((n) => n.remove());
+	return ((clone.textContent ?? '').match(/[\p{L}\p{N}][\p{L}\p{N}'’._-]*/gu) ?? []).length;
+};
+
+describe('MTA-STS page: the words on the enable path (the reviewer measured 1,054; the target is 450)', () => {
+	it('the four screens of the flow add up to at most 450 words', async () => {
+		const states: Array<[string, MtaStsStatus]> = [
+			['open', base()],
+			['setting up', base({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), records: records({ written: true }), enforce: { ready: false, allowed: false, reasons: ['Setup is not finished.'] } })],
+			['testing, served, no report', testing()],
+			['testing, first report', testing({ reports: [report()], summary: { total_success: 50, total_failure: 4, report_count: 1, sts_success: 45, sts_failure: 3 }, evidence: { ...EVIDENCE, counted_reports: 1 } })],
+		];
+		let total = 0;
+		const per: Record<string, number> = {};
+		for (const [name, status] of states) {
+			const r = page(status);
+			await screen.findByRole('heading', { name: /MTA-STS for example\.com/ });
+			await waitFor(() => expect(screen.queryByLabelText('Loading MTA-STS')).toBeNull());
+			per[name] = visibleWords(document.querySelector('main') ?? document.body);
+			total += per[name];
+			r.unmount();
+		}
+		process.stderr.write(`WORDS ${JSON.stringify(per)} total ${total}\n`);
+		expect(total).toBeLessThanOrEqual(450);
 	});
 });
