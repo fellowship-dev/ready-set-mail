@@ -105,7 +105,7 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 					<Alert variant="info" data-testid="spf-pending">
 						<p>{pendingSentence(state.config.pending)}</p>
 						<p className="mt-1">{PENDING_WHY}</p>
-						{waitAnswer ? <p className="mt-1 font-medium" role="status">{waitAnswer}</p> : null}
+						{waitAnswer ? <p className="mt-1 font-medium" data-testid="spf-wait-answer">{waitAnswer}</p> : null}
 					</Alert>
 				</>
 			);

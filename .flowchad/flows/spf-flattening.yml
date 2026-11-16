@@ -5,6 +5,9 @@ covers:
   - web/src/pages/wizards/SpfFlattenPage.tsx
   - web/src/components/domain/DnsTools.tsx
   - web/src/components/domain/SpfCard.tsx
+  - web/src/components/domain/SpfStatusLine.tsx
+  - web/src/pages/domains/SpfLookupsPage.tsx
+  - web/src/lib/spf-breakdown.ts
   - web/src/lib/spf-flatten.ts
   # Server files that implement the steps: the one refresh engine, the add-on gate and the operator setting parser. The routes are in src/api/router.ts, which stays out
   # of this list on purpose: every router change would then ask for a walk of this flow; the logic the routes call is in src/spf/* and is covered.
@@ -23,7 +26,7 @@ context:
 steps:
   - action: navigate
     url: /#/domains/1
-    expect: Domain page; the SPF flattening card under DNS tools says the record needs more than 10 lookups
+    expect: Domain page; "Do this next" leads with "Bring SPF down to 10 DNS lookups or fewer" and its link "Open SPF flattening" is in the first screen at 375 and 1440
   - action: click
     selector: "text=Open SPF flattening"
     expect: Your SPF record - why it matters, the record and the flattened record side by side

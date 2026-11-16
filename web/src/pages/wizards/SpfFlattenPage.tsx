@@ -222,7 +222,7 @@ function SpfFlattenWizard() {
 										<Alert variant="info" data-testid="spf-pending">
 											<p>{pendingSentence(c.pending)}</p>
 											<p className="mt-1">{PENDING_WHY}</p>
-											{waitAnswer ? <p className="mt-1 font-medium" role="status">{waitAnswer}</p> : null}
+											{waitAnswer ? <p className="mt-1 font-medium" data-testid="spf-wait-answer">{waitAnswer}</p> : null}
 										</Alert>
 									) : null}
 								</>

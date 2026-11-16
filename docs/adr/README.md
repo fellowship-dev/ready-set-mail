@@ -18,8 +18,9 @@ Short records of decisions already made, with who made them. A change that contr
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
-| 0022 | [SPF flattening has one refresh engine, and it resolves the stored original](0022-one-spf-flattening-refresh-engine.md) | accepted |
+| 0022 | [SPF flattening has one refresh engine, and it resolves the stored original](0022-one-spf-flattening-refresh-engine.md) | accepted, "never rewritten" narrowed by 0025 |
 | 0023 | [SPF flattening is an add-on, per domain; its price is open](0023-spf-flattening-is-an-add-on-per-domain-price-open.md) | accepted, price open |
 | 0024 | [A refresh never removes an authorised address on its first sighting; a removal waits four hours](0024-a-refresh-never-removes-an-address-on-first-sighting.md) | accepted |
+| 0025 | [After an edit made outside the app, the owner chooses: use it as the new original, or discard it](0025-the-owner-may-adopt-an-outside-edit-as-the-new-original.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

@@ -148,7 +148,7 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     await expect(page.getByTestId('spf-pending')).toContainText('We wait at least 4 hours so the second look is a fresh answer from the provider');
     // "Check again now" before the time answers when it can confirm, and writes nothing.
     await page.getByRole('button', { name: 'Check again now' }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'until a second check agrees' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('spf-wait-answer')).toContainText('until a second check agrees', { timeout: 30_000 });
     expect((await apex(inst)).content).toBe(held);
     // Four hours on, the next check writes the removal.
     sql(inst, 'UPDATE spf_flatten_config SET pending_since = pending_since - 18000');
@@ -276,7 +276,7 @@ test('a flattened record over 255 bytes is stored as several strings: a check fi
     // "Check now" reads it back as the same record: nothing to change, nothing audited, no problem.
     await page.goto(`${inst.url}/#/domains/${id}/spf-flatten`);
     await page.getByRole('button', { name: 'Check now' }).click();
-    await expect(page.getByText('Nothing changed.')).toBeVisible({ timeout: 30_000 }); // the check has finished
+    await expect(page.getByText('Nothing changed.', { exact: true })).toBeVisible({ timeout: 30_000 }); // the check has finished
     await expect.poll(() => sql(inst, 'SELECT last_refreshed_at AS t FROM spf_flatten_config')[0]!.t).not.toBeNull();
     expect(sql(inst, 'SELECT problem_kind AS k FROM spf_flatten_config')[0]!.k).toBeNull();
     expect(audits(inst, 'spf_flatten.update')).toBe(0);
