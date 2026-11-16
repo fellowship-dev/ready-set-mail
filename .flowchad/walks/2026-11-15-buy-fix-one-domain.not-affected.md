@@ -1,0 +1,8 @@
+# Not affected: buy-fix-one-domain
+
+- **Flow:** buy-fix-one-domain
+- **Changed:** `web/src/pages/operator/OrdersPage.tsx`
+- **Reason:** I read `git diff 61e6b8fe` of the page for what the owner who buys Fix one domain sees or does: nothing, because the page is the instance owner's Orders list (not a step of the purchase, which is the domain page, the confirm step, the card and the payment). What changed is what the page says when the server will not list orders: with billing off the instance owner is told billing is off and what turns it on (a self-hosted instance owner: that it has no orders), and everyone else is told the page is not available to their account, where it named OWNER_EMAIL before; the header sentence "Instance owner only." is gone. The orders table, the narrow-width cards, Mark started and Mark done, and every request they make are unchanged, and no file of the purchase (`src/billing/*`, `web/src/components/billing/*`, `web/src/lib/billing.ts`, `web/src/pages/settings/BillingSection.tsx`, `web/src/pages/domains/DomainDetailPage.tsx`) is in the diff. Proof: `web/test/billing.test.tsx` (the operator's orders tests, which pass) and `web/test/truth-dead-ends.test.tsx`; the screen was also walked before and after, as the instance owner and as an admin, at 375 and 1440, on both modes (screenshots listed in the pull request).
+- **By:** Claude (Fable 5.2) for Max F. Findel, PR "truth-and-dead-ends"; reviewer to accept
+- **Date:** 2026-11-16
+- **File name:** dated 2026-11-15 because the name for 2026-11-16 is PR 178's record of this flow and `scripts/check-flows.mjs` only counts a record that this change adds (a `not-affected` record cannot carry a tag).
