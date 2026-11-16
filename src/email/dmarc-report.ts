@@ -32,6 +32,8 @@ import { rawXmlRetentionDays } from '../lifecycle/config';
 import { rawTooLarge, REASONS, type Outcome, type ReasonCode } from '../hosted/reasons';
 
 export interface ReportOptions {
+  /** Keeps the first-report email alive after the handler returns. */
+  ctx?: Pick<ExecutionContext, 'waitUntil'>;
   /** Cap on the decompressed report (default MAX_REPORT_BYTES, which also bounds zip/gzip bombs in self-host). */
   maxBytes?: number;
   /** Refuse reports with more records than this, before any per-record work. */
@@ -253,7 +255,7 @@ export async function handleDmarcReport(
 
   // 4. Store in D1: one batch, all or nothing
   try {
-    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter);
+    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter, opts.ctx);
     if (stored.stored) return result('accepted', 'ok', { ...known, dedup: stored.superseded ? 'superseded' : 'new' });
     // Lost the race to a concurrent delivery of the same report: nothing was written, which is the right outcome.
     return result('duplicate', 'duplicate', { ...known, dedup: 'duplicate' });

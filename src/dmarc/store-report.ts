@@ -82,6 +82,7 @@ export async function storeReport(
   rawXml: string | null = null,
   notifyFirstReport = false,
   reporter?: ReporterInfo,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>,
 ): Promise<StoreReportResult> {
   const { total, pass, fail } = computeCounts(report.records);
   const meta = report.report_metadata;
@@ -125,12 +126,14 @@ export async function storeReport(
 
       if (domainRow) {
         const uniqueSources = new Set(report.records.map(r => r.source.ip));
-        void sendFirstReportNotification(tenant, domainRow.domain, {
+        // Kept alive past the email handler's return when the caller has a ctx.
+        const sent = sendFirstReportNotification(tenant, domainRow.domain, {
           totalMessages: total,
           passMessages: pass,
           failMessages: fail,
           sourceCount: uniqueSources.size,
-        })?.catch(() => {}); // fire-and-forget
+        }, domainId)?.catch(() => {});
+        if (ctx && sent) ctx.waitUntil(sent);
       }
     }
   }
