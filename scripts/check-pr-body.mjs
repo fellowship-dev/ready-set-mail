@@ -6,7 +6,8 @@
 //   node scripts/check-pr-body.mjs <body.md>    # a body saved in a file
 //
 // A section fails when it is missing, or when what is left after removing HTML comments is only whitespace or a placeholder
-// (TODO, TBD, -, ..., or a bare "None": "None" needs a reason). Headings match ignoring case and spacing.
+// (TODO, TBD, -, ..., or a bare "None": "None" needs a reason) or checkbox lines: the template's checklist, ticked or not, is not
+// an answer. Headings match ignoring case and spacing.
 //
 // Exit: 0 every section filled, 1 a section missing or empty, 2 usage.
 import { readFileSync } from 'node:fs';
@@ -38,11 +39,18 @@ export function requiredSections(template = readFileSync(TEMPLATE, 'utf8')) {
   return sections(template).map((s) => s.heading);
 }
 
-/** True when a section's text says nothing: whitespace, or placeholder lines only (an empty list item or checkbox counts). */
+const CHECKBOX = /^([-*+]|\d+\.)\s+\[[ xX]?\]/;
+
+/**
+ * True when a section's text says nothing: whitespace, placeholder lines, or checklist lines only. A checkbox line, ticked or not,
+ * is the template's checklist, not an answer: the section still needs a line of its own text.
+ */
 export function isEmpty(text) {
   return withoutComments(text)
     .split('\n')
-    .map((l) => l.trim().replace(/^([-*+]|\d+\.)\s+(\[[ xX]?\]\s*)?/, '').replace(/[.:;!]+$/, '').trim().toLowerCase())
+    .map((l) => l.trim())
+    .filter((l) => !CHECKBOX.test(l))
+    .map((l) => l.replace(/^([-*+]|\d+\.)\s+/, '').replace(/[.:;!]+$/, '').trim().toLowerCase())
     .every((l) => PLACEHOLDERS.has(l));
 }
 

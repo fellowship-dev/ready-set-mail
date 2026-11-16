@@ -20,8 +20,11 @@ describe('the template and the checker agree', () => {
     for (const h of required) expect(template, h).toMatch(new RegExp(`^## ${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n<!-- .*"None" needs a reason.* -->$`, 'm'));
   });
 
-  it('the unfilled template fails on every section', () => {
-    expect(checkPrBody(template)).toEqual(required.map((section) => ({ section, problem: 'empty' })));
+  it('the unfilled template fails on every section, with its checklist ticked or not', () => {
+    const all = required.map((section) => ({ section, problem: 'empty' }));
+    expect(checkPrBody(template)).toEqual(all);
+    expect(template).toMatch(/^- \[ \] /m);
+    expect(checkPrBody(template.replace(/^- \[ \] /gm, '- [x] '))).toEqual(all);
   });
 });
 
@@ -46,6 +49,12 @@ describe('checkPrBody', () => {
     for (const p of ['TODO', 'todo.', '- TODO', '-', '- [ ]', 'TBD', 'N/A', '...', 'None', 'None.', '* none']) {
       expect(checkPrBody(body((h) => (h === 'Design system' ? p : 'Filled.'))), p).toEqual([{ section: 'Design system', problem: 'empty' }]);
     }
+  });
+
+  it('fails a section of checkbox lines only, ticked or not, and passes one with text of its own', () => {
+    const only = '- [x] Extends the module listed for every concept it touches.\n- [ ] Contradicts no ADR.';
+    expect(checkPrBody(body((h) => (h === 'Walk records' ? only : 'Filled.')))).toEqual([{ section: 'Walk records', problem: 'empty' }]);
+    expect(isEmpty(`${only}\nNone: no file on a protected flow changes.`)).toBe(false);
   });
 
   it('passes "None" with its reason', () => {
