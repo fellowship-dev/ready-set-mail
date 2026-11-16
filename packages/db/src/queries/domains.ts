@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { cloudflareConnections, domains, productDomains } from '../schema';
-import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
+import { PlanLimitError, changesOf, freeNameStatements, proofValues, roomCondition, whyRefused, type DomainRoom, type ZoneProofColumns } from './plan-limit';
 
 export type DomainRow = typeof domains.$inferSelect;
 
@@ -61,7 +61,7 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * transaction. D1 serialises writes, so concurrent inserts cannot exceed the cap: the margin is exactly 0. A refusal
 		 * throws PlanLimitError and writes nothing (the product mapping, if any, selects the new row and so inserts nothing either).
 		 */
-		async insert(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
+		async insert(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns }, productId?: string, opts: DomainRoom & { freeing?: number } = {}) {
 			// Auto-detect parent: strip the leftmost label and check if the apex exists
 			const parts = d.domain.split('.');
 			let parentId: number | null = null;
@@ -76,17 +76,20 @@ export function domainQueries(db: Db, workspaceId: string) {
 			const pv = proofValues(d.domain, d.verified_via, d.proof); // before anything is written: a zone proof without its servers is refused
 			try {
 				const max = opts.maxDomains;
+				const room: DomainRoom = { maxDomains: max, org: opts.org, units: opts.units };
+				const cond = roomCondition(workspaceId, room);
 				// `freeing`: an unproven holder of this very name in another workspace, detached in the same transaction (see freeNameStatements).
-				const free = opts.freeing === undefined ? [] : freeNameStatements(opts.freeing, workspaceId, max);
-				// One conditional statement: the row is selected (so inserted) only while the workspace is under its cap.
-				const capped = max === undefined ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, cf_connection_id)
-					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}, ${pv.cf_connection_id ?? null}
-					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`;
-				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
+				const free = opts.freeing === undefined ? [] : freeNameStatements(opts.freeing, workspaceId, room);
+				// One conditional statement: the row is selected (so inserted) only while the workspace has room (a row cap, or room under the plan).
+				const capped = !cond ? null : sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, org_domain, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, cf_connection_id)
+					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${opts.org ?? null}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}, ${pv.cf_connection_id ?? null}
+					WHERE ${cond}`;
+				const insert = db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, org_domain: opts.org ?? null, ...pv });
+				const refused = () => whyRefused(db as any, workspaceId, room);
 				if (!productId) {
 					if (!capped) return free.length ? (await batchStatements(db, [...free, insert]))[free.length] : await insert.run();
 					const res = (await batchStatements(db, [...free, capped]))[free.length];
-					if (changesOf(res) === 0) throw new PlanLimitError('domains_per_workspace', max!);
+					if (changesOf(res) === 0) throw await refused();
 					return res;
 				}
 				// The binding exists iff this exact insert succeeds. A duplicate or a failed
@@ -97,7 +100,7 @@ export function domainQueries(db: Db, workspaceId: string) {
 					domain_id: domains.id,
 				}).from(domains).where(and(mine, eq(domains.domain, d.domain), eq(domains.id, sql`last_insert_rowid()`))));
 				const result = capped || free.length ? await batchStatements(db, [...free, capped ?? insert, mapping]) : await db.batch([insert, mapping]);
-				if (capped && changesOf(result[free.length]) === 0) throw new PlanLimitError('domains_per_workspace', max!);
+				if (capped && changesOf(result[free.length]) === 0) throw await refused();
 				return result[free.length];
 			} catch (e) {
 				if (e instanceof PlanLimitError) throw e;

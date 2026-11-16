@@ -16,6 +16,7 @@ export type { DomainRow, DmarcFacts } from './domains';
 import { mtaStsQueries, spfFlattenQueries } from './domain-config';
 import { hostedQueries, intakeQueries } from './intake';
 import { monitorQueries } from './monitor';
+import { planQueries } from './plan';
 import { reportQueries } from './reports';
 import type { CountingMode } from './counting';
 import { settingsQueries } from './settings';
@@ -32,7 +33,8 @@ export * from './team';
 export * from './api-keys';
 export type { CfConnectionInfo, CfConnectionZone } from './connections';
 export { authLookups } from './auth';
-export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns } from './plan-limit';
+export { PlanLimitError, ProofIncompleteError, type ZoneProofColumns, type UnitRoom, type DomainRoom } from './plan-limit';
+export { planLookups, PLAN_LOCK_SECONDS, type SubscriptionRow, type SubscriptionPatch, type IntentRow } from './plan';
 export { workspaceLifecycle, type WorkspaceSummary } from './workspaces';
 export { intakeLookups, STORED_ROW, UNCOUNTED_ROW, isUncountedTier, type DropRow, TOKEN_ROTATION_GRACE_SECONDS, type QuotaLimits, type QuotaResult, type QuotaScope, type FailureRow, type IntakeTarget, type HostedDomainRow, type PointerStatus } from './intake';
 export type { MtaStsMode } from './domain-config';
@@ -81,6 +83,7 @@ export function forWorkspace(db: DbLike, workspaceId: string, opts: ScopeOptions
 		intake: intakeQueries(d, workspaceId),
 		hosted: hostedQueries(d, workspaceId),
 		billing: billingQueries(d, workspaceId),
+		plan: planQueries(d, workspaceId),
 	};
 }
 

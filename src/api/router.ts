@@ -117,7 +117,7 @@ import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal'
 import { autoVerifyClaims } from '../connections/import';
 import { admitDomain, claimView, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
-import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
+import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, planRefusal, proofIncomplete, roomForInsert, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
 import { planLimitResponse } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
@@ -736,7 +736,7 @@ async function _handleApi(
       const domain = named.domain;
 
       // Hosted plan cap, advisory: no claim for a domain that can never be added (the insert below enforces it exactly).
-      if (!(await tenant.scope.domains.getByName(domain))) await assertDomainRoom(tenant);
+      if (!(await tenant.scope.domains.getByName(domain))) await assertDomainRoom(tenant, domain);
 
       // SaaS: the hub domain is a claim like any other until its owner is proven.
       const admission = await admitDomain(tenant, domain);
@@ -777,10 +777,10 @@ async function _handleApi(
         if (own?.verified_via === 'legacy' && admission.via !== 'existing') await restoreInPlace(tenant, own, admission.via, { id: userBySession?.id, email: userBySession?.email });
         created = own
           ? null
-          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { ...(await roomForInsert(tenant, domain)), freeing: freeingFor(tenant, domain) });
       } catch (e: any) {
         if (e instanceof ProofIncompleteError) return json(proofIncomplete(domain).body, 409);
-        if (e instanceof PlanLimitError) return planLimitResponse(env, 'domains_per_workspace', e.max);
+        if (e instanceof PlanLimitError) { const refused = await planRefusal(tenant, e, domain); return json(refused.body ?? { error: refused.message }, refused.status); }
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
       }
@@ -868,7 +868,7 @@ async function _handleApi(
         return json(added, 200);
       }
       if (claim.settled_at !== null) return err('claim not found', 404); // it became a domain that has since been removed
-      if (!(await tenant.scope.domains.getByName(claim.domain))) await assertDomainRoom(tenant); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A row the workspace has (unproven) takes no new place.
+      if (!(await tenant.scope.domains.getByName(claim.domain))) await assertDomainRoom(tenant, claim.domain); // at the hosted cap: nothing is verified (or evicted from anyone) for a domain that cannot be added; the claim stays pending. A row the workspace has (unproven) takes no new place.
       const outcome = await verifyClaim(tenant, claim);
       if (outcome.kind === 'taken') return json({ error: 'another workspace has already verified this domain', code: 'domain_taken', claim: claimView({ ...claim, status: 'lost' }) }, 409);
       if (outcome.kind === 'unproven') return json({ verified: false, error: outcome.reason, ...(outcome.code ? { code: outcome.code } : {}), claim: claimView((await tenant.scope.claims.getById(claim.id)) ?? claim) }, 422);

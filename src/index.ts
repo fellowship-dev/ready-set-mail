@@ -67,6 +67,7 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string;    // secret: whsec_… signing secret of the webhook endpoint (POST /api/stripe/webhook)
   STRIPE_PRICE_LOOKUP_KEY?: string;  // lookup key of the one-time "Fix one domain" price (default rsm_fix_one_domain)
   STRIPE_API_BASE?: string;          // testing only: a local fake Stripe, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
+  HOSTED_PLAN?: string;              // hosted plan: off (default) | free_one_domain (one free domain per person, pay as you go for more; docs/billing.md)
   // Hosted product analytics (MODE=saas only, docs/analytics.md). Off unless BOTH are set; a self-hosted installation never sends anything.
   POSTHOG_KEY?: string;              // the PUBLIC PostHog project key (phc_…): it can only send events. Not a personal API key
   POSTHOG_HOST?: string;             // PostHog's own ingestion origin: exactly https://us.i.posthog.com or https://eu.i.posthog.com (anything else, a proxy included, leaves analytics off)

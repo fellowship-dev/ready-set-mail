@@ -404,6 +404,418 @@ describe('failNext, billing portal, reset', () => {
   });
 });
 
+describe('subscriptions', () => {
+  const MONTHLY = 'price_fake_extra_monthly';
+  const types = (fake: FakeStripe) => [...fake.state.events.values()].map(e => e.type).filter(t => t !== 'checkout.session.completed');
+  const create = (fake: FakeStripe, cust: string, params: Params = {}, headers: Record<string, string> = {}) =>
+    api(fake, 'POST', '/v1/subscriptions', { customer: cust, 'items[0][price]': MONTHLY, 'items[0][quantity]': '0', 'metadata[workspace_id]': 'w1', ...params }, headers);
+  const setQty = (fake: FakeStripe, item: string, quantity: number, extra: Params = {}) => api(fake, 'POST', `/v1/subscription_items/${item}`, { quantity: String(quantity), ...extra });
+  const itemOf = (sub: { items: { data: { id: string }[] } }) => sub.items.data[0].id;
+
+  it('seeds the recurring prices', async () => {
+    const fake = mk();
+    const r = (await api(fake, 'GET', '/v1/prices', 'lookup_keys[]=rsm_extra_domain_monthly&lookup_keys[]=rsm_extra_domain_yearly')).json;
+    expect(r.data).toHaveLength(2);
+    expect(r.data.find((p: { id: string }) => p.id === 'price_fake_extra_monthly')).toMatchObject({
+      lookup_key: 'rsm_extra_domain_monthly', unit_amount: 500, currency: 'usd', type: 'recurring', billing_scheme: 'per_unit', product: 'prod_fake_extra',
+      recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+    });
+    expect(r.data.find((p: { id: string }) => p.id === 'price_fake_extra_yearly')).toMatchObject({ unit_amount: 5000, recurring: { interval: 'year', interval_count: 1, usage_type: 'licensed' } });
+  });
+
+  it('quantity 0 is active with a paid $0 first invoice in the clover shape', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const r = await create(fake, cust);
+    expect(r.status).toBe(200);
+    const sub = r.json;
+    expect(sub.id).toMatch(/^sub_fake/);
+    expect(sub).toMatchObject({ object: 'subscription', status: 'active', customer: cust, metadata: { workspace_id: 'w1' }, cancel_at_period_end: false, canceled_at: null, collection_method: 'charge_automatically', created: T0 / 1000 });
+    expect(sub).not.toHaveProperty('current_period_start');
+    expect(sub).not.toHaveProperty('current_period_end');
+    const item = sub.items.data[0];
+    expect(item.id).toMatch(/^si_fake/);
+    expect(item).toMatchObject({ quantity: 0, price: { id: MONTHLY, unit_amount: 500, recurring: { interval: 'month' } }, current_period_start: T0 / 1000 });
+    expect(item.current_period_end).toBeGreaterThan(T0 / 1000 + 27 * 86400);
+    const inv = (await api(fake, 'GET', `/v1/invoices/${sub.latest_invoice}`)).json;
+    expect(inv).toMatchObject({ status: 'paid', total: 0, amount_due: 0, amount_paid: 0, billing_reason: 'subscription_create' });
+    expect(inv).not.toHaveProperty('subscription');
+    expect(inv.parent).toEqual({ type: 'subscription_details', subscription_details: { subscription: sub.id, metadata: { workspace_id: 'w1' } } });
+    expect(inv.lines.data[0]).toMatchObject({
+      amount: 0, quantity: 0,
+      parent: { type: 'subscription_item_details', subscription_item_details: { subscription: sub.id, subscription_item: item.id, proration: false, proration_details: { credited_items: null } } },
+    });
+    expect(fake.state.paymentIntents.size).toBe(0);
+    expect(types(fake)).toEqual(['customer.subscription.created', 'invoice.created', 'invoice.finalized', 'invoice.paid', 'invoice.payment_succeeded']);
+    expect(fake.state.subscriptions.size).toBe(1);
+    expect(fake.state.subscriptionItems.size).toBe(1);
+  });
+
+  it('quantity > 0 bills and pays the first invoice with the default card', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '3', 'items[0][price]': 'price_fake_extra_yearly' })).json;
+    expect(sub.status).toBe('active');
+    const inv = (await api(fake, 'GET', `/v1/invoices/${sub.latest_invoice}`)).json;
+    expect(inv).toMatchObject({ status: 'paid', total: 15000, amount_paid: 15000, billing_reason: 'subscription_create' });
+    expect(inv.lines.data[0].description).toBe('3 × Extra domain (at $50.00 / year)');
+    expect(fake.state.charges.size).toBe(1);
+    expect(types(fake)).toEqual(['customer.subscription.created', 'invoice.created', 'invoice.finalized', 'invoice.paid', 'invoice.payment_succeeded']);
+    const exp = (await api(fake, 'GET', `/v1/subscriptions/${sub.id}`, 'expand[]=latest_invoice')).json;
+    expect(exp.latest_invoice).toMatchObject({ id: inv.id, object: 'invoice' });
+  });
+
+  it('first payment problems follow payment_behavior and the card', async () => {
+    const fake = mk();
+    const declined = await customerWithCard(fake, 'decline');
+    const e = await create(fake, declined.cust, { 'items[0][quantity]': '1', payment_behavior: 'error_if_incomplete' });
+    expect(e.status).toBe(402);
+    expect(e.json.error).toMatchObject({ type: 'card_error', code: 'card_declined' });
+    expect(fake.state.subscriptions.size).toBe(0);
+    expect(fake.state.invoices.size).toBe(0);
+    const inc = (await create(fake, declined.cust, { 'items[0][quantity]': '1', payment_behavior: 'default_incomplete' })).json;
+    expect(inc.status).toBe('incomplete');
+    expect(fake.state.invoices.get(inc.latest_invoice)!.status).toBe('open');
+    expect(types(fake)).not.toContain('invoice.payment_failed');
+    const allow = (await create(fake, declined.cust, { 'items[0][quantity]': '1' })).json;
+    expect(allow.status).toBe('incomplete');
+    expect(types(fake)).toContain('invoice.payment_failed');
+    // a $0 subscription needs no card at all
+    expect((await create(fake, declined.cust, { payment_behavior: 'error_if_incomplete' })).json.status).toBe('active');
+
+    const three = await customerWithCard(fake, 'requires_action');
+    const r = await create(fake, three.cust, { 'items[0][quantity]': '1', payment_behavior: 'error_if_incomplete' });
+    expect(r.status).toBe(402);
+    expect(r.json.error.code).toBe('invoice_payment_intent_requires_action');
+    const pending = (await create(fake, three.cust, { 'items[0][quantity]': '1' })).json;
+    expect(pending.status).toBe('incomplete');
+    expect(types(fake)).toContain('invoice.payment_action_required');
+    // authenticating the first invoice activates the subscription
+    fake.completeInvoiceAction(pending.latest_invoice, 'succeed');
+    expect(fake.state.subscriptions.get(pending.id)!.status).toBe('active');
+    const ev = [...fake.state.events.values()].filter(x => x.type === 'customer.subscription.updated').pop()!;
+    expect(ev.data.object).toMatchObject({ id: pending.id, status: 'active' });
+    expect(ev.data.previous_attributes).toEqual({ status: 'incomplete' });
+  });
+
+  it('validates the create call and is idempotent', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    expect((await api(fake, 'POST', '/v1/subscriptions', { customer: cust })).status).toBe(400);
+    expect((await create(fake, cust, { 'items[0][price]': 'price_fake_fix_one_domain' })).status).toBe(400);
+    expect((await create(fake, cust, { 'items[0][price]': 'price_nope' })).status).toBe(404);
+    expect((await create(fake, 'cus_nope')).status).toBe(404);
+    const a = await create(fake, cust, {}, { 'Idempotency-Key': 'k1' });
+    const b = await create(fake, cust, {}, { 'Idempotency-Key': 'k1' });
+    expect(b.json).toEqual(a.json);
+    expect(b.res.headers.get('Idempotent-Replayed')).toBe('true');
+    expect(fake.state.subscriptions.size).toBe(1);
+    const c = await create(fake, cust, { 'items[0][quantity]': '2' }, { 'Idempotency-Key': 'k1' });
+    expect(c.status).toBe(400);
+    expect(c.json.error.type).toBe('idempotency_error');
+    expect(fake.state.subscriptions.size).toBe(1);
+  });
+
+  it('retrieves, lists with filters, updates metadata and cancel_at_period_end', async () => {
+    const fake = mk();
+    const a = await customerWithCard(fake);
+    const b = await customerWithCard(fake);
+    const s1 = (await create(fake, a.cust)).json;
+    const s2 = (await create(fake, b.cust)).json;
+    expect((await api(fake, 'GET', `/v1/subscriptions/${s1.id}`)).json.id).toBe(s1.id);
+    expect((await api(fake, 'GET', '/v1/subscriptions/sub_nope')).status).toBe(404);
+    const byCust = (await api(fake, 'GET', '/v1/subscriptions', `customer=${a.cust}&status=active&limit=5`)).json;
+    expect(byCust).toMatchObject({ object: 'list', has_more: false });
+    expect(byCust.data.map((x: { id: string }) => x.id)).toEqual([s1.id]);
+    expect((await api(fake, 'GET', '/v1/subscriptions', 'status=all')).json.data).toHaveLength(2);
+    expect((await api(fake, 'GET', '/v1/subscriptions', 'status=past_due')).json.data).toHaveLength(0);
+    expect((await api(fake, 'GET', '/v1/subscriptions', 'limit=1')).json).toMatchObject({ has_more: true });
+
+    const u = (await api(fake, 'POST', `/v1/subscriptions/${s2.id}`, { cancel_at_period_end: 'true', 'metadata[reason]': 'bye' })).json;
+    expect(u).toMatchObject({ cancel_at_period_end: true, cancel_at: u.items.data[0].current_period_end, metadata: { workspace_id: 'w1', reason: 'bye' } });
+    expect(u.canceled_at).toBe(T0 / 1000);
+    const ev = [...fake.state.events.values()].filter(x => x.type === 'customer.subscription.updated').pop()!;
+    expect(ev.data.previous_attributes).toMatchObject({ cancel_at_period_end: false, metadata: { workspace_id: 'w1' } });
+    const back = (await api(fake, 'POST', `/v1/subscriptions/${s2.id}`, { cancel_at_period_end: 'false' })).json;
+    expect(back).toMatchObject({ cancel_at_period_end: false, cancel_at: null, canceled_at: null });
+  });
+
+  it('DELETE cancels immediately without a refund', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    const del = await api(fake, 'DELETE', `/v1/subscriptions/${sub.id}`);
+    expect(del.status).toBe(200);
+    expect(del.json).toMatchObject({ id: sub.id, status: 'canceled', canceled_at: T0 / 1000, ended_at: T0 / 1000 });
+    expect(types(fake)).toContain('customer.subscription.deleted');
+    expect(fake.state.refunds.size).toBe(0);
+    expect([...fake.state.charges.values()][0].amount_refunded).toBe(0);
+    expect((await api(fake, 'GET', '/v1/subscriptions', `customer=${cust}`)).json.data).toHaveLength(0);
+    expect((await api(fake, 'GET', '/v1/subscriptions', `customer=${cust}&status=canceled`)).json.data).toHaveLength(1);
+    const missing = await api(fake, 'DELETE', '/v1/subscriptions/sub_nope');
+    expect(missing.status).toBe(404);
+    expect(missing.json.error.code).toBe('resource_missing');
+    expect((await api(fake, 'DELETE', `/v1/subscriptions/${sub.id}`)).status).toBe(400);
+  });
+
+  it('quantity 0 -> 1 -> 2 -> 1 all succeed without a payment and record proration lines for the next invoice', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust)).json;
+    const item = itemOf(sub);
+    const start = sub.items.data[0].current_period_start; const end = sub.items.data[0].current_period_end;
+    const charges = fake.state.charges.size;
+    // halfway through the period
+    fake.setNow(((start + end) / 2) * 1000);
+    const up = await setQty(fake, item, 1);
+    expect(up.status).toBe(200);
+    expect(up.json).toMatchObject({ id: item, quantity: 1 });
+    expect((await setQty(fake, item, 2)).status).toBe(200);
+    expect((await setQty(fake, item, 1)).status).toBe(200);
+    expect(fake.state.charges.size).toBe(charges);
+    expect(fake.state.invoices.size).toBe(1);
+    expect(fake.state.subscriptions.get(sub.id)!.status).toBe('active');
+    const evs = [...fake.state.events.values()].filter(x => x.type === 'customer.subscription.updated');
+    expect(evs).toHaveLength(3);
+    expect(evs[0].data.previous_attributes!.items.data[0].quantity).toBe(0);
+    expect(evs[0].data.object.items.data[0].quantity).toBe(1);
+
+    const half = (n: number) => Math.round(500 * n * ((end - (start + end) / 2) / (end - start)));
+    const date = new Date(((start + end) / 2) * 1000);
+    const dt = `${date.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+    const pv = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, subscription: sub.id })).json;
+    const lines = pv.lines.data as { amount: number; description: string; quantity: number; parent: { subscription_item_details: { proration: boolean } } }[];
+    const prorations = lines.filter(l => l.parent.subscription_item_details.proration);
+    expect(prorations.map(l => [l.description, l.amount])).toEqual([
+      [`Remaining time on 1 × Extra domain after ${dt}`, half(1)],
+      [`Unused time on 1 × Extra domain after ${dt}`, -half(1)],
+      [`Remaining time on 2 × Extra domain after ${dt}`, half(2)],
+      [`Unused time on 2 × Extra domain after ${dt}`, -half(2)],
+      [`Remaining time on 1 × Extra domain after ${dt}`, half(1)],
+    ]);
+    const recurring = lines.filter(l => !l.parent.subscription_item_details.proration);
+    expect(recurring).toHaveLength(1);
+    expect(recurring[0]).toMatchObject({ amount: 500, quantity: 1 });
+    expect(pv.total).toBe(500 + half(1));
+
+    // the renewal bills the recurring line at the current quantity and the pending prorations, once
+    const { invoice } = fake.advancePeriod(sub.id);
+    expect(invoice).toMatchObject({ billing_reason: 'subscription_cycle', status: 'paid', total: 500 + half(1), amount_paid: 500 + half(1) });
+    expect(invoice!.lines.data).toHaveLength(6);
+    const next = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, subscription: sub.id })).json;
+    expect(next.lines.data).toHaveLength(1);
+    expect(next.total).toBe(500);
+  });
+
+  it('proration_behavior none records nothing; invalid values and canceled subscriptions are refused', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust)).json;
+    const item = itemOf(sub);
+    fake.setNow(T0 + 10 * 86400_000);
+    expect((await setQty(fake, item, 2, { proration_behavior: 'none' })).status).toBe(200);
+    const pv = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, subscription: sub.id })).json;
+    expect(pv.lines.data).toHaveLength(1);
+    expect(pv.lines.data[0]).toMatchObject({ quantity: 2, amount: 1000 });
+    expect((await setQty(fake, item, 3, { proration_behavior: 'always_invoice' })).status).toBe(400);
+    expect((await setQty(fake, item, -1)).status).toBe(400);
+    expect((await setQty(fake, 'si_nope', 1)).status).toBe(404);
+    await api(fake, 'DELETE', `/v1/subscriptions/${sub.id}`);
+    expect((await setQty(fake, item, 1)).status).toBe(400);
+  });
+
+  it('quantity updates are idempotent and reject the same key with other params', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust)).json;
+    const item = itemOf(sub);
+    const post = (quantity: string) => api(fake, 'POST', `/v1/subscription_items/${item}`, { quantity }, { 'Idempotency-Key': 'q1' });
+    const a = await post('1');
+    const b = await post('1');
+    expect(b.json).toEqual(a.json);
+    expect(b.res.headers.get('Idempotent-Replayed')).toBe('true');
+    expect([...fake.state.events.values()].filter(x => x.type === 'customer.subscription.updated')).toHaveLength(1);
+    const c = await post('2');
+    expect(c.status).toBe(400);
+    expect(c.json.error.type).toBe('idempotency_error');
+    expect(fake.state.subscriptionItems.get(item)!.quantity).toBe(1);
+  });
+
+  it('create_preview: a change to an existing subscription, by item id or by price, changes nothing', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    const item = sub.items.data[0];
+    const before = JSON.stringify([...fake.state.subscriptions.values(), ...fake.state.subscriptionItems.values(), ...fake.state.invoices.values()]);
+    const events = fake.state.events.size;
+    fake.setNow((item.current_period_start + (item.current_period_end - item.current_period_start) / 2) * 1000);
+    const pv = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, subscription: sub.id, 'subscription_details[items][0][id]': item.id, 'subscription_details[items][0][quantity]': '3' })).json;
+    expect(pv).toMatchObject({
+      id: null, object: 'invoice', status: 'draft', currency: 'usd', customer: cust, billing_reason: 'upcoming',
+      period_end: item.current_period_end, next_payment_attempt: item.current_period_end,
+      parent: { type: 'subscription_details', subscription_details: { subscription: sub.id } },
+    });
+    expect(pv).not.toHaveProperty('subscription');
+    const half = Math.round((item.current_period_end - (item.current_period_start + item.current_period_end) / 2) / (item.current_period_end - item.current_period_start) * 500);
+    const amounts = pv.lines.data.map((l: { amount: number }) => l.amount);
+    expect(amounts).toEqual([-half, half * 3, 1500]);
+    expect(pv.total).toBe(1500 + half * 2);
+    expect(pv.amount_due).toBe(pv.total);
+    const byPrice = (await api(fake, 'POST', '/v1/invoices/create_preview', { subscription: sub.id, 'subscription_details[items][0][price]': MONTHLY, 'subscription_details[items][0][quantity]': '3', 'subscription_details[proration_behavior]': 'none' })).json;
+    expect(byPrice.total).toBe(1500);
+    const withDate = (await api(fake, 'POST', '/v1/invoices/create_preview', { subscription: sub.id, 'subscription_details[items][0][id]': item.id, 'subscription_details[items][0][quantity]': '2', 'subscription_details[proration_date]': String(item.current_period_start) })).json;
+    expect(withDate.lines.data.map((l: { amount: number }) => l.amount)).toEqual([-500, 1000, 1000]);
+    expect(JSON.stringify([...fake.state.subscriptions.values(), ...fake.state.subscriptionItems.values(), ...fake.state.invoices.values()])).toBe(before);
+    expect(fake.state.events.size).toBe(events);
+    expect((await api(fake, 'POST', '/v1/invoices/create_preview', { subscription: 'sub_nope' })).status).toBe(404);
+  });
+
+  it('create_preview without a subscription previews a new one: amount due now is quantity x price', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const pv = (await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust, 'subscription_details[items][0][price]': 'price_fake_extra_yearly', 'subscription_details[items][0][quantity]': '4' })).json;
+    expect(pv).toMatchObject({ id: null, status: 'draft', total: 20000, amount_due: 20000, currency: 'usd', billing_reason: 'subscription_create' });
+    expect(pv.lines.data).toHaveLength(1);
+    expect(pv.period_end).toBeGreaterThan(T0 / 1000 + 360 * 86400);
+    expect(fake.state.subscriptions.size).toBe(0);
+    expect(fake.state.invoices.size).toBe(0);
+    expect((await api(fake, 'POST', '/v1/invoices/create_preview', { customer: cust })).status).toBe(400);
+  });
+
+  it('renewal with a working card: new period, paid invoice, events', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '2' })).json;
+    const first = sub.items.data[0];
+    const queued = fake.state.events.size;
+    const r = fake.advancePeriod(sub.id);
+    expect(r.invoice).toMatchObject({ billing_reason: 'subscription_cycle', status: 'paid', total: 1000 });
+    expect(r.invoice!.parent.subscription_details.subscription).toBe(sub.id);
+    expect(r.invoice).not.toHaveProperty('subscription');
+    expect(r.invoice!.lines.data[0].period.start).toBe(first.current_period_end);
+    expect(r.subscription.items.data[0].current_period_start).toBe(first.current_period_end);
+    expect(r.subscription.items.data[0].current_period_end).toBeGreaterThan(first.current_period_end + 27 * 86400);
+    expect(r.subscription.status).toBe('active');
+    expect(r.subscription.latest_invoice).toBe(r.invoice!.id);
+    expect([...fake.state.events.values()].slice(queued).map(e => e.type)).toEqual(['invoice.created', 'invoice.finalized', 'invoice.paid', 'invoice.payment_succeeded', 'customer.subscription.updated']);
+  });
+
+  it('renewal with a declining card: open invoice, past_due, then a retry succeeds', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    fake.setCardBehavior(cust, 'decline');
+    const queued = fake.state.events.size;
+    const r = fake.advancePeriod(sub.id);
+    expect(r.invoice).toMatchObject({ status: 'open', amount_due: 500, attempt_count: 1 });
+    expect(r.subscription.status).toBe('past_due');
+    const evs = [...fake.state.events.values()].slice(queued);
+    expect(evs.map(e => e.type)).toEqual(['invoice.created', 'invoice.finalized', 'invoice.payment_failed', 'customer.subscription.updated']);
+    expect(evs[3].data.previous_attributes).toMatchObject({ status: 'active' });
+    expect(() => fake.advancePeriod(sub.id)).toThrow(/past_due/);
+    // dunning: fails again, then the card works
+    const again = fake.retryPayment(sub.id);
+    expect(again.invoice).toMatchObject({ status: 'open', attempt_count: 2 });
+    expect(again.subscription.status).toBe('past_due');
+    const fixed = fake.retryPayment(sub.id, { card: 'ok' });
+    expect(fixed.invoice).toMatchObject({ status: 'paid', amount_paid: 500 });
+    expect(fixed.subscription.status).toBe('active');
+    const last = [...fake.state.events.values()].filter(e => e.type === 'customer.subscription.updated').pop()!;
+    expect(last.data.object.status).toBe('active');
+    expect(last.data.previous_attributes).toEqual({ status: 'past_due' });
+    expect(() => fake.retryPayment(sub.id)).toThrow(/no open invoice/);
+  });
+
+  it('renewal needing 3-D Secure: action events, past_due, hosted url; completing it activates the subscription', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    const queued = fake.state.events.size;
+    const r = fake.advancePeriod(sub.id, { card: 'requires_action' });
+    expect(r.subscription.status).toBe('past_due');
+    expect(r.invoice).toMatchObject({ status: 'open', hosted_invoice_url: `https://stripe.fake/i/${r.invoice!.id}` });
+    const t = [...fake.state.events.values()].slice(queued).map(e => e.type);
+    expect(t).toEqual(['invoice.created', 'invoice.finalized', 'invoice.payment_action_required', 'invoice.payment_failed', 'customer.subscription.updated']);
+    expect([...fake.state.paymentIntents.values()].pop()!.status).toBe('requires_action');
+    fake.completeInvoiceAction(r.invoice!.id, 'succeed');
+    expect(fake.state.invoices.get(r.invoice!.id)!.status).toBe('paid');
+    expect(fake.state.subscriptions.get(sub.id)!.status).toBe('active');
+    expect(types(fake).slice(-3)).toEqual(['invoice.paid', 'invoice.payment_succeeded', 'customer.subscription.updated']);
+  });
+
+  it('a failed authentication leaves the subscription past_due', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    const r = fake.advancePeriod(sub.id, { card: 'requires_action' });
+    fake.completeInvoiceAction(r.invoice!.id, 'fail');
+    expect(fake.state.subscriptions.get(sub.id)!.status).toBe('past_due');
+    expect(fake.state.invoices.get(r.invoice!.id)!.status).toBe('open');
+  });
+
+  it('exhaustRetries ends dunning as unpaid or canceled', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const a = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    const b = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    expect(() => fake.exhaustRetries(a.id)).toThrow(/not past_due/);
+    fake.setCardBehavior(cust, 'decline');
+    fake.advancePeriod(a.id);
+    fake.advancePeriod(b.id);
+    const un = fake.exhaustRetries(a.id, { to: 'unpaid' });
+    expect(un.subscription.status).toBe('unpaid');
+    const ev = [...fake.state.events.values()].pop()!;
+    expect(ev).toMatchObject({ type: 'customer.subscription.updated' });
+    expect(ev.data.previous_attributes).toEqual({ status: 'past_due' });
+    const gone = fake.exhaustRetries(b.id, { to: 'canceled' });
+    expect(gone.subscription).toMatchObject({ status: 'canceled', canceled_at: T0 / 1000 });
+    expect([...fake.state.events.values()].pop()!.type).toBe('customer.subscription.deleted');
+    expect(gone.invoice!.status).toBe('open');
+    // paying the old invoice later brings an unpaid subscription back
+    fake.setCardBehavior(cust, 'ok');
+    fake.retryPayment(a.id);
+    expect(fake.state.subscriptions.get(a.id)!.status).toBe('active');
+  });
+
+  it('cancel_at_period_end ends the subscription at the next period boundary without an invoice', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const sub = (await create(fake, cust, { 'items[0][quantity]': '1' })).json;
+    await api(fake, 'POST', `/v1/subscriptions/${sub.id}`, { cancel_at_period_end: 'true' });
+    const invoices = fake.state.invoices.size;
+    const r = fake.advancePeriod(sub.id);
+    expect(r.subscription).toMatchObject({ status: 'canceled', ended_at: sub.items.data[0].current_period_end });
+    expect(fake.state.invoices.size).toBe(invoices);
+    expect([...fake.state.events.values()].pop()!.type).toBe('customer.subscription.deleted');
+  });
+
+  it('setNow moves the clock, setCardBehavior needs a default card, reset clears subscriptions', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    fake.setNow(T0 + 5000_000);
+    const sub = (await create(fake, cust)).json;
+    expect(sub.created).toBe(T0 / 1000 + 5000);
+    const bare = (await api(fake, 'POST', '/v1/customers', { email: 'x@y.test' })).json.id;
+    expect(() => fake.setCardBehavior(bare, 'decline')).toThrow(/no default payment method/);
+    expect(() => fake.setCardBehavior(cust, 'nope' as never)).toThrow(/unknown card kind/);
+    // no card and a charge due: incomplete, never an exception
+    expect((await create(fake, bare, { 'items[0][quantity]': '1' })).json.status).toBe('incomplete');
+    fake.reset();
+    expect(fake.state.subscriptions.size).toBe(0);
+    expect(fake.state.subscriptionItems.size).toBe(0);
+    expect(fake.state.prices.has('price_fake_extra_monthly')).toBe(true);
+    const cust2 = (await api(fake, 'POST', '/v1/customers', { email: 'x@y.test' })).json.id;
+    expect((await create(fake, cust2)).json.created).toBe(T0 / 1000);
+  });
+
+  it('the billing portal session offers nothing to change a quantity with', async () => {
+    const fake = mk();
+    const { cust } = await customerWithCard(fake);
+    const p = (await api(fake, 'POST', '/v1/billing_portal/sessions', { customer: cust, return_url: 'https://app/billing' })).json;
+    expect(Object.keys(p).sort()).toEqual(['created', 'customer', 'id', 'livemode', 'object', 'return_url', 'url']);
+  });
+});
+
 describe('standalone server', () => {
   it('serves checkout pages, redirects to the success url, and exposes control endpoints', async () => {
     const hooks: string[] = [];

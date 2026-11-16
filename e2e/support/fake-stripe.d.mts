@@ -54,6 +54,8 @@ export interface FakeStripe {
     portalSessions: Map<string, StripeObject>;
     prices: Map<string, StripeObject>;
     events: Map<string, FakeStripeEvent>;
+    subscriptions: Map<string, StripeObject>;
+    subscriptionItems: Map<string, StripeObject>;
   };
   calls: FakeStripeCall[];
   /** Key prefixes only, e.g. 'rk_test_'. */
@@ -77,6 +79,16 @@ export interface FakeStripe {
   /** Credit (negative, minor units) applied to the customer's next finalized invoice. */
   setCustomerBalance(customerId: string, balance: number): void;
   deleteCustomer(id: string): void;
+  /** Freeze the fake's clock at `ms` (wins over the `now` option until reset). */
+  setNow(ms: number): void;
+  /** Switch how the customer's default card behaves from now on (a card that later declines). */
+  setCardBehavior(customerId: string, kind: CardKind): void;
+  /** Bill the next period of an active subscription (the clock is not moved). `card` forces the behaviour of this attempt. */
+  advancePeriod(subscriptionId: string, opts?: { card?: CardKind }): { subscription: StripeObject; invoice: StripeObject | null };
+  /** One dunning retry of the open invoice of a past_due subscription. */
+  retryPayment(subscriptionId: string, opts?: { card?: CardKind }): { subscription: StripeObject; invoice: StripeObject | null };
+  /** Dunning gave up: the past_due subscription becomes `unpaid` or `canceled` (default). */
+  exhaustRetries(subscriptionId: string, opts?: { to?: 'canceled' | 'unpaid' }): { subscription: StripeObject; invoice: StripeObject | null };
   failNext(matcher: string | RegExp, failure?: { status?: number; error?: StripeObject }): void;
   reset(): void;
 

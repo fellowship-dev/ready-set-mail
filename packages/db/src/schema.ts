@@ -46,7 +46,19 @@ export const workspaces = sqliteTable('workspaces', {
 	created_at: integer('created_at').notNull().default(now),
 	/** The workspace's Stripe Customer (hosted billing, 0016): one card per workspace. Created on first need, cleared when Stripe says it was deleted. */
 	stripe_customer_id: text('stripe_customer_id'),
-}, (t) => [uniqueIndex('idx_workspaces_stripe_customer').on(t.stripe_customer_id)]);
+	/** Hosted plan (0017): 'free' or 'payg' (a Stripe subscription exists, see workspaceSubscriptions). */
+	plan: text('plan', { enum: ['free', 'payg'] }).notNull().default('free'),
+	/** Non-null: this workspace holds that person's one free domain (the allowance). Unique, so a second one is refused by the database under any race. */
+	free_owner_user_id: text('free_owner_user_id'),
+	/** The lease every plan change of this workspace runs under, and the revision it bumps (part of the Stripe idempotency keys). */
+	plan_lock_token: text('plan_lock_token'),
+	plan_lock_until: integer('plan_lock_until'),
+	plan_revision: integer('plan_revision').notNull().default(0),
+}, (t) => [
+	uniqueIndex('idx_workspaces_stripe_customer').on(t.stripe_customer_id),
+	uniqueIndex('idx_workspaces_free_owner').on(t.free_owner_user_id).where(sql`${t.free_owner_user_id} IS NOT NULL`),
+	check('workspaces_plan_check', sql`${t.plan} IN ('free', 'payg')`),
+]);
 
 export const memberships = sqliteTable(
 	'memberships',
@@ -160,8 +172,13 @@ export const domains = sqliteTable(
 		dmarc_sp: text('dmarc_sp'),
 		dmarc_p: text('dmarc_p'),
 		dmarc_rua: integer('dmarc_rua'),
+		/** The organizational domain this row is a unit of (0017): a domain with all its subdomains is one domain of the plan. Null: the row's own name (rows from before are filled in by the Worker). */
+		org_domain: text('org_domain'),
+		/** Unix seconds the domain was paused (the plan lapsed, or its owner kept one domain): readable and exportable, new reports are not processed. Null: active. */
+		paused_at: integer('paused_at'),
 	},
 	(t) => [
+		index('idx_domains_workspace_org').on(t.workspace_id, t.org_domain),
 		index('idx_domains_domain').on(t.domain),
 		index('idx_domains_cf_connection').on(t.cf_connection_id),
 		index('idx_domains_parent').on(t.parent_id),
@@ -204,6 +221,9 @@ export const aggregateReports = sqliteTable(
 		ingest_token: text('ingest_token'),
 		/** Rows stored in report_records for this report. Null: stored before 0010. */
 		record_count: integer('record_count'),
+		/** A report too large to store row by row (0017): how many failing rows were folded into summary rows, and from how many source addresses. Null: stored whole. */
+		summarised_rows: integer('summarised_rows'),
+		summarised_sources: integer('summarised_sources'),
 	},
 	(t) => [
 		unique().on(t.domain_id, t.report_id),
@@ -236,6 +256,8 @@ export const reportRecords = sqliteTable(
 		country_code: text('country_code'),
 		org: text('org'),
 		workspace_id: workspaceId(),
+		/** A summary row (0017): the number of failing source addresses of one network folded into it, with exact message totals. Null: a real row. */
+		summarised_sources: integer('summarised_sources'),
 	},
 	(t) => [
 		index('idx_records_report').on(t.report_id),
@@ -812,6 +834,7 @@ export const GLOBAL_TABLES = {
 	intake_quota: 'instance-wide intake counters per scope and day; a counter, no tenant content',
 	billing_events: 'Stripe events already seen, by event id (webhook idempotency); no workspace is known when one arrives, no tenant content',
 	billing_price_cache: 'the Stripe price an offer resolves to, instance-wide',
+	workspace_intents: 'a person\'s wish to create a workspace, keyed by user: the workspace does not exist until the card is verified',
 } as const;
 
 /** Tables that must carry an `workspace_id` column. */
@@ -844,6 +867,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'reporter_candidate_days',
 	'billing_orders',
 	'billing_checkout_sessions',
+	'workspace_subscriptions',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1118,4 +1142,49 @@ export const billingPriceCache = sqliteTable('billing_price_cache', {
 	amount: integer('amount').notNull(),
 	currency: text('currency').notNull(),
 	fetched_at: integer('fetched_at').notNull(),
+	/** 'month' | 'year' for a recurring price (0017); null for the one-time offer price. */
+	interval: text('interval'),
 });
+
+/** The one Stripe subscription of a pay-as-you-go workspace (0017): its state as last seen. No card data. */
+export const workspaceSubscriptions = sqliteTable('workspace_subscriptions', {
+	workspace_id: text('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
+	stripe_subscription_id: text('stripe_subscription_id').notNull(),
+	stripe_item_id: text('stripe_item_id').notNull(),
+	price_id: text('price_id').notNull(),
+	interval: text('interval', { enum: ['month', 'year'] }).notNull().default('month'),
+	status: text('status').notNull(),
+	/** What the server last pushed as the quantity, and what Stripe reported. */
+	quantity_sent: integer('quantity_sent').notNull().default(0),
+	quantity_seen: integer('quantity_seen'),
+	current_period_end: integer('current_period_end'),
+	cancel_at_period_end: integer('cancel_at_period_end').notNull().default(0),
+	canceled_at: integer('canceled_at'),
+	lapsed_at: integer('lapsed_at'),
+	/** 1: the database count may differ from Stripe's quantity; the daily job (or the owner's next Billing page) repairs it. */
+	dirty: integer('dirty').notNull().default(0),
+	/** The hosted invoice page while a renewal needs the bank's confirmation. */
+	action_url: text('action_url'),
+	last_failed_at: integer('last_failed_at'),
+	synced_at: integer('synced_at'),
+	created_at: integer('created_at').notNull().default(now),
+	updated_at: integer('updated_at').notNull().default(now),
+}, (t) => [
+	uniqueIndex('idx_workspace_subscriptions_stripe').on(t.stripe_subscription_id),
+	index('idx_workspace_subscriptions_sync').on(t.synced_at),
+	check('workspace_subscriptions_interval_check', sql`${t.interval} IN ('month', 'year')`),
+]);
+
+/** A person's wish to create another workspace, held until the card is verified (0017): the workspace id is allocated here, the workspace row is written on success. */
+export const workspaceIntents = sqliteTable('workspace_intents', {
+	id: text('id').primaryKey(),
+	user_id: text('user_id').notNull(),
+	name: text('name').notNull(),
+	stripe_customer_id: text('stripe_customer_id'),
+	status: text('status', { enum: ['open', 'created', 'expired'] }).notNull().default('open'),
+	created_at: integer('created_at').notNull().default(now),
+	completed_at: integer('completed_at'),
+}, (t) => [
+	index('idx_workspace_intents_user').on(t.user_id, t.status),
+	check('workspace_intents_status_check', sql`${t.status} IN ('open', 'created', 'expired')`),
+]);

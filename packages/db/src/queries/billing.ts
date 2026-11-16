@@ -133,7 +133,7 @@ export function billingLookups(dbLike: DbLike) {
 
 		price: {
 			get: (lookupKey: string) => db.select().from(billingPriceCache).where(eq(billingPriceCache.lookup_key, lookupKey)).get().then((r) => r ?? null),
-			put: (row: PriceCacheRow) => db.insert(billingPriceCache).values(row).onConflictDoUpdate({ target: billingPriceCache.lookup_key, set: { price_id: row.price_id, amount: row.amount, currency: row.currency, fetched_at: row.fetched_at } }).run(),
+			put: (row: PriceCacheRow) => db.insert(billingPriceCache).values(row).onConflictDoUpdate({ target: billingPriceCache.lookup_key, set: { price_id: row.price_id, amount: row.amount, currency: row.currency, fetched_at: row.fetched_at, interval: row.interval ?? null } }).run(),
 			drop: (lookupKey: string) => db.delete(billingPriceCache).where(eq(billingPriceCache.lookup_key, lookupKey)).run(),
 		},
 	};

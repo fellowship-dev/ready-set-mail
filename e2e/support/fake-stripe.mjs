@@ -74,7 +74,9 @@ const asArray = v => (v === undefined ? [] : Array.isArray(v) ? v : typeof v ===
  * @param {import('./fake-stripe.mjs').FakeStripeOptions} [opts]
  */
 export function createFakeStripe(opts = {}) {
-  const now = opts.now ?? (() => Date.now());
+  const clock = opts.now ?? (() => Date.now());
+  let fixedNow = null; // set by fake.setNow: a frozen clock that wins over opts.now
+  const now = () => fixedNow ?? clock();
   const sec = () => Math.floor(now() / 1000);
   let counter = 0;
   const id = prefix => `${prefix}_fake${String(++counter).padStart(6, '0')}`;
@@ -82,7 +84,7 @@ export function createFakeStripe(opts = {}) {
   const state = {
     customers: new Map(), sessions: new Map(), setupIntents: new Map(), paymentMethods: new Map(), invoices: new Map(),
     invoiceItems: new Map(), paymentIntents: new Map(), charges: new Map(), refunds: new Map(), portalSessions: new Map(),
-    prices: new Map(), events: new Map(),
+    prices: new Map(), events: new Map(), subscriptions: new Map(), subscriptionItems: new Map(),
   };
   const behaviors = new Map(); // payment method id -> 'ok'|'decline'|'requires_action'
   const delivered = new Set();
@@ -108,8 +110,9 @@ export function createFakeStripe(opts = {}) {
     id: id('evt'), object: 'event', api_version: STRIPE_FAKE_API_VERSION, created: sec(), livemode: fake.livemode,
     pending_webhooks: 1, request: { id: null, idempotency_key: null }, type, data: { object: clone(object) }, ...extra,
   });
-  function queue(type, object) {
+  function queue(type, object, previous) {
     const ev = fake.makeEvent(type, object);
+    if (previous) ev.data.previous_attributes = clone(previous);
     state.events.set(ev.id, ev);
     schedule();
     return ev;
@@ -170,6 +173,13 @@ export function createFakeStripe(opts = {}) {
   }
   function seedDefaults() {
     seedPrice({ id: 'price_fake_fix_one_domain', lookup_key: 'rsm_fix_one_domain', unit_amount: 14900, currency: 'usd', type: 'one_time', active: true, billing_scheme: 'per_unit' });
+    for (const [pid, key, amount, interval] of [['price_fake_extra_monthly', 'rsm_extra_domain_monthly', 500, 'month'], ['price_fake_extra_yearly', 'rsm_extra_domain_yearly', 5000, 'year']]) {
+      seedPrice({
+        id: pid, lookup_key: key, unit_amount: amount, currency: 'usd', type: 'recurring', active: true, billing_scheme: 'per_unit',
+        product: 'prod_fake_extra', nickname: 'Extra domain', // GUESS: real prices carry nickname null and the name lives on the product; the fake keeps it here for line descriptions
+        recurring: { interval, interval_count: 1, usage_type: 'licensed' },
+      });
+    }
   }
   seedDefaults();
   fake.seedPrice = seedPrice;
@@ -186,6 +196,7 @@ export function createFakeStripe(opts = {}) {
   }
 
   function invoiceTotal(inv) {
+    if (inv._lines) return inv._lines.reduce((s, l) => s + l.amount, 0);
     return [...state.invoiceItems.values()].filter(i => i.invoice === inv.id).reduce((s, i) => s + i.amount, 0);
   }
   function syncTotals(inv) {
@@ -195,6 +206,7 @@ export function createFakeStripe(opts = {}) {
     inv.amount_remaining = inv.status === 'paid' ? 0 : t;
   }
   function linesOf(inv) {
+    if (inv._lines) return { object: 'list', data: clone(inv._lines), has_more: false, url: `/v1/invoices/${inv.id}/lines` };
     const data = [...state.invoiceItems.values()].filter(i => i.invoice === inv.id).map(i => ({
       id: `il_${i.id}`, object: 'line_item', amount: i.amount, currency: i.currency, description: i.description, quantity: i.quantity ?? 1, metadata: clone(i.metadata ?? {}),
       pricing: i.price ? { type: 'price_details', price_details: { price: i.price.id, product: i.price.product }, unit_amount_decimal: String(i.price.unit_amount) } : { type: 'price_details', price_details: { price: null, product: null } },
@@ -205,6 +217,7 @@ export function createFakeStripe(opts = {}) {
   function invoiceOut(inv, expand = []) {
     const out = clone(inv);
     delete out.payments;
+    for (const k of Object.keys(out)) if (k.startsWith('_')) delete out[k];
     out.lines = linesOf(inv);
     if (expand.some(e => e === 'payments' || e.startsWith('payments.'))) {
       const full = expand.includes('payments.data.payment.payment_intent');
@@ -249,9 +262,41 @@ export function createFakeStripe(opts = {}) {
     ip.status = 'paid'; ip.amount_paid = pi.amount;
     inv.status = 'paid'; inv.amount_paid = pi.amount; inv.amount_remaining = 0;
     inv.status_transitions.paid_at = sec();
+    if (inv.attempt_count !== undefined) { inv.next_payment_attempt = null; }
     queue('invoice.paid', invoiceOut(inv));
     queue('invoice.payment_succeeded', invoiceOut(inv));
+    reactivate(inv);
     return ch;
+  }
+  /** A paid subscription invoice brings an incomplete / past_due / unpaid subscription back to active. */
+  function reactivate(inv) {
+    const sub = state.subscriptions.get(inv.parent?.subscription_details?.subscription);
+    if (!sub || !['incomplete', 'past_due', 'unpaid'].includes(sub.status)) return;
+    const before = sub.status;
+    sub.status = 'active';
+    queue('customer.subscription.updated', subOut(sub), { status: before });
+  }
+  /** Try the customer's default card on an open invoice. `override` forces a card behaviour for this one attempt. No default card counts as a decline. */
+  function chargeInvoice(inv, override) {
+    const cust = state.customers.get(inv.customer);
+    const pmId = cust?.invoice_settings?.default_payment_method ?? null;
+    const behavior = override ?? (pmId ? behaviors.get(pmId) ?? 'ok' : 'decline');
+    const pi = intentFor(inv, pmId);
+    pi.payment_method = pmId;
+    if (inv.attempt_count !== undefined) inv.attempt_count += 1;
+    if (behavior === 'ok') { markPaid(inv, pi); return { outcome: 'paid', pi }; }
+    if (inv.attempt_count !== undefined) inv.next_payment_attempt = sec() + 3 * 86400; // GUESS: a fixed 3 day dunning step
+    if (behavior === 'decline') {
+      pi.status = 'requires_payment_method';
+      pi.last_payment_error = { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_method: pmId ? clone(state.paymentMethods.get(pmId)) : null };
+      queue('invoice.payment_failed', invoiceOut(inv));
+      return { outcome: 'decline', pi };
+    }
+    pi.status = 'requires_action';
+    // Real Stripe sends invoice.payment_failed as well while the PaymentIntent is still waiting for the buyer (3-D Secure); either may arrive first.
+    queue('invoice.payment_action_required', invoiceOut(inv));
+    queue('invoice.payment_failed', invoiceOut(inv));
+    return { outcome: 'requires_action', pi };
   }
 
   // ---- test controls ----
@@ -315,7 +360,7 @@ export function createFakeStripe(opts = {}) {
   fake.reset = () => {
     for (const m of Object.values(state)) m.clear();
     behaviors.clear(); delivered.clear(); idem.clear();
-    failures = []; nextCard = null; counter = 0;
+    failures = []; nextCard = null; counter = 0; fixedNow = null;
     fake.calls.length = 0; fake.keySeen.length = 0; fake.deliveries.length = 0;
     seedDefaults();
   };
@@ -326,6 +371,270 @@ export function createFakeStripe(opts = {}) {
     if (expand.includes('setup_intent') && out.setup_intent) out.setup_intent = clone(state.setupIntents.get(out.setup_intent));
     return out;
   }
+
+  // ---- subscriptions ----
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmtDate = ts => { const d = new Date(ts * 1000); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+  const money = (minor, currency) => `${currency === 'usd' ? '$' : `${currency.toUpperCase()} `}${(minor / 100).toFixed(2)}`;
+  function addInterval(ts, interval, count = 1) {
+    const d = new Date(ts * 1000);
+    if (interval === 'year') d.setUTCFullYear(d.getUTCFullYear() + count);
+    else if (interval === 'month') d.setUTCMonth(d.getUTCMonth() + count);
+    else return ts + count * (interval === 'week' ? 7 : 1) * 86400;
+    return Math.floor(d.getTime() / 1000);
+  }
+  const itemsOf = sub => [...state.subscriptionItems.values()].filter(i => i.subscription === sub.id);
+  const itemsList = sub => ({ object: 'list', data: itemsOf(sub).map(clone), has_more: false, url: `/v1/subscription_items?subscription=${sub.id}` });
+  function subOut(sub, expand = []) {
+    const out = clone(sub);
+    for (const k of Object.keys(out)) if (k.startsWith('_')) delete out[k];
+    out.items = itemsList(sub);
+    if (expand.includes('latest_invoice') && sub.latest_invoice) out.latest_invoice = invoiceOut(state.invoices.get(sub.latest_invoice));
+    if (expand.includes('customer')) out.customer = customerOut(state.customers.get(sub.customer));
+    return out;
+  }
+  const subOf = sid => {
+    const sub = state.subscriptions.get(sid);
+    if (!sub) throw missing('subscription', sid);
+    return sub;
+  };
+  const productName = price => price.nickname ?? price.product;
+
+  function subLine({ sub, item, amount, quantity, period, proration, description, lid }) {
+    return {
+      id: lid, object: 'line_item', amount, currency: item.price.currency, description, quantity, metadata: {}, period,
+      pricing: { type: 'price_details', price_details: { price: item.price.id, product: item.price.product }, unit_amount_decimal: String(item.price.unit_amount) },
+      parent: { type: 'subscription_item_details', subscription_item_details: { subscription: sub?.id ?? null, subscription_item: item.id ?? null, proration, proration_details: { credited_items: null }, invoice_item: null } }, // GUESS: proration_details.credited_items is null (credit notes are not modelled)
+    };
+  }
+  function recurringLine(sub, item, qty, period, lid) {
+    const p = item.price;
+    return subLine({ sub, item, amount: p.unit_amount * qty, quantity: qty, period, proration: false, lid, description: `${qty} × ${productName(p)} (at ${money(p.unit_amount, p.currency)} / ${p.recurring.interval})` });
+  }
+  /** Stripe prorates the whole old quantity as a credit and the whole new quantity as a charge, both for the rest of the period. */
+  function prorationLines(sub, item, oldQty, newQty, t, mkId) {
+    if (oldQty === newQty) return [];
+    const s0 = item.current_period_start; const e0 = item.current_period_end;
+    const frac = Math.min(1, Math.max(0, (e0 - t) / (e0 - s0))); // GUESS: the remaining fraction is by seconds, clamped to [0, 1], rounded to the minor unit
+    const unit = item.price.unit_amount;
+    const out = [];
+    const name = productName(item.price);
+    if (oldQty > 0) out.push(subLine({ sub, item, amount: -Math.round(unit * oldQty * frac), quantity: oldQty, period: { start: t, end: e0 }, proration: true, lid: mkId(), description: `Unused time on ${oldQty} × ${name} after ${fmtDate(t)}` }));
+    if (newQty > 0) out.push(subLine({ sub, item, amount: Math.round(unit * newQty * frac), quantity: newQty, period: { start: t, end: e0 }, proration: true, lid: mkId(), description: `Remaining time on ${newQty} × ${name} after ${fmtDate(t)}` }));
+    return out;
+  }
+
+  function createSubInvoice(sub, reason, lines) {
+    const item = itemsOf(sub)[0];
+    const inv = base('in', 'invoice', {
+      customer: sub.customer, status: 'draft', collection_method: sub.collection_method, auto_advance: true, currency: sub.currency,
+      description: null, metadata: {}, payment_settings: {}, hosted_invoice_url: null, subtotal: 0, total: 0, amount_due: 0, amount_paid: 0, amount_remaining: 0,
+      status_transitions: { finalized_at: null, paid_at: null, voided_at: null, marked_uncollectible_at: null }, payments: [],
+      billing_reason: reason, attempt_count: 0, next_payment_attempt: null,
+      period_start: item.current_period_start, period_end: item.current_period_end, // GUESS: the invoice period mirrors the subscription's current period
+      parent: { type: 'subscription_details', subscription_details: { subscription: sub.id, metadata: clone(sub.metadata) } },
+      _lines: lines,
+    });
+    state.invoices.set(inv.id, inv);
+    syncTotals(inv);
+    return inv;
+  }
+  function payZero(inv) {
+    inv.status = 'paid'; inv.amount_paid = 0; inv.amount_remaining = 0;
+    inv.status_transitions.paid_at = sec();
+    queue('invoice.paid', invoiceOut(inv));
+    queue('invoice.payment_succeeded', invoiceOut(inv));
+  }
+  /** created, finalized, then paid at once ($0) or the default card is tried. */
+  function runSubInvoice(inv, override) {
+    queue('invoice.created', invoiceOut(inv));
+    invoiceAction(inv, 'finalize', {});
+    if (inv.amount_due === 0) return payZero(inv);
+    if (inv.collection_method === 'send_invoice') return;
+    chargeInvoice(inv, override);
+  }
+  function pastDue(sub, extra = {}) {
+    const before = sub.status;
+    if (before === 'active') { sub.status = 'past_due'; queue('customer.subscription.updated', subOut(sub), { status: before, ...extra }); }
+  }
+  const endSub = (sub, at = sec()) => {
+    sub.status = 'canceled'; sub.ended_at = at; if (!sub.canceled_at) sub.canceled_at = at;
+    queue('customer.subscription.deleted', subOut(sub));
+  };
+
+  function createSubscription(form) {
+    const cid = need(form, 'customer');
+    const cust = customerOf(cid);
+    const items = asArray(form.items);
+    if (items.length !== 1) throw bad('This fake supports exactly one subscription item.', 'parameter_invalid_integer', 'items');
+    const price = state.prices.get(need(items[0], 'price'));
+    if (!price) throw missing('price', items[0].price);
+    if (price.type !== 'recurring') throw bad('The price specified is a one-time price, but subscriptions need a recurring price.', 'parameter_invalid_empty', 'items[0][price]');
+    const qty = items[0].quantity === undefined ? 1 : Number(items[0].quantity);
+    if (!Number.isInteger(qty) || qty < 0) throw bad('Invalid quantity: must be a non-negative integer.', 'parameter_invalid_integer', 'items[0][quantity]');
+    const behavior = form.payment_behavior ?? 'allow_incomplete';
+    if (!['allow_incomplete', 'default_incomplete', 'error_if_incomplete', 'pending_if_incomplete'].includes(behavior)) throw bad(`Invalid payment_behavior: ${behavior}.`, 'parameter_invalid_enum', 'payment_behavior');
+    const collection = form.collection_method ?? 'charge_automatically';
+    const pmId = cust.invoice_settings.default_payment_method;
+    const kind = pmId ? behaviors.get(pmId) ?? 'ok' : 'decline';
+    const total = qty * price.unit_amount;
+    const needsCard = total > 0 && collection === 'charge_automatically';
+    if (needsCard && behavior === 'error_if_incomplete') {
+      // Nothing is created when the first payment cannot complete.
+      if (!pmId) throw bad('This customer has no attached payment source or default payment method.', 'invoice_no_payment_method', 'customer');
+      if (kind === 'decline') throw new ApiError(402, { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.' });
+      if (kind === 'requires_action') throw new ApiError(402, { type: 'invalid_request_error', code: 'invoice_payment_intent_requires_action', message: 'This payment requires additional user action before it can be completed successfully.' });
+    }
+    // GUESS: with an ok card the first invoice is paid right away for every payment_behavior (real Stripe leaves default_incomplete incomplete until the client confirms).
+    const paysNow = !needsCard || kind === 'ok';
+    const start = sec();
+    const end = addInterval(start, price.recurring.interval, price.recurring.interval_count);
+    const sub = base('sub', 'subscription', {
+      customer: cid, status: paysNow ? 'active' : 'incomplete', metadata: {}, cancel_at_period_end: false, cancel_at: null, canceled_at: null, ended_at: null,
+      collection_method: collection, currency: price.currency, start_date: start, billing_cycle_anchor: start, latest_invoice: null, default_payment_method: null,
+      description: null, trial_start: null, trial_end: null, days_until_due: null,
+      // 2025-09-30.clover moved current_period_start/end onto the items: they stay absent here.
+      _prorations: [],
+    });
+    mergeMeta(sub.metadata, form.metadata);
+    state.subscriptions.set(sub.id, sub);
+    const item = base('si', 'subscription_item', {
+      subscription: sub.id, price: clone(price), quantity: qty, metadata: {}, current_period_start: start, current_period_end: end, discounts: [], tax_rates: [], billing_thresholds: null, // GUESS: item fields beyond id/price/quantity/period mirror the real object loosely
+    });
+    state.subscriptionItems.set(item.id, item);
+    const inv = createSubInvoice(sub, 'subscription_create', [recurringLine(sub, item, qty, { start, end }, id('il'))]);
+    sub.latest_invoice = inv.id;
+    queue('customer.subscription.created', subOut(sub));
+    if (!paysNow && behavior === 'default_incomplete') {
+      // Not attempted: the intent waits for the client to confirm it.
+      queue('invoice.created', invoiceOut(inv));
+      invoiceAction(inv, 'finalize', {});
+      const pi = intentFor(inv, pmId ?? null);
+      if (kind === 'requires_action') pi.status = 'requires_action';
+    } else runSubInvoice(inv);
+    return ok(subOut(sub, asArray(form.expand)));
+  }
+
+  function updateItemQuantity(item, form) {
+    const sub = state.subscriptions.get(item.subscription);
+    if (sub.status === 'canceled') throw bad('A canceled subscription can only update its cancellation_details and metadata.', 'subscription_canceled');
+    const q = Number(need(form, 'quantity'));
+    if (!Number.isInteger(q) || q < 0) throw bad('Invalid quantity: must be a non-negative integer.', 'parameter_invalid_integer', 'quantity');
+    const behavior = form.proration_behavior ?? 'create_prorations';
+    if (!['create_prorations', 'none'].includes(behavior)) throw bad(`Unsupported proration_behavior in this fake: ${behavior}.`, 'parameter_invalid_enum', 'proration_behavior');
+    if (q === item.quantity) return;
+    const previous = { items: itemsList(sub) };
+    const old = item.quantity;
+    item.quantity = q;
+    if (behavior === 'create_prorations') sub._prorations.push(...prorationLines(sub, item, old, q, form.proration_date ? Number(form.proration_date) : sec(), () => id('il')));
+    queue('customer.subscription.updated', subOut(sub), previous);
+  }
+
+  /** The upcoming invoice for a change, without touching any state. */
+  function previewInvoice(form) {
+    const sd = form.subscription_details ?? {};
+    const req = asArray(sd.items);
+    const t = sd.proration_date ? Number(sd.proration_date) : sec();
+    const behavior = sd.proration_behavior ?? 'create_prorations';
+    let n = 0;
+    const lid = () => `il_preview_${++n}`;
+    let sub = null; let cid = form.customer; let lines; let first; let period; let reason; let nextAttempt;
+    if (form.subscription) {
+      sub = subOf(form.subscription);
+      if (cid && cid !== sub.customer) throw bad(`Subscription ${sub.id} does not belong to customer ${cid}.`, 'parameter_invalid_empty', 'customer');
+      cid = sub.customer;
+      first = itemsOf(sub)[0];
+      let qty = first.quantity; let fresh = [];
+      if (req[0]) {
+        const target = req[0].id ? itemsOf(sub).find(i => i.id === req[0].id) : itemsOf(sub).find(i => i.price.id === req[0].price);
+        if (!target) throw missing('subscription_item', req[0].id ?? req[0].price);
+        if (req[0].quantity !== undefined) qty = Number(req[0].quantity);
+        if (behavior !== 'none') fresh = prorationLines(sub, target, target.quantity, qty, t, lid);
+      }
+      const start = first.current_period_end; const end = addInterval(start, first.price.recurring.interval, first.price.recurring.interval_count);
+      lines = [...clone(sub._prorations), ...fresh, recurringLine(sub, first, qty, { start, end }, lid())];
+      period = { start: first.current_period_start, end: first.current_period_end };
+      reason = 'upcoming'; nextAttempt = first.current_period_end;
+    } else {
+      if (!req[0]) throw bad('Missing required param: subscription_details[items].', 'parameter_missing', 'subscription_details');
+      const price = state.prices.get(need(req[0], 'price'));
+      if (!price) throw missing('price', req[0].price);
+      const qty = req[0].quantity === undefined ? 1 : Number(req[0].quantity);
+      const start = sec(); const end = addInterval(start, price.recurring.interval, price.recurring.interval_count);
+      first = { price, id: null };
+      lines = [recurringLine(null, first, qty, { start, end }, lid())];
+      period = { start, end }; reason = 'subscription_create'; nextAttempt = null; // GUESS: a not yet created subscription has no next payment attempt
+    }
+    const cust = customerOf(cid);
+    const total = lines.reduce((s, l) => s + l.amount, 0);
+    const due = Math.max(0, total);
+    return {
+      id: null, object: 'invoice', customer: cid, status: 'draft', collection_method: sub?.collection_method ?? 'charge_automatically', currency: first.price.currency,
+      billing_reason: reason, created: sec(), livemode: fake.livemode, description: null, metadata: {}, hosted_invoice_url: null, auto_advance: false,
+      subtotal: total, total, amount_due: due, amount_paid: 0, amount_remaining: due, starting_balance: cust.balance,
+      period_start: period.start, period_end: period.end, next_payment_attempt: nextAttempt,
+      parent: { type: 'subscription_details', subscription_details: { subscription: sub?.id ?? null, metadata: clone(sub?.metadata ?? {}) } },
+      lines: { object: 'list', data: lines, has_more: false, url: '/v1/invoices/upcoming_in_fake/lines' },
+    };
+  }
+
+  // ---- subscription test controls ----
+  fake.setNow = ms => { fixedNow = ms; };
+  /** Make the customer's default card behave differently from now on (a card that later declines). */
+  fake.setCardBehavior = (customerId, kind) => {
+    if (!CARDS[kind]) throw new Error(`fake-stripe: unknown card kind ${kind}`);
+    const pm = state.customers.get(customerId)?.invoice_settings?.default_payment_method;
+    if (!pm) throw new Error(`fake-stripe: customer ${customerId} has no default payment method`);
+    behaviors.set(pm, kind);
+  };
+  const result = sub => ({ subscription: subOut(sub), invoice: sub.latest_invoice ? invoiceOut(state.invoices.get(sub.latest_invoice)) : null });
+  const subFor = sid => {
+    const sub = state.subscriptions.get(sid);
+    if (!sub) throw new Error(`fake-stripe: no such subscription ${sid}`);
+    return sub;
+  };
+  /** Move the subscription one interval forward and bill the renewal. `card` forces the behaviour of this one attempt. */
+  fake.advancePeriod = (subId, o = {}) => {
+    const sub = subFor(subId);
+    if (o.card !== undefined && !CARDS[o.card]) throw new Error(`fake-stripe: unknown card kind ${o.card}`);
+    if (sub.status !== 'active') throw new Error(`fake-stripe: subscription ${subId} is ${sub.status}`);
+    const item = itemsOf(sub)[0];
+    if (sub.cancel_at_period_end) { endSub(sub, item.current_period_end); return result(sub); }
+    const previous = { items: itemsList(sub) };
+    const start = item.current_period_end;
+    const end = addInterval(start, item.price.recurring.interval, item.price.recurring.interval_count);
+    const lines = [...sub._prorations, recurringLine(sub, item, item.quantity, { start, end }, id('il'))];
+    sub._prorations = [];
+    // GUESS: the period moves on whether or not the renewal is paid (as in real Stripe, where an unpaid renewal leaves the subscription past_due in the new period)
+    item.current_period_start = start; item.current_period_end = end;
+    const inv = createSubInvoice(sub, 'subscription_cycle', lines);
+    sub.latest_invoice = inv.id;
+    runSubInvoice(inv, o.card);
+    if (inv.status === 'paid') queue('customer.subscription.updated', subOut(sub), previous);
+    else pastDue(sub, previous);
+    return result(sub);
+  };
+  /** One dunning retry of the subscription's open invoice. */
+  fake.retryPayment = (subId, o = {}) => {
+    const sub = subFor(subId);
+    if (o.card !== undefined && !CARDS[o.card]) throw new Error(`fake-stripe: unknown card kind ${o.card}`);
+    const inv = state.invoices.get(sub.latest_invoice);
+    if (!inv || inv.status !== 'open') throw new Error(`fake-stripe: subscription ${subId} has no open invoice`);
+    chargeInvoice(inv, o.card);
+    return result(sub);
+  };
+  /** Dunning gave up: the subscription becomes unpaid, or is canceled (the open invoice stays open, GUESS). */
+  fake.exhaustRetries = (subId, o = {}) => {
+    const sub = subFor(subId);
+    const to = o.to ?? 'canceled';
+    if (!['canceled', 'unpaid'].includes(to)) throw new Error(`fake-stripe: unknown end state ${to}`);
+    if (sub.status !== 'past_due') throw new Error(`fake-stripe: subscription ${subId} is ${sub.status}, not past_due`);
+    const inv = state.invoices.get(sub.latest_invoice);
+    if (inv) { inv.next_payment_attempt = null; inv.auto_advance = false; }
+    if (to === 'canceled') endSub(sub);
+    else { sub.status = 'unpaid'; queue('customer.subscription.updated', subOut(sub), { status: 'past_due' }); }
+    return result(sub);
+  };
 
   // ---- routing ----
   const need = (form, name) => {
@@ -402,6 +711,50 @@ export function createFakeStripe(opts = {}) {
       out.has_more = rows.length > limit;
       return ok(out);
     }
+
+    if (path === '/v1/subscriptions' && method === 'POST') return createSubscription(form);
+    if (path === '/v1/subscriptions' && method === 'GET') {
+      let rows = [...state.subscriptions.values()].reverse();
+      if (q.customer) rows = rows.filter(sub => sub.customer === q.customer);
+      if (q.status === undefined) rows = rows.filter(sub => sub.status !== 'canceled'); // like Stripe: canceled subscriptions only with status=canceled|all
+      else if (q.status !== 'all') rows = rows.filter(sub => sub.status === q.status);
+      const limit = q.limit ? Number(q.limit) : 10;
+      const out = list(rows.slice(0, limit).map(sub => subOut(sub, expand)), '/v1/subscriptions');
+      out.has_more = rows.length > limit;
+      return ok(out);
+    }
+    if ((m = path.match(/^\/v1\/subscriptions\/([^/]+)$/))) {
+      const sub = subOf(m[1]);
+      if (method === 'GET') return ok(subOut(sub, expand));
+      if (method === 'DELETE') {
+        if (sub.status === 'canceled') throw bad('A canceled subscription can only update its cancellation_details and metadata.', 'subscription_canceled');
+        endSub(sub); // no refund and no proration credit
+        return ok(subOut(sub, expand));
+      }
+      if (method === 'POST') {
+        const previous = {};
+        if (form.metadata !== undefined) { previous.metadata = clone(sub.metadata); mergeMeta(sub.metadata, form.metadata); }
+        if (form.cancel_at_period_end !== undefined) {
+          if (sub.status === 'canceled') throw bad('A canceled subscription can only update its cancellation_details and metadata.', 'subscription_canceled');
+          const want = isTrue(form.cancel_at_period_end);
+          if (want !== sub.cancel_at_period_end) {
+            Object.assign(previous, { cancel_at_period_end: sub.cancel_at_period_end, cancel_at: sub.cancel_at, canceled_at: sub.canceled_at });
+            sub.cancel_at_period_end = want;
+            sub.cancel_at = want ? itemsOf(sub)[0].current_period_end : null;
+            sub.canceled_at = want ? sec() : null;
+          }
+        }
+        if (Object.keys(previous).length) queue('customer.subscription.updated', subOut(sub), previous);
+        return ok(subOut(sub, expand));
+      }
+    }
+    if ((m = path.match(/^\/v1\/subscription_items\/([^/]+)$/))) {
+      const item = state.subscriptionItems.get(m[1]);
+      if (!item) throw missing('subscription_item', m[1]);
+      if (method === 'GET') return ok(clone(item));
+      if (method === 'POST') { updateItemQuantity(item, form); return ok(clone(item)); }
+    }
+    if (path === '/v1/invoices/create_preview' && method === 'POST') return ok(previewInvoice(form));
 
     if (path === '/v1/invoices' && method === 'POST') {
       const cid = need(form, 'customer');
@@ -502,8 +855,11 @@ export function createFakeStripe(opts = {}) {
       syncTotals(inv);
       // A credit on the customer's balance is applied when the invoice is finalized: what is due drops, what is sold does not.
       const cust = state.customers.get(inv.customer);
-      const credit = cust && cust.balance < 0 ? Math.min(-cust.balance, inv.total) : 0;
+      const credit = cust && cust.balance < 0 ? Math.min(-cust.balance, Math.max(inv.total, 0)) : 0;
       if (credit) { cust.balance += credit; inv.starting_balance = -credit; inv.amount_due = inv.total - credit; inv.amount_remaining = inv.amount_due; }
+      if (inv.total < 0 && cust) { // GUESS: a negative invoice (prorated credit beyond the charges) owes nothing and the remainder goes to the customer balance
+        cust.balance += inv.total; inv.ending_balance = cust.balance; inv.amount_due = 0; inv.amount_remaining = 0;
+      }
       inv.status = 'open';
       inv.hosted_invoice_url = `${fake.publicBase}/i/${inv.id}`;
       inv.status_transitions.finalized_at = sec();
@@ -524,20 +880,9 @@ export function createFakeStripe(opts = {}) {
     const cust = state.customers.get(inv.customer);
     const pmId = cust?.invoice_settings?.default_payment_method;
     if (!pmId) throw bad('This customer has no attached payment source or default payment method.', 'invoice_no_payment_method');
-    const behavior = behaviors.get(pmId) ?? 'ok';
-    const pi = intentFor(inv, pmId);
-    pi.payment_method = pmId;
-    if (behavior === 'ok') { markPaid(inv, pi); return ok(invoiceOut(inv)); }
-    if (behavior === 'decline') {
-      pi.status = 'requires_payment_method';
-      pi.last_payment_error = { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_method: clone(state.paymentMethods.get(pmId)) };
-      queue('invoice.payment_failed', invoiceOut(inv));
-      throw new ApiError(402, { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_intent: clone(pi) });
-    }
-    pi.status = 'requires_action';
-    // Real Stripe sends invoice.payment_failed as well while the PaymentIntent is still waiting for the buyer (3-D Secure); either may arrive first.
-    queue('invoice.payment_action_required', invoiceOut(inv));
-    queue('invoice.payment_failed', invoiceOut(inv));
+    const { outcome, pi } = chargeInvoice(inv);
+    if (outcome === 'paid') return ok(invoiceOut(inv));
+    if (outcome === 'decline') throw new ApiError(402, { type: 'card_error', code: 'card_declined', decline_code: 'generic_decline', message: 'Your card was declined.', payment_intent: clone(pi) });
     throw new ApiError(402, { type: 'invalid_request_error', code: 'invoice_payment_intent_requires_action', message: 'This payment requires additional user action before it can be completed successfully.', payment_intent: clone(pi) });
   }
 

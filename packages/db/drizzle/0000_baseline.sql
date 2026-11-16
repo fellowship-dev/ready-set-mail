@@ -62,6 +62,8 @@ CREATE TABLE `aggregate_reports` (
 	`reporter_identity` text,
 	`ingest_token` text,
 	`record_count` integer,
+	`summarised_rows` integer,
+	`summarised_sources` integer,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
@@ -208,7 +210,8 @@ CREATE TABLE `billing_price_cache` (
 	`price_id` text NOT NULL,
 	`amount` integer NOT NULL,
 	`currency` text NOT NULL,
-	`fetched_at` integer NOT NULL
+	`fetched_at` integer NOT NULL,
+	`interval` text
 );
 --> statement-breakpoint
 CREATE TABLE `canary_tokens` (
@@ -346,11 +349,14 @@ CREATE TABLE `domains` (
 	`dmarc_sp` text,
 	`dmarc_p` text,
 	`dmarc_rua` integer,
+	`org_domain` text,
+	`paused_at` integer,
 	FOREIGN KEY (`parent_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`cf_connection_id`) REFERENCES `cloudflare_connections`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `domains_domain_unique` ON `domains` (`domain`);--> statement-breakpoint
+CREATE INDEX `idx_domains_workspace_org` ON `domains` (`workspace_id`,`org_domain`);--> statement-breakpoint
 CREATE INDEX `idx_domains_domain` ON `domains` (`domain`);--> statement-breakpoint
 CREATE INDEX `idx_domains_cf_connection` ON `domains` (`cf_connection_id`);--> statement-breakpoint
 CREATE INDEX `idx_domains_parent` ON `domains` (`parent_id`);--> statement-breakpoint
@@ -649,6 +655,7 @@ CREATE TABLE `report_records` (
 	`country_code` text,
 	`org` text,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
+	`summarised_sources` integer,
 	FOREIGN KEY (`report_id`) REFERENCES `aggregate_reports`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
@@ -778,6 +785,18 @@ CREATE TABLE `verifications` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_verifications_identifier` ON `verifications` (`identifier`);--> statement-breakpoint
+CREATE TABLE `workspace_intents` (
+	`id` text PRIMARY KEY NOT NULL,
+	`user_id` text NOT NULL,
+	`name` text NOT NULL,
+	`stripe_customer_id` text,
+	`status` text DEFAULT 'open' NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`completed_at` integer,
+	CONSTRAINT "workspace_intents_status_check" CHECK("workspace_intents"."status" IN ('open', 'created', 'expired'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_workspace_intents_user` ON `workspace_intents` (`user_id`,`status`);--> statement-breakpoint
 CREATE TABLE `workspace_storage` (
 	`workspace_id` text PRIMARY KEY NOT NULL,
 	`reports` integer DEFAULT 0 NOT NULL,
@@ -788,11 +807,43 @@ CREATE TABLE `workspace_storage` (
 	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE TABLE `workspace_subscriptions` (
+	`workspace_id` text PRIMARY KEY NOT NULL,
+	`stripe_subscription_id` text NOT NULL,
+	`stripe_item_id` text NOT NULL,
+	`price_id` text NOT NULL,
+	`interval` text DEFAULT 'month' NOT NULL,
+	`status` text NOT NULL,
+	`quantity_sent` integer DEFAULT 0 NOT NULL,
+	`quantity_seen` integer,
+	`current_period_end` integer,
+	`cancel_at_period_end` integer DEFAULT 0 NOT NULL,
+	`canceled_at` integer,
+	`lapsed_at` integer,
+	`dirty` integer DEFAULT 0 NOT NULL,
+	`action_url` text,
+	`last_failed_at` integer,
+	`synced_at` integer,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "workspace_subscriptions_interval_check" CHECK("workspace_subscriptions"."interval" IN ('month', 'year'))
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_workspace_subscriptions_stripe` ON `workspace_subscriptions` (`stripe_subscription_id`);--> statement-breakpoint
+CREATE INDEX `idx_workspace_subscriptions_sync` ON `workspace_subscriptions` (`synced_at`);--> statement-breakpoint
 CREATE TABLE `workspaces` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
-	`stripe_customer_id` text
+	`stripe_customer_id` text,
+	`plan` text DEFAULT 'free' NOT NULL,
+	`free_owner_user_id` text,
+	`plan_lock_token` text,
+	`plan_lock_until` integer,
+	`plan_revision` integer DEFAULT 0 NOT NULL,
+	CONSTRAINT "workspaces_plan_check" CHECK("workspaces"."plan" IN ('free', 'payg'))
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `idx_workspaces_stripe_customer` ON `workspaces` (`stripe_customer_id`);
+CREATE UNIQUE INDEX `idx_workspaces_stripe_customer` ON `workspaces` (`stripe_customer_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_workspaces_free_owner` ON `workspaces` (`free_owner_user_id`) WHERE "workspaces"."free_owner_user_id" IS NOT NULL;

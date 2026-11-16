@@ -7,6 +7,8 @@ import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
 import { isClaimProof, recordFirstDnsCheck } from './first-check';
 import { planLimitBody, planLimits } from '../hosted/plan-limits';
+import { SUBDOMAIN_CAP_MESSAGE, insertRoom, loadPlanState, planEnforced, planRequiredBody, unitOf, type PlanGrant } from '../hosted/plan';
+import type { DomainRoom } from '@ready-set-mail/db';
 import { INVALID_DOMAIN_MESSAGE, normalizeDomainName, specialUseMessage, type DomainNameResult } from '@ready-set-mail/dns-checks';
 
 export class DomainServiceError extends Error {
@@ -41,10 +43,53 @@ export function planLimitError(tenant: TenantContext, max: number): DomainServic
   return new DomainServiceError(body.error, 403, body);
 }
 
-/** Early, non-atomic: is the workspace already at its domain cap? Throws the refusal when so. Never run for a domain it already has. */
-export async function assertDomainRoom(tenant: TenantContext): Promise<void> {
-  const max = domainCap(tenant);
-  if (max !== undefined && (await tenant.scope.domains.list()).length >= max) throw planLimitError(tenant, max);
+/** Is the caller a signed-in person (a browser session), as opposed to an agent credential or an API key? */
+const isSession = (tenant: TenantContext): boolean => !tenant.access || !!tenant.access.session;
+
+/**
+ * The refusal for an insert that found no room: the plan (402 `plan_required`: the domain does not fit the free allowance; 403 `plan_limit` for the
+ * subdomain rows of one domain) or the workspace's own row cap (403 `plan_limit`, as before).
+ */
+export async function planRefusal(tenant: TenantContext, e: PlanLimitError, domain: string): Promise<DomainServiceError> {
+  if (e.kind === 'plan_units') {
+    const body = planRequiredBody(tenant.env, await loadPlanState(tenant.env, tenant.db, tenant.workspaceId), { domain, session: isSession(tenant) });
+    return new DomainServiceError(body.error, 402, { ...body });
+  }
+  if (e.kind === 'plan_subdomains') {
+    const body = { error: SUBDOMAIN_CAP_MESSAGE, code: 'plan_limit' as const, limit: { kind: 'subdomains_per_domain', max: e.max }, help_url: planLimitBody(tenant.env, 'domains_per_workspace', e.max).help_url };
+    return new DomainServiceError(body.error, 403, body);
+  }
+  return planLimitError(tenant, e.max);
+}
+
+/**
+ * What the insert of this domain is held to: today's row cap (plan off, self-host, the operator's workspaces), or room under the plan. Without a `grant`
+ * (only withPlanLock can make one) the room is the free allowance and nothing more.
+ */
+export async function roomForInsert(tenant: TenantContext, domain: string, grant?: PlanGrant): Promise<DomainRoom> {
+  if (!planEnforced(tenant.env)) return { maxDomains: domainCap(tenant), org: unitOf(domain) };
+  return insertRoom(tenant.env, await loadPlanState(tenant.env, tenant.db, tenant.workspaceId), domain, grant);
+}
+
+/** Early, non-atomic: is there room for this domain? Throws the refusal when not. Never run for a domain the workspace already has. */
+export async function assertDomainRoom(tenant: TenantContext, domain: string, grant?: PlanGrant): Promise<void> {
+  if (!planEnforced(tenant.env)) {
+    const max = domainCap(tenant);
+    if (max !== undefined && (await tenant.scope.domains.list()).length >= max) throw planLimitError(tenant, max);
+    return;
+  }
+  const state = await loadPlanState(tenant.env, tenant.db, tenant.workspaceId);
+  const room = insertRoom(tenant.env, state, domain, grant);
+  const org = unitOf(domain);
+  if (!room.units) { // the operator's workspaces: today's cap
+    if (room.maxDomains !== undefined && state.rows.length >= room.maxDomains) throw planLimitError(tenant, room.maxDomains);
+    return;
+  }
+  if (state.rows.some((r) => r.org === org)) {
+    if (room.units.subdomainMax !== undefined && state.rows.filter((r) => r.org === org).length >= room.units.subdomainMax) throw await planRefusal(tenant, new PlanLimitError('plan_subdomains', room.units.subdomainMax), domain);
+    return;
+  }
+  if (state.units >= room.units.max) throw await planRefusal(tenant, new PlanLimitError('plan_units', room.units.max), domain);
 }
 
 /** What the holder of a name that another workspace proved is told (by the email, and by "prove again" on the old row): the new holder keeps it, the history stays read-only. */
@@ -55,7 +100,7 @@ export const EVICTED_NOTICE = (domain: string, evictedAtSeconds: number) =>
 export const proofIncomplete = (domain: string) => new DomainServiceError(`Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, 409, { error: `Cloudflare could not confirm ${domain} well enough to keep the proof (its zone and name servers). Add it with the DNS record instead.`, code: 'proof_incomplete' });
 
 /** `analyticsCtx`: where a caller with no request lifetime of its own for the other side effects (an agent tool call) lets the analytics event run. */
-export interface EnrollmentOptions { productId?: string; analyticsCtx?: ExecutionContext }
+export interface EnrollmentOptions { productId?: string; analyticsCtx?: ExecutionContext; /** Room beyond the free allowance: only withPlanLock can make one (src/hosted/plan.ts), so only the owner's confirmed paid add passes it. */ grant?: PlanGrant }
 
 /** Delegated enrollment cannot authorize the legacy transfer's DNS writes or owner email. */
 export async function assertAgentEnrollmentSafe(tenant: TenantContext, domain: string): Promise<void> {
@@ -97,7 +142,7 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
   await assertAgentEnrollmentSafe(tenant, domain);
   const existing = await tenant.scope.domains.getByName(domain);
   if (existing) await assertExistingProductMapping(tenant, existing, options);
-  if (!existing) await assertDomainRoom(tenant); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
+  if (!existing) await assertDomainRoom(tenant, domain, options.grant); // before a claim exists: nobody publishes a TXT record for a domain that can never be added
   const admission = await admitDomain(tenant, domain);
   if (admission.kind === 'taken') throw new DomainServiceError('domain already registered in another workspace', 409);
   if (admission.kind === 'limit') throw new DomainServiceError('too many unverified domains — verify or remove some first', 429);
@@ -133,14 +178,14 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   // Insert domain row — no DNS writes here; all DNS changes require explicit user action
   let domainId: number;
   try {
-    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via, proof: proofColumns(tenant, domain, via) }, options.productId, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via, proof: proofColumns(tenant, domain, via) }, options.productId, { ...(await roomForInsert(tenant, domain, options.grant)), freeing: freeingFor(tenant, domain) });
     domainId = result.meta.last_row_id as number;
   } catch (e: any) {
     if (e instanceof PlanLimitError) {
       // A concurrent verify of the same domain may have taken the last place: that is this domain being added, not a cap.
       const raced = await resumeExistingDomain(tenant, domain, options);
       if (raced) return raced;
-      throw planLimitError(tenant, e.max);
+      throw await planRefusal(tenant, e, domain);
     }
     if (e instanceof ProofIncompleteError) throw proofIncomplete(domain);
     if (e?.message?.includes('UNIQUE')) {

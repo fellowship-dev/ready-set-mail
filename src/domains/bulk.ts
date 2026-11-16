@@ -8,7 +8,8 @@ import { logAudit } from '../audit/log';
 import { PlanLimitError } from '@ready-set-mail/db';
 import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
-import { domainCap, domainRefusal } from './service';
+import { domainCap, domainRefusal, planRefusal, roomForInsert } from './service';
+import { planEnforced } from '../hosted/plan';
 import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { recordFirstDnsCheck } from './first-check';
@@ -34,7 +35,7 @@ export interface BulkImportResult {
   status: BulkImportStatus;
   error?: string;
   /** 'plan_limit': the workspace is at its hosted domain cap; this row and every row after it were not attempted. */
-  code?: 'plan_limit';
+  code?: 'plan_limit' | 'plan_required';
   /** With code 'plan_limit': where to ask for more (https only), or null. */
   help_url?: string | null;
   dns_record_id?: string | null;
@@ -93,6 +94,8 @@ export async function bulkInsertDomains(
   const batch = domains.slice(0, BATCH_LIMIT);
   const results: BulkImportResult[] = [];
   const cap = domainCap(tenant);
+  // Under the plan the room is units, not rows (a subdomain of a domain already held always fits), so the insert alone decides row by row.
+  const enforced = planEnforced(tenant.env);
   let atCap = false;
   // One count up front, then a local tally. It is advisory: the capped INSERT below is what enforces the cap, so a stale tally
   // can only send a row to that insert, never past the cap.
@@ -115,7 +118,7 @@ export async function bulkInsertDomains(
     }
 
     // Advisory (see service.ts): a domain that can never be added gets no claim. The INSERT below is what enforces the cap.
-    if (cap !== undefined && (atCap || held >= cap)) { atCap = true; results.push(atCapRow(tenant, domain, cap)); continue; }
+    if (!enforced && cap !== undefined && (atCap || held >= cap)) { atCap = true; results.push(atCapRow(tenant, domain, cap)); continue; }
 
     const admission = await admitDomain(tenant, domain);
     if (admission.kind === 'taken') { results.push({ domain, status: 'duplicate', error: 'already registered in another workspace' }); continue; }
@@ -124,11 +127,16 @@ export async function bulkInsertDomains(
 
     let domainId: number;
     try {
-      const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via) }, undefined, { maxDomains: cap, freeing: freeingFor(tenant, domain) });
+      const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via) }, undefined, { ...(await roomForInsert(tenant, domain)), freeing: freeingFor(tenant, domain) });
       domainId = result.meta.last_row_id as number;
       held++;
     } catch (e: unknown) {
-      if (e instanceof PlanLimitError) { atCap = true; results.push(atCapRow(tenant, domain, e.max)); continue; }
+      if (e instanceof PlanLimitError) {
+        if (e.kind === 'domains_per_workspace') { atCap = true; results.push(atCapRow(tenant, domain, e.max)); continue; }
+        const refused = await planRefusal(tenant, e, domain);
+        results.push({ domain, status: 'error', error: refused.message, code: (refused.body?.code as 'plan_limit' | 'plan_required') ?? 'plan_limit', help_url: refused.body?.help_url as string | null });
+        continue;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       // Race condition: another request inserted the domain between our check and insert
       if (msg.includes('UNIQUE')) {

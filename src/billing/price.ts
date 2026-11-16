@@ -7,6 +7,9 @@ import { StripeError, StripeNetworkError } from './stripe-client';
 export const PRICE_TTL_SECONDS = 600;
 
 export interface OfferPrice { price_id: string; amount: number; currency: string }
+export type PlanInterval = 'month' | 'year';
+/** The recurring price of one extra domain (pay as you go): per domain, per interval. */
+export interface PlanPrice extends OfferPrice { interval: PlanInterval }
 
 /** The price cannot be sold: missing, inactive, recurring, not USD, not a positive whole amount, or several prices share the key. */
 export class PriceMisconfiguredError extends Error {
@@ -44,12 +47,53 @@ export async function resolvePrice(db: D1Database, stripe: StripeClient, lookupK
   if (cached && !opts.fresh && now - cached.fetched_at < PRICE_TTL_SECONDS) return { price_id: cached.price_id, amount: cached.amount, currency: cached.currency };
   try {
     const price = validatePrice(await stripe.listPrices(lookupKey), lookupKey);
-    await lookups.price.put({ lookup_key: lookupKey, ...price, fetched_at: now });
+    await lookups.price.put({ lookup_key: lookupKey, ...price, fetched_at: now, interval: null });
     return price;
   } catch (e) {
     if (e instanceof PriceMisconfiguredError) { await lookups.price.drop(lookupKey); throw e; }
     if (e instanceof StripeNetworkError || (e instanceof StripeError && e.status >= 500)) {
       if (cached && !opts.fresh) return { price_id: cached.price_id, amount: cached.amount, currency: cached.currency };
+      throw new PriceUnavailableError();
+    }
+    throw e;
+  }
+}
+
+/** Lookup keys of the pay-as-you-go price (docs/billing.md "Stripe setup"). */
+export const PLAN_LOOKUP_KEYS: Record<PlanInterval, string> = { month: 'rsm_extra_domain_monthly', year: 'rsm_extra_domain_yearly' };
+
+/** Throws PriceMisconfiguredError unless exactly one active recurring licensed per-unit USD price for `interval` carries the key. */
+export function validatePlanPrice(list: { data: unknown[] }, lookupKey: string, interval: PlanInterval): PlanPrice {
+  if (list.data.length === 0) throw new PriceMisconfiguredError(`no active price has the lookup key ${lookupKey}`);
+  if (list.data.length > 1) throw new PriceMisconfiguredError(`more than one active price has the lookup key ${lookupKey}`);
+  const p = list.data[0] as RawPrice & { recurring?: { interval?: unknown; interval_count?: unknown; usage_type?: unknown } | null };
+  if (typeof p.id !== 'string' || !p.id) throw new PriceMisconfiguredError('the price has no id');
+  if (p.active !== true) throw new PriceMisconfiguredError('the price is not active');
+  if (p.type !== 'recurring' || !p.recurring) throw new PriceMisconfiguredError('the price is not recurring');
+  if (p.recurring.interval !== interval || (p.recurring.interval_count !== undefined && p.recurring.interval_count !== 1)) throw new PriceMisconfiguredError(`the price is not billed every ${interval}`);
+  if (p.recurring.usage_type !== undefined && p.recurring.usage_type !== 'licensed') throw new PriceMisconfiguredError('the price is metered');
+  if (p.currency !== 'usd') throw new PriceMisconfiguredError('the price is not in USD');
+  if (p.billing_scheme !== undefined && p.billing_scheme !== 'per_unit') throw new PriceMisconfiguredError('the price is tiered');
+  if (!Number.isSafeInteger(p.unit_amount) || (p.unit_amount as number) <= 0) throw new PriceMisconfiguredError('the price has no fixed positive amount');
+  return { price_id: p.id, amount: p.unit_amount as number, currency: 'usd', interval };
+}
+
+/** The pay-as-you-go price for an interval, by lookup key. `fresh`: ask Stripe now (a confirm) and refresh the cache; otherwise as resolvePrice. */
+export async function resolvePlanPrice(db: D1Database, stripe: StripeClient, interval: PlanInterval, opts: { fresh?: boolean; now?: () => number } = {}): Promise<PlanPrice> {
+  const lookupKey = PLAN_LOOKUP_KEYS[interval];
+  const now = Math.floor((opts.now?.() ?? Date.now()) / 1000);
+  const lookups = billingLookups(db);
+  const cached = await lookups.price.get(lookupKey);
+  const fromCache = (c: NonNullable<typeof cached>): PlanPrice => ({ price_id: c.price_id, amount: c.amount, currency: c.currency, interval });
+  if (cached && cached.interval === interval && !opts.fresh && now - cached.fetched_at < PRICE_TTL_SECONDS) return fromCache(cached);
+  try {
+    const price = validatePlanPrice(await stripe.listPrices(lookupKey), lookupKey, interval);
+    await lookups.price.put({ lookup_key: lookupKey, price_id: price.price_id, amount: price.amount, currency: price.currency, fetched_at: now, interval });
+    return price;
+  } catch (e) {
+    if (e instanceof PriceMisconfiguredError) { await lookups.price.drop(lookupKey); throw e; }
+    if (e instanceof StripeNetworkError || (e instanceof StripeError && e.status >= 500)) {
+      if (cached && cached.interval === interval && !opts.fresh) return fromCache(cached);
       throw new PriceUnavailableError();
     }
     throw e;

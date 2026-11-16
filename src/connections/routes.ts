@@ -248,11 +248,11 @@ export async function handleConnectionRoutes(
 
       // POST /api/cloudflare/connections/:id/import { zone_ids? } — add the connection's zones as verified domains (src/connections/import.ts)
       if (sub === 'import' && method === 'POST') {
-        let body: { zone_ids?: unknown } = {};
+        let body: { zone_ids?: unknown; preferred_domain?: unknown } = {};
         try { const text = await request.text(); body = text.trim() ? JSON.parse(text) : {}; } catch { return err('Invalid JSON body', 400); }
         if (body.zone_ids !== undefined && (!Array.isArray(body.zone_ids) || body.zone_ids.some(z => typeof z !== 'string') || body.zone_ids.length > 500)) return err('zone_ids must be an array of zone ids', 400);
         try {
-          const result = await importZones(tenant, id, { zoneIds: body.zone_ids as string[] | undefined }, { id: caller.user?.id, email: caller.user?.email }, ctx);
+          const result = await importZones(tenant, id, { zoneIds: body.zone_ids as string[] | undefined, preferredDomain: typeof body.preferred_domain === 'string' && body.preferred_domain.length <= 253 ? body.preferred_domain : null }, { id: caller.user?.id, email: caller.user?.email }, ctx);
           tenant.invalidate();
           domainAdded(tenant, ctx, { source: 'cloudflare_import', added: result.imported.length, needsProof: false });
           return json(result);
