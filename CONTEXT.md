@@ -59,7 +59,7 @@ A domain's rung on the authentication ladder. **Two ladders today** (three count
 _Avoid_: grade, score
 
 **Subdomain**:
-A name under a domain (`app.example.com` under `example.com`), shown inside that domain's page, never as a sibling (ADR 0014, decided; the data model still keeps each added subdomain as its own row, which a later slice changes). Its mail is reported inside its organizational domain's report unless it publishes a DMARC record of its own. The names a domain's reports show are listed on its page: `namesSeen` in `src/domains/names.ts`, `GET /api/domains/:id/names`.
+A name under a domain (`app.example.com` under `example.com`), shown inside that domain's page, never as a sibling (ADR 0015, decided; the data model still keeps each added subdomain as its own row, which a later slice changes). Its mail is reported inside its organizational domain's report unless it publishes a DMARC record of its own. The names a domain's reports show are listed on its page: `namesSeen` in `src/domains/names.ts`, `GET /api/domains/:id/names`.
 _Avoid_: sibling domain, child domain
 
 **Organizational domain**:

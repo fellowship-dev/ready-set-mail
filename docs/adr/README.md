@@ -17,6 +17,7 @@ Short records of decisions already made, with who made them. A change that contr
 | 0011 | [Reviews of the hosted service judge what can happen with today's customers](0011-reviews-judge-todays-customers.md) | accepted |
 | 0012 | [Map the flow to its value moment before designing or changing screens](0012-map-flows-to-value-before-screens.md) | accepted |
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
-| 0014 | [A subdomain is part of its domain, never a sibling; a domain with all its subdomains counts as one domain](0014-a-subdomain-is-part-of-its-domain.md) | decided, not yet implemented in the data model |
+| 0014 | reserved for PR 177 (branch onboarding-signup-first-run), which adds it and merges first | reserved |
+| 0015 | [A subdomain is part of its domain, never a sibling; a domain with all its subdomains counts as one domain](0015-a-subdomain-is-part-of-its-domain.md) | decided, not yet implemented in the data model |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.
