@@ -22,7 +22,7 @@ import { useDnsPoll } from '../../lib/poll';
 import { firstCheck } from '../../lib/dns-plan';
 import { useHostedConfig, useHostedStatuses, type HostedResponse } from '../../lib/hosted';
 import { useDomainClaims, useDomains, useFirstRunDomain } from '../../lib/queries';
-import { useHosted, useSession } from '../../lib/session';
+import { useAddOns, useHosted, useSession } from '../../lib/session';
 import type { DailyStat, Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
 import { listedParentFinder } from '../../lib/listed-parent';
@@ -106,6 +106,7 @@ export function OverviewPage() {
 	const [exporting, setExporting] = useState(false);
 	const listId = useId();
 	const hostedMode = useHosted();
+	const spfFlattening = useAddOns().spf_flattening;
 	// Hosted, before report intake: no domain can have reports, so say why once and make no pass-rate claim.
 	const reportsOff = useWorkspaceReportsNotConnected();
 
@@ -139,7 +140,7 @@ export function OverviewPage() {
 		if (s === null) return unavailableVerdict('it is not in the summary yet. Reload the page.', d.domain);
 		const info = hostedOn && h.data?.enabled ? h.data : null;
 		// Per domain, as the server decides it (report_connect in the same batch): the domain page reads the same row.
-		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(s) });
+		return domainVerdict(d, s, totals[i], info, undefined, { hostedMode, spfFlattening, idByName, suffixParent: suffixParent(d), reportsRefusal: reportsRefusalOf(s) });
 	});
 	// Day one: until the first report, a new domain is "waiting for reports", not red (dayOneVerdict). The domain page keeps its own rules.
 	const shownVerdicts = verdicts.map((v, i) => (v ? dayOneVerdict(v, domains[i]!, summaryOf(domains[i]!), totals[i]) : v));

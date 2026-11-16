@@ -38,7 +38,7 @@ function passRate(pass: number, total: number): number | null {
 
 /** The domain's verdict, exactly as the overview row computes it (the shared DMARC rule, report visibility included). */
 export function pdfVerdict(summary: DomainCheckSummary, ctx: PdfDomainContext): DomainVerdict {
-	return domainVerdict(ctx.domain, summary, totalsFromSummary(summary), ctx.hosted, undefined, { hostedMode: ctx.hostedMode, idByName: ctx.idByName, suffixParent: ctx.suffixParent ?? null, reportsRefusal: ctx.reportsRefusal });
+	return domainVerdict(ctx.domain, summary, totalsFromSummary(summary), ctx.hosted, undefined, { hostedMode: ctx.hostedMode, ...(ctx.hostedMode ? { spfFlattening: false } : {}), idByName: ctx.idByName, suffixParent: ctx.suffixParent ?? null, reportsRefusal: ctx.reportsRefusal });
 }
 
 export function getRecommendations(summary: DomainCheckSummary, ctx: PdfDomainContext): Recommendation[] {

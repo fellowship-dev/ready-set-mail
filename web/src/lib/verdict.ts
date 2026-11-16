@@ -115,6 +115,8 @@ export function domainVerdict(
 	/** `hostedMode`: the hosted service (MODE=saas). There, a domain with no report address has no report intake. */
 	opts: {
 		hostedMode?: boolean;
+		/** False: SPF flattening is not available to this workspace (an add-on), so no step sends the person to it. Default: available. */
+		spfFlattening?: boolean;
 		/** The workspace's domains by name: a fix that belongs on a listed parent links to its page. */
 		idByName?: ReadonlyMap<string, number>;
 		/** A listed parent whose own record does not cover this name (a public suffix): see suffixParentOf. */
@@ -129,6 +131,8 @@ export function domainVerdict(
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
 	const rate = reportsNotConnected(domain) ? null : exactRate(reports);
+	// Where the workspace has not got SPF flattening there is nothing to send the person to.
+	if (opts.spfFlattening === false && core.next?.to?.endsWith('/spf-flatten')) core.next = { ...core.next, to: undefined };
 	return { ...core, reportsConfirmed: rate !== null && rate >= READY, reportsNotConnected: reportsNotConnected(domain), help };
 }
 

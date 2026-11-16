@@ -87,7 +87,7 @@ describe('Hosted records need a records zone', () => {
 
 describe('Hosted report intake on the domain page', () => {
 	const notConnected = { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, reports_since_connect: 0, reports_before_connect: 0, state: 'not_connected', dns: null, parent: null };
-	it('hosted, no address: "Reports not connected yet" carries the Connect reports action; no RUA section', async () => {
+	it('hosted, no address: the reports panel states it and carries the Connect reports action; no RUA section', async () => {
 		detail({
 			status: { mode: 'saas' },
 			routes: detailRoutes({
@@ -96,8 +96,10 @@ describe('Hosted report intake on the domain page', () => {
 				'GET /api/domains/1/report-address': notConnected,
 			}),
 		});
-		const box = await screen.findByTestId('reports-not-connected');
+		const box = await screen.findByTestId('connect-reports');
+		expect(await within(box).findByText('Reports not connected yet')).toBeInTheDocument();
 		expect(await within(box).findByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
+		expect(screen.queryByTestId('reports-not-connected')).not.toBeInTheDocument();
 		expect(screen.queryByText('RUA reporting address')).not.toBeInTheDocument();
 		expect(screen.queryByText('Enable hosted records')).not.toBeInTheDocument();
 	});

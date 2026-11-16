@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from './api';
 import { domainKeys, invalidateDomain } from './domain-queries';
+import { useAddOns, useHosted } from './session';
 
 /** Hosted records (docs/hosted.md, API section). All of it is dormant unless GET /api/hosted/config says enabled. */
 export type HostedPurpose = 'dmarc' | 'spf' | 'tls_rpt' | 'mta_sts';
@@ -81,6 +82,19 @@ export function useHostedStatus(domainId: number) {
 export function useHostedInfo(domainId: number): HostedStatus | null {
 	const q = useHostedStatus(domainId);
 	return q.data?.enabled ? q.data : null;
+}
+
+/**
+ * Which DNS tools are off for this domain on this deployment: the one predicate the domain page and its tools list share. SPF
+ * flattening is off where the workspace does not have the add-on (self-host has it; the hosted service only where the operator
+ * admitted the workspace: `useAddOns`); MTA-STS is off on hosted unless the domain is on hosted records. `pending`: hosted, and the domain's hosted status has
+ * not answered yet, so MTA-STS is not known to be off (the wizard route waits; the card stays hidden).
+ */
+export function useDnsToolsOff(domainId: number): { spfOff: boolean; mtaOff: boolean; pending: boolean } {
+	const hostedMode = useHosted();
+	const spfOn = useAddOns().spf_flattening; // SPF flattening is an add-on (src/hosted/plan-limits.ts capability): self-host has it, hosted only where the operator admitted the workspace
+	const { pending, info } = useHostedLevelInput(domainId);
+	return { spfOff: !spfOn, mtaOff: hostedMode && !info, pending: hostedMode && pending };
 }
 
 /**

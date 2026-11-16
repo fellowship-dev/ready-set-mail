@@ -4,6 +4,7 @@ import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/reac
 import { CheckCircle2, CircleDashed, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { useDnsToolsOff } from '../../lib/hosted';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
 import { useAddOns } from '../../lib/session';
@@ -127,18 +128,20 @@ function Slot<T>({ q, title, show, render }: { q: UseQueryResult<T>; title: stri
 
 /** SPF flattening and MTA-STS: only shown when a tool is available or configured for this instance. */
 export function DnsTools({ domainId }: { domainId: number }) {
-	// SPF flattening is an add-on: where the workspace does not have it, nothing is asked and nothing is shown (src/hosted/plan-limits.ts capability).
-	const spfOn = useAddOns().spf_flattening;
-	const spf = useSpfFlatten(domainId, spfOn);
-	const mta = useMtaSts(domainId);
-	const spfHidden = !spfOn || (spf.isSuccess && !spf.data.available && !spf.data.config);
-	const mtaHidden = mta.isSuccess && !mta.data.available && !mta.data.config;
+	// Hosted: the tool serves the policy from the install's own reports domain, which the hosted service has none of (enabling it fails there);
+	// only a domain on hosted records has MTA-STS, and that card leads to the hosted page.
+	const { spfOff, mtaOff } = useDnsToolsOff(domainId); // spfOff: the workspace does not have the add-on (src/hosted/plan-limits.ts capability)
+	// SPF flattening is an add-on: where the workspace does not have it, nothing is asked and nothing is shown.
+	const spf = useSpfFlatten(domainId, !spfOff);
+	const mta = useMtaSts(domainId, !mtaOff);
+	const spfHidden = spfOff || (spf.isSuccess && !spf.data.available && !spf.data.config);
+	const mtaHidden = mtaOff || (mta.isSuccess && !mta.data.available && !mta.data.config);
 	if (spfHidden && mtaHidden) return null;
 	return (
 		<Section title="DNS tools" description="Optional tools that change your DNS for you.">
 			<div className="grid gap-3 md:grid-cols-2">
-				{spfOn ? <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => <SpfCard domainId={domainId} status={d} />} /> : null}
-				<Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />
+				{spfOff ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => <SpfCard domainId={domainId} status={d} />} />}
+				{mtaOff ? null : <Slot q={mta} title="MTA-STS" show={(d) => d.available || !!d.config} render={(d) => mtaCard(domainId, d)} />}
 			</div>
 		</Section>
 	);

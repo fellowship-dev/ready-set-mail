@@ -15,7 +15,7 @@ import { writableDomains } from './domains';
 import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
-import { ReportAddressError, connectReports } from '../hosted/report-address';
+import { ReportAddressError, ReportRecordChanged, applyReportRecord } from '../hosted/report-address';
 import { applyClicked, applyDone, dnsCheckedById } from '../product-analytics/steps';
 import { setupPathChosen } from '../product-analytics/auth';
 import { DNS_PROVIDERS } from '../product-analytics/events';
@@ -183,29 +183,37 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const changes = writes.filter(w => w.action !== 'none').length;
     applyClicked(tenant, ctx, step, changes);
     const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string; reports?: 'connected' | 'refused' }[] = [];
-    // Hosted: a record that carries our report address connects the domain's reports (the "Connect reports" step), so nothing is left to connect.
-    const connect = async (x: { domainId?: number; reportAddress?: string } | undefined): Promise<'connected' | 'refused' | undefined> => {
-      if (!x?.reportAddress || !x.domainId) return undefined;
-      const row = await tenant.scope.domains.getById(x.domainId);
-      if (!row) return undefined;
-      try { await connectReports(tenant, row, {}, { id: caller.user?.id, email: caller.user?.email }, ctx); return 'connected'; } catch (e) { if (e instanceof ReportAddressError) return 'refused'; throw e; }
+    // Hosted: a write that carries our report address goes through the one function that writes it (src/hosted/report-address.ts), with the
+    // review the plan was built from: it connects the domain, then writes the record, and refuses (record_changed) when the live record moved.
+    const reportWrite = async (w: PlanWrite, x: NonNullable<ReturnType<typeof exec.get>>) => {
+      const row = x.domainId ? await tenant.scope.domains.getById(x.domainId) : null;
+      if (!row || !x.reportReview) return { id: w.id, ok: false, error: 'This domain is gone; plan again.' };
+      try {
+        await applyReportRecord(tenant, row, { reviewed: x.reportReview, choice: { kind: 'add' } }, {}, { id: caller.user?.id, email: caller.user?.email }, ctx);
+      } catch (e) {
+        if (e instanceof ReportRecordChanged) return { id: w.id, ok: false, error: 'The DMARC record changed since you looked; review again.', code: 'record_changed' };
+        if (e instanceof ReportAddressError) return { id: w.id, ok: false, error: `Reports could not be connected for this domain, so the record was not written. ${e.message}`, code: 'reports_refused', reports: 'refused' as const };
+        throw e;
+      }
+      const v = await verifyWrite(tenant, w, x);
+      return { id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}), reports: 'connected' as const };
     };
     for (const w of writes) {
-      if (w.action === 'none') {
-        const reports = await connect(exec.get(w.id)); // already in place: still connect
-        if (reports) results.push({ id: w.id, ok: true, reports });
+      const x = exec.get(w.id);
+      if (x?.reportReview) {
+        try { results.push(await reportWrite(w, x)); } catch (e) {
+          const code = failureCode(e);
+          results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });
+        }
         continue;
       }
+      if (w.action === 'none') continue;
       try {
-        const x = exec.get(w.id);
         // Never turned on from here: the zone-level enable rewrites the zone apex's mail records.
         if (!x || (x.kind as string) === 'enable' || w.id === 'enable') throw new Error('Ready Set Mail does not turn on Email Routing; do that in Cloudflare.');
-        // The domain is connected BEFORE the record carrying our address is written: that address never reaches DNS for a domain intake would refuse.
-        const reports = await connect(x);
-        if (reports === 'refused') { results.push({ id: w.id, ok: false, error: 'Reports could not be connected for this domain, so the record was not written. Try again, or connect reports from the domain page.', code: 'reports_refused', reports }); continue; }
         await applyWrite(tenant, w, x, ctx, caller);
         const v = await verifyWrite(tenant, w, x);
-        results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}), ...(reports ? { reports } : {}) });
+        results.push({ id: w.id, ok: true, verified: v.verified, ...(v.reason ? { verify_note: v.reason } : {}) });
       } catch (e) {
         const code = failureCode(e);
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });

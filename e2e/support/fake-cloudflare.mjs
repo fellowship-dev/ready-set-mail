@@ -44,6 +44,8 @@ function freshState() {
     records,
     routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null, rules: [] }])),
     nsOverrides: new Map(), // name -> NS hosts (DoH only)
+    txtLag: new Map(), // name -> TXT strings public DNS shows instead of the zone's (POST /__lag)
+    failDnsWrites: false, // POST /__fail {writes: true}: every DNS record write answers 500
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
     zoneReads: {}, // zone name -> number of GET /zones/:id (a live check of a zone)
@@ -103,6 +105,13 @@ export function createFakeCloudflare() {
       if (Array.isArray(body?.ns) && body.ns.length) st.nsOverrides.set(n, body.ns); else st.nsOverrides.delete(n);
       return send(200, { ok: true });
     }
+    // POST /__lag {name, txt: [..] | null}: what public DNS (the DNS-over-HTTPS answers) shows for the TXT name while the zone holds something else (a write that has not propagated); null clears it.
+    if (url.pathname === '/__lag' && method === 'POST') {
+      const n = String(body?.name ?? '').toLowerCase().replace(/\.$/, '');
+      if (Array.isArray(body?.txt)) st.txtLag.set(n, body.txt); else st.txtLag.delete(n);
+      return send(200, { ok: true });
+    }
+    if (url.pathname === '/__fail' && method === 'POST') { st.failDnsWrites = !!body?.writes; return send(200, { ok: true }); }
     if (url.pathname === '/__rules' && method === 'POST') {
       const z = st.zones.find(x => x.name === body?.zone);
       if (!z) return notFound('Zone not found');
@@ -128,7 +137,8 @@ export function createFakeCloudflare() {
       const zone = [...st.zones].filter(z => name === z.name || name.endsWith(`.${z.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
       const reply = body => { res.writeHead(200, { 'Content-Type': 'application/dns-json' }); res.end(JSON.stringify(body)); };
       if (!zone || !CODES[type]) return reply({ Status: zone ? 0 : 3, Question: [{ name, type: CODES[type] ?? 1 }] });
-      const rows = type === 'NS' && name === zone.name
+      const lagged = type === 'TXT' ? st.txtLag.get(name) : undefined;
+      const rows = lagged ? lagged.map(c => ({ data: JSON.stringify(c) })) : type === 'NS' && name === zone.name
         ? [{ data: 'ada.ns.cloudflare.com.' }, { data: 'bob.ns.cloudflare.com.' }]
         : st.records.get(zone.id).filter(r => r.name === name && r.type === type).map(r => ({
             data: type === 'TXT' ? (st.realisticTxt ? r.content : JSON.stringify(stripQuotes(r.content))) : type === 'MX' ? `${r.priority ?? 0} ${r.content}.` : r.type === 'CNAME' || type === 'NS' ? `${r.content}.` : r.content,
@@ -188,6 +198,7 @@ export function createFakeCloudflare() {
     const rest = m[2];
     const records = st.records.get(zone.id);
 
+    if (st.failDnsWrites && /^\/dns_records(\/|$)/.test(rest) && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return send(500, failure('Internal error', 1000));
     if (rest === '/dns_records') {
       if (method === 'GET') {
         let list = records;

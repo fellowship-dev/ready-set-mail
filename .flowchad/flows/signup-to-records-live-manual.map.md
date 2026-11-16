@@ -16,7 +16,9 @@ flowchart TD
   dns --> found{Record found?}
   found -->|no| claim
   found -->|yes| d1[First-day dashboard: waiting for the report address in DMARC]
-  d1 --> dmarc[Domain page: the DMARC record to add]
-  dmarc --> dns2((Wait: record in public DNS, looked for every 15 s))
+  d1 --> page[Domain page: Connect reports in the first screen]
+  page --> dmarc[DMARC step: the record and Copy record first, then where to add it]
+  dmarc --> rep[Reports step: Check again beside the status, the record below]
+  rep --> dns2((Wait: record in public DNS, looked for every 15 s))
   dns2 --> live[Records live: first reports on their way]:::value
 ```
