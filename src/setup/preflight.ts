@@ -12,10 +12,11 @@ import { bookingUrl, helpUrl, sequenceEnabled } from '../funnel/config';
 import { intakeSetupFindings } from '../reports/auth-status';
 import { reportIntakePreflightItems } from '../hosted/report-intake-check';
 import { billingPreflight } from '../billing/preflight';
+import { analyticsState } from '../product-analytics/capture';
 
 export interface PreflightItem {
   /** Stable id for tests and the UI key. */
-  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections' | 'public_reports' | 'billing';
+  id: 'mode' | 'auth_url' | 'oauth_storage' | 'booking_link' | 'mail_sender' | 'bot_check' | 'client_registration' | 'rate_limits' | 'intake' | 'cloudflare_connections' | 'public_reports' | 'billing' | 'product_analytics';
   /** `action`: something does not work until it is fixed. `note`: works, but worth knowing. */
   severity: 'action' | 'note';
   /** The setting(s) to change, by name. */
@@ -190,6 +191,10 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
   // Hosted billing (src/billing/preflight.ts): configured, not configured, or misconfigured with the reason.
   const billing = await billingPreflight(env);
   items.push(...billing.items);
+
+  // Product analytics (docs/analytics.md): a POSTHOG_* setting present but unusable says why it is off (never the value).
+  const analytics = analyticsState(env);
+  if (analytics.state === 'misconfigured') items.push({ id: 'product_analytics', severity: 'note', setting: analytics.setting, message: analytics.reason });
 
   return { mode: hosted ? 'saas' : 'self-host', agents: agentAvailability(env), items, ...(reports ? { public_reports: reports } : {}), ...(billing.status ? { billing: billing.status } : {}) };
 }

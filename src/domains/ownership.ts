@@ -24,6 +24,27 @@ import { getMode } from '../tenancy/mode';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
+/**
+ * How a domain's ownership was proven, as a category (for product analytics and anything else that only needs the kind of proof):
+ * the Cloudflare zone, the TXT record, a proven parent, self-host's own say-so, or `other` (an unproven `legacy` row, or `existing`).
+ */
+export type ProofMethod = 'cloudflare_zone' | 'txt' | 'parent' | 'selfhost' | 'other';
+/** The way ownership was proven, in two words: through the connected Cloudflare zone, or by hand (TXT, parent, self-host, other). */
+export type ProofPath = 'cloudflare' | 'manual';
+/** What a caller passes to say which domain's proof it asks about: any row of `domains` (callers never name the proof column). */
+export type ProofSource = Pick<DomainRow, 'verified_via'>;
+
+/** The proof method of an admission (`VerifiedVia`, as `admitDomain` and `commitVerifiedDomain` pass it). */
+export function proofMethodOfVia(via: VerifiedVia | string | null | undefined): ProofMethod {
+  return via === 'cloudflare' ? 'cloudflare_zone' : via === 'txt' || via === 'parent' || via === 'selfhost' ? via : 'other';
+}
+
+/** The proof method of a stored domain. */
+export const proofMethodOf = (row: ProofSource): ProofMethod => proofMethodOfVia(row.verified_via);
+
+/** `cloudflare` when the proof is the Cloudflare zone, otherwise `manual`: how the ownership was proven, not how records were written. */
+export const proofPathOf = (method: ProofMethod): ProofPath => (method === 'cloudflare_zone' ? 'cloudflare' : 'manual');
+
 /** Most unproven claims one workspace may hold at a time. */
 export const MAX_PENDING_CLAIMS = 25;
 

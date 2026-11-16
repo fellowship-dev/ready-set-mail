@@ -9,6 +9,7 @@ import { BillingError, idOf, type BillingDeps } from './deps';
 import { appUrl } from './paths';
 import { OFFER_ID, OFFER_NAME } from './offer';
 import { failOrder, reconcileOrder, soldProblem } from './sync';
+import { orderEvent } from '../product-analytics/steps';
 import { orderView, type OrderView } from './orders';
 import { PriceMisconfiguredError, PriceUnavailableError, resolvePrice, type OfferPrice } from './price';
 import { StripeError, StripeNetworkError, type StripeObject } from './stripe-client';
@@ -124,6 +125,7 @@ export async function startCardSession(d: BillingDeps, ws: Ws, actor: Actor, ret
     if (typeof session.url !== 'string' || !session.url) throw new Error('billing: Checkout session has no url');
     await q.sessions.attach(ref, session.id);
     logAudit({ db: d.db, workspaceId: ws.id }, { actor_id: actor.userId, actor_email: actor.email, action: 'billing.card_session_started', resource_type: 'billing', resource_id: ref }, d.ctx);
+    orderEvent(d.env, d.ctx, { workspace_id: ws.id }, 'billing.card_session_started');
     return { url: session.url };
   } catch (e) {
     throw e instanceof BillingError ? e : stripeFailure(e);
@@ -153,6 +155,7 @@ export async function completeSetupSession(d: BillingDeps, row: CheckoutSessionR
   await d.stripe.setDefaultPaymentMethod(workspaceCustomer, pm);
   if (await q.sessions.complete(row.ref)) {
     logAudit({ db: d.db, workspaceId: row.workspace_id }, { actor_id: row.user_id, actor_email: await emailOf(d.env, row.user_id), action: 'billing.card_added', resource_type: 'billing', resource_id: row.ref }, d.ctx);
+    orderEvent(d.env, d.ctx, { workspace_id: row.workspace_id }, 'billing.card_added');
   }
   return 'completed';
 }

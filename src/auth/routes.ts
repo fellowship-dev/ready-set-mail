@@ -12,8 +12,9 @@
 import type { BoundEnv as Env } from '../index';
 import { authLookups, forWorkspace, globalQueries, workspaceLifecycle, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
 import { logAudit, type AuditEntry } from '../audit/log';
-import { track } from '../telemetry';
-import { TenantContext } from '../tenancy/context';
+import type { TenantContext } from '../tenancy/context';
+import { attemptTag, codeVerified, inviteAccepted, signedIn, signupHooks, signupProfileSaved, signupTag } from '../product-analytics/auth';
+import { analyticsEnabled } from '../product-analytics/capture';
 import { hashPassword, verifyPassword } from '../api/password';
 import { AUTH_BASE_PATH, createAuth, type Auth } from './index';
 import { baseUrl, enabledOAuthProviders, isSaas } from './config';
@@ -245,7 +246,7 @@ async function passwordMatches(env: Env, user: { id: string; email_verified: num
  */
 async function answerWithCode(
   env: Env, request: Request, ctx: ExecutionContext, attempt: Attempt,
-  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void; /** A new sign-up attempt (S1): codes from an earlier attempt no longer work, so "use the newest one" would not be true. */ freshAttempt?: boolean } = {},
+  opts: { pool?: MailPool; notice?: 'signup'; afterAnswer?: boolean; onAfterAnswer?: () => void; analytics?: ReturnType<typeof signupHooks>; /** A new sign-up attempt (S1): codes from an earlier attempt no longer work, so "use the newest one" would not be true. */ freshAttempt?: boolean } = {},
 ): Promise<Response> {
   const secure = secureOrigin(env, request);
   const origin = baseUrl(env, new URL(request.url).origin);
@@ -255,6 +256,7 @@ async function answerWithCode(
   if (wait) return mailLimit(wait, opts.freshAttempt);
   const mailing = !!attempt.userId || !!attempt.create;
   const { handle, code } = await startAttempt(env, pendingHandle(request, secure), mailing ? attempt : decoyOf(attempt));
+  await opts.analytics?.started(handle);
   if (opts.afterAnswer) {
     // Reset: the code goes out after the answer, and an address with no account is mailed nothing, so both answers follow the
     // same database work and return the same body at the same time. The cost: during a mail outage a reset looks sent.
@@ -280,6 +282,7 @@ async function answerWithCode(
       return notSent();
     }
   }
+  opts.analytics?.answered(mailing);
   const out = json({ code_required: true, purpose: attempt.purpose, email: attempt.email, expires_in: CODE_SECONDS });
   out.headers.append('set-cookie', pendingCookie(handle, secure));
   return out;
@@ -340,6 +343,7 @@ async function passwordSession(env: Env, request: Request, ctx: ExecutionContext
     resource_type: 'user', resource_id: user.id, resource_name: user.email,
     meta: { ip: clientIp(request) },
   });
+  signedIn(env, ctx, user.id, 'password');
   return openSession(env, request, ctx, user.id, body);
 }
 
@@ -458,11 +462,10 @@ export async function handleAuthRoute(
     // when they are signed in; an anonymous visitor gets the self-host instance's, or nothing in saas.
     const t = await tenantFor();
     const mine = !saas || !!t.userId ? t : null;
-    const [siteKey, closed, customDomainRow, telemetryRow, codes] = await Promise.all([
+    const [siteKey, closed, customDomainRow, codes] = await Promise.all([
       turnstileSiteKey(env),
       hostedSignupClosed(env),
       mine?.scope.settings.get('custom_domain') ?? null,
-      mine?.scope.settings.get('telemetry_opted_in') ?? null,
       signinCodes(env),
     ]);
     const existingDomains = mine ? await mine.scope.domains.list() : [];
@@ -481,7 +484,6 @@ export async function handleAuthRoute(
       // Closed: an OAuth login still signs in an existing user; the user-creation hook refuses a new account.
       oauth_providers: enabledOAuthProviders(env),
       prefill: { name: '', email: '' },
-      telemetry_default: telemetryRow?.value === 'true',
       turnstile_site_key: siteKey,
       custom_domain: customDomainRow?.value ?? null,
       base_domain: baseDomain ?? null,
@@ -499,6 +501,8 @@ export async function handleAuthRoute(
       ...(!saas && codes.on ? { signin_code_sender_domain: (await senderAddress(env))?.split('@')[1] ?? null } : {}),
       // Terms, privacy and operator: hosted always; self-host only what its operator configured.
       legal: legalStatus(env),
+      // Whether this dashboard counts product steps with PostHog (hosted with POSTHOG_KEY and POSTHOG_HOST only; docs/analytics.md).
+      product_analytics: analyticsEnabled(env),
     });
   }
 
@@ -513,7 +517,7 @@ export async function handleAuthRoute(
       || request.headers.get('x-inbox-angel-bootstrap') // @legacy-name: header before the rename to Ready Set Mail (2026-11-13); remove after every installation's owner setup is done
       || '';
     if (!(await verifyBootstrapProof(env, bootstrapProof))) return err('installer proof required', 403);
-    const body = await readJson<{ name?: string; email?: string; password?: string; telemetry?: boolean; cf_turnstile_token?: string }>(request);
+    const body = await readJson<{ name?: string; email?: string; password?: string; cf_turnstile_token?: string }>(request);
     if (!body.email || !body.password) return err('email and password are required', 400);
     if (body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (!EMAIL_RE.test(body.email)) return err('invalid email', 400);
@@ -525,7 +529,6 @@ export async function handleAuthRoute(
 
     // Self-host: the instance owner is verified at setup (there may be no outbound email to verify with).
     await globalQueries(env.DB).users.markEmailVerified(user.id);
-    if (body.telemetry !== undefined) await platform(env).settings.set('telemetry_opted_in', body.telemetry ? 'true' : 'false');
     auditUser(env, ctx, user.id, {
       actor_id: user.id, actor_email: email, actor_type: 'user',
       action: 'auth.setup',
@@ -533,7 +536,6 @@ export async function handleAuthRoute(
       after_value: { email, role: 'owner' },
       meta: { ip },
     });
-    track(new TenantContext({ env, workspaceId: IMPLICIT_WORKSPACE_ID }), { event: 'instance.born' }); // fire-and-forget
 
     const hasDomain = (await platform(env).domains.list()).length > 0 || !!(await platform(env).settings.get('base_domain'))?.value;
     return sessionResponse(request, res, { has_domain: hasDomain }, 201);
@@ -548,7 +550,7 @@ export async function handleAuthRoute(
     if (!isSaas(env)) return err('sign-up is closed — ask an owner for an invite', 403);
     if (await hostedSignupClosed(env)) return err(SIGNUP_CLOSED_MESSAGE, 503);
     if (await ipLimited(env, request, 'signup', { window: 3600, max: 10 })) return err('Too many requests — try again later', 429);
-    const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string }>(request);
+    const body = await readJson<{ email?: string; password?: string; cf_turnstile_token?: string; src?: unknown; from_checker?: unknown }>(request);
     if (!body.email || !body.password) return err('email and password are required', 400);
     if (body.password.length < 8) return err('password must be at least 8 characters', 400);
     if (body.password.length > MAX_PASSWORD) return err(`password must be at most ${MAX_PASSWORD} characters`, 400);
@@ -561,9 +563,10 @@ export async function handleAuthRoute(
     const passwordHash = await hashPassword(body.password);
     const user = await globalQueries(env.DB).users.byEmail(email);
     const terms = legal(env).termsVersion ?? undefined;
-    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup', freshAttempt: true });
+    const analytics = signupHooks(env, ctx, await signupTag(env, pendingHandle(request, secureOrigin(env, request)), body)); // docs/analytics.md
+    if (user?.email_verified) return answerWithCode(env, request, ctx, { purpose: 'signup', userId: null, email }, { notice: 'signup', analytics, freshAttempt: true });
     // No account yet, or one still waiting for its code from before codes: the code sets this attempt's password.
-    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms }, { freshAttempt: true });
+    return answerWithCode(env, request, ctx, { purpose: 'signup', userId: user?.id ?? null, create: !user, email, passwordHash, terms }, { analytics, freshAttempt: true });
   }
 
   // ── Hosted sign-up, screen by screen: S1 /signup (above), S2 /signup/profile, S3 the code (/code), and the way back ──
@@ -597,6 +600,7 @@ export async function handleAuthRoute(
     const handle = pendingHandle(request, secureOrigin(env, request));
     // Held with the attempt, for every address alike (a decoy takes them too, so this answer says nothing about accounts).
     if (!handle || !(await saveAttemptProfile(env, handle, checked.profile))) return codeRefusal('code_expired');
+    await signupProfileSaved(env, ctx, handle, checked.profile); // docs/analytics.md: the closed answers, and whether "heard about" was filled; never its text
     return json({ ok: true, step: 'code' });
   }
   if (path === '/api/auth/signup/resend' && method === 'POST') {
@@ -612,7 +616,8 @@ export async function handleAuthRoute(
     // The same attempt again with a new code: what the person typed (password hash, S2 answers) carries over, the old code stops
     // working, and the mail allowance, the answer and the notice for an address that already has an account are those of sign-up.
     const { tries: _tries, expiresAt: _expiresAt, ...attempt } = pending;
-    return answerWithCode(env, request, ctx, attempt, { notice: 'signup' });
+    // A resent code keeps the attempt's analytics id and counts as `Signup Code Sent` (resend).
+    return answerWithCode(env, request, ctx, attempt, { notice: 'signup', analytics: signupHooks(env, ctx, await signupTag(env, handle, {})) });
   }
   if (path === '/api/auth/signup/cancel' && method === 'POST') {
     const secure = secureOrigin(env, request);
@@ -672,6 +677,7 @@ export async function handleAuthRoute(
   if (path === '/api/auth/code' && method === 'POST') {
     if (await limited(env, request)) return err('Too many requests — try again later', 429);
     const body = await readJson<{ code?: unknown }>(request);
+    const tagged = await attemptTag(env, pendingHandle(request, secureOrigin(env, request))); // docs/analytics.md
     const confirmed = await confirmCode(env, request, ctx, body.code, ['signup', 'invite', 'signin']);
     if ('response' in confirmed) return confirmed.response;
     const { attempt } = confirmed;
@@ -702,6 +708,7 @@ export async function handleAuthRoute(
         action: 'auth.login', resource_type: 'user', resource_id: userId, resource_name: user.email,
         meta: { ip, code: 'email' },
       });
+      signedIn(env, ctx, userId, 'code');
       return openSession(env, request, ctx, userId, { purpose: 'signin' });
     }
 
@@ -727,9 +734,11 @@ export async function handleAuthRoute(
             action: 'auth.invite_accepted', resource_type: 'user', resource_id: userId, resource_name: attempt.email,
             after_value: { email: attempt.email, role: invite.role, invited_by: invite.invited_by },
           }, invite.workspace_id);
+          inviteAccepted(env, ctx, invite);
         }
       }
     }
+    await codeVerified(env, ctx, { userId, purpose: attempt.purpose, tagged, created: !attempt.userId, joinedWorkspaceId: joined?.workspace_id });
     return openSession(env, request, ctx, userId, { purpose: attempt.purpose, ...(joined ?? {}) });
   }
 

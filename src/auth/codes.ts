@@ -106,7 +106,7 @@ export function pendingHandle(request: Request, secure: boolean): string | null 
 
 const b64url = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const sha256 = async (s: string) => b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
-const identifierFor = async (handle: string) => `signin-code:${await sha256(handle)}`;
+export const identifierFor = async (handle: string) => `signin-code:${await sha256(handle)}`;
 
 /** A uniformly random six-digit code (rejection sampling: no modulo bias). */
 export function newCode(): string {

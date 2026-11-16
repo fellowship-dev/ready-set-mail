@@ -15,6 +15,7 @@ import { freshSubject, resourceContext, type ToolContext } from '../context';
 import type { DomainInput } from '../schemas';
 import { ToolError } from '../errors';
 import { spendDnsCheck } from '../rate-limit';
+import { enrollmentAdded } from '../../product-analytics/steps';
 
 export function result(summary: string, data: Record<string, unknown>, evidence: { href: string; label: string }[] = []) {
  const structuredContent = { schema: 'ready-set-mail-tool/v1' as const, summary, data, evidence };
@@ -118,7 +119,8 @@ export async function sourceStatus(context: ToolContext, input: DomainInput) {
 export async function addDomain(context: ToolContext, input: DomainInput) {
  const { tenant } = await resourceContext(context, input, 'domains:manage');
  await assertAgentEnrollmentSafe(tenant, input.domain);
- const enrollment = await enrollDomain(tenant, input.domain, undefined, undefined, context.identity.principalId, { productId: input.productId });
+ const enrollment = await enrollDomain(tenant, input.domain, undefined, undefined, context.identity.principalId, { productId: input.productId, analyticsCtx: context.ctx });
+ enrollmentAdded(tenant, context.ctx, 'agent', input.domain, enrollment);
  return result('Domain enrollment saved; follow the returned ownership proof when pending. No DNS records or messages were changed.', { enrollment });
 }
 export async function verifyDomain(context: ToolContext, input: DomainInput) {
@@ -134,6 +136,6 @@ export async function verifyDomain(context: ToolContext, input: DomainInput) {
  const outcome = await verifyClaim(tenant, claim, context.reportOptions?.resolver);
  if (outcome.kind === 'taken') throw new ToolError('forbidden', 'Domain belongs to another workspace');
  if (outcome.kind === 'unproven') return result('Ownership proof not verified yet.', { verified: false, reason: outcome.reason, claim: claimView((await tenant.scope.claims.get(input.domain)) ?? claim) });
- const enrollment = await commitVerifiedDomain(tenant, input.domain, outcome.via, undefined, undefined, context.identity.principalId, { productId: input.productId });
+ const enrollment = await commitVerifiedDomain(tenant, input.domain, outcome.via, undefined, undefined, context.identity.principalId, { productId: input.productId, analyticsCtx: context.ctx });
  return result('Ownership verified and monitoring enrollment saved.', { verified: true, enrollment });
 }

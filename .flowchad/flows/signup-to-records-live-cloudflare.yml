@@ -1,0 +1,67 @@
+name: New hosted user signs up and gets DMARC with the report address live through Cloudflare
+goal: A new workspace has its domains imported from Cloudflare and one domain's DMARC record applied and visible in public DNS
+value_moment: Records live - ownership proven and DMARC seen in public DNS, carrying the shared report address when the server admits the workspace to reports (HOSTED_CONNECT_REPORTS; by default only the operator's own workspaces)
+# Pages on the path (the dashboard screens a person sees). A change to any of them needs a fresh walk record.
+covers:
+  - web/src/app.tsx
+  - web/src/pages/auth/*
+  - web/src/pages/wizards/SetupWizardPage.tsx
+  - web/src/pages/wizards/cloudflare/*
+  - web/src/pages/cloudflare/*
+  - web/src/pages/domains/OverviewPage.tsx
+  - web/src/pages/domains/DomainDetailPage.tsx
+  - web/src/pages/setup/*
+  - web/src/components/FirstDay.tsx
+  - web/src/components/HandoffCard.tsx
+  - web/src/lib/first-run.ts
+  - web/src/lib/first-day.ts
+  - web/src/components/domain/*
+  # Server files that implement the steps: sign-up and the code, the first screen, ownership, adding domains, and the writes.
+  - src/auth/routes.ts
+  - src/auth/codes.ts
+  - src/auth/profile.ts
+  - src/auth/names.ts
+  - src/auth/mail.ts
+  - src/auth/signup-policy.ts
+  - src/auth/bot-protection.ts
+  - src/auth/turnstile.ts
+  - src/domains/ownership.ts
+  - src/domains/service.ts
+  - src/api/router.ts
+  - src/connections/*
+  - src/onboarding/*
+  - src/dns/write-policy.ts
+  - src/tenancy/cf-client.ts
+url: /#/signup
+tags: [onboarding, value, protected]
+priority: P0
+context:
+  user: new_account
+  auth: logged_out
+  mode: hosted
+# Baseline measured on main 6a7d775 (2026-11-15); rebuilt by PR #177 as S1, S2, S3, S4, Cloudflare's consent, C2 and the first-day dashboard: walk and re-baseline it in that PR.
+steps:
+  - action: navigate
+    url: /#/signup
+    expect: Create your account - email and password; the bot check runs unseen on Continue
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: S2 Tell us about yourself (name, organization, whose email, optional role and where you heard); the code email is already on its way
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: S3 Check your inbox - one input for the 6-digit code that submits at the sixth digit
+  - action: click
+    selector: "text=Continue"
+    effect: write
+    expect: S4 asks which domain you send email from (or shows the checker's domain checked, with Not this domain?)
+  - action: click
+    selector: "text=Connect Cloudflare"
+    effect: write
+    expect: One line of public DNS, then Cloudflare's own consent (no page in between), then the zone for the domain (every active zone for a company) added as verified domains; nothing written to DNS
+  - action: click
+    selector: "text=Apply"
+    effect: write
+    expect: C2 review shows what exists and what will be written, one Apply; the record is written to the zone and the dashboard's first-day card says it is waiting for public DNS, then that the first reports are on their way (the report address only for a workspace HOSTED_CONNECT_REPORTS admits)
+    first_value: true

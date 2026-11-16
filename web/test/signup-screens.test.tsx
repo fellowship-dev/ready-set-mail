@@ -434,3 +434,21 @@ describe('the URL holds the step, and the server state picks the screen', () => 
 		expect(calls.map((c) => c.path).filter((p) => p.startsWith('/api/auth/') && p !== '/api/auth/status' && p !== '/api/auth/signup/pending')).toEqual(['/api/auth/signup', '/api/auth/signup/profile', '/api/auth/code']);
 	});
 });
+
+describe('S1 carries where the sign-up came from (analytics, categories only)', () => {
+	it('src and from_checker go with the sign-up request; the domain itself is never in it', async () => {
+		const { captureVisit, __resetVisitForTests } = await import('../src/lib/signup-source');
+		captureVisit(new URLSearchParams('src=checker&domain=harbor-lane.org'));
+		try {
+			const { calls } = flow({ routes: { 'POST /api/auth/signup': SENT } });
+			const user = userEvent.setup();
+			await user.type(await screen.findByLabelText('Work email'), EMAIL);
+			await user.type(screen.getByLabelText('Password', { exact: true }), 'long-enough-1');
+			await user.click(screen.getByRole('button', { name: 'Continue' }));
+			await waitFor(() => expect(calls.find((c) => c.path === '/api/auth/signup')?.body).toEqual({ email: EMAIL, password: 'long-enough-1', src: 'checker', from_checker: true }));
+			expect(JSON.stringify(calls.map((c) => c.body))).not.toContain('harbor-lane');
+		} finally {
+			__resetVisitForTests();
+		}
+	});
+});

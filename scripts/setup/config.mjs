@@ -132,7 +132,7 @@ export const CRON_DESCRIPTIONS = {
   '0 8 * * *': 'daily 08:00 UTC: re-reads each domain\'s DNS, runs monitor checks and change alerts',
   '0 9 * * 1': 'Mondays 09:00 UTC: weekly DMARC digest email',
   '0 10 * * *': 'daily 10:00 UTC: SPF flattening refresh (only for domains that turned it on)',
-  '0 11 * * *': 'daily 11:00 UTC: usage heartbeat, sent only if you opt in to telemetry',
+  '0 11 * * *': 'daily 11:00 UTC: nothing on a self-hosted installation (hosted product analytics only)',
 };
 
 export function describeCrons(cfg) {

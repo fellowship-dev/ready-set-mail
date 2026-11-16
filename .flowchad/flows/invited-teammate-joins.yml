@@ -1,0 +1,44 @@
+name: Invited teammate joins the workspace and sees its domains
+goal: A person invited by an owner joins with the one-time link and lands on the workspace overview
+value_moment: The teammate (a read-only member unless invited as admin) sees the workspace's domains with each one's verdict
+covers:
+  - web/src/pages/members/MembersPage.tsx
+  - web/src/pages/auth/InvitePage.tsx
+  - web/src/pages/auth/CodeStep.tsx
+  - web/src/pages/auth/SignupCode.tsx
+  - web/src/pages/setup/HandOffPage.tsx
+  - web/src/components/HandoffCard.tsx
+  - web/src/lib/handoff.ts
+  - web/src/pages/domains/OverviewPage.tsx
+  # Server files that implement the steps: the invite link (members routes), accepting it, the code.
+  - src/api/router.ts
+  - src/auth/routes.ts
+  - src/auth/codes.ts
+  - src/auth/mail.ts
+  - src/team/handoff.ts
+url: /#/members
+tags: [collaboration, value, protected]
+priority: P1
+context:
+  user: owner_then_invitee
+  auth: logged_in
+steps:
+  - action: navigate
+    url: /#/members
+    expect: Members with an invite form (email, role)
+  - action: click
+    selector: "text=Create invite link"
+    effect: write
+    expect: A one-time link (7 days) shown to the owner; no email is sent
+  - action: navigate
+    url: /#/invite/TOKEN
+    expect: Join form for the invited email (a hand-off says which domain to finish)
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: Check your inbox - the same code screen as sign-up
+  - action: click
+    selector: "text=Continue"
+    effect: write
+    expect: Overview of the workspace with its domains and their verdicts (the setup stepper shows only to owners and admins)
+    first_value: true

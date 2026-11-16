@@ -8,7 +8,6 @@ import { enrollDomain, DomainServiceError } from '../../src/domains/service';
 import { bulkInsertDomains, validateDomain } from '../../src/domains/bulk';
 import { json, nxdomain } from './helpers';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 vi.mock('../../src/dns/provision', () => ({
   provisionDomain: vi.fn().mockResolvedValue({ recordId: null, recordName: null, manual: true }),
 }));

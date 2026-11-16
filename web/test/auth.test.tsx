@@ -76,7 +76,7 @@ describe('first-run setup', () => {
 		expect(calls.some((c) => c.path === '/api/auth/setup')).toBe(false);
 	});
 
-	it('creates the owner with the telemetry choice', async () => {
+	it('creates the owner (no usage-statistics choice: nothing is sent from a self-hosted installation)', async () => {
 		let done = false;
 		const { calls } = renderApp(<AuthPage />, {
 			role: null,
@@ -91,12 +91,12 @@ describe('first-run setup', () => {
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Confirm password'), 'long-enough-1');
 		await user.type(screen.getByLabelText('Installer proof'), 'installer-proof-012345678901234567890123');
-		await user.click(screen.getByRole('checkbox'));
+		expect(screen.queryByRole('checkbox')).toBeNull();
 		await user.click(screen.getByRole('button', { name: 'Create account' }));
 
 		await waitFor(() => expect(meFetches(calls)).toBeGreaterThan(1));
 		expect(localStorage.getItem('ia_api_key')).toBeNull();
-		expect(calls.find((c) => c.path === '/api/auth/setup')?.body).toEqual({ name: '', email: 'owner@example.com', password: 'long-enough-1', telemetry: true });
+		expect(calls.find((c) => c.path === '/api/auth/setup')?.body).toEqual({ name: '', email: 'owner@example.com', password: 'long-enough-1' });
 		expect(calls.find((c) => c.path === '/api/auth/setup')?.headers['x-ready-set-mail-bootstrap']).toBe('installer-proof-012345678901234567890123');
 		expect(screen.getByLabelText('Installer proof')).toHaveValue('');
 	});

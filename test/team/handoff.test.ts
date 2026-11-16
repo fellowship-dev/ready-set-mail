@@ -282,7 +282,7 @@ describe('the hand-off as a carrier (review item 16)', () => {
   it('a lapsed proof does not count as proven', async () => {
     const w = world();
     const key = await owner(w);
-    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, proof_lost_at) SELECT workspace_id, 'harbor-lane.org', '', 'txt', 1 FROM domain_claims LIMIT 1").run();
+    w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via, proof_lost_at) SELECT workspace_id, 'harbor-lane.org', '', 'legacy', 1 FROM domain_claims LIMIT 1").run();
     expect((await to(w, key, 'sam@other.example', 'harbor-lane.org')).status).toBe(403);
   });
 

@@ -7,7 +7,6 @@ import { makeTenant } from '../helpers/tenant';
 import { dohFetch } from '../../packages/dns-checks/test/helpers';
 import { hosted, json } from './helpers';
 
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const MESSAGE = '[claim-preview] DNS_PREVIEW_LIMITER binding missing: falling back to a per-isolate counter; add the ratelimit binding for hosted mode.';
 

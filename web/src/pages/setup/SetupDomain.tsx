@@ -11,7 +11,7 @@ import type { ClaimPreviewData } from '../../lib/claim-preview';
 import { DOMAIN_PATTERN } from '../wizards/setup/DomainStep';
 import { INVALID_DOMAIN_TEXT, domainErrorMessage } from '../../lib/domain-errors';
 import { normalizeDomainInput } from '../../lib/domain-input';
-import { useDnsHost } from '../../lib/dns-host';
+import { hostOf, useDnsHost } from '../../lib/dns-host';
 import { dnsFromPreview, dnsFromStatus, HAND_OFF_ENABLED, hostSentence, REVIEW_PATH, rememberFocusDomain, resultLine, setupChoice, type PublicDns } from '../../lib/first-run';
 import { keys, useDomainClaims, useDomains } from '../../lib/queries';
 import { handoffPath } from '../../lib/handoff';
@@ -262,7 +262,21 @@ function Entered({ entered, removeError, didNotConnect, onNotThis, onVerified, h
 	// Only an instance that offers a pasted token and no sign-in goes to the token screen.
 	const start = useStartOAuth();
 	const startError = start.isError ? (isEncryptionMissing(start.error) ? ENCRYPTION_MESSAGE : errorMessage(start.error)) : '';
+	// The S4 choice is counted on the server (categories only: the path, and the DNS host's id). Never blocks the screen.
+	const chosen = useRef<string | null>(null);
+	const choose = (path: 'cloudflare' | 'records') => {
+		if (chosen.current === path) return;
+		chosen.current = path;
+		const provider = hostOf(host.data);
+		void api('/api/onboarding/setup-path', { method: 'POST', body: { path, ...(provider ? { dns_provider: provider.id } : {}) } }).catch(() => {});
+	};
+	// A host we cannot connect (or cannot tell): the records path is the only one, so it is the one being shown.
+	useEffect(() => {
+		if (claim && !hostPending && choice.kind === 'records') choose('records');
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [claim?.id, hostPending, choice.kind]);
 	const connect = () => {
+		choose('cloudflare');
 		clearProgress(me?.workspace_id ?? null);
 		if (!conns.data?.oauth.available) return navigate('/setup/cloudflare');
 		start.mutate({ returnTo: '/#/setup/cloudflare' }, { onSuccess: (r) => window.location.assign(r.authorize_url) });
@@ -327,7 +341,7 @@ function Entered({ entered, removeError, didNotConnect, onNotThis, onVerified, h
 					{startError ? <FieldError>{startError}</FieldError> : null}
 					<div className="flex flex-col gap-2 sm:flex-row">
 						{choice.kind === 'continue' ? (
-							<Button className="w-full sm:w-auto" loading={verify.isPending} onClick={() => { setVerifyError(''); verify.mutate(); }}>
+							<Button className="w-full sm:w-auto" loading={verify.isPending} onClick={() => { choose('cloudflare'); setVerifyError(''); verify.mutate(); }}>
 								{choice.account ? `Continue with ${choice.account}` : 'Continue with Cloudflare'}
 							</Button>
 						) : (
@@ -335,7 +349,7 @@ function Entered({ entered, removeError, didNotConnect, onNotThis, onVerified, h
 								{start.isPending ? 'Opening Cloudflare…' : 'Connect Cloudflare'}
 							</Button>
 						)}
-						<Button variant="secondary" className="w-full sm:w-auto" onClick={() => setManual(true)}>
+						<Button variant="secondary" className="w-full sm:w-auto" onClick={() => { choose('records'); setManual(true); }}>
 							I'll add the records myself
 						</Button>
 					</div>

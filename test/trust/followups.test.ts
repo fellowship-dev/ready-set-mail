@@ -130,7 +130,7 @@ describe('detached (evicted) domains are invisible everywhere except export', ()
     return { w, q: forWorkspace(w.env.DB, w.A.ws) };
   }
 
-  it('lists, report queries, analytics, digest stats and heartbeat counts skip them', async () => {
+  it('lists, report queries, analytics and digest stats skip them', async () => {
     const { w, q } = await withEvicted();
     expect((await q.domains.list()).map(d => d.domain)).toEqual(['live.com']);
     expect(await q.domains.getById(61)).toBeNull();
@@ -142,8 +142,6 @@ describe('detached (evicted) domains are invisible everywhere except export', ()
     const senders = JSON.stringify(await q.analytics.senderRows(null, 0, 0, Math.floor(Date.now() / 1000)));
     expect(senders).toContain('198.51.100.1');
     expect(senders).not.toContain('198.51.100.99');
-    const hb = await q.heartbeat();
-    expect(JSON.stringify(hb)).not.toMatch(/"domains":2/);
     // the API says the same
     const res = await call(w.env, 'GET', '/api/domains', { key: w.A.token });
     expect((await json(res)).domains.map((d: any) => d.domain)).toEqual(['live.com']);

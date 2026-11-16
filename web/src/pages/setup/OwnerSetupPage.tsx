@@ -1,4 +1,4 @@
-import { Button, Checkbox, FieldError, Input, Label } from '@ready-set-mail/ui';
+import { Button, FieldError, Input } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
@@ -34,7 +34,6 @@ export function OwnerSetupPage() {
 	const [confirm, setConfirm] = useState('');
 	const [bootstrapProof, setBootstrapProof] = useState('');
 	const [proofOpen, setProofOpen] = useState(false);
-	const [telemetry, setTelemetry] = useState(status?.telemetry_default ?? false);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
 	/** The server refused the held link: it is shown as expired, whatever the reason. */
@@ -58,7 +57,7 @@ export function OwnerSetupPage() {
 			// Setup opens the owner's session at once, with no emailed code (first-owner setup is self-host only).
 			const res = await api<{ has_domain?: boolean }>('/api/auth/setup', {
 				method: 'POST',
-				body: { name, email, password, telemetry, ...turnstile },
+				body: { name, email, password, ...turnstile },
 				headers: { 'X-Ready-Set-Mail-Bootstrap': linkToken ?? bootstrapProof },
 			});
 			setBootstrapProof('');
@@ -113,13 +112,6 @@ export function OwnerSetupPage() {
 				<Field id="confirm" label="Confirm password">
 					<Input id="confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
 				</Field>
-				<div className="flex items-start gap-3">
-					<Checkbox id="telemetry" checked={telemetry} onCheckedChange={(v) => setTelemetry(v === true)} className="mt-0.5" />
-					<Label htmlFor="telemetry" className="font-normal leading-snug">
-						<strong className="font-semibold">Share anonymous usage stats.</strong>{' '}
-						<span className="text-ink-2">Feature usage counts only: no personal data, email addresses or domain names. You can change this later.</span>
-					</Label>
-				</div>
 				{check.widget}
 				{error ? <FieldError>{error}</FieldError> : null}
 				<Button type="submit" className="w-full" loading={busy} disabled={!check.ready}>

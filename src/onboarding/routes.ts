@@ -1,6 +1,7 @@
 // /api/onboarding/* — the one-click Cloudflare onboarding (owner/admin, the caller's workspace only).
 //
 //   GET  /api/onboarding/dns-state?names=a.com,b.com   public DNS state per name; at most 10 are read per request (see MAX_STATE_NAMES)
+//   POST /api/onboarding/setup-path  { path, dns_provider? }          count the S4 choice (analytics only)
 //   POST /api/onboarding/dns-plan    { domain_ids }                    what each step would write, from Cloudflare's current records
 //   POST /api/onboarding/dns-apply   { domain_ids, step, plan_id }     perform one step's writes; 409 plan_changed when the plan moved
 //   POST /api/onboarding/first-check { domain_ids }                    store the first DNS read so the overview shows real levels
@@ -15,6 +16,9 @@ import { buildPlan, type DnsPlan, type PlanWrite } from './plan';
 import { listEmailRules } from './rules';
 import { failureCode, plainCloudflareError } from './errors';
 import { ReportAddressError, connectReports } from '../hosted/report-address';
+import { applyClicked, applyDone, dnsCheckedById } from '../product-analytics/steps';
+import { setupPathChosen } from '../product-analytics/auth';
+import { DNS_PROVIDERS } from '../product-analytics/events';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -149,6 +153,17 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
 
   if (request.method !== 'POST') return null;
 
+  // POST /api/onboarding/setup-path { path, dns_provider? } — the S4 choice, counted (docs/analytics.md `Setup Path Chosen`). Changes nothing else.
+  // Only the two closed paths the screen offers; `dns_provider` is a category (the id of a host the product recognises), anything else is `other`.
+  if (path === '/api/onboarding/setup-path') {
+    let body: { path?: unknown; dns_provider?: unknown } = {};
+    try { body = await request.json() as typeof body; } catch { /* empty */ }
+    if (body.path !== 'cloudflare' && body.path !== 'records') return err('path must be cloudflare or records', 400);
+    const provider = typeof body.dns_provider === 'string' ? body.dns_provider : undefined;
+    setupPathChosen(tenant.env, ctx, tenant.workspaceId, body.path, provider === undefined ? 'unknown' : (DNS_PROVIDERS as readonly string[]).includes(provider) ? provider : 'other');
+    return json({ ok: true });
+  }
+
   if (path === '/api/onboarding/dns-plan') {
     const input = await domainIds(request);
     if (input instanceof Response) return input;
@@ -164,6 +179,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     const { plan, exec } = await buildPlan(tenant, input.ids);
     if (plan.plan_id !== input.body.plan_id) return json({ error: 'Cloudflare changed since you looked; review again.', code: 'plan_changed', plan }, 409);
     const writes = plan.steps.find(s => s.key === step)?.writes ?? [];
+    const changes = writes.filter(w => w.action !== 'none').length;
+    applyClicked(tenant, ctx, step, changes);
     const results: { id: string; ok: boolean; verified?: boolean; verify_note?: string; error?: string; code?: string; reports?: 'connected' | 'refused' }[] = [];
     // Hosted: a record that carries our report address connects the domain's reports (the "Connect reports" step), so nothing is left to connect.
     const connect = async (x: { domainId?: number; reportAddress?: string } | undefined): Promise<'connected' | 'refused' | undefined> => {
@@ -193,6 +210,8 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
         results.push({ id: w.id, ok: false, error: plainCloudflareError(e), ...(code ? { code } : {}) });
       }
     }
+    const reports = results.some(r => r.reports === 'connected') ? 'connected' : results.some(r => r.reports === 'refused') ? 'refused' : 'none';
+    applyDone(tenant, ctx, { step, changes, failed: results.filter(r => !r.ok).length, reports, domainIds: writes.flatMap(w => { const id = exec.get(w.id)?.domainId; return id ? [id] : []; }) });
     return json({ results });
   }
 
@@ -203,6 +222,7 @@ export async function handleOnboardingRoutes(request: Request, tenant: TenantCon
     for (const d of await writableDomains(tenant, input.ids)) {
       const id = d.id;
       results.push({ domain_id: id, stored: (await recordFirstDnsCheck(tenant, id, d.domain, { resolver: resolverFor(tenant.env) })) !== null });
+      dnsCheckedById(tenant, ctx, id);
     }
     return json({ results });
   }

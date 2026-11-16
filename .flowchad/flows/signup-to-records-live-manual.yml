@@ -1,0 +1,64 @@
+name: New hosted user signs up and gets DMARC with the report address live by adding records by hand
+goal: A new workspace proves one domain with the TXT record and publishes DMARC at another DNS host
+value_moment: Records live - ownership proven by the TXT record and DMARC seen in public DNS, carrying the shared report address when the server admits the workspace to reports (HOSTED_CONNECT_REPORTS; by default only the operator's own workspaces)
+covers:
+  - web/src/app.tsx
+  - web/src/pages/auth/*
+  - web/src/pages/wizards/SetupWizardPage.tsx
+  - web/src/pages/wizards/cloudflare/FirstScreen.tsx
+  - web/src/pages/setup/*
+  - web/src/components/FirstDay.tsx
+  - web/src/lib/first-run.ts
+  - web/src/lib/first-day.ts
+  - web/src/lib/poll.ts
+  - web/src/pages/wizards/setup/*
+  - web/src/components/wizard/*
+  - web/src/components/domain/ClaimCard.tsx
+  - web/src/components/domain/ClaimPreview.tsx
+  - web/src/components/domain/ProofRecord.tsx
+  # Server files that implement the steps: sign-up and the code, the first screen, ownership, adding domains, and the writes.
+  - src/auth/routes.ts
+  - src/auth/codes.ts
+  - src/auth/profile.ts
+  - src/auth/names.ts
+  - src/auth/mail.ts
+  - src/auth/signup-policy.ts
+  - src/auth/bot-protection.ts
+  - src/auth/turnstile.ts
+  - src/domains/ownership.ts
+  - src/domains/service.ts
+  - src/api/router.ts
+  - src/domains/claim-preview.ts
+url: /#/signup
+tags: [onboarding, value, protected]
+priority: P0
+context:
+  user: new_account
+  auth: logged_out
+  mode: hosted
+# Rebuilt by PR #177 as S1, S2, S3, S4 (the records path, polled) and the first-day dashboard: walk and re-baseline it in that PR.
+steps:
+  - action: navigate
+    url: /#/signup
+    expect: Create your account - email and password; the bot check runs unseen on Continue
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: S2 Tell us about yourself; the code email is already on its way
+  - action: click
+    selector: "button[type=submit]"
+    effect: write
+    expect: S3 Check your inbox - one input for the 6-digit code
+  - action: click
+    selector: "text=Continue"
+    effect: write
+    expect: S4 asks which domain you send email from
+  - action: click
+    selector: "text=Check"
+    effect: write
+    expect: One line of public DNS and the setup choice for the DNS host (the record path, with the provider named); the TXT proof record to add, looked for every 15 seconds
+  - action: click
+    selector: "text=Verify"
+    effect: write
+    expect: Domain proven (found by itself, or by Verify); the dashboard's first-day card says it is waiting for the report address in DMARC, with the way to add it, and flips to the first reports are on their way when public DNS shows it
+    first_value: true

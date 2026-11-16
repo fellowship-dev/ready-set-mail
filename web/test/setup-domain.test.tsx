@@ -387,3 +387,36 @@ describe('setupChoice', () => {
 		expect(setupChoice('x.com', { provider: null, nameservers: [], status: 'mixed' } as never, c(), true).kind).toBe('records');
 	});
 });
+
+describe('S4 choice is counted on the server (categories only)', () => {
+	const added = (domain: string, extra: Record<string, unknown> = {}) => ({
+		'POST /api/domains': { __status: 202, body: { pending: true, claim: claim(domain), domain: null } },
+		'GET /api/domains/claims/5/preview': preview(domain),
+		'POST /api/onboarding/setup-path': { ok: true },
+		'POST /api/cloudflare/oauth/start': { authorize_url: 'about:blank#cf' },
+		...extra,
+	});
+	const counted = (calls: Array<{ method: string; path: string; body: unknown }>) => calls.filter((c) => c.path === '/api/onboarding/setup-path').map((c) => c.body);
+
+	it('Connect Cloudflare: path cloudflare with the host id; nothing typed travels', async () => {
+		const { calls } = open({ routes: added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') }) });
+		await enter('brightwave-mail.com');
+		expect(counted(calls)).toEqual([]);
+		await userEvent.setup().click(await screen.findByRole('button', { name: 'Connect Cloudflare' }));
+		await waitFor(() => expect(counted(calls)).toEqual([{ path: 'cloudflare', dns_provider: 'cloudflare' }]));
+	});
+
+	it('"I\'ll add the records myself": path records, once', async () => {
+		const { calls } = open({ routes: added('brightwave-mail.com', { 'GET /api/domains/dns-host': host('cloudflare', 'Cloudflare') }) });
+		await enter('brightwave-mail.com');
+		await userEvent.setup().click(await screen.findByRole('button', { name: "I'll add the records myself" }));
+		await waitFor(() => expect(counted(calls)).toEqual([{ path: 'records', dns_provider: 'cloudflare' }]));
+	});
+
+	it('a host that cannot be connected shows only the records path, which is counted once it is shown', async () => {
+		const { calls } = open({ routes: added('acme.io', { 'GET /api/domains/dns-host': host('godaddy', 'GoDaddy') }) });
+		await enter('acme.io');
+		await screen.findByRole('group', { name: 'DNS record to add' });
+		await waitFor(() => expect(counted(calls)).toEqual([{ path: 'records', dns_provider: 'godaddy' }]));
+	});
+});

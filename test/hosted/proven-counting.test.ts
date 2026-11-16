@@ -6,7 +6,6 @@ import { forWorkspace, resetSchemaReadyCache, type CountingMode } from '@ready-s
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 import { getAnalytics } from '../../src/reports/analytics';
 import { getDomainReport } from '../../src/reports/service';

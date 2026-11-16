@@ -3,6 +3,7 @@
  * first run was about, from what the server already knows: whether the domain is proven, whether reports can reach this workspace,
  * whether its DMARC record names our report address, and whether any report has arrived. Never from a page that was visited.
  */
+import { isUnproven, type ProofShape } from '../components/domain/ProofLost';
 import { hasReportAddress } from './dmarc-record';
 import type { Domain, DomainCheckSummary } from './types';
 import type { DomainVerdict, ReportTotals } from './verdict';
@@ -28,7 +29,7 @@ export type FirstDay =
 
 export interface FirstDayInput {
 	/** The domain the first run was about (focusDomainOf), if the workspace has one. */
-	domain: Pick<Domain, 'id' | 'domain' | 'rua_address' | 'created_at' | 'cf_account_id' | 'verified_via' | 'proof_lost_at'> | undefined;
+	domain: (Pick<Domain, 'id' | 'domain' | 'rua_address' | 'created_at' | 'cf_account_id'> & ProofShape) | undefined;
 	/** Pending claims in this workspace (open, unproven). */
 	claims: Array<{ domain: string; status: string }>;
 	/** The domain's stored facts and 30-day totals. Undefined while loading, null when they failed. */
@@ -40,14 +41,13 @@ export interface FirstDayInput {
 	now?: number;
 }
 
-const unproven = (d: NonNullable<FirstDayInput['domain']>) => d.verified_via === 'legacy' || !!d.proof_lost_at;
 
 /** The state to show, or null when the dashboard should show nothing extra (loading, or the normal overview takes over). */
 export function firstDay(i: FirstDayInput): FirstDay | null {
 	const waiting = i.claims.find((c) => c.status === 'pending');
 	if (!i.domain) return waiting ? { kind: 'proof', domain: waiting.domain, lost: false } : { kind: 'empty' };
 	const d = i.domain;
-	if (unproven(d)) return { kind: 'proof', domain: d.domain, lost: true };
+	if (isUnproven(d)) return { kind: 'proof', domain: d.domain, lost: true };
 	const s = i.summary;
 	if (!s) return null; // still loading, or its facts failed: say nothing rather than guess
 	if (s.total_messages > 0) return i.arrivedSeen ? null : { kind: 'arrived', domain: d.domain, total: s.total_messages, passed: s.pass_messages };
@@ -76,14 +76,14 @@ const joinList = (parts: string[]) => (parts.length < 2 ? (parts[0] ?? '') : `${
  */
 export function dayOneVerdict(
 	v: DomainVerdict,
-	domain: Pick<Domain, 'created_at' | 'verified_via' | 'proof_lost_at'>,
+	domain: Pick<Domain, 'created_at'> & ProofShape,
 	s: DomainCheckSummary | null | undefined,
 	totals: ReportTotals | null | undefined,
 	now = Math.floor(Date.now() / 1000),
 ): DomainVerdict {
 	if (!s || !totals || totals.total > 0) return v;
 	if (v.status !== 'attention' && v.status !== 'improve' && v.status !== 'approval') return v;
-	if (now - domain.created_at >= DAY_ONE_SECONDS || unprovenRow(domain)) return v;
+	if (now - domain.created_at >= DAY_ONE_SECONDS || isUnproven(domain)) return v;
 	if (s.dns_check_status === 'failed' || s.dns_check_status === 'nxdomain' || s.dns_last_good_status === 'nxdomain' || s.dmarc_issue) return v;
 	const missing = [!s.spf_record ? 'SPF' : null, !s.dmarc_policy ? 'DMARC' : null].filter((x): x is string => !!x);
 	return {
@@ -95,7 +95,6 @@ export function dayOneVerdict(
 	};
 }
 
-const unprovenRow = (d: Pick<Domain, 'verified_via' | 'proof_lost_at'>) => d.verified_via === 'legacy' || !!d.proof_lost_at;
 
 /** The workspace sentence while every domain is on its first day: no "Not yet" and nothing to fix yet. Null when any domain is not. */
 export function dayOneAnswer(rows: Array<{ name: string; verdict: DomainVerdict | null; dayOne: boolean }>): string | null {
@@ -115,8 +114,8 @@ export type Blocker = { kind: 'connection'; label: string; count: number } | { k
  * What truly blocks: a Cloudflare connection that stopped or was revoked, or a domain whose proof lapsed. Anything that merely waits (a record, a first report) is
  * not a blocker. Connection first: with it nothing can be written to DNS at all.
  */
-export function blockerOf(brokenConnections: Array<{ label: string }>, domains: Array<Pick<Domain, 'domain' | 'verified_via' | 'proof_lost_at'>>): Blocker | null {
+export function blockerOf(brokenConnections: Array<{ label: string }>, domains: Array<Pick<Domain, 'domain'> & ProofShape>): Blocker | null {
 	if (brokenConnections.length > 0) return { kind: 'connection', label: brokenConnections[0]!.label, count: brokenConnections.length };
-	const lost = domains.find((d) => unprovenRow(d));
+	const lost = domains.find(isUnproven);
 	return lost ? { kind: 'proof', domain: lost.domain } : null;
 }

@@ -117,7 +117,7 @@ The Worker runs five cron triggers (times in UTC). They start when it is deploye
 | `0 8 * * *` | daily 08:00 | Re-reads each domain's DNS (SPF lookup count, DMARC policy), runs monitor checks and change alerts, rollout regression checks, MTA-STS MX refresh |
 | `0 9 * * 1` | Mondays 09:00 | Weekly DMARC digest email |
 | `0 10 * * *` | daily 10:00 | SPF flattening refresh, only for domains that turned flattening on |
-| `0 11 * * *` | daily 11:00 | Usage heartbeat, sent only if the owner opted in to telemetry |
+| `0 11 * * *` | daily 11:00 | Nothing on a self-hosted installation (the hosted service's product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)) |
 | `0 4 * * *` | daily 04:00 | Data lifecycle: retries failed Cloudflare revocations, then deletes data past its retention period ([data retention](data-retention.md)) |
 
 ## Upgrade
@@ -134,7 +134,7 @@ Coming from 1.x (v1.2.0 or earlier)? That is a new install next to the old one, 
 
 The dashboard (a notice, and the Version row in Settings) and the weekly digest tell you when a newer **published release** exists, name it, and link its release notes and this upgrade guide. `GET /api/version` returns the same answer: `current`, `latest`, `status` (`newer`, `same`, `older` when you run something ahead of the latest release, `unknown` when GitHub could not be reached, `off`), `release_url` and `upgrade_url`.
 
-How it checks: one plain, unauthenticated `GET` of `https://api.github.com/repos/fellowship-dev/ready-set-mail/releases/latest` (falling back to the `github.com/fellowship-dev/ready-set-mail/releases/latest` redirect when GitHub rate-limits the API). The request carries no token, cookie or instance identifier, and its User-Agent does not include your version. The answer is cached in your `OAUTH_KV` namespace (or, without one, in the Workers cache) for 6 hours, 1 hour after a failure, so page views and digests do not each call GitHub. It compares semantic versions and ignores pre-releases; it never reads the main branch, so a version bump there tells no one to upgrade before the release exists. This is separate from telemetry, which stays off unless you opt in.
+How it checks: one plain, unauthenticated `GET` of `https://api.github.com/repos/fellowship-dev/ready-set-mail/releases/latest` (falling back to the `github.com/fellowship-dev/ready-set-mail/releases/latest` redirect when GitHub rate-limits the API). The request carries no token, cookie or instance identifier, and its User-Agent does not include your version. The answer is cached in your `OAUTH_KV` namespace (or, without one, in the Workers cache) for 6 hours, 1 hour after a failure, so page views and digests do not each call GitHub. It compares semantic versions and ignores pre-releases; it never reads the main branch, so a version bump there tells no one to upgrade before the release exists. No other request leaves your installation for us: a self-hosted installation sends no usage statistics or analytics.
 
 To turn it off, set the variable `UPDATE_CHECK` to `off` (`vars` in your `wrangler.local.jsonc`, then `npm run deploy`); the Worker then makes no request and shows "update check off". The hosted service (`MODE=saas`) never checks.
 

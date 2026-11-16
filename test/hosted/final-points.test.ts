@@ -12,7 +12,6 @@ import { dmarcXml, fakeMessage, gzipReportMime } from '../helpers/mail';
 import { nxdomain, quiet, twoWorkspaces } from './world';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 
 const RUA = 'rua.readysetmail.com';
 const FIXED = `rua@${RUA}`;

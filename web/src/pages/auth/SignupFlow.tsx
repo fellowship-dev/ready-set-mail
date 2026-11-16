@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { bindSignupDomainToEmail } from '../../lib/signup-intent';
+import { signupAnalytics } from '../../lib/signup-source';
 import { useSession } from '../../lib/session';
 import { EMAIL_PATTERN, readSignupEmail, rememberSignupEmail, screenFor, setPendingSignup, SIGNUP_PATH, stepOfPath, usePendingSignup, type PendingSignup } from '../../lib/signup';
 import { PageSkeleton } from '../../components/states';
@@ -70,7 +71,7 @@ function SignupForm({ onSignIn }: { onSignIn: () => void }) {
 			bindSignupDomainToEmail(email);
 			const token = await check.run();
 			if (status?.turnstile_site_key && !token) return setErrors({ form: 'The human check did not pass. Try again.' });
-			const res = await api<unknown>('/api/auth/signup', { method: 'POST', body: { email: email.trim(), password, ...(token ? { cf_turnstile_token: token } : {}) } });
+			const res = await api<unknown>('/api/auth/signup', { method: 'POST', body: { email: email.trim(), password, ...(token ? { cf_turnstile_token: token } : {}), ...signupAnalytics() } });
 			if (!needsCode(res)) return setErrors({ form: 'Something went wrong. Try again.' });
 			rememberSignupEmail(email);
 			setPendingSignup(qc, { pending: true, email: res.email, step: 'about', expires_in: (res as { expires_in?: number }).expires_in ?? 600, lifetime_seconds: (res as { expires_in?: number }).expires_in });

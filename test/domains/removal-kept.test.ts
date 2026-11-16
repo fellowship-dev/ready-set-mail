@@ -4,7 +4,6 @@ import { call, makeEnv, setupOwner } from '../auth/helpers';
 import { FakeCloudflare } from '../helpers/cf-fake';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
-vi.mock('../../src/telemetry', () => ({ track: vi.fn() }));
 beforeEach(() => { for (const m of ['warn', 'log', 'error'] as const) vi.spyOn(console, m).mockImplementation(() => {}); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, FieldError, Input, Label } from '@ready-set-mail/ui';
+import { Alert, Button, FieldError, Input } from '@ready-set-mail/ui';
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
 import { api, ApiError, errorMessage } from '../../lib/api';
@@ -33,7 +33,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	const [password, setPassword] = useState('');
 	const [confirm, setConfirm] = useState('');
 	const [bootstrapProof, setBootstrapProof] = useState('');
-	const [telemetry, setTelemetry] = useState(status?.telemetry_default ?? false);
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
 	/** Set when the server emailed a code and waits for it. */
@@ -68,7 +67,7 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 	/** Sign-up or sign-in, with a bot-check token; also what "Send a new code" repeats. */
 	async function request(token: string | null) {
 		const turnstile = token ? { cf_turnstile_token: token } : {};
-		const body = mode === 'setup' ? { name, email, password, telemetry, ...turnstile } : { email, password, ...turnstile };
+		const body = mode === 'setup' ? { name, email, password, ...turnstile } : { email, password, ...turnstile };
 		return api<CodeRequired | { has_domain?: boolean }>(endpoint, { method: 'POST', body, ...(mode === 'setup' ? { headers: { 'X-Ready-Set-Mail-Bootstrap': bootstrapProof } } : {}) });
 	}
 
@@ -164,15 +163,6 @@ export function AuthPage({ initialMode }: { initialMode?: 'signup' } = {}) {
 					<Field id="confirm" label="Confirm password">
 						<Input id="confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password" />
 					</Field>
-				) : null}
-				{mode === 'setup' ? (
-					<div className="flex items-start gap-3">
-						<Checkbox id="telemetry" checked={telemetry} onCheckedChange={(v) => setTelemetry(v === true)} className="mt-0.5" />
-						<Label htmlFor="telemetry" className="font-normal leading-snug">
-							<strong className="font-semibold">Share anonymous usage stats.</strong>{' '}
-							<span className="text-ink-2">Feature usage counts only: no personal data, email addresses or domain names. You can change this later.</span>
-						</Label>
-					</div>
 				) : null}
 				{mode === 'signin' && !hosted && status.signin_codes ? (
 					<p className="text-sm text-ink-2">

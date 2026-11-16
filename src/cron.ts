@@ -12,7 +12,7 @@ import { checkSubscription, detectRollbackRisk } from './monitor/check';
 import { sendChangeNotification } from './monitor/notify';
 import { sendWeeklyDigests } from './digest/weekly';
 import { logAudit } from './audit/log';
-import { track } from './telemetry';
+import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
 import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
 import { runRetention } from './lifecycle/retention';
@@ -68,14 +68,9 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 
 /** One cron tick for one workspace. */
 async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext): Promise<void> {
-  // Daily telemetry heartbeat — every day 11am UTC
+  // Daily product analytics — every day 11am UTC: hosted with PostHog configured only (docs/analytics.md); a no-op everywhere else.
   if (event.cron === '0 11 * * *') {
-    try {
-      const stats = await tenant.scope.heartbeat();
-      await track(tenant, { event: 'instance.heartbeat', ...stats });
-    } catch (e) {
-      console.error('[telemetry] heartbeat failed:', e);
-    }
+    dailyAnalytics(tenant, ctx);
     return;
   }
 
@@ -133,6 +128,7 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
       await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });
+      dnsChecked(tenant, ctx, d, found.dmarc, 'daily'); // the row it has: no query unless the read shows the records live
     } catch (e) {
       console.warn(`[monitor] storing DNS check failed for ${d.domain}:`, e);
     }
