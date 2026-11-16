@@ -21,6 +21,8 @@
 //    request to a host on its own Cloudflare zone carries the visitor's address ("In same-zone Worker subrequests, the value of
 //    `CF-Connecting-IP` reflects the value of `x-real-ip` (the client's IP)", https://developers.cloudflare.com/fundamentals/reference/http-headers/),
 //    so a first-party reverse proxy (right for the website's BROWSER events) would hand PostHog every visitor's IP here.
+//    Tests and e2e send to a local fake through the separate, testing-only POSTHOG_API_BASE (like STRIPE_API_BASE): a loopback origin
+//    only, and a loopback address in POSTHOG_HOST itself is a misconfiguration.
 //  - No client IP otherwise: the request is made by the Worker with only a Content-Type header. Nothing of the visitor's request (IP,
 //    CF-Connecting-IP, X-Forwarded-For, Forwarded, User-Agent, cookies) is copied onto it, and no `$ip` property is ever set (the
 //    allow-list has none). PostHog therefore only sees Cloudflare's egress address, and `$geoip_disable: true` ("To skip it for a
@@ -43,6 +45,8 @@ export interface AnalyticsEnv {
   MODE?: unknown;
   POSTHOG_KEY?: unknown;
   POSTHOG_HOST?: unknown;
+  /** Testing only: a local fake PostHog, http://127.0.0.1:<port> or http://localhost:<port>. Anything else turns analytics off. */
+  POSTHOG_API_BASE?: unknown;
 }
 
 export interface AnalyticsConfig { key: string; batchUrl: string }
@@ -60,15 +64,25 @@ export function dropped(stage: 'capture' | 'later' | 'send' | 'post'): void {
   try { console.warn(`[product-analytics] dropped: ${stage}`); } catch { /* nothing */ }
 }
 
-/** A local fake PostHog for tests and e2e only: plain http on the loopback with a port, the origin only. */
-function localFake(url: URL): boolean {
-  return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.port !== '';
+/**
+ * The test-only endpoint override (POSTHOG_API_BASE): exactly http://127.0.0.1:<port> or http://localhost:<port>, the origin only
+ * (the same strict parse as stripeApiBase in src/billing/config.ts: no userinfo, path, query or fragment). Null for anything else.
+ */
+function localFakeOrigin(raw: string): string | null {
+  if (!/^http:\/\/(127\.0\.0\.1|localhost):[0-9]{1,5}\/?$/.test(raw)) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && Number(u.port) > 0) return `http://${u.hostname}:${u.port}`;
+  } catch { /* not a URL */ }
+  return null;
 }
 
 /**
  * Whether analytics is on, and if a setting is present but wrong, why not (for the owner's setup check; never a value).
  * `off`: not hosted, or neither setting is set. On only for MODE=saas with POSTHOG_KEY a `phc_` project key and POSTHOG_HOST exactly
- * one of ALLOWED_HOSTS (an http://127.0.0.1:<port> or http://localhost:<port> fake is accepted for tests). Never throws.
+ * one of ALLOWED_HOSTS, whatever else is set. The separate, testing-only POSTHOG_API_BASE (a loopback origin, see localFakeOrigin) sends
+ * the events to a local fake instead; set to anything else it makes analytics `misconfigured`, never a silent fall back to the real
+ * host. A loopback address in POSTHOG_HOST is `misconfigured`: an address alone never turns analytics on. Never throws.
  */
 export function analyticsState(env: AnalyticsEnv): { state: 'on'; config: AnalyticsConfig } | { state: 'off' } | { state: 'misconfigured'; setting: string; reason: string } {
   try {
@@ -83,10 +97,14 @@ export function analyticsState(env: AnalyticsEnv): { state: 'on'; config: Analyt
     let url: URL | null = null;
     try { url = new URL(rawHost.trim()); } catch { url = null; }
     const origin = url && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/' ? url.origin : null;
-    if (!url || !origin || (!(ALLOWED_HOSTS as readonly string[]).includes(origin) && !localFake(url))) {
-      return { state: 'misconfigured', setting: 'POSTHOG_HOST', reason: `POSTHOG_HOST must be exactly ${ALLOWED_HOSTS.join(' or ')} (PostHog's own ingestion host, no path), so product analytics is off. Server-side events go straight to PostHog, never through a proxy on our own domain, which would forward each visitor's IP address.` };
+    if (!url || !origin || !(ALLOWED_HOSTS as readonly string[]).includes(origin)) {
+      return { state: 'misconfigured', setting: 'POSTHOG_HOST', reason: `POSTHOG_HOST must be exactly ${ALLOWED_HOSTS.join(' or ')} (PostHog's own ingestion host, no path), so product analytics is off. Server-side events go straight to PostHog, never through a proxy on our own domain, which would forward each visitor's IP address. A local fake for tests is set with POSTHOG_API_BASE (testing only), never here.` };
     }
-    return { state: 'on', config: { key, batchUrl: `${origin}/batch/` } };
+    const rawBase = env.POSTHOG_API_BASE;
+    if (rawBase === undefined || (typeof rawBase === 'string' && !rawBase.trim())) return { state: 'on', config: { key, batchUrl: `${origin}/batch/` } };
+    const base = typeof rawBase === 'string' ? localFakeOrigin(rawBase.trim()) : null;
+    if (!base) return { state: 'misconfigured', setting: 'POSTHOG_API_BASE', reason: 'POSTHOG_API_BASE is testing only and must be exactly http://127.0.0.1:<port> or http://localhost:<port> (a local fake PostHog); leave it unset on the hosted service. Product analytics is off.' };
+    return { state: 'on', config: { key, batchUrl: `${base}/batch/` } };
   } catch {
     return { state: 'off' };
   }

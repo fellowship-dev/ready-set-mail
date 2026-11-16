@@ -86,14 +86,65 @@ describe('off by default', () => {
       'https://us.i.posthog.com/ingest', 'https://us.i.posthog.com/batch/', 'https://us.i.posthog.com:8443', 'https://us.posthog.com', 'https://app.posthog.com',
       'https://us.i.posthog.com.evil.example', 'https://10.0.0.1', 'https://169.254.169.254', 'https://ph.example.com',
       'http://us.i.posthog.com', 'ftp://x.test', 'https://user:pw@us.i.posthog.com', 'https://us.i.posthog.com/?a=1', 'https://us.i.posthog.com/#x', 'not a url',
-      'http://localhost', 'http://127.0.0.1', 'http://127.0.0.1:9999/ingest', 'http://10.0.0.1:8000',
+      'http://localhost', 'http://127.0.0.1', 'http://127.0.0.1:9999/ingest', 'http://10.0.0.1:8000', 'http://127.0.0.1:9999', 'http://localhost:9999',
     ];
     for (const host of refused) {
       expect(analyticsConfig({ ...ON, POSTHOG_HOST: host }), host).toBeNull();
       expect(analyticsState({ ...ON, POSTHOG_HOST: host }), host).toMatchObject({ state: 'misconfigured', setting: 'POSTHOG_HOST', reason: expect.stringContaining('never through a proxy on our own domain') });
     }
-    // A local fake PostHog (tests, e2e): loopback with a port, origin only.
-    expect(analyticsConfig({ ...ON, POSTHOG_HOST: 'http://127.0.0.1:9999' })?.batchUrl).toBe('http://127.0.0.1:9999/batch/');
+  });
+
+  it('a loopback address in POSTHOG_HOST is a misconfiguration that names the test setting, and nothing is sent', async () => {
+    const env = { ...ON, POSTHOG_HOST: 'http://127.0.0.1:9999' };
+    expect(analyticsState(env)).toMatchObject({ state: 'misconfigured', setting: 'POSTHOG_HOST', reason: expect.stringContaining('POSTHOG_API_BASE') });
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    await send(env, { analyticsId: VISITOR_ID }, [{ event: 'Signed In', props: { method: 'code' } }]);
+    capture(env, undefined, { analyticsId: VISITOR_ID }, 'Signed In', { method: 'code' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('POSTHOG_API_BASE (testing only), a loopback origin, sends the batch there instead of to PostHog', async () => {
+    for (const base of ['http://127.0.0.1:9999', 'http://localhost:9999', 'http://127.0.0.1:9999/', ' http://127.0.0.1:9999 ']) {
+      const env = { ...ON, POSTHOG_API_BASE: base };
+      expect(analyticsState(env), base).toMatchObject({ state: 'on' });
+      const fetchSpy = vi.fn(async (_url: string, _init: RequestInit) => new Response('{}'));
+      vi.stubGlobal('fetch', fetchSpy);
+      await send(env, { analyticsId: VISITOR_ID }, [{ event: 'Signed In', props: { method: 'code' } }]);
+      expect(fetchSpy.mock.calls.map((c) => c[0]), base).toEqual([`http://${base.trim().replace(/^http:\/\//, '').replace(/\/$/, '')}/batch/`]);
+    }
+    expect(analyticsConfig({ ...ON, POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_API_BASE: 'http://localhost:1234' })?.batchUrl).toBe('http://localhost:1234/batch/');
+    expect(analyticsConfig({ ...ON, POSTHOG_API_BASE: '' })?.batchUrl).toBe('https://us.i.posthog.com/batch/'); // blank is unset
+  });
+
+  it('POSTHOG_API_BASE that is not a loopback origin turns analytics off: nothing is sent anywhere, never the real host', async () => {
+    const refused = ['https://evil.example', 'https://us.i.posthog.com', 'http://evil.example:9999', 'http://127.0.0.1', 'http://127.0.0.1:0', 'http://127.0.0.1:9999/ingest', 'http://127.0.0.1:9999/?a=1', 'http://127.0.0.1:9999/#x',
+      'http://user:pw@127.0.0.1:9999', 'https://127.0.0.1:9999', 'http://127.0.0.1.evil.example:9999', 'http://10.0.0.1:9999', 'http://[::1]:9999', 'nonsense', 123, null, {}];
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    for (const base of refused) {
+      const env = { ...ON, POSTHOG_API_BASE: base };
+      expect(analyticsConfig(env), String(base)).toBeNull();
+      const state = analyticsState(env);
+      expect(state, String(base)).toMatchObject({ state: 'misconfigured', setting: 'POSTHOG_API_BASE' });
+      expect(JSON.stringify(state)).not.toContain('evil');
+      await send(env, { analyticsId: VISITOR_ID }, [{ event: 'Signed In', props: { method: 'code' } }]);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('POSTHOG_API_BASE alone does not turn analytics on: with the key or host unset, or on self-host, it is off', async () => {
+    const base = 'http://127.0.0.1:9999';
+    expect(analyticsState({ MODE: 'saas', POSTHOG_API_BASE: base })).toEqual({ state: 'off' });
+    expect(analyticsState({ MODE: 'saas', POSTHOG_KEY, POSTHOG_API_BASE: base })).toMatchObject({ state: 'misconfigured', setting: 'POSTHOG_HOST' });
+    expect(analyticsState({ MODE: 'saas', POSTHOG_HOST, POSTHOG_API_BASE: base })).toMatchObject({ state: 'misconfigured', setting: 'POSTHOG_KEY' });
+    expect(analyticsState({ POSTHOG_KEY, POSTHOG_HOST, POSTHOG_API_BASE: base })).toEqual({ state: 'off' });
+    expect(analyticsState({ MODE: 'selfhost', POSTHOG_KEY, POSTHOG_HOST, POSTHOG_API_BASE: base })).toEqual({ state: 'off' });
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    await send({ MODE: 'saas', POSTHOG_API_BASE: base }, { analyticsId: VISITOR_ID }, [{ event: 'Signed In', props: { method: 'code' } }]);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('the owner\'s setup check says why analytics is off when a setting is present but wrong, and never shows a value', async () => {
@@ -109,6 +160,13 @@ describe('off by default', () => {
     expect(JSON.stringify(await item({ POSTHOG_KEY: 'phx_personal0123456789', POSTHOG_HOST }))).not.toContain('phx_personal0123456789');
     expect(await item({ POSTHOG_KEY: 123, POSTHOG_HOST })).toMatchObject({ setting: 'POSTHOG_KEY' });
     expect(await item({ POSTHOG_HOST })).toMatchObject({ setting: 'POSTHOG_KEY' });
+    const loop = await item({ POSTHOG_KEY, POSTHOG_HOST: 'http://127.0.0.1:9999' });
+    expect(loop).toMatchObject({ setting: 'POSTHOG_HOST', message: expect.stringContaining('POSTHOG_API_BASE') });
+    expect(JSON.stringify(loop)).not.toContain('9999');
+    const base = await item({ POSTHOG_KEY, POSTHOG_HOST, POSTHOG_API_BASE: 'https://evil.example' });
+    expect(base).toMatchObject({ severity: 'note', setting: 'POSTHOG_API_BASE', message: expect.stringContaining('testing only') });
+    expect(JSON.stringify(base)).not.toContain('evil');
+    expect(await item({ POSTHOG_KEY, POSTHOG_HOST, POSTHOG_API_BASE: 'http://127.0.0.1:9999' })).toBeUndefined(); // a valid fake: on
   });
 
   it('a hosted sign-up without the keys makes no PostHog request and stores no analytics id; nor does a self-host with them', async () => {

@@ -1,5 +1,5 @@
-// Product analytics on a real local hosted instance (docs/analytics.md): `wrangler dev` with POSTHOG_KEY and POSTHOG_HOST pointed at a
-// fake PostHog (a local HTTP server that keeps every request), the fake Cloudflare (which also answers DNS-over-HTTPS) and the fake
+// Product analytics on a real local hosted instance (docs/analytics.md): `wrangler dev` with POSTHOG_KEY, POSTHOG_HOST (PostHog's own) and the
+// testing-only POSTHOG_API_BASE pointed at a fake PostHog (a local HTTP server that keeps every request), the fake Cloudflare (which also answers DNS-over-HTTPS) and the fake
 // Stripe. A person arrives from the website's checker (`src=checker`, its domain carried over; a stray `vid` the server must ignore),
 // signs up in the browser, adds a domain, connects Cloudflare with a pasted token, applies the DMARC step, sees the records live, and
 // buys the fix; the operator marks it done. The fake PostHog must have received the funnel's steps in order, under the workspace's
@@ -81,7 +81,7 @@ test(`hosted with PostHog configured: the walk from sign-up to a delivered order
 	const intake = 'rua.intake.example.net';
 	const inst = await startInstance({
 		mode: 'hosted', port: PORT, tokenKey: true, dohNs: { [DOMAIN]: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'] },
-		vars: { POSTHOG_KEY: KEY, POSTHOG_HOST: ph.url, INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all', STRIPE_SECRET_KEY: 'rk_test_e2eanalytics0123456789', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: stripe.url, OWNER_EMAIL: OWNER },
+		vars: { POSTHOG_KEY: KEY, POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_API_BASE: ph.url, INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all', STRIPE_SECRET_KEY: 'rk_test_e2eanalytics0123456789', STRIPE_WEBHOOK_SECRET: WHSEC, STRIPE_API_BASE: stripe.url, OWNER_EMAIL: OWNER },
 	});
 	try {
 		await signUp(page, inst, `#/signup?domain=${DOMAIN}&src=checker&vid=${VID}`);
@@ -159,7 +159,7 @@ test(`hosted with PostHog configured: the walk from sign-up to a delivered order
 test('hosted without POSTHOG_KEY / POSTHOG_HOST: the same sign-up sends nothing and stores no analytics id', async ({ page }) => {
 	const ph = await fakePostHog();
 	// The host alone (no key): still off.
-	const inst = await startInstance({ mode: 'hosted', port: OFF_PORT, tokenKey: true, vars: { POSTHOG_HOST: ph.url } });
+	const inst = await startInstance({ mode: 'hosted', port: OFF_PORT, tokenKey: true, vars: { POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_API_BASE: ph.url } });
 	try {
 		await signUp(page, inst, `#/signup?domain=${DOMAIN}&src=checker`);
 		expect((await call(page, 'POST', '/api/domains', { domain: DOMAIN })).status).toBe(202);

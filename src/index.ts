@@ -69,7 +69,8 @@ export interface Env {
   STRIPE_API_BASE?: string;          // testing only: a local fake Stripe, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
   // Hosted product analytics (MODE=saas only, docs/analytics.md). Off unless BOTH are set; a self-hosted installation never sends anything.
   POSTHOG_KEY?: string;              // the PUBLIC PostHog project key (phc_…): it can only send events. Not a personal API key
-  POSTHOG_HOST?: string;             // PostHog ingestion origin, e.g. https://us.i.posthog.com (testing: http://127.0.0.1:<port> for a local fake)
+  POSTHOG_HOST?: string;             // PostHog's own ingestion origin: exactly https://us.i.posthog.com or https://eu.i.posthog.com (anything else, a proxy included, leaves analytics off)
+  POSTHOG_API_BASE?: string;         // testing only: a local fake PostHog, http://127.0.0.1:<port> or http://localhost:<port> (anything else turns analytics off, never falls back to the real host)
   // Worker config (vars in wrangler.jsonc)
   WORKER_NAME?: string;          // defaults to "ready-set-mail-worker"
   MODE?: string;                 // "selfhost" (default) | "saas"

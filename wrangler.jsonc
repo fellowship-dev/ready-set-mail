@@ -95,7 +95,7 @@
 
 	// Hosted billing (MODE=saas only, docs/billing.md): secrets STRIPE_SECRET_KEY (a restricted rk_ key) and STRIPE_WEBHOOK_SECRET; optional STRIPE_PRICE_LOOKUP_KEY. Off unless both secrets are set.
 	// Hosted product analytics (MODE=saas only, docs/analytics.md): POSTHOG_KEY (the PUBLIC project key, phc_…) and POSTHOG_HOST (e.g. https://us.i.posthog.com). Off unless both are set;
-	// a self-hosted installation never sends anything, and npm run setup sets neither. Set them only after the website's privacy policy carries the analytics sentence.
+	// a self-hosted installation never sends anything, and npm run setup sets neither. POSTHOG_API_BASE is testing only (a local fake, http://127.0.0.1:<port>): never set it on the hosted service. Set them only after the website's privacy policy carries the analytics sentence.
 
 	// Hosted intake: three tiers (docs/hosted.md). A report is COUNTED only when the receiving mail server authenticated the sender (AUTHSERV_ID +
 	// AUTHSERV_HEADER; nothing is authenticated until both are set, and the Worker logs the authserv-id it sees: {"evt":"intake_authserv"}) AND the sender is in
