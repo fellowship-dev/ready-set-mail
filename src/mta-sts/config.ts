@@ -2,7 +2,7 @@
 // needs three operator settings besides the hosted ones (docs/hosted.md, Environment):
 //   POLICY_HOST_ZONE    the operator's Cloudflare for SaaS zone, e.g. readysetmail.com
 //   POLICY_HOST_TARGET  the hostname customers point `mta-sts.<domain>` at (a proxied, originless record in that zone, set as its fallback origin)
-//   POLICY_HOST_TOKEN   secret: "Zone Read", "SSL and Certificates Write" and "Workers Routes Write" on that one zone
+//   POLICY_HOST_TOKEN   secret: "SSL and Certificates Write" and "Workers Routes Write" on that one zone
 // Self-host needs none of them.
 
 import { hostedConfig, hostedEnabled, type HostedEnv } from '../hosted/config';
