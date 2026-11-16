@@ -58,6 +58,23 @@ Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 A domain's rung on the authentication ladder. **Two ladders today** (three counting the email check's protected / at risk / exposed): the dashboard's three rungs, Delivering / Authenticated / Protected (`assessDomain` in `web/src/lib/levels.ts`, names in `packages/ui/src/components/level-ladder.tsx`), and the agent report's four, Unprotected / Monitoring / Enforced / Hardened (`packages/dns-checks/src/report.ts`). Which one is canonical is an **open owner decision** (`docs/adr/OPEN.md`); do not build on either.
 _Avoid_: grade, score
 
+**Subdomain**:
+A name under a domain (`app.example.com` under `example.com`), shown inside that domain's page, never as a sibling (ADR 0014, decided; the data model still keeps each added subdomain as its own row, which a later slice changes). Its mail is reported inside its organizational domain's report unless it publishes a DMARC record of its own. The names a domain's reports show are listed on its page: `namesSeen` in `src/domains/names.ts`, `GET /api/domains/:id/names`.
+_Avoid_: sibling domain, child domain
+
+**Organizational domain**:
+The registrable name a subdomain belongs to, from the Public Suffix List with its private section (`mail.example.co.uk` is under `example.co.uk`, never `co.uk`; `alice.github.io` is its own). DMARC's relaxed alignment compares organizational domains. RFC 9989 replaces the list with a DNS tree walk; that change is not decided (`docs/adr/OPEN.md`). Not the "organisation" of a report sender or of a company (see **Organization**).
+Home: `organizationalDomain`, `sameOrganizationalDomain` and `domainAncestry` (the names from a domain up to its organizational domain: report filing and `domains.parent_id`) in `packages/dns-checks/src/org-domain.ts`.
+
+**Effective policy**:
+The DMARC policy receivers apply to mail from ONE name, and where it comes from: the name's own record's `p=`; else the organizational domain's `sp=` when the name exists or `np=` when it does not exist (NXDOMAIN), then `sp=`, then `p=` (RFC 9989 sections 4.10.1 and 4.7; an invalid `sp=` makes the record `p=none`). It is never the parent's `p=` read for a subdomain. Every level, grade and verdict for a name takes it from `DmarcLookup.effective`.
+Home: `effectivePolicy` in `packages/dns-checks/src/effective-policy.ts`, reached through `lookupDmarc` in `packages/dns-checks/src/dmarc.ts`; existence in `packages/dns-checks/src/name-exists.ts`. The dashboard's `policyInForce` in `packages/dns-checks/src/dmarc-next-step.ts` reads the stored facts built from it (`dmarcFactsFromLookup` in `src/email/dns-snapshot.ts`).
+_Avoid_: inherited policy (say which tag and which record), "the policy" without a name
+
+**Alignment**:
+Whether the domain SPF or DKIM authenticated is the same as the From domain: relaxed means the same organizational domain, strict the identical domain (RFC 9989 sections 3.2.10.1 and 3.2.10.2). The SPF identifier is the return-path (MAIL FROM) domain, never the From domain, and the DKIM identifier is the signature's `d=`. A message fails DMARC when neither identifier aligns, even if both passed. The receiver's own verdict is stored per record (`spf_aligned`, `dkim_aligned`, and the report's `aspf` and `adkim`, migration 0017); the sentence for the identifier that did not align, and the fix at the right place, is one function.
+Home: `aligned`, `alignmentVerdict`, `explainAlignment` in `packages/dns-checks/src/alignment.ts`; what a missing SPF record at a name means: `packages/dns-checks/src/spf-identity.ts`.
+
 **Verdict**:
 The one-line judgement of a domain shown to a person (verified, needs attention, unknown…) with its reason.
 Home: `domainVerdict` in `web/src/lib/verdict.ts`; words in `STATUS` in `packages/ui/src/components/status.tsx`.
