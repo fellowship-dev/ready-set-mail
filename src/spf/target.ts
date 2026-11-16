@@ -23,6 +23,8 @@ export function isConnectionFailure(e: unknown): boolean {
   return e instanceof CfError || e instanceof CfNotConfiguredError || e instanceof CfConnectionError || e instanceof CfZoneNotFoundError || e instanceof CfZoneNotAllowedError
     || e instanceof CfAuthError || e instanceof CfNetworkError || e instanceof CfNotFoundError || e instanceof CfApiError;
 }
+/** The connection was disconnected or revoked: nothing can be written through it any more (not a passing failure). */
+export const isConnectionRevoked = (e: unknown): boolean => e instanceof CfConnectionError && e.code === 'revoked';
 export const connectionText = (e: unknown): string => (e instanceof CfError ? cfErrorText(e) : e instanceof Error ? e.message : 'unknown error');
 
 /** The SPF record at the apex of `domain`, in the domain's own zone (older installs may hold it in the base zone: still found and patched there). */

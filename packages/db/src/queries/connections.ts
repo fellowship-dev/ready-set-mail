@@ -173,6 +173,15 @@ export function connectionQueries(db: Db, workspaceId: string) {
 			return true;
 		},
 
+		/** The domains linked to a connection (what a disconnect leaves without a way to change its DNS). */
+		linkedDomains(connectionId: string): Promise<Array<{ id: number; domain: string }>> {
+			return db
+				.select({ id: domains.id, domain: domains.domain })
+				.from(domains)
+				.where(and(eq(domains.workspace_id, workspaceId), eq(domains.cf_connection_id, connectionId)))
+				.all();
+		},
+
 		/** Domains linked to a connection (for the delete warning). */
 		async linkedDomainCount(connectionId: string): Promise<number> {
 			const r = await db

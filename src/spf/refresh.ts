@@ -19,7 +19,7 @@ import { capability } from '../hosted/plan-limits';
 import { spfRefreshed } from '../product-analytics/steps';
 import type { TenantContext } from '../tenancy/context';
 import { mapLimit } from '../util/map-limit';
-import { cloudflareTarget, connectionText, isConnectionFailure, type SpfLive, type SpfTarget } from './target';
+import { cloudflareTarget, connectionText, isConnectionFailure, isConnectionRevoked, type SpfLive, type SpfTarget } from './target';
 import type { SpfProblemKind, SpfRefreshEvent } from './events';
 
 /** A run holds a row for this long; a crashed run does not block the row longer. */
@@ -299,10 +299,18 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
     return { outcome: 'problem', fetches };
   };
 
+  // The connection was revoked: nothing can be written any more. Flattening stops (no refresh, no retry every day); the original stays with the row.
+  const stopAfterRevocation = async (): Promise<{ outcome: RefreshOutcome; fetches: number }> => {
+    await q.finish(row.domain_id, claimed, {});
+    await stopSpf(tenant, domain, 'connection_revoked', deps);
+    return { outcome: 'problem', fetches };
+  };
+
   // 1. What is in Cloudflare now?
   let live: SpfLive;
   try { live = await target.read(); } catch (e) {
     if (!isConnectionFailure(e)) { await q.finish(row.domain_id, claimed, {}); throw e; }
+    if (isConnectionRevoked(e)) return stopAfterRevocation();
     return fail('connection_lost', `${problemSentence({ kind: 'connection_lost' })} (${connectionText(e)})`);
   }
   if ('multiple' in live) return fail('edited_outside', problemSentence({ kind: 'edited_outside' }));
@@ -375,6 +383,7 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
     await putBack(target, live.id, live.content);
     if (e instanceof NotKept) return { ...(await fail('connection_lost', `Cloudflare did not keep the new record.${UNCHANGED}`)), fetches };
     if (!isConnectionFailure(e)) { await q.finish(row.domain_id, claimed, {}); throw e; }
+    if (isConnectionRevoked(e)) return { ...(await stopAfterRevocation()), fetches };
     return { ...(await fail('connection_lost', `${problemSentence({ kind: 'connection_lost' })} (${connectionText(e)})`)), fetches };
   }
   const done = await q.finish(row.domain_id, claimed, { ...settle, flattened_record: plan.record, previous_record: edited ? live.content : row.flattened_record, last_flattened_at: at });
@@ -392,7 +401,7 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
 
 export type DisableResult =
   | { ok: true; restored: boolean; why?: 'edited_outside' | 'record_missing' }
-  | { ok: false; restoreFailed: string; original: string }
+  | { ok: false; restoreFailed: string; original: string; flattened: string | null }
   | { ok: false; notConfigured: true };
 
 /**
@@ -413,7 +422,7 @@ export async function disableSpf(tenant: TenantContext, domain: { id: number; do
   };
   const failed = async (message: string): Promise<DisableResult> => {
     await q.setProblem(domain.id, { kind: 'restore_failed', since: row.problem_kind === 'restore_failed' ? row.problem_since : at, error: message, at });
-    return { ok: false, restoreFailed: message, original: row.canonical_record };
+    return { ok: false, restoreFailed: message, original: row.canonical_record, flattened: row.flattened_record };
   };
 
   let live: SpfLive;
@@ -441,6 +450,70 @@ export async function disableSpf(tenant: TenantContext, domain: { id: number; do
     return failed(`${problemSentence({ kind: 'restore_failed' })} (${connectionText(e)})`);
   }
   return done(true);
+}
+
+// ── When the domain, the workspace or the connection goes ────
+
+/** The body of the 409 that stops a delete: the sentence, the record to copy, and what Cloudflare holds now. */
+export interface SpfRestoreRefusal { error: string; code: 'spf_restore_failed'; domain: string; original: string; flattened_record: string | null; leave_param: 'leave_spf_record=1' }
+
+/**
+ * Before a domain (or the workspace that holds it) is deleted: put the owner's original record back. Deleting the row without this would leave the flattened
+ * record in Cloudflare with nothing refreshing it and the original lost. Nothing to restore (no row, or the record was edited or deleted outside, which
+ * disableSpf leaves alone): `ok`. The restore failed: the refusal says why and carries the original, so the owner can copy it first.
+ */
+export async function restoreSpfBeforeRemoval(tenant: TenantContext, domain: { id: number; domain: string }, deps: SpfDeps = {}): Promise<{ ok: true } | { ok: false; refusal: SpfRestoreRefusal }> {
+  const r = await disableSpf(tenant, domain, deps);
+  if (r.ok || 'notConfigured' in r) return { ok: true };
+  return { ok: false, refusal: {
+    error: `${r.restoreFailed} Your SPF record in Cloudflare is still the flattened one, and deleting ${domain.domain} would leave it there with nothing keeping it up to date. Your original record is: ${r.original}`,
+    code: 'spf_restore_failed', domain: domain.domain, original: r.original, flattened_record: r.flattened, leave_param: 'leave_spf_record=1',
+  } };
+}
+
+/** What a disconnect did to one flattened domain: its original is back in Cloudflare, or flattening stopped and the owner has the original to copy. */
+export interface SpfDisconnectOutcome { domain: string; restored: boolean; original: string; flattened_record: string | null; message: string | null }
+
+/**
+ * The Cloudflare connection is being removed: for each domain linked to it that has flattening, put the original back while the connection still works.
+ * Where that is not possible, flattening stops (stopSpf) and the answer says so, with the original.
+ */
+export async function settleSpfBeforeDisconnect(tenant: TenantContext, domains: Array<{ id: number; domain: string }>, deps: SpfDeps = {}): Promise<SpfDisconnectOutcome[]> {
+  const out: SpfDisconnectOutcome[] = [];
+  for (const d of domains) {
+    const row = await tenant.scope.spf.get(d.id);
+    if (!row) continue;
+    const r = await restoreSpfBeforeRemoval(tenant, d, deps);
+    if (r.ok) { out.push({ domain: d.domain, restored: true, original: row.canonical_record, flattened_record: null, message: null }); continue; }
+    await stopSpf(tenant, d, 'connection_removed', deps);
+    out.push({ domain: d.domain, restored: false, original: r.refusal.original, flattened_record: r.refusal.flattened_record, message: (await tenant.scope.spf.get(d.id))?.last_error ?? null });
+  }
+  return out;
+}
+
+export type SpfStopReason = 'connection_removed' | 'connection_revoked' | 'proof_lost';
+const STOP_SENTENCE: Record<SpfStopReason, (domain: string) => string> = {
+  connection_removed: d => `The Cloudflare connection for ${d} was removed, so we can no longer change its DNS. We have stopped keeping your SPF record up to date.`,
+  connection_revoked: d => `The Cloudflare connection for ${d} was disconnected, so we can no longer change its DNS. We have stopped keeping your SPF record up to date.`,
+  proof_lost: d => `We can no longer show that you control ${d}, so we have stopped keeping your SPF record up to date.`,
+};
+
+/**
+ * Flattening stops where we cannot write any more (the connection is gone, or the proof of ownership is): no refresh, no write. The row stays, in the state
+ * a failed turn-off leaves (`restore_failed`), with the original and what Cloudflare holds, and the sentence says how to put the original back by hand.
+ * Returns false when the domain has no row.
+ */
+export async function stopSpf(tenant: TenantContext, domain: { id: number; domain: string }, why: SpfStopReason, deps: SpfDeps = {}): Promise<boolean> {
+  const q = tenant.scope.spf;
+  const before = await q.get(domain.id);
+  if (!before) return false;
+  await q.deactivate(domain.id); // from here no refresh can finish
+  const row = (await q.get(domain.id))!;
+  const at = nowS(deps);
+  const message = `${STOP_SENTENCE[why](domain.domain)} The SPF record in Cloudflare is the flattened one. To go back to your original, set the SPF TXT record of ${domain.domain} to: ${row.canonical_record}`;
+  await q.setProblem(domain.id, { kind: 'restore_failed', since: row.problem_kind === 'restore_failed' ? row.problem_since : at, error: message, at });
+  audit(tenant, deps, 'spf_flatten.stopped', domain, { spf_record: row.flattened_record }, { spf_record: row.flattened_record, original_record: row.canonical_record }, { reason: why });
+  return true;
 }
 
 // ── One step back ───────────────────────────────────────────

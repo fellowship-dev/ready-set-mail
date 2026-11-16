@@ -139,7 +139,7 @@ import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
-import { disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, spfIsOn, spfView } from '../spf/refresh';
+import { disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, restoreSpfBeforeRemoval, spfIsOn, spfView } from '../spf/refresh';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
@@ -353,12 +353,18 @@ async function cloudflarePreflight(tenant: TenantContext, domains: Array<{ id: n
   return null;
 }
 
-export async function deleteDomain(tenant: TenantContext, domainId: string, actor?: { id?: string; email?: string }, ctx?: ExecutionContext): Promise<Response> {
+export async function deleteDomain(tenant: TenantContext, domainId: string, actor?: { id?: string; email?: string }, ctx?: ExecutionContext, opts: { leaveSpfRecord?: boolean } = {}): Promise<Response> {
   const id = parseInt(domainId, 10);
   if (isNaN(id)) return err('invalid domain id', 400);
 
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
+
+  // A flattened SPF record goes back to the owner's original first: deleting the row would leave the flattened record in Cloudflare with nothing keeping it up
+  // to date and the original lost. If it cannot be put back, the delete stops and says why, with the original to copy (leave_spf_record=1 deletes anyway).
+  const restored = await restoreSpfBeforeRemoval(tenant, domain, { actor, ctx });
+  if (!restored.ok && !opts.leaveSpfRecord) return json(restored.refusal, 409);
+  if (!restored.ok) logAudit(tenant, { actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user', action: 'spf_flatten.left_in_dns', resource_type: 'domain', resource_id: String(id), resource_name: domain.domain, before_value: { spf_record: restored.refusal.flattened_record }, after_value: { original_record: restored.refusal.original } }, ctx);
 
   // Hosted records (and their quota) go first. If the DNS cleanup fails the domain is kept, so nothing is orphaned.
   try {
@@ -1769,7 +1775,7 @@ async function _handleApi(
     // DELETE /api/domains/:id
     const domainDeleteMatch = path.match(/^\/api\/domains\/([^/]+)$/);
     if (domainDeleteMatch && method === 'DELETE') {
-      return await deleteDomain(tenant, domainDeleteMatch[1], { id: userBySession?.id, email: userBySession?.email }, ctx);
+      return await deleteDomain(tenant, domainDeleteMatch[1], { id: userBySession?.id, email: userBySession?.email }, ctx, { leaveSpfRecord: url.searchParams.get('leave_spf_record') === '1' });
     }
     // GET /api/reports
     if (path === '/api/reports' && method === 'GET') {

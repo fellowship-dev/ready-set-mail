@@ -22,6 +22,7 @@ import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
 import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
+import { stopSpf } from '../spf/refresh';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
@@ -283,6 +284,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
       cleanup = 'failed';
       console.warn(`[eviction] hosted cleanup failed for domain ${row.id}:`, e instanceof Error ? e.message : e);
     }
+    await stopSpf(evicted, row, 'proof_lost'); // the name is another workspace's now: no refresh writes to it
     await removeAuthRecord(evicted, row);
     if (row.id !== holderDomainId) await lookups.detach(row.id, Math.floor(Date.now() / 1000)); // the holder's own row went with the insert
     logAudit({ db: tenant.db, workspaceId: holderWorkspaceId }, {
