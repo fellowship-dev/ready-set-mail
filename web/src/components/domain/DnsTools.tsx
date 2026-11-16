@@ -127,7 +127,7 @@ function Slot<T>({ q, title, show, render }: { q: UseQueryResult<T>; title: stri
 
 /** SPF flattening and MTA-STS: only shown when a tool is available or configured for this instance. */
 export function DnsTools({ domainId }: { domainId: number }) {
-	// SPF flattening is an add-on: where the workspace does not have it, nothing is asked and nothing is shown (src/hosted/plan-limits.ts addOnAccess).
+	// SPF flattening is an add-on: where the workspace does not have it, nothing is asked and nothing is shown (src/hosted/plan-limits.ts capability).
 	const spfOn = useAddOns().spf_flattening;
 	const spf = useSpfFlatten(domainId, spfOn);
 	const mta = useMtaSts(domainId);

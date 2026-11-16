@@ -147,7 +147,7 @@ export function useWriteAccess(): { canWrite: boolean; reason: string | undefine
 }
 
 /**
- * Add-ons of this workspace (src/hosted/plan-limits.ts addOnAccess). Self-host has them all; on the hosted service nothing is shown
+ * Add-ons of this workspace (src/hosted/plan-limits.ts capability). Self-host has them all; on the hosted service nothing is shown
  * until the server says so, and an older server that does not say is read as the instance's own mode.
  */
 export function useAddOns(): { spf_flattening: boolean } {

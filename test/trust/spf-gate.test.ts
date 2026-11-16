@@ -1,9 +1,9 @@
-// The SPF flattening add-on gate (src/hosted/plan-limits.ts addOnAccess): hosted is off unless the operator admits the workspace, self-host always has it,
+// The SPF flattening add-on gate (src/hosted/plan-limits.ts capability): hosted is off unless the operator admits the workspace, self-host always has it,
 // and turning it off stays possible for a domain that has it.
 import { describe, it, expect } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
-import { addOnAccess, spfFlatteningSetting } from '../../src/hosted/plan-limits';
+import { capability, spfFlatteningSetting } from '../../src/hosted/plan-limits';
 
 const json = async (r: Response) => await r.json() as any;
 const HOSTED = { MODE: 'saas', SAAS_ENABLED: '1' };
@@ -101,13 +101,13 @@ describe('the add-on goes away while a domain has it on: reading and turning off
 });
 
 describe('the one answer', () => {
-  it('addOnAccess: self-host, off, owner, all, ids; reasons', async () => {
+  it('capability(): self-host, off, owner, all, ids; reasons', async () => {
     const db = createMigratedD1();
     const base = { DB: db as unknown as D1Database } as never;
-    expect(await addOnAccess({ ...(base as object), MODE: 'selfhost' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: true, reason: 'self_host' });
-    expect(await addOnAccess({ ...(base as object), MODE: 'saas' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: false, reason: 'not_enabled' });
-    expect(await addOnAccess({ ...(base as object), MODE: 'saas', HOSTED_SPF_FLATTENING: 'all' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: true, reason: 'operator_setting' });
-    expect(await addOnAccess({ ...(base as object), MODE: 'saas', HOSTED_SPF_FLATTENING: 'ws_abc, ws_x1' } as never, 'spf_flattening', { workspaceId: 'ws_x1' })).toEqual({ allowed: true, reason: 'operator_setting' });
+    expect(await capability({ ...(base as object), MODE: 'selfhost' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: true, reason: 'self_host' });
+    expect(await capability({ ...(base as object), MODE: 'saas' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: false, reason: 'not_enabled' });
+    expect(await capability({ ...(base as object), MODE: 'saas', HOSTED_SPF_FLATTENING: 'all' } as never, 'spf_flattening', { workspaceId: 'ws_x' })).toEqual({ allowed: true, reason: 'operator_setting' });
+    expect(await capability({ ...(base as object), MODE: 'saas', HOSTED_SPF_FLATTENING: 'ws_abc, ws_x1' } as never, 'spf_flattening', { workspaceId: 'ws_x1' })).toEqual({ allowed: true, reason: 'operator_setting' });
   });
   it('the setting parser: unset, owner, all, ids, junk', () => {
     const s = (v?: string) => { const a = spfFlatteningSetting({ HOSTED_SPF_FLATTENING: v }); return { all: a.all, owner: a.owner, ids: [...a.ids], valid: a.valid }; };

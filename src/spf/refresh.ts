@@ -15,7 +15,7 @@ import { flattenFromSource, sameSpfRecord, type SpfFlat, type SpfProblem, type S
 import type { SpfConfigRow, SpfPatch } from '@ready-set-mail/db';
 import { logAudit } from '../audit/log';
 import { resolverFor } from '../dns/resolver';
-import { addOnAccess } from '../hosted/plan-limits';
+import { capability } from '../hosted/plan-limits';
 import { spfRefreshed } from '../product-analytics/steps';
 import type { TenantContext } from '../tenancy/context';
 import { mapLimit } from '../util/map-limit';
@@ -488,7 +488,7 @@ export async function runSpfRefresh(tenant: TenantContext, ctx: Ctx, budget: Spf
   const nowSec = nowS(deps);
   const rows = await tenant.scope.spf.due(nowSec - SPF_DUE_AFTER_SECONDS, Math.min(SPF_REFRESH_MAX_PER_WORKSPACE, budget.domains));
   if (rows.length === 0) return;
-  const access = await addOnAccess(tenant.env, 'spf_flattening', { workspaceId: tenant.workspaceId });
+  const access = await capability(tenant.env, 'spf_flattening', { workspaceId: tenant.workspaceId });
   if (!access.allowed) { console.log(`[spf-flatten] ${rows.length} flattened domains left as they are: SPF flattening is not available to this workspace`); return; }
   console.log(`[spf-flatten] refreshing ${rows.length} flattened domains`);
   await mapLimit(rows, SPF_REFRESH_CONCURRENCY, async row => {

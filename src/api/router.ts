@@ -126,7 +126,7 @@ import { admitDomain, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, i
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
-import { addOnAccess, planLimitResponse, type AddOnAccess } from '../hosted/plan-limits';
+import { capability, planLimitResponse, type CapabilityAnswer } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
@@ -765,10 +765,10 @@ async function _handleApi(
   // SPF flattening is an add-on: one gate for every one of its routes (src/hosted/plan-limits.ts). Where it is not available, nothing is read or written and the route
   // answers 404, except reading the state and turning it off for a domain that already has it: nobody is left with a flattened record they cannot get rid of.
   const spfGate = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh))?$/);
-  let spfAccess: AddOnAccess | null = null;
+  let spfAccess: CapabilityAnswer | null = null;
   if (spfGate) {
     const spfId = parseInt(spfGate[1], 10);
-    spfAccess = await addOnAccess(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: isNaN(spfId) ? undefined : spfId });
+    spfAccess = await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: isNaN(spfId) ? undefined : spfId });
     if (!spfAccess.allowed) {
       const keepsRow = !isNaN(spfId) && !spfGate[2] && (method === 'GET' || method === 'DELETE') && !!(await tenant.scope.spf.get(spfId));
       if (!keepsRow) return err('not available on the hosted service', 404);
@@ -788,7 +788,7 @@ async function _handleApi(
       ...(profile ? { whose_email: profile.whose_email, ...(profile.whose_email === 'clients' ? { agency_name: profile.organization } : {}) } : {}),
       instance_owner: instanceOwner,
       // What this workspace may use beyond the base product: true when allowed, or when it still has something turned on that it must be able to see and turn off.
-      add_ons: { spf_flattening: (await addOnAccess(env, 'spf_flattening', { workspaceId: tenant.workspaceId })).allowed || await tenant.scope.spf.any() },
+      add_ons: { spf_flattening: (await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId })).allowed || await tenant.scope.spf.any() },
       user: userBySession,
       role: workspace.role ?? 'member',
       workspace_id: tenant.workspaceId,
@@ -1936,7 +1936,7 @@ async function _handleApi(
     }
 
     // SPF flattening: GET /api/domains/:id/spf-flatten, /preview; POST /spf-flatten (turn on), /spf-flatten/refresh ("Try again", or Replace after an outside edit); DELETE (turn off).
-    // The gate (addOnAccess above) already answered 404 where it is not available. Everything below is src/spf/refresh.ts: the one engine.
+    // The gate (capability above) already answered 404 where it is not available. Everything below is src/spf/refresh.ts: the one engine.
     const spfMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh))?$/);
     if (spfMatch) {
       const id = parseInt(spfMatch[1], 10);
@@ -1945,7 +1945,7 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
       const actor = { id: userBySession?.id, email: userBySession?.email };
       const available = tenant.hasCloudflare();
-      const access = spfAccess ?? await addOnAccess(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: id });
+      const access = spfAccess ?? await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: id });
       const sub = spfMatch[2];
 
       if (sub === 'preview') {

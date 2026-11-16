@@ -1,7 +1,7 @@
 // Operator allow-settings of the hosted service: the one parser and the one "is this the operator's own workspace" test.
 //
 // Two settings use it: HOSTED_CONNECT_REPORTS (who may connect reports to the shared address; src/hosted/fixed-address.ts) and
-// HOSTED_SPF_FLATTENING (who may use SPF flattening; src/hosted/plan-limits.ts addOnAccess). The words are the same:
+// HOSTED_SPF_FLATTENING (who may use SPF flattening; src/hosted/plan-limits.ts capability). The words are the same:
 //   `owner`   the workspaces owned by the OWNER_EMAIL account (the operator's own)
 //   `all`     every workspace
 //   `ws_...`  one workspace by id (a comma list, with or without `owner`); only where the setting takes ids
