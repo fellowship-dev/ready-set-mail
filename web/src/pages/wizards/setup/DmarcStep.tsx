@@ -15,6 +15,7 @@ import { errorMessage } from '../../../lib/api';
 import { useApplyDmarc, type ApplyDmarcResponse } from '../../../lib/apply-dmarc';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
+import { useReportIntakeEnabled } from '../../../lib/report-address';
 import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
@@ -33,9 +34,10 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const [authProvisioned, setAuthProvisioned] = useState(false);
 
 	// The report address is top-level in the status, and empty when the domain was added without a reports domain (or, hosted, is not connected yet).
-	// Hosted and not connected: the address Apply via Cloudflare would write and connect in one step is offered apart. A record to paste never gets
-	// it: reports sent for a domain that was never connected are refused.
-	const rua = hasReportAddress(status.rua_address) ? status.rua_address : cf_available && hasReportAddress(status.offered_rua_address) ? status.offered_rua_address! : null;
+	// Hosted with report intake: our address is written into a record only by Connect reports (the panel below, ADR 0020), which reads the record as it is
+	// now, so this step never builds a record that carries it and never sends one to apply-dmarc.
+	const reportsPanel = useReportIntakeEnabled();
+	const rua = hasReportAddress(status.rua_address) ? status.rua_address : null;
 	const lookupSeverity = dmarcSeverity(dmarc, dmarcFailed.length > 0);
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
@@ -81,9 +83,8 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 			onSuccess: (res) => {
 				setApplied(true);
 				setWritten(res);
-				const note = res.reports?.state === 'connected' ? 'Reports are connected.' : res.reports?.reason;
-				toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: `Waiting to show in public DNS. ${note ?? ''}`.trim() });
-				patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: res.reports?.state === 'connected', current_record: res.record } }));
+				toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: 'Waiting to show in public DNS.' });
+				patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: false, current_record: res.record } }));
 			},
 		});
 
@@ -137,7 +138,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 						</>
 					) : null}
 					{/* The record to publish comes first (FOLD-01, FOLD-02): where to add it and the sentences about it follow. */}
-					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
+					{(severity === 'error' || severity === 'warning') && recommended && !applied && reportsPanel && rua ? (
+						<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
+					) : (severity === 'error' || severity === 'warning') && recommended && !applied ? (
 						<div className="space-y-3">
 							{/* Apply writes this record itself: nothing to copy. Without Cloudflare it is the record to paste. */}
 							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
@@ -212,11 +215,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 					{applied && written ? (
 						<Alert variant="success" title="DMARC record written to Cloudflare">
 							<PublicDnsLive domain={status.domain} record={written.record} />
-							<p className="mt-2">
-								{written.reports?.state === 'connected'
-									? 'Reports are connected: nothing is left to set up. They start arriving within 24 hours of the record showing in public DNS.'
-									: written.reports?.reason ?? 'Reports are not connected for this name.'}
-							</p>
+							<p className="mt-2">Reports are not connected for this name.</p>
 						</Alert>
 					) : (severity === 'info' && !hostedNoReports && !recordProblem) ? (
 						<Alert variant="info" title="Reports are configured">

@@ -32,7 +32,7 @@ export const RUA_ADDRESS_LIMIT = 2;
 
 /** What to tell a person whose record already lists `count` addresses (two or more): the one wording of the rule, for every screen and plan ("two" is RUA_ADDRESS_LIMIT). */
 export const ruaLimitSentence = (count: number): string =>
-  `The record already lists ${count === 2 ? 'two' : count} report addresses. Receivers are only required to send reports to the first two, so ours is never added after them. Choose which of the first two it replaces, or leave the record as it is (reports then stay not connected).`;
+  `The record already lists ${count === 2 ? 'two' : count} report addresses. Receivers are only required to send reports to the first two, so ours is never added after them. Choose which of the first two it replaces, or leave the record as it is.`;
 
 /** The address part of one rua= entry: no `mailto:`, no `!size` limit, lower-cased (compared case-insensitively). */
 export function ruaEntryAddress(entry: string): string {
