@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useDomainId } from '../../app';
 import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
+import { ConnectReports } from '../../components/reports/ConnectReports';
 import { CopyField } from '../../components/domain/CopyField';
 import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { ApiError, api, errorMessage } from '../../lib/api';
@@ -161,7 +162,9 @@ function InfrastructureSection({ domain }: { domain: Domain }) {
 				</p>
 			) : (
 				<div className="space-y-2">
-					<p className="text-sm text-ink-2">Make this the domain that hosts the reports address for all your domains.</p>
+					<p className="text-sm text-ink-2">
+						Reports for all your domains are received at <span className="font-mono">reports.{domain.domain}</span> once this is the default domain: choose it instead of the current default, for example before you remove that one.
+					</p>
 					<WriteButton variant="secondary" loading={setDefault.isPending} onClick={() => setDefault.mutate()}>
 						Set as default domain
 					</WriteButton>
@@ -264,15 +267,19 @@ function Settings({ domain }: { domain: Domain }) {
 						{hasReportAddress(domain.rua_address) ? (
 							<CopyField label="RUA address" value={`rua=mailto:${domain.rua_address.trim()}`} />
 						) : (
-							<Info label="RUA address">{hosted ? 'Reports not connected yet: this domain has no Ready Set Mail report address.' : 'No reports address is configured for this domain.'}</Info>
+							<>
+								<Info label="RUA address">{hosted ? 'Reports not connected yet: this domain has no Ready Set Mail report address.' : 'No reports address is configured for this domain.'}</Info>
+								<ConnectReports domain={domain} bare />
+							</>
 						)}
 						<LiveDmarcRecord domain={domain} />
 					</CardContent>
 				</Card>
 			</Section>
 			<ExportSection domain={domain} />
-			<AlertsSection domain={domain} />
-			<InfrastructureSection domain={domain} />
+			{/* Hosted: no reports domain and no sender address of the install's own, which the alert emails and the default domain are built from. */}
+			{hosted ? null : <AlertsSection domain={domain} />}
+			{hosted ? null : <InfrastructureSection domain={domain} />}
 			<DangerZone domain={domain} />
 		</div>
 	);

@@ -74,7 +74,7 @@ export const EVENTS = {
   'Cloudflare Connect Returned': { path: PATHS, method: ['oauth', 'token'], result: ['connected', 'denied', 'failed'], zones: COUNT, accounts: COUNT },
   // ── Records ──
   'Apply Clicked': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], changes: COUNT },
-  'Apply Done': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], result: ['applied', 'partial', 'failed', 'nothing_to_do'], changes: COUNT, reports: ['connected', 'refused', 'limit', 'unavailable', 'none'] },
+  'Apply Done': { path: PATHS, step: ['dmarc', 'reports_mailbox', 'dmarc_record'], result: ['applied', 'partial', 'failed', 'nothing_to_do'], changes: COUNT, reports: ['connected', 'refused', 'none'] },
   'Records Live': { path: PATHS, records_by: RECORDS_BY, seen_by: SEEN_BY, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
   'First Report Received': { path: PATHS, records_by: RECORDS_BY, since_live: LONG_WAIT },
   'No Report After 3 Days': { domains_waiting: COUNT },

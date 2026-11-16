@@ -29,6 +29,7 @@ describe('protected value flows', () => {
     expect(protectedFlows.map(f => f.id).sort()).toEqual([
       'agent-connects-and-reads-report',
       'buy-fix-one-domain',
+      'connect-reports-cloudflare',
       'enable-mta-sts',
       'invited-teammate-joins',
       'signup-to-records-live-cloudflare',

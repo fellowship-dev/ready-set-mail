@@ -58,7 +58,7 @@ describe('planReportAddress', () => {
     expect(p).toEqual({ kind: 'add', name: '_dmarc.google.com', current: 'v=DMARC1; p=reject; rua=mailto:mailauth-reports@google.com', record: `v=DMARC1; p=reject; rua=mailto:mailauth-reports@google.com,mailto:${OURS}`, created: false });
   });
 
-  it('two addresses already → a choice: replace either one, or add a third knowingly; nothing is dropped silently', async () => {
+  it('two addresses already → a choice: replace either one of the first two; never a third, nothing is dropped silently', async () => {
     const rec = 'v=DMARC1; p=quarantine; rua=mailto:a@x.com,mailto:b@y.com';
     const p = await plan({ 'TXT _dmarc.two.test': [rec] }, 'two.test');
     expect(p?.kind).toBe('choose');
@@ -67,7 +67,6 @@ describe('planReportAddress', () => {
     expect(p.options).toEqual([
       { replaces: 'mailto:a@x.com', record: `v=DMARC1; p=quarantine; rua=mailto:${OURS},mailto:b@y.com` },
       { replaces: 'mailto:b@y.com', record: `v=DMARC1; p=quarantine; rua=mailto:a@x.com,mailto:${OURS}` },
-      { replaces: null, record: `v=DMARC1; p=quarantine; rua=mailto:a@x.com,mailto:b@y.com,mailto:${OURS}` },
     ]);
     for (const o of p.options) expect(parseDmarcRecord(o.record).policy).toBe('quarantine');
   });

@@ -4,6 +4,7 @@ import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/reac
 import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Info, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
+import { useDnsToolsOff } from '../../lib/hosted';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
 import { cardState, type CardState } from '../../lib/mta-sts';
@@ -117,7 +118,7 @@ function spfCard(id: number, s: SpfFlatStatus) {
 			title="SPF flattening"
 			badge={badge}
 			active={active}
-			activeText={`${s.config?.ip_count ?? '?'} IPs, re-resolved daily.`}
+			activeText={`${s.config?.ip_count ?? '?'} IPs, as resolved when it ran. Not updated when your providers change theirs.`}
 			inactiveText="Resolve SPF includes to raw IPs to stay under the 10-lookup limit."
 			configureTo={`/domains/${id}/spf-flatten`}
 			disablePath={`/api/domains/${id}/spf-flatten`}
@@ -174,12 +175,15 @@ const dnsToolsSummary = (spfListed: boolean) => (spfListed ? 'Optional tools for
 const spfListed = (q: UseQueryResult<SpfFlatStatus>) => q.isSuccess && (q.data.available || !!q.data.config);
 
 export function DnsTools({ domainId }: { domainId: number }) {
-	const spf = useSpfFlatten(domainId);
+	// Hosted: no SPF flattening (the routes are off there; a hosted-records domain's SPF is flattened by the hosted service). MTA-STS is shown everywhere with its real
+	// state: the server says whether it can be turned on here (the capability check) and, when it cannot, why.
+	const { spfOff } = useDnsToolsOff(domainId);
+	const spf = useSpfFlatten(domainId, !spfOff);
 	const mta = useMtaSts(domainId);
 	return (
 		<Section title="DNS tools" description={dnsToolsSummary(spfListed(spf))}>
 			<div className="grid gap-3 md:grid-cols-2">
-				<Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />
+				{spfOff ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />}
 				<Slot q={mta} title="MTA-STS" show={() => true} render={(d) => <MtaStsCard id={domainId} s={d} />} />
 			</div>
 		</Section>

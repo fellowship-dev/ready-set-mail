@@ -119,110 +119,52 @@ describe('HOSTED_CONNECT_REPORTS keeps its meaning', () => {
   });
 });
 
-describe('the apply-dmarc route (the per-domain Apply) on hosted', () => {
+describe('the apply-dmarc route on hosted never adds our address and never drops one that is published', () => {
   const apply1 = (w: World, record: string, token = w.A.token) => w.api(token, 'POST', '/api/domains/1/apply-dmarc', { record });
+  const seedLive = (w: World, content: string) => w.cf.seed(Z.a1, { id: 'c'.repeat(32), type: 'TXT', name: '_dmarc.a-corp.com', content });
 
-  it('adds the address to the record it is given and connects the domain', async () => {
+  it('a record that adds our address is refused with a pointer to Connect reports: nothing is written, nothing is connected', async () => {
     const w = await setup();
-    const res = await json(await apply1(w, 'v=DMARC1; p=none'));
-    expect(res).toMatchObject({ ok: true, record: `v=DMARC1; p=none; rua=mailto:${ADDRESS}`, reports: { state: 'connected', address: ADDRESS } });
-    expect(live(w)).toBe(`v=DMARC1; p=none; rua=mailto:${ADDRESS}`);
-    expect(row(w)).toMatchObject({ rua_address: ADDRESS });
+    seedLive(w, 'v=DMARC1; p=reject;');
+    const res = await apply1(w, `v=DMARC1; p=reject; rua=mailto:${ADDRESS}`);
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toMatch(/Connect reports/);
+    expect(live(w)).toBe('v=DMARC1; p=reject;');
+    expect(row(w)).toMatchObject({ rua_address: '', reports_connected_at: null });
+    expect((await apply1(w, `v=DMARC1; p=none; rua=mailto:${ADDRESS}`, w.admin)).status).toBe(409); // an admin of the same workspace, same rule
   });
 
-  it('keeps a foreign address and the policy, and never weakens a p=reject', async () => {
+  it('a record that drops a published address is refused: the address stays', async () => {
     const w = await setup();
-    w.cf.seed(Z.a1, { id: 'c'.repeat(32), type: 'TXT', name: '_dmarc.a-corp.com', content: 'v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example' });
-    const res = await json(await apply1(w, 'v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example'));
-    expect(res.record).toBe(`v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example,mailto:${ADDRESS}`);
+    seedLive(w, 'v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example');
+    const res = await apply1(w, 'v=DMARC1; p=reject');
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toMatch(/dmarc@vendor\.example/);
+    expect(live(w)).toBe('v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example');
   });
 
-  it('two foreign addresses: written as given, no third, not connected, and it says so', async () => {
+  it('a policy record that keeps what is published is still written, and reports stay as they were', async () => {
     const w = await setup();
-    const two = 'v=DMARC1; p=none; rua=mailto:a@one.example,mailto:b@two.example';
-    const res = await json(await apply1(w, two));
-    expect(res.record).toBe(two);
-    expect(res.reports.state).toBe('limit');
+    seedLive(w, 'v=DMARC1; p=none; rua=mailto:dmarc@vendor.example');
+    const res = await json(await apply1(w, 'v=DMARC1; p=quarantine; rua=mailto:dmarc@vendor.example'));
+    expect(res).toMatchObject({ ok: true, record: 'v=DMARC1; p=quarantine; rua=mailto:dmarc@vendor.example' });
+    expect(res.reports).toBeUndefined();
+    expect(live(w)).toBe('v=DMARC1; p=quarantine; rua=mailto:dmarc@vendor.example');
     expect(row(w)).toMatchObject({ rua_address: '' });
   });
 
-  it('a third address the caller appended is cut back to what was there, ours left out', async () => {
-    const w = await setup();
-    w.cf.seed(Z.a1, { id: 'c'.repeat(32), type: 'TXT', name: '_dmarc.a-corp.com', content: 'v=DMARC1; p=none; rua=mailto:a@one.example,mailto:b@two.example' });
-    const res = await json(await apply1(w, `v=DMARC1; p=none; rua=mailto:a@one.example,mailto:b@two.example,mailto:${ADDRESS}`));
-    expect(res.record).toBe('v=DMARC1; p=none; rua=mailto:a@one.example,mailto:b@two.example');
-    expect(res.reports.state).toBe('limit');
-  });
-
-  it('where reports are not admitted: written without the address, with the reason', async () => {
-    const w = await setup({ HOSTED_CONNECT_REPORTS: 'owner', OWNER_EMAIL: 'someone-else@example.com' });
-    const res = await json(await apply1(w, 'v=DMARC1; p=none', w.admin));
-    expect(res.record).toBe('v=DMARC1; p=none');
-    expect(res.reports).toMatchObject({ state: 'refused' });
-    expect(res.reports.reason).toMatch(/only the operator/);
-    expect(row(w)).toMatchObject({ rua_address: '' });
-  });
-
-  it('the setup status leaves the stored address alone and offers the connectable one apart, for Apply via Cloudflare only; refused workspaces are offered none', async () => {
-    const w = await setup();
-    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
-    expect(s.rua_address).toBe(''); // not connected: no hand-made record with it would be accepted at intake
-    expect(s.offered_rua_address).toBe(ADDRESS);
-    const blocked = await setup({ HOSTED_CONNECT_REPORTS: 'owner', OWNER_EMAIL: 'someone-else@example.com' });
-    const b = await json(await blocked.api(blocked.A.token, 'GET', '/api/domains/1/onboarding-status'));
-    expect(b.rua_address).toBe('');
-    expect(b.offered_rua_address).toBeNull();
-  });
-
-  it('with Cloudflare connected but the domain\'s zone not in it, no report address is offered: that Apply cannot write the record or connect the reports', async () => {
-    const w = await setup();
-    w.db.sqlite.prepare('UPDATE domains SET cf_connection_id = NULL WHERE id = 1').run(); // a connection exists, for other zones; this domain is not linked to it
-    w.cf.doh['_dmarc.a-corp.com'] = ['v=DMARC1; p=none; rua=mailto:someone-else@example.net'];
-    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
-    expect(s).toMatchObject({ cf_available: true, rua_address: '', offered_rua_address: null });
-    expect(JSON.stringify(s)).not.toContain(ADDRESS);
-    const linked = await json(await w.api(w.A.token, 'GET', '/api/domains/2/onboarding-status')); // the linked one still offers it
-    expect(linked.offered_rua_address).toBe(ADDRESS);
-  });
-
-  it('without Cloudflare nothing is offered, even when the record already lists our address: the domain was never connected', async () => {
-    const w = await world({ INTAKE_DOMAIN: INTAKE, HOSTED_CONNECT_REPORTS: 'all' });
-    w.db.sqlite.prepare("UPDATE domains SET verified_via = 'txt', rua_address = '' WHERE id = 3").run(); // B's domain: proven, no Cloudflare, not connected
-    w.cf.doh['_dmarc.b-corp.org'] = [`v=DMARC1; p=none; rua=mailto:${ADDRESS}`];
-    const s = await json(await w.api(w.B.token, 'GET', '/api/domains/3/onboarding-status'));
-    expect(s).toMatchObject({ rua_address: '', offered_rua_address: null, cf_available: false });
-    expect(s.dmarc.has_our_rua).toBe(false);
-    expect(await intakeLookups(w.env.DB).connectedForReport(['b-corp.org'], fixedReportAddress(INTAKE))).toBeNull(); // so a pasted record's reports would be refused
-  });
-
-  it('invariant: an address the status offers is accepted at intake once the Apply it is offered for has run, and is connected before the record carrying it is written', async () => {
-    const w = await setup();
-    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
-    expect(s.offered_rua_address).toBe(ADDRESS);
-    expect(await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE))).toBeNull(); // before: refused
-    const connectedAtWrite: string[] = [];
-    const prev = globalThis.fetch;
-    vi.stubGlobal('fetch', async (input: any, init?: any) => {
-      if (/dns_records/.test(String(input.url ?? input)) && ['POST', 'PUT', 'PATCH'].includes((init?.method ?? 'GET').toUpperCase()) && /_dmarc/.test(String(init?.body))) connectedAtWrite.push(row(w).rua_address);
-      return prev(input, init);
-    });
-    const res = await json(await w.api(w.A.token, 'POST', '/api/domains/1/apply-dmarc', { record: `v=DMARC1; p=none; rua=mailto:${s.offered_rua_address}` }));
-    expect(res.reports).toMatchObject({ state: 'connected' });
-    expect(connectedAtWrite).toEqual([ADDRESS]);
-    expect((await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE)))?.workspace_id).toBe(w.A.ws);
-  });
-
-  it('invariant, the plan apply: the domain is connected before the record is written', async () => {
-    const w = await setup();
-    const p = await plan(w);
-    const connectedAtWrite: string[] = [];
-    const prev = globalThis.fetch;
-    vi.stubGlobal('fetch', async (input: any, init?: any) => {
-      if (/dns_records/.test(String(input.url ?? input)) && ['POST', 'PUT', 'PATCH'].includes((init?.method ?? 'GET').toUpperCase()) && /_dmarc/.test(String(init?.body))) connectedAtWrite.push(row(w).rua_address);
-      return prev(input, init);
-    });
-    expect((await apply(w, p)).results).toEqual([{ id: 'dmarc:1', ok: true, verified: true, reports: 'connected' }]);
-    expect(connectedAtWrite).toEqual([ADDRESS]);
+  it('a workspace that is not admitted, or a domain that is not proven, can never get our address through apply-dmarc or the policy PATCH', async () => {
+    for (const [extra, prove] of [[{ HOSTED_CONNECT_REPORTS: 'owner', OWNER_EMAIL: 'someone-else@example.com' }, true], [{}, false]] as const) {
+      const w = await setup(extra);
+      if (!prove) w.db.sqlite.prepare("UPDATE domains SET verified_via = 'legacy' WHERE id = 1").run();
+      seedLive(w, 'v=DMARC1; p=none');
+      expect((await apply1(w, `v=DMARC1; p=none; rua=mailto:${ADDRESS}`)).status).toBe(409);
+      // Even when its stored address is ours (connected before the workspace was refused), the policy PATCH adds nothing.
+      w.db.sqlite.prepare('UPDATE domains SET rua_address = ? WHERE id = 1').run(ADDRESS);
+      const patched = await json(await w.api(w.A.token, 'PATCH', '/api/domains/1/dmarc', { policy: 'quarantine' }));
+      expect(patched.record).toBe('v=DMARC1; p=quarantine');
+      expect(live(w)).toBe('v=DMARC1; p=quarantine');
+    }
   });
 });
 
@@ -234,5 +176,139 @@ describe('public DNS re-read', () => {
     w.cf.doh['_dmarc.a-corp.com'] = [`v=DMARC1; p=none; rua=mailto:${ADDRESS}`];
     const after = await json(await w.api(w.A.token, 'GET', '/api/onboarding/dns-state?names=a-corp.com'));
     expect(after.states[0].dmarc).toMatchObject({ state: 'found', policy: 'none', record: `v=DMARC1; p=none; rua=mailto:${ADDRESS}` });
+  });
+});
+
+describe('the reports status the dashboard panel reads (GET /api/domains/:id/report-address)', () => {
+  const status = async (w: World, id = 1, token = w.A.token) => json(await w.api(token, 'GET', `/api/domains/${id}/report-address`));
+  const seedLive = (w: World, content: string) => w.cf.seed(Z.a1, { id: 'c'.repeat(32), type: 'TXT', name: '_dmarc.a-corp.com', content });
+
+  it('linked to a working Cloudflare connection and not connected: Apply reaches the zone, and the review is the record in the zone now and after, policy kept', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example');
+    w.cf.doh['_dmarc.a-corp.com'] = ['v=DMARC1; p=none']; // public DNS lags behind: Cloudflare's record is the one reviewed
+    const s = await status(w);
+    expect(s).toMatchObject({ state: 'not_connected', address: null, can_connect: true, apply_via_cloudflare: true });
+    expect(s.review).toMatchObject({
+      source: 'cloudflare',
+      name: '_dmarc.a-corp.com',
+      now: 'v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example',
+      outcome: { kind: 'write', action: 'update', after: `v=DMARC1; p=reject; rua=mailto:dmarc@vendor.example,mailto:${ADDRESS}` },
+    });
+    expect(s.review.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row(w)).toMatchObject({ rua_address: '' }); // reading the review connects nothing
+  });
+
+  it('p=reject with no rua= (the owner\'s case): the after-record is the same record with only our rua= added', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=reject;');
+    const s = await status(w);
+    expect(s.review.now).toBe('v=DMARC1; p=reject;');
+    expect(s.review.outcome.after).toMatch(/^v=DMARC1; p=reject;/);
+    expect(s.review.outcome.after).toContain(`rua=mailto:${ADDRESS}`);
+  });
+
+  it('two addresses already: the review is a choice between the first two, never a third address', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=quarantine; rua=mailto:a@one.example,mailto:b@two.example');
+    const o = (await status(w)).review.outcome;
+    expect(o.kind).toBe('choose');
+    expect(o.options.map((x: any) => x.replaces)).toEqual(['mailto:a@one.example', 'mailto:b@two.example']);
+    for (const x of o.options) expect(x.after.match(/mailto:/g)).toHaveLength(2);
+    expect(o.reason).toMatch(/first two/);
+  });
+
+  it('a domain not linked to the connection: no Apply, no review, and no record with the address is offered before the domain is connected', async () => {
+    const w = await setup();
+    w.db.sqlite.prepare('UPDATE domains SET cf_connection_id = NULL WHERE id = 1').run();
+    w.cf.doh['_dmarc.a-corp.com'] = ['v=DMARC1; p=reject;'];
+    const s = await status(w);
+    expect(s).toMatchObject({ can_connect: true, apply_via_cloudflare: false, review: null });
+    expect(JSON.stringify(s)).not.toContain(ADDRESS);
+  });
+
+  it('connected: the review stays, Apply still reaches the zone', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=reject;');
+    w.cf.doh['_dmarc.a-corp.com'] = ['v=DMARC1; p=reject;'];
+    expect((await w.api(w.A.token, 'POST', '/api/domains/1/report-address', {})).status).toBe(201);
+    const s = await status(w);
+    expect(s).toMatchObject({ state: 'not_published', address: ADDRESS, apply_via_cloudflare: true });
+    expect(s.review.outcome.kind).toBe('write');
+    expect(s.dns.plan.kind).toBe('add');
+  });
+
+  it('where reports cannot be connected: no Apply, no review', async () => {
+    const w = await setup({ HOSTED_CONNECT_REPORTS: 'owner', OWNER_EMAIL: 'someone-else@example.com' });
+    seedLive(w, 'v=DMARC1; p=reject;');
+    expect(await status(w)).toMatchObject({ can_connect: false, apply_via_cloudflare: false, review: null });
+  });
+
+  it('the setup status no longer offers an address to write: the write goes through Connect reports', async () => {
+    const w = await setup();
+    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/onboarding-status'));
+    expect(s.rua_address).toBe('');
+    expect(s).not.toHaveProperty('offered_rua_address');
+    expect(JSON.stringify(s)).not.toContain(ADDRESS);
+  });
+});
+
+describe('Apply: connect first, then write', () => {
+  const seedLive = (w: World, content: string) => w.cf.seed(Z.a1, { id: 'c'.repeat(32), type: 'TXT', name: '_dmarc.a-corp.com', content });
+  const apply1 = async (w: World, token = w.A.token, choice: unknown = { kind: 'add' }) => {
+    const hash = (await json(await w.api(w.A.token, 'GET', '/api/domains/1/report-address'))).review.hash;
+    return w.api(token, 'POST', '/api/domains/1/report-address/apply', { reviewed: hash, choice });
+  };
+
+  it('the domain is connected before the record carrying our address is written', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=none;');
+    expect(await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE))).toBeNull(); // before: refused
+    const connectedAtWrite: string[] = [];
+    const prev = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: any, init?: any) => {
+      if (/dns_records/.test(String(input.url ?? input)) && ['POST', 'PUT', 'PATCH'].includes((init?.method ?? 'GET').toUpperCase()) && /_dmarc/.test(String(init?.body))) connectedAtWrite.push(row(w).rua_address);
+      return prev(input, init);
+    });
+    const res = await json(await apply1(w));
+    expect(res).toMatchObject({ ok: true, wrote: true });
+    expect(connectedAtWrite).toEqual([ADDRESS]);
+    expect((await intakeLookups(w.env.DB).connectedForReport(['a-corp.com'], fixedReportAddress(INTAKE)))?.workspace_id).toBe(w.A.ws);
+  });
+
+  it('a write that fails after the domain was connected leaves it connected, says so, and a retry writes it', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=reject;');
+    const real = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+      if (/\/dns_records/.test(u.pathname) && ['POST', 'PATCH', 'PUT'].includes((init?.method ?? 'GET').toUpperCase())) return Response.json({ success: false, errors: [{ message: 'write refused' }] }, { status: 500 });
+      return real(input, init);
+    });
+    const res = await apply1(w);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect((await json(res)).error).toMatch(/write refused/);
+    expect(live(w)).toBe('v=DMARC1; p=reject;'); // nothing written
+    expect(row(w)).toMatchObject({ rua_address: ADDRESS }); // but connected, before the write
+    const s = await json(await w.api(w.A.token, 'GET', '/api/domains/1/report-address'));
+    expect(s).toMatchObject({ state: 'not_published', address: ADDRESS, apply_via_cloudflare: true });
+    expect(s.review.outcome.kind).toBe('write');
+    // The retry: the connection stays, the record is written.
+    vi.stubGlobal('fetch', real);
+    expect(await json(await apply1(w))).toMatchObject({ ok: true, wrote: true });
+    expect(live(w)).toBe(`v=DMARC1; p=reject; rua=mailto:${ADDRESS}`);
+    w.cf.doh['_dmarc.a-corp.com'] = [live(w)!];
+    expect((await json(await w.api(w.A.token, 'GET', '/api/domains/1/report-address'))).state).toBe('waiting');
+    expect(w.rows("SELECT action FROM audit_log WHERE action = 'reports.connect'")).toHaveLength(1);
+  });
+
+  it('read-only members cannot connect or apply: 403, nothing changes; they can read the status', async () => {
+    const w = await setup();
+    seedLive(w, 'v=DMARC1; p=reject;');
+    expect((await w.api(w.member, 'POST', '/api/domains/1/report-address', {})).status).toBe(403);
+    expect((await apply1(w, w.member)).status).toBe(403);
+    expect(live(w)).toBe('v=DMARC1; p=reject;');
+    expect(row(w)).toMatchObject({ rua_address: '' });
+    expect((await w.api(w.member, 'GET', '/api/domains/1/report-address')).status).toBe(200);
   });
 });

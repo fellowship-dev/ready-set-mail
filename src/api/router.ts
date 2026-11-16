@@ -87,7 +87,7 @@ import { handleBillingRoutes } from '../billing/routes';
 import { handleKeyRoutes, isKeyRoute } from '../auth/key-routes';
 import { handleHostedRoutes } from '../hosted/routes';
 import { handleReportAddressRoutes } from '../hosted/report-address-routes';
-import { ReportAddressError, connectReports, mergeReportAddress, reportAddressForWrite, reportConnectFor, reportConnectForPage, type ReportMerge } from '../hosted/report-address';
+import { policyWriteRua, reportAddressChangeIn, reportConnectFor, reportConnectForPage } from '../hosted/report-address';
 import { handleAnalyticsRoutes } from '../analytics/routes';
 import { reportVisibility, reportVisibilityMany, reporterMix } from '../reports/visibility';
 import { handleUnknownReporterRoutes } from '../reports/unknown-reporters';
@@ -143,6 +143,7 @@ import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/sp
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
+import { resolverFor } from '../dns/resolver';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -158,13 +159,24 @@ const CHECK_SESSION_WINDOW_MS = 3600_000;
 /**
  * Endpoints that act on the operator's own Cloudflare account (Email Routing, Workers custom domains) with the
  * instance token. On the hosted service they would run with a customer's connection token, widening what a
- * stolen session can do in that account, and no hosted customer needs them.
+ * stolen session can do in that account, and no hosted customer needs them. Also what only means something with
+ * the install's own reports domain: the default ("infrastructure hub") domain, and SPF flattening.
+ * `method` null: every method. (MTA-STS is not here: hosted-records domains use that route; the route itself refuses the rest in saas mode.)
  */
-const SELF_HOST_ONLY: ReadonlySet<string> = new Set([
-  'POST /api/setup/email-routing',
-  'POST /api/setup/custom-domain',
-  'POST /api/settings/register-destination',
-]);
+const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
+  { method: 'POST', path: /^\/api\/setup\/email-routing$/ },
+  { method: 'POST', path: /^\/api\/setup\/custom-domain$/ },
+  { method: 'POST', path: /^\/api\/settings\/register-destination$/ },
+  { method: 'PUT', path: /^\/api\/domains\/[^/]+\/set-default$/ },
+  // SPF flattening rewrites the customer's SPF in place and its daily refresh is not wired for the hosted service (hosted SPF has its own, src/hosted/spf.ts).
+  { method: null, path: /^\/api\/domains\/[^/]+\/spf-flatten(\/preview)?$/ },
+  // Monitoring alerts: the email is built from the workspace's own reports domain and sender address (src/monitor/notify.ts), which a hosted workspace has neither of,
+  // so the send fails after the baseline moved on (src/tenancy/load.ts derives both for self-host only).
+  { method: 'PATCH', path: /^\/api\/domains\/[^/]+\/alerts$/ },
+  { method: 'GET', path: /^\/api\/domains\/[^/]+\/monitor-subs$/ },
+  { method: 'PATCH', path: /^\/api\/monitor-subs\/[^/]+$/ },
+];
+const selfHostOnly = (method: string, path: string): boolean => SELF_HOST_ONLY.some((r) => (r.method === null || r.method === method) && r.path.test(path));
 
 const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'X-Content-Type-Options': 'nosniff',
@@ -736,7 +748,7 @@ async function _handleApi(
     return err('admin required', 403);
   }
 
-  if (getMode(env) === 'saas' && SELF_HOST_ONLY.has(`${method} ${path}`)) return err('not available on the hosted service', 404);
+  if (getMode(env) === 'saas' && selfHostOnly(method, path)) return err('not available on the hosted service', 404);
 
   // GET /api/me — who the caller is in this workspace (the dashboard gates controls on `role`)
   const instanceOwner = isInstanceOwner(env, { kind: (workspace as AuthedWorkspace).kind, email: userBySession?.email, role: workspace.role, workspaceId: workspace.workspaceId });
@@ -1026,7 +1038,7 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
 
       try {
-        const txt = await createResolver().txt(`_dmarc.${domain.domain}`);
+        const txt = await resolverFor(env).txt(`_dmarc.${domain.domain}`);
         // SERVFAIL / timeout / HTTP error / malformed answer: we don't know, so don't say "not found"
         if (txt.status === 'error') {
           return json({ found: false, has_rua: false, current_record: null, cf_managed: false, error: 'dns lookup failed' });
@@ -1078,7 +1090,7 @@ async function _handleApi(
       // Read-modify-write: a change made at the DNS provider between this read and the write below is overwritten (Cloudflare has
       // no conditional update). The daily DNS refresh re-reads the live record, so the stored policy is corrected even then.
       const before = live.kind === 'one' ? live.content : null;
-      const newRecord = withPolicy(before, policy as DmarcPolicy, domain.rua_address);
+      const newRecord = withPolicy(before, policy as DmarcPolicy, policyWriteRua(tenant, domain.rua_address));
       const problem = dmarcRecordProblem(newRecord);
       if (problem) {
         return err(`The DMARC record at ${recordName} cannot be updated safely: ${problem}. Fix it at your DNS provider, then try again.`, 409);
@@ -1119,7 +1131,7 @@ async function _handleApi(
 
       // Live DNS goes through the shared resolver: a DNS *error* is reported as such
       // (`dns_errors`), never as "record not found".
-      const dnsResolver = createResolver();
+      const dnsResolver = resolverFor(env);
       const dns_errors: string[] = [];
       // What this read resolved, stored below. A key stays unset when its lookup failed (unknown is never stored as absent).
       const resolved: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean } = {};
@@ -1261,18 +1273,10 @@ async function _handleApi(
       }
 
       const spfFlatConfig = await tenant.scope.spf.get(domain.id);
-      // Hosted, reports not connected yet but connectable, and Apply via Cloudflare is there: the address that write would carry, so the record shown is
-      // the record written. It is NOT the domain's report address: `rua_address` stays what is stored (empty until the reports are connected), because
-      // a record pasted by hand with that address would be refused at intake, the domain never having been connected. Only the apply connects it.
-      // Only when that Apply can actually run for THIS domain: a connection exists AND it manages the domain's zone (the domain is linked to it). With Cloudflare
-      // connected for other zones only, Apply cannot write the record or connect the reports, so no report address is named anywhere.
-      const applyReaches = tenant.hasCloudflare() && await tenant.cfFor(domain.domain).then(() => true, () => false);
-      const reportWrite = domain.rua_address?.trim() || !applyReaches ? null : await reportAddressForWrite(tenant, domain);
       return json({
         domain_id: domain.id,
         domain: domain.domain,
         rua_address: domain.rua_address,
-        offered_rua_address: reportWrite?.kind === 'ready' ? reportWrite.address : null,
         cf_available: tenant.hasCloudflare(),
         // `effective`: the policy that applies (RFC 7489), own or inherited from the organizational domain; null when DNS
         // could not say. The dashboard never offers a record weaker than this.
@@ -1332,20 +1336,17 @@ async function _handleApi(
       const body = await parseBody<{ record?: unknown }>(request);
       if (!body.record) return err('record content is required', 400);
       if (typeof body.record !== 'string') return err('record must be a string', 400);
-      let record = body.record.trim();
+      const record = body.record.trim();
       const problem = dmarcRecordProblem(record);
       if (problem) return err(`Not a valid DMARC record: ${problem}`, 400);
       // A later policy change (PATCH) rewrites p= and adds our rua= when missing: what that can grow to must fit the cap too, so a
       // record applied here is never refused there for its length. p=quarantine is the longest policy.
-      if (withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) {
+      const ruaForPolicy = policyWriteRua(tenant, domain.rua_address);
+      if (withPolicy(record, 'quarantine', ruaForPolicy).length > MAX_DMARC_RECORD_LENGTH) {
         return err(`Not a valid DMARC record: with our report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
       }
 
       const recordName = `_dmarc.${domain.domain}`;
-
-      // Hosted: whether reports can be connected for this domain decides whether our address is written (src/hosted/report-address.ts).
-      let reportPlan = await reportAddressForWrite(tenant, domain);
-      let reportMerge: ReportMerge | null = null;
 
       applyClicked(tenant, ctx, 'dmarc_record', 1);
       // The write goes to the zone this domain lives in, through the connection it is linked to.
@@ -1359,20 +1360,9 @@ async function _handleApi(
           return err(`${recordName} has ${live.count} DMARC records, so receivers ignore all of them. Keep one at your DNS provider, then try again.`, 409);
         }
         existing = live.kind === 'one' ? live : null;
-        // Hosted: the report address goes into the record being written, by the existing report-address rules.
-        if (reportPlan.kind === 'ready') {
-          const merged = mergeReportAddress(domain.domain, record, reportPlan.address, existing?.content ?? null);
-          // The domain is connected BEFORE the record that carries our address is written: that address never reaches DNS for a domain whose reports
-          // intake would refuse. (Two foreign addresses already there: ours is not added, so there is nothing to connect.) A refusal now, between the
-          // plan and the connect, is the plan's refusal: the record goes out without our address.
-          let connectRefused: string | null = null;
-          if (merged.outcome !== 'limit') {
-            try { await connectReports(tenant, domain, {}, { id: userBySession?.id, email: userBySession?.email }, ctx); } catch (e) { if (!(e instanceof ReportAddressError)) throw e; connectRefused = e.message; }
-          }
-          if (connectRefused !== null) reportPlan = { kind: 'refused', reason: connectRefused };
-          else { record = merged.record; reportMerge = merged.outcome; }
-        }
-        if (dmarcRecordProblem(record) || withPolicy(record, 'quarantine', domain.rua_address).length > MAX_DMARC_RECORD_LENGTH) return err(`Not a valid DMARC record: with the report address added it would be longer than ${MAX_DMARC_RECORD_LENGTH} characters`, 400);
+        // Hosted: this route never adds our report address and never drops one that is published (Connect reports does that: src/hosted/report-address.ts).
+        const refused = reportAddressChangeIn(tenant, existing?.content ?? null, record);
+        if (refused) return err(refused, 409);
         written = await writeDmarcRecord(cf, zoneId, domain.domain, existing?.record ?? null, record);
       } catch (e) {
         applyDone(tenant, ctx, { step: 'dmarc_record', changes: 1, failed: 1, reports: 'none', domainIds: [] });
@@ -1407,16 +1397,8 @@ async function _handleApi(
         }
       }
 
-      // What the write did about reports: the domain was connected before the write, so a record carrying our address is already accepted at intake.
-      type ReportsOutcome = { state: 'connected' | 'limit' | 'refused' | 'unavailable'; address?: string; reason?: string };
-      let reports: ReportsOutcome = reportPlan.kind === 'refused' ? { state: 'refused', reason: reportPlan.reason } : { state: 'unavailable' };
-      if (reportPlan.kind === 'ready') {
-        reports = reportMerge === 'limit'
-          ? { state: 'limit', address: reportPlan.address, reason: 'The record already lists two report addresses, so ours was not added. Choose which to replace under DMARC reports on the domain page.' }
-          : { state: 'connected', address: reportPlan.address };
-      }
-      applyDone(tenant, ctx, { step: 'dmarc_record', changes: 1, failed: 0, reports: reports.state, domainIds: [id] });
-      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id, reports });
+      applyDone(tenant, ctx, { step: 'dmarc_record', changes: 1, failed: 0, reports: 'none', domainIds: [id] });
+      return json({ ok: true, record, created: !existingId, auth_record_provisioned: authProvisioned || !!domain.dns_record_id });
     }
 
     // POST /api/spf-lookup-count — count real DNS lookups for an arbitrary SPF record
