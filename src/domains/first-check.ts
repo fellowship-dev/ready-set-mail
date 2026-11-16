@@ -35,7 +35,7 @@ export function snapshotFromPreview(p: ClaimPreview): DnsSnapshot {
  * facts came from, or null when nothing could be stored.
  */
 export async function recordFirstDnsCheck(
-  tenant: TenantContext, domainId: number, domain: string, opts: { resolver?: Resolver; now?: number } = {},
+  tenant: TenantContext, domainId: number, domain: string, opts: { resolver?: Resolver; now?: number; proven?: boolean } = {},
 ): Promise<'preview' | 'snapshot' | null> {
   try {
     const fresh = cachedPreview(domain, opts.now);
@@ -44,7 +44,7 @@ export async function recordFirstDnsCheck(
     // Only a complete read is stored: a half-answered one would turn "not checked yet" into "last check failed" on a domain
     // proven seconds ago. The daily refresh and the domain page read it again either way.
     if (found.spf_record === undefined || found.dmarc === undefined) return null;
-    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor((opts.now ?? Date.now()) / 1000), reports_address: await viaFor(tenant, domainId) });
+    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor((opts.now ?? Date.now()) / 1000), reports_address: await viaFor(tenant, domainId, opts.proven) });
     return fresh ? 'preview' : 'snapshot';
   } catch (e) {
     console.warn(`[domain.verified] first DNS check not stored for ${domain}:`, e instanceof Error ? e.message : e);
@@ -89,7 +89,7 @@ export async function reservePctRecheck(tenant: TenantContext, domainId: number,
 }
 
 /** The address this row's reports arrive at through its connected parent (none of its own), for the stored `dmarc_rua`. */
-async function viaFor(tenant: TenantContext, domainId: number): Promise<string | null> {
+async function viaFor(tenant: TenantContext, domainId: number, proven?: boolean): Promise<string | null> {
   const row = await tenant.scope.domains.getById(domainId);
-  return row ? reportsAddressVia(tenant, row) : null;
+  return row ? reportsAddressVia(tenant, row, { proven }) : null;
 }

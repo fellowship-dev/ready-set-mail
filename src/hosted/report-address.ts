@@ -108,8 +108,8 @@ async function refusalFrom(domain: ProofFacts, proven: () => boolean | Promise<b
 }
 
 /** Why this domain's reports cannot be connected, with its kind, or null. Hosted records are handled by the callers. */
-async function refusalOf(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<Refusal | null> {
-  return refusalFrom(domain, () => isDomainProven(tenant, domain), () => workspaceMay ?? workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId));
+async function refusalOf(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean, proven?: boolean): Promise<Refusal | null> {
+  return refusalFrom(domain, () => proven ?? isDomainProven(tenant, domain), () => workspaceMay ?? workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId));
 }
 
 /** The connect answer once the hosted-records fact and the refusal are known (shared by the one-domain and the page paths). */
@@ -136,11 +136,11 @@ export interface ReportConnect {
  * domain page decide each row from this. Null on an instance without hosted report intake (self-host: the deployment's
  * reports address is the one to publish). `workspaceMay`: HOSTED_CONNECT_REPORTS's answer for the workspace, when known.
  */
-export async function reportConnectFor(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<ReportConnect | null> {
+export async function reportConnectFor(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean, proven?: boolean): Promise<ReportConnect | null> {
   if (!hostedEnabled(tenant.env)) return null;
   if (!reportIntakeDomain(tenant.env)) return unavailable();
   if (await tenant.scope.hosted.get(domain.id)) return connectAnswer(true, null);
-  return connectAnswer(false, await refusalOf(tenant, domain, workspaceMay));
+  return connectAnswer(false, await refusalOf(tenant, domain, workspaceMay, proven));
 }
 
 /**
@@ -191,11 +191,14 @@ export async function reportsViaParent(tenant: TenantContext, domain: DomainRow,
   return row ? { domain_id: row.id, domain: row.domain } : null;
 }
 
-/** The address a row's reports arrive at when it has none of its own (through its connected parent), else null: what its DNS record is compared with. */
-export async function reportsAddressVia(tenant: TenantContext, domain: DomainRow): Promise<string | null> {
+/**
+ * The address a row's reports arrive at when it has none of its own (through its connected parent), else null: what its DNS record is compared with.
+ * `known.proven`: the caller has just proved the row (a bulk import), so its proof is not read again from the workspace's whole domain list.
+ */
+export async function reportsAddressVia(tenant: TenantContext, domain: DomainRow, known: { proven?: boolean } = {}): Promise<string | null> {
   const intakeDomain = reportIntakeDomain(tenant.env);
   if (!intakeDomain || domain.rua_address?.trim() || domainAncestry(domain.domain).length < 2) return null;
-  if (!(await reportConnectFor(tenant, domain))?.can_connect) return null;
+  if (!(await reportConnectFor(tenant, domain, undefined, known.proven))?.can_connect) return null;
   return (await reportsViaParent(tenant, domain, intakeDomain)) ? fixedReportAddress(intakeDomain) : null;
 }
 

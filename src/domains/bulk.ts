@@ -204,7 +204,7 @@ async function firstDnsChecks(
       if (used + (inFlight + 1) * DNS_LOOKUPS_PER_DOMAIN > budget) continue; // stays dns_checked: false
       inFlight++;
       try {
-        item.row.dns_checked = (await recordFirstDnsCheck(tenant, item.id, item.domain, { resolver })) !== null;
+        item.row.dns_checked = (await recordFirstDnsCheck(tenant, item.id, item.domain, { resolver, proven: true /* admitted above: no per-row read of the whole domain list */ })) !== null;
       } finally {
         inFlight--;
       }
