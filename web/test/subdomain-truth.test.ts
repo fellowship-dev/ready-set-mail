@@ -94,22 +94,25 @@ describe('B4: no SPF record at the name', () => {
 		expect(JSON.stringify(spf.detail)).not.toContain('Receivers cannot tell which servers may send for you');
 	});
 	const evidence = { from_messages: 100, from_dkim_aligned: 100, from_spf_at_name: 0, from_unjudged: 0 };
-	it('when the reports show none of its mail used the name as its SPF domain and all of it passed on aligned DKIM, no SPF record is not a fault and does not pull the level down', () => {
+	it('when the reports show none of its mail used the name as its SPF domain, no SPF record is not a fault and does not pull the level down', () => {
 		const a = assessDomain({ ...base, ...evidence });
 		expect(a.level).toBe(2);
 		expect(a.findings[0]).toMatchObject({ status: 'pass', label: 'No SPF record at this name, and none is needed' });
-		expect(String(a.findings[0]!.detail)).toBe('No SPF record at app.example.com. In the reports of the last 30 days all 100 messages sent as app.example.com passed DMARC on DKIM that aligns with it, and none used app.example.com as its SPF (return-path) domain, so SPF was checked at other names and none is needed here for that mail.');
+		expect(String(a.findings[0]!.detail)).toBe('No SPF record at app.example.com. In the reports of the last 30 days none of the 100 messages sent as app.example.com used app.example.com as its SPF (return-path) domain, so SPF was checked at other names and a record here would change the result of none of them.');
 		expect(a.next).toBeNull();
 	});
 	it.each([
 		['some of its mail used the name as its SPF domain', { ...evidence, from_spf_at_name: 1 }],
-		['some of its mail did not align on DKIM', { ...evidence, from_dkim_aligned: 99 }],
-		['some reports carry no verdict (stored before 0017)', { ...evidence, from_unjudged: 5 }],
 		['no mail was sent as the name', { ...evidence, from_messages: 0, from_dkim_aligned: 0 }],
 	])('the ladder applies as before when %s', (_why, e) => {
 		const a = assessDomain({ ...base, ...e });
 		expect(a.level).toBe(0);
 		expect(a.findings[0]!.status).toBe('missing');
+	});
+	it('the owner\'s live case: 40 messages through cf-bounce.app. and 9 unaligned ones elsewhere: no message used the name, so no SPF fault at app.', () => {
+		const a = assessDomain({ ...base, from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 0, from_unjudged: 0 });
+		expect(a.findings[0]).toMatchObject({ status: 'pass', label: 'No SPF record at this name, and none is needed' });
+		expect(String(a.findings[0]!.detail)).toContain('none of the 49 messages');
 	});
 	it('the domain verdict stops calling it "no SPF record" when DKIM alignment carries DMARC', () => {
 		const now = 1_800_000_000;

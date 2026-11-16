@@ -60,8 +60,8 @@ export function assessDomain(
 	const hasSpf = !!s.spf_record;
 	const spf = hasSpf ? spfFinding(s.spf_lookup_count) : null;
 	const spfUnknown = !hasSpf && nullMeans === 'unknown';
-	// No SPF record at this name is not a fault when the reports show none of its mail used the name as its SPF (return-path) domain and
-	// all of it passed on aligned DKIM (RFC 9989 section 3.2.4); otherwise the ladder applies as before.
+	// No SPF record at this name is not a fault when the reports show none of its mail used the name as its SPF (return-path) domain
+	// (RFC 7208 section 3, RFC 9989 section 3.2.4); otherwise the ladder applies as before.
 	const spfNotNeeded = !hasSpf && !spfUnknown && spfNotNeededAtName(s);
 	const spfWorks = (hasSpf && !spf!.broken) || spfNotNeeded;
 	const policy = s.dmarc_policy;

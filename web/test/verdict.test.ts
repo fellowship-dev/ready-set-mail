@@ -211,6 +211,14 @@ describe('domainActions: the live-read parts of Do this next', () => {
 		expect(k).toEqual(['attention:spf-missing', 'attention:dmarc-missing', 'unknown:dkim-unknown']);
 	});
 
+	it('no SPF step when the reports show no message used the name as its SPF domain (40 through cf-bounce.app., 9 unaligned elsewhere); one with no evidence', () => {
+		const noSpf = onboarding({ spf: { record: null, lookup_count: null, flattening_active: false } });
+		const evidence = (o: Partial<DomainCheckSummary>) => keys({ onboarding: noSpf, summary: summary({ ...passing(99), ...o }) });
+		expect(evidence({ from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 0, from_unjudged: 0 })).not.toContain('attention:spf-missing');
+		expect(evidence({ from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 2, from_unjudged: 0 })).toContain('attention:spf-missing');
+		expect(evidence({ from_messages: 0, from_spf_at_name: 0 })).toContain('attention:spf-missing');
+	});
+
 	it('SPF over ten lookups needs attention and points at flattening', () => {
 		const [a] = domainActions(input({ onboarding: onboarding({ spf: { record: 'v=spf1 include:a include:b ~all', lookup_count: 13, flattening_active: false } }) }));
 		expect(a).toMatchObject({ key: 'spf-lookups', status: 'attention', to: '/domains/1/spf-flatten' });

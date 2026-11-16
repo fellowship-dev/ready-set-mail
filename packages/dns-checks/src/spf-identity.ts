@@ -30,19 +30,20 @@ export interface FromEvidence {
 }
 
 /**
- * A missing SPF record at the From name is not a fault when the reports show it is not used: every counted message sent as the name
- * passed DMARC on aligned DKIM, and none of them used the name as its SPF (return-path) domain, so SPF was evaluated elsewhere
- * (RFC 7208 section 3, RFC 9989 section 3.2.4). Needs at least one message and a verdict for each; anything else leaves the ladder as it is.
+ * A missing SPF record at the From name is not a fault when the reports show SPF was never evaluated at it: not one counted message
+ * sent as the name used the name as its SPF (return-path) domain, so a record there would change the result of none of them
+ * (RFC 7208 section 3: SPF is checked per name, at the MAIL FROM domain; RFC 9989 section 3.2.4). Mail that failed with its return-path
+ * elsewhere (spoofing, a service with its own bounce domain) is the failing-senders items' business, not an SPF record at the From name.
+ * Needs at least one message; with none, the ladder applies as before.
  */
 export function spfNotNeededAtName(s: FromEvidence): boolean {
-  const total = s.from_messages ?? 0;
-  return total > 0 && (s.from_dkim_aligned ?? 0) === total && (s.from_spf_at_name ?? 0) === 0 && (s.from_unjudged ?? 0) === 0;
+  return (s.from_messages ?? 0) > 0 && (s.from_spf_at_name ?? 0) === 0;
 }
 
 /** No SPF record at `name`, and none is needed: the reports show where SPF was evaluated instead. Says exactly what the evidence shows. */
 export function noSpfNeededAtName(name: string, e: FromEvidence): string {
   const n = (e.from_messages ?? 0).toLocaleString('en-US');
-  return `No SPF record at ${name}. In the reports of the last 30 days all ${n} ${e.from_messages === 1 ? 'message' : 'messages'} sent as ${name} passed DMARC on DKIM that aligns with it, and none used ${name} as its SPF (return-path) domain, so SPF was checked at other names and none is needed here for that mail.`;
+  return `No SPF record at ${name}. In the reports of the last 30 days none of the ${n} ${e.from_messages === 1 ? 'message' : 'messages'} sent as ${name} used ${name} as its SPF (return-path) domain, so SPF was checked at other names and a record here would change the result of none of them.`;
 }
 
 /** The short next step for a name with no SPF record (a one-line slot). */
