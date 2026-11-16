@@ -84,4 +84,17 @@ describe('queries judge a record by its verdict only', () => {
     expect((await q.reports.checkSummary(id, 0))?.failed_not_yours).toBe(8);
     expect((await q.reports.checkSummaries(0, { limit: 10 }))[0]?.failed_not_yours).toBe(8);
   });
+
+  it('failed_unrecorded: the failed messages (report totals) of reports whose records have no recorded verdict', async () => {
+    const { q, id } = await seed([
+      { ip: '1.1.1.1', n: 8, spf: 'fail', dkim: 'fail', spfAligned: 0, dkimAligned: 0 },
+    ]);
+    // an older report in the window: stored without the verdict, 5 of its 15 messages failed
+    const old = await q.reports.insertAggregate({ domain_id: id, org_name: 'google', report_id: 'r-old', date_begin: NOW - 2 * 86400, date_end: NOW - 86400, total_count: 15, pass_count: 10, fail_count: 5, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'counted' });
+    await q.reports.insertRecords([{ report_id: Number(old.meta.last_row_id), source_ip: '9.9.9.9', count: 15, disposition: 'none', spf_result: 'fail', dkim_result: 'fail', spf_domain: null, dkim_domain: null, header_from: 'example.com' }]);
+    const s = await q.reports.checkSummary(id, 0);
+    expect(s?.failed_unrecorded).toBe(5);
+    expect(s?.failed_not_yours).toBe(8);
+    expect(s?.fail_messages).toBe(13);
+  });
 });

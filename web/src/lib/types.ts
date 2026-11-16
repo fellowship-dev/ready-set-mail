@@ -333,6 +333,8 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   pass_messages: number;
   /** Of the failing messages, those from servers that are not a known sending service and passed SPF or DKIM for no name of this domain (likelyNotYours). */
   failed_not_yours?: number;
+  /** Of the failing messages, those in reports stored before the receiver's verdict was kept: whose they are is not recorded. */
+  failed_unrecorded?: number;
   fail_messages: number;
   dkim_total: number;
   dkim_pass: number;

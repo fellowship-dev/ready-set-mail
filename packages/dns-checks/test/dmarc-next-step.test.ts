@@ -93,4 +93,26 @@ describe('dmarcSteps: failures that are only others\' mail', () => {
     expect(s[0]!.why).toContain('nothing to fix');
     expect(s[0]!.why).toContain('95%');
   });
+  it('p=reject, 8 recorded not-yours failures and 5 with no recorded verdict: no "Fix the senders", and the sentences say which is which', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 8, failedUnrecorded: 5 });
+    expect(s[0]!.key).toBe('done');
+    const note = s.find((x) => x.key === 'not-yours')!;
+    expect(note.do).toBe('Nothing to fix in the mail with a recorded verdict');
+    expect(note.why).toContain('Of the 13 messages that failed, 8 came from servers that are not a known sending service');
+    expect(note.why).toContain("likely mail pretending to be example.test, which p=reject asks receivers to reject. The other 5 are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.");
+    expect(s.some((x) => x.do.includes('Fix the senders'))).toBe(false);
+  });
+  it('nothing recorded as not-yours, only unrecorded failures: unchanged', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 0, failedUnrecorded: 13 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('a recorded failure that is yours keeps the senders step even with unrecorded ones', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 5, failedUnrecorded: 5 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('the gate with unrecorded failures says so too', () => {
+    const s = steps('none', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 8, failedUnrecorded: 5 });
+    expect(s[0]!.why).toContain("The other 5 are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.");
+    expect(s[0]!.why).toContain('If none of the failing senders is a service you use, there is nothing to fix for them;');
+  });
 });

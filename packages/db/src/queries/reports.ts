@@ -151,6 +151,8 @@ export interface DomainCheckSummary {
 	from_unjudged?: number;
 	/** Messages in the window whose verdict is 'failed' from sources that are likely not the domain's own (`likelyNotYours`): the evidence for "nothing to fix". */
 	failed_not_yours?: number;
+	/** Failed messages (report totals) of the window's counted reports whose records have no recorded verdict (stored before 0017 kept it, or not recoverable): whose they are is not recorded. */
+	failed_unrecorded?: number;
 	mta_sts_enabled: number; // 0 or 1
 	mta_sts_mode: string | null;
 	/** SPF DNS lookups at the last refresh (null: not counted). */
@@ -232,6 +234,7 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			COALESCE(ar.total, 0)     AS total_messages,
 			COALESCE(ar.pass, 0)      AS pass_messages,
 			COALESCE(ar.fail, 0)      AS fail_messages,
+			COALESCE(ar.fail_unrecorded, 0) AS failed_unrecorded,
 			COALESCE(rr.total, 0)     AS dkim_total,
 			COALESCE(rr.dkim_pass, 0) AS dkim_pass,
 			COALESCE(rr.total, 0)     AS spf_total,
@@ -244,7 +247,8 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			m.mode                    AS mta_sts_mode
 		FROM domains d
 		LEFT JOIN (
-			SELECT domain_id, SUM(total_count) AS total, SUM(pass_count) AS pass, SUM(fail_count) AS fail
+			SELECT domain_id, SUM(total_count) AS total, SUM(pass_count) AS pass, SUM(fail_count) AS fail,
+				SUM(CASE WHEN EXISTS (SELECT 1 FROM report_records r WHERE r.report_id = aggregate_reports.id AND ${verdictSql('r')} = 'not-recorded') THEN fail_count ELSE 0 END) AS fail_unrecorded
 			FROM aggregate_reports
 			WHERE workspace_id = ${A} AND date_begin >= ${since} AND ${C('aggregate_reports')}
 			GROUP BY domain_id

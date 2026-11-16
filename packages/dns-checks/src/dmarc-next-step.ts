@@ -177,6 +177,11 @@ export interface DmarcEvidence {
    * likely mail pretending to be this domain, not senders to fix. Absent or null: not known, failures are treated as yours.
    */
   failedNotYours?: number | null;
+  /**
+   * Of the window's failing messages, how many are in reports stored before the receiver's verdict was kept (no source is recorded
+   * for them, so they can be neither yours nor not yours). Absent or null: none.
+   */
+  failedUnrecorded?: number | null;
 }
 
 export interface ReportsRefusal {
@@ -342,14 +347,21 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
   // Every failing message came from servers that are not a known sending service and authenticated as no name of this domain.
   const failed = reports ? reports.total - reports.passed : 0;
-  const onlyOthers = failed > 0 && (ev.failedNotYours ?? 0) >= failed;
-  const othersWhy = `Every message that failed came from servers that are not a known sending service and passed SPF or DKIM for no name of ${name}: likely mail pretending to be ${name}`;
+  const notYours = ev.failedNotYours ?? 0;
+  const unrec = ev.failedUnrecorded ?? 0;
+  // Nothing recorded as not-yours: unchanged. Otherwise the failures are the recorded not-yours ones plus those with no recorded verdict.
+  const onlyOthers = failed > 0 && notYours > 0 && notYours + unrec >= failed;
+  /** The failures with no recorded source: what is left of `failed` once the not-yours ones are taken out (at most `unrec`). */
+  const unrecorded = onlyOthers ? failed - notYours : 0;
+  const likelySpoofed = `servers that are not a known sending service and passed SPF or DKIM for no name of ${name}: likely mail pretending to be ${name}`;
+  const othersWhy = unrecorded > 0 ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}` : `Every message that failed came from ${likelySpoofed}`;
+  const unrecordedWhy = unrecorded > 0 ? ` The other ${unrecorded} are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.` : '';
   const sendersStep = (status: StepStatus, why: string, threshold?: { next: string; pct: number }): DmarcStep => onlyOthers && threshold
-    ? { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}. If none of them is a service you use, there is nothing to fix; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
+    ? { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} If none of the failing senders is a service you use, there is nothing to fix for them; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
     : { key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' };
   const notYoursStep = (): DmarcStep => ({
-    key: 'not-yours', status: 'note', do: 'Nothing to fix', who: 'nobody', where: 'senders',
-    why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}. If one of them is a service you use, open the failing senders.`,
+    key: 'not-yours', status: 'note', do: unrecorded > 0 ? 'Nothing to fix in the mail with a recorded verdict' : 'Nothing to fix', who: 'nobody', where: 'senders',
+    why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}.${unrecordedWhy} If one of the failing senders is a service you use, open the failing senders.`,
   });
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
