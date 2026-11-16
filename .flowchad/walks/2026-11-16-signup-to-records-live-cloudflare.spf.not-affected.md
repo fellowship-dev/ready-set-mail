@@ -1,0 +1,7 @@
+# Not affected: signup-to-records-live-cloudflare
+
+- **Flow:** signup-to-records-live-cloudflare
+- **Changed:** `src/api/router.ts`, `web/src/components/domain/DnsRecords.tsx`, `web/src/components/domain/DnsTools.tsx`, `web/src/components/domain/SpfCard.tsx`, `web/src/pages/domains/DomainDetailPage.tsx`
+- **Reason:** This flow is hosted sign-up to records live. On the hosted service SPF flattening is an add-on that is off unless the operator sets HOSTED_SPF_FLATTENING for the workspace, so a person on this flow sees no change: no card, no next-step link, the routes answer 404. I walked that state on a local hosted instance (MODE=saas, sign-up through the three screens, Cloudflare connected with the fake token) at 375 and 1440 and searched the domain page for the SPF flattening card and the "Open SPF flattening" link: none; a typed /spf-flatten address says "SPF flattening is not available on the hosted service." (evidence: the steps "hosted, HOSTED_SPF_FLATTENING unset" in the spf-flattening walk record). `DnsRecords.tsx` changes one sentence of the state "flattening is on"; `router.ts` is the diff described in the other records (no sign-up, ownership, first-day or Cloudflare-connection route changes). The new screens belong to the new protected flow spf-flattening, which I walked.
+- **By:** Claude (Fable 5.2) for Max F. Findel, the SPF flattening pull request; reviewer to accept
+- **Date:** 2026-11-16
