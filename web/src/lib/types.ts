@@ -221,6 +221,8 @@ export interface MtaStsServed { ok: boolean | null; checked_at: number | null; r
 /** A policy being taken down the RFC 8461 section 8.3 way (a lost proof, a removed or an evicted domain). */
 export interface MtaStsRetiring { retiring: true; reason: 'lost_proof' | 'removed' | 'evicted'; enforced: boolean; until: number; message: string }
 
+export interface MtaStsEnforceCheck { key: 'days' | 'report' | 'failures' | 'mx' | 'served'; label: string; met: boolean; reasons: string[] }
+
 export interface MtaStsStatus {
   available: boolean;
   unavailable_reason: MtaStsUnavailable | 'none';
@@ -234,9 +236,9 @@ export interface MtaStsStatus {
   policy_host_status: { kind: 'worker_route' | 'saas_hostname'; hostname: string; route: boolean; certificate: { status: string | null; ssl_status: string | null; active: boolean } | null } | null;
   summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null;
   reports: MtaStsReport[];
-  enforce: { ready: boolean; allowed: boolean; reasons: string[] } | null;
+  enforce: { ready: boolean; allowed: boolean; reasons: string[]; /** The whole enforce rule, one line each, met or not now. */ checks?: MtaStsEnforceCheck[] } | null;
   /** The evidence rule in one sentence, the sentence about domains without reports, and how many reports in the last 30 days are evidence or not; `verifiable` false: this server cannot tell who sent a report. */
-  evidence?: { rule: string; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null;
+  evidence?: { rule: string; reporters?: string[]; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null;
   disable: { allowed: boolean; after: number | null; reason: string | null } | null;
   max_age: number;
   served?: MtaStsServed | null;

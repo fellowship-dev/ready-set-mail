@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, CardContent, StatusDot } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { CheckCircle2, Circle, Clock } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
@@ -14,9 +14,9 @@ import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useInvalidateDomain } from '../../lib/domain-queries';
 import { formatDate, formatDateTime } from '../../lib/format';
-import { EVIDENCE_SENTENCE, maxAgeWords, mtaStsExplainer, policyUrl, stateSentence } from '../../lib/mta-sts';
+import { ENFORCE_MAX_AGE, holdSentence, isStaleServed, maxAgeWords, senderNames, mtaStsExplainer, policyUrl, stateSentence } from '../../lib/mta-sts';
 import { useDomain } from '../../lib/queries';
-import type { MtaStsDisableResult, MtaStsStatus, MtaStsVerifyResult } from '../../lib/types';
+import type { MtaStsDisableResult, MtaStsEnforceCheck, MtaStsStatus, MtaStsVerifyResult } from '../../lib/types';
 
 const SETUP_STATES = ['creating', 'waiting_records', 'waiting_certificate', 'waiting_policy', 'waiting_txt'];
 /** While a setup waits for DNS or a certificate the page looks again by itself, for this long. */
@@ -118,6 +118,18 @@ export function MtaStsPage() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [waiting]);
 
+	// "Served" is the last fetch of the policy URL. When the page is opened and that fetch is old, look again once (the same check as the button), so a host that has
+	// stopped answering is not shown as served. Once per page view: a ref, not a render.
+	const refetched = useRef(false);
+	const reviewable = !!q.data?.config && !waiting && q.data.config.state === 'active';
+	const stale = reviewable && isStaleServed(q.data?.served, Math.floor(Date.now() / 1000));
+	useEffect(() => {
+		if (!stale || refetched.current || check.isPending) return;
+		refetched.current = true;
+		check.mutate();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [stale]);
+
 	let body: ReactNode;
 	if (removed) body = <RemovedResult result={removed} domain={name} back={back} via={q.data?.config?.via ?? null} />;
 	else if (q.isPending) body = <PageSkeleton label="Loading MTA-STS" />;
@@ -146,12 +158,13 @@ export function MtaStsPage() {
 			const setup = SETUP_STATES.includes(c.state);
 			const served = s.served ?? null;
 			const unreachable = !setup && served?.ok === false;
-			const isServed = !setup && served?.ok === true; // served is the last fetch of the policy URL and nothing else
-			const unproved = !setup && served?.ok == null; // a row from before the fetch existed: not looked at yet
+			const fresh = !isStaleServed(served, Math.floor(Date.now() / 1000));
+			const checking = !setup && !fresh && check.isPending; // an old result is being replaced: say so instead of claiming it
+			const isServed = !setup && served?.ok === true && fresh; // served is the last fetch of the policy URL, and only while it is recent
+			const unproved = !setup && !checking && (served?.ok == null || (served.ok && !fresh)); // never fetched, or too old to say, and not being looked at now
 			const checksAllOk = !!checked && checked.checks.every((k) => k.state === 'ok' || k.state === 'not_applicable');
 			const manualRecords = s.records.filter((r) => r.add_now);
 			const canEnforce = !!s.enforce?.allowed && !unreachable;
-			const primaryIsEnforce = !!s.enforce && isServed; // the primary action once the policy is served; before that it is Check now
 			body = (
 				<>
 					<Section
@@ -165,6 +178,7 @@ export function MtaStsPage() {
 					>
 						<p className="text-sm text-ink-1">{stateSentence(c.state, c.mode)}</p>
 						{isServed ? <StatusDot status="ok" label={`Served at ${policyUrl(name ?? '')}`} /> : null}
+						{checking ? <p className="text-sm text-ink-2">Checking that {policyUrl(name ?? '')} answers…</p> : null}
 						{unreachable ? <Alert variant="warning" title="The policy cannot be reached">{served?.message}</Alert> : null}
 						{c.last_error ? <Alert variant="warning" title="The last check had a problem">{c.last_error}</Alert> : null}
 						{c.notice ? (
@@ -199,19 +213,14 @@ export function MtaStsPage() {
 					{/* Enforce is not asked of a setup that is still waiting: its reasons would only say "setup is not finished". */}
 					{s.enforce && !setup ? (
 						<Section title="Enforce">
-							<WriteButton variant={primaryIsEnforce ? 'primary' : 'secondary'} disabled={!canEnforce} onClick={() => setDialog('enforce')}>
+							{/* Brand blue is for the one action that is available: a disabled Switch to enforce is secondary. */}
+							<WriteButton variant={canEnforce && !unproved ? 'primary' : 'secondary'} disabled={!canEnforce} onClick={() => setDialog('enforce')}>
 								Switch to enforce
 							</WriteButton>
 							{canEnforce ? null : (
 								<>
-									<ul aria-label="Not yet" className="list-disc space-y-1 pl-5 text-sm text-ink-2">
-										{s.enforce.reasons.map((r) => (
-											<li key={r}>{r}</li>
-										))}
-									</ul>
-									<p className="text-sm text-ink-2">
-										{EVIDENCE_SENTENCE} {s.evidence?.no_reports_note ?? 'A domain that receives no TLS reports can never switch to enforce.'}
-									</p>
+									<EnforceRule checks={s.enforce.checks} reasons={s.enforce.reasons} />
+									<p className="text-sm text-ink-2">{s.evidence?.no_reports_note ?? 'A domain that receives no TLS reports can never switch to enforce.'}</p>
 								</>
 							)}
 						</Section>
@@ -227,13 +236,14 @@ export function MtaStsPage() {
 						<Section title="TLS reports, last 30 days">
 							{s.summary && s.reports.length > 0 ? (
 								<p className="text-sm text-ink-2">
-									{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions, from {s.summary.report_count} {s.summary.report_count === 1 ? 'report' : 'reports'}.
+									{s.summary.sts_success.toLocaleString()} successful and {s.summary.sts_failure.toLocaleString()} failed sessions, from {s.summary.report_count} signed {s.summary.report_count === 1 ? 'report' : 'reports'}.
+									{s.summary.report_count > s.reports.length ? ` The newest ${s.reports.length} are listed.` : ''}
 								</p>
 							) : null}
 							<ReportList reports={s.reports} />
 							{s.evidence && s.evidence.uncounted_reports > 0 ? (
 								<p className="text-xs text-ink-2">
-									{s.evidence.uncounted_reports} {s.evidence.uncounted_reports === 1 ? 'report is' : 'reports are'} from other senders and not counted.
+									{s.evidence.uncounted_reports} more {s.evidence.uncounted_reports === 1 ? 'report arrived but is' : 'reports arrived but are'} not counted: sender not verified.
 								</p>
 							) : null}
 						</Section>
@@ -243,7 +253,7 @@ export function MtaStsPage() {
 						<div className="space-y-3">
 							<RecordList records={s.records} copyable={c.via === 'manual'} label="The three records" />
 							<p className="text-sm text-ink-2">
-								MX hosts in the policy: <span className="font-mono [overflow-wrap:anywhere]">{c.mx_host_list.join(', ')}</span>. Senders keep it up to {maxAgeWords(c.max_age)}.
+								MX hosts in the policy: <span className="font-mono [overflow-wrap:anywhere]">{c.mx_host_list.join(', ')}</span>. {holdSentence(c.max_age, c.mode === 'testing' ? s.disable?.after : null)}
 							</p>
 						</div>
 					</Disclosure>
@@ -259,7 +269,7 @@ export function MtaStsPage() {
 						open={dialog === 'enforce'}
 						onOpenChange={(o) => !o && (setDialog(null), mode.reset())}
 						title="Switch to enforce?"
-						description={`From now on, senders that cannot use an encrypted connection to ${name ?? 'your domain'} will not deliver the mail. The reports show they can; switching back to testing is always possible.`}
+						description={`From now on, senders that check MTA-STS deliver to ${name ?? 'your domain'} only over a verified encrypted connection to a listed MX host; they refuse otherwise. The evidence is signed reports from ${senderNames(s.evidence?.reporters)}: senders that send none are not covered. You can switch back to testing, but senders that fetched the enforce policy may keep it for up to ${maxAgeWords(ENFORCE_MAX_AGE)}.`}
 						confirmLabel="Switch to enforce"
 						busyLabel="Switching…"
 						busy={mode.isPending}
@@ -270,7 +280,7 @@ export function MtaStsPage() {
 						open={dialog === 'testing'}
 						onOpenChange={(o) => !o && (setDialog(null), mode.reset())}
 						title="Switch to testing?"
-						description={`Senders will deliver again even when they cannot use an encrypted connection, and keep reporting. Senders that already fetched the enforce policy keep it for up to ${maxAgeWords(c.max_age)}.`}
+						description={`Senders will deliver again even without a verified encrypted connection, and keep reporting. Senders that already fetched the enforce policy may keep it for up to ${maxAgeWords(c.max_age)}.`}
 						confirmLabel="Switch to testing"
 						busyLabel="Switching…"
 						busy={mode.isPending}
@@ -299,6 +309,35 @@ export function MtaStsPage() {
 			<WizardHeader backTo={back} title={name ? `MTA-STS for ${name}` : 'MTA-STS'} subtitle={mtaStsExplainer(name)} />
 			<ReadOnlyNotice />
 			{body}
+		</div>
+	);
+}
+
+/** The whole enforce rule, once, with each line met or missing now (the server decides; `reasons` is its own flat list for an older server). */
+function EnforceRule({ checks, reasons }: { checks?: MtaStsEnforceCheck[]; reasons: string[] }) {
+	if (!checks) {
+		return (
+			<ul aria-label="Not yet" className="list-disc space-y-1 pl-5 text-sm text-ink-2">
+				{reasons.map((r) => (
+					<li key={r}>{r}</li>
+				))}
+			</ul>
+		);
+	}
+	return (
+		<div className="space-y-2">
+			<p className="text-sm text-ink-1">To switch, all of these must be met:</p>
+			<ul aria-label="What enforce needs" className="space-y-2 text-sm">
+				{checks.map((k) => (
+					<li key={k.key} className="flex gap-2">
+						{k.met ? <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0 text-success" /> : <Circle aria-hidden className="mt-0.5 size-4 shrink-0 text-ink-3" />}
+						<span className={k.met ? 'text-ink-2' : 'text-ink-1'}>
+							<span className="font-medium">{k.met ? 'Met' : 'Missing'}:</span> {k.label}
+							{k.met ? null : <span className="block text-ink-2">{k.reasons.join(' ')}</span>}
+						</span>
+					</li>
+				))}
+			</ul>
 		</div>
 	);
 }

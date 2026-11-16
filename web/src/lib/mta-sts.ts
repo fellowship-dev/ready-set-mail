@@ -5,8 +5,34 @@ import type { MtaStsCheckState, MtaStsState, MtaStsStatus, MtaStsUnavailable } f
 export const mtaStsExplainer = (domain: string | null): string =>
 	`MTA-STS asks other mail servers to encrypt delivery to ${domain ?? 'your domain'} and to report how it went.`;
 
-/** The evidence rule, in one sentence (ADR 0021): the server's own sentence for the rule says the same; this is the short one the page shows. */
-export const EVIDENCE_SENTENCE = 'Only reports signed by a known sender, like Google or Microsoft, count.';
+/** "Google or Microsoft": the senders whose signed TLS reports count, as the server lists them (the registry's TLS identities, operator additions included). */
+export const senderNames = (labels: readonly string[] | undefined): string => {
+	const l = labels?.length ? labels : ['Google', 'Microsoft'];
+	return l.length < 2 ? l.join('') : `${l.slice(0, -1).join(', ')} or ${l[l.length - 1]}`;
+};
+
+/**
+ * How old the last fetch of the policy may be before the page looks again when it is opened. Basis: a record or a certificate change settles in a few minutes
+ * (the page itself says a certificate takes a few minutes), and the daily job is the only other fetch, so a result from a day ago says nothing about now.
+ * Bounded: once per page view, never on a re-render.
+ */
+export const SERVED_STALE_SECONDS = 600;
+
+export const isStaleServed = (served: { checked_at: number | null } | null | undefined, nowSec: number): boolean =>
+	!served || served.checked_at === null || nowSec - served.checked_at > SERVED_STALE_SECONDS;
+
+/** What a sender may keep an enforce policy for: `MAX_AGE_ENFORCE` in src/mta-sts/config.ts (a week). */
+export const ENFORCE_MAX_AGE = 604800;
+
+const utc = (sec: number): string => `${new Date(sec * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+
+/**
+ * How long senders may hold the policy, true for the mode AND for what came before it: after leaving enforce, a sender that fetched the enforce policy may
+ * keep it until the week is over (`disable.after`, the server's left_enforce_at + 604800), not for the testing policy's one day.
+ */
+export function holdSentence(maxAge: number, heldUntil: number | null | undefined): string {
+	return heldUntil ? `Senders that fetched the enforce policy may keep it until ${utc(heldUntil)}.` : `Senders keep it up to ${maxAgeWords(maxAge)}.`;
+}
 
 export const policyUrl = (domain: string): string => `https://mta-sts.${domain}/.well-known/mta-sts.txt`;
 
@@ -30,8 +56,8 @@ export function cardState(s: MtaStsStatus): { state: CardState; word: string; de
 	if (c?.enabled) {
 		if (c.state !== 'active') return { state: 'setting_up', word: 'Setting up', detail: stateSentence(c.state, c.mode) };
 		return c.mode === 'enforce'
-			? { state: 'enforced', word: 'Enforced', detail: 'Senders must use an encrypted connection to deliver to this domain.' }
-			: { state: 'testing', word: 'Testing', detail: 'Senders deliver as before and report problems with encryption.' };
+			? { state: 'enforced', word: 'Enforced', detail: 'Senders that check MTA-STS deliver only over a verified encrypted connection.' }
+			: { state: 'testing', word: 'Testing', detail: 'Senders deliver as before; those that send TLS reports tell you about problems.' };
 	}
 	if (!s.available) {
 		const reason = s.unavailable_reason === 'none' ? null : SHORT_REASON[s.unavailable_reason];
@@ -49,8 +75,8 @@ export function stateSentence(state: MtaStsState, mode: 'testing' | 'enforce'): 
 		case 'waiting_policy': return 'Waiting for the policy file to be reachable.';
 		case 'waiting_txt': return 'Waiting for the last record, the one that tells senders a policy exists.';
 		case 'active': return mode === 'enforce'
-			? 'Enforcing: senders that cannot encrypt do not deliver.'
-			: 'Testing: mail is delivered as before and problems are reported.';
+			? 'Enforcing: senders that check MTA-STS deliver only over a verified encrypted connection to a listed MX host.'
+			: 'Testing: mail is delivered as before, and senders that send TLS reports tell you about problems.';
 	}
 }
 

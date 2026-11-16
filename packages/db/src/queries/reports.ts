@@ -655,12 +655,15 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
       return { dmarc: source(dmarc, dmarcSummary, dmarcDates), tls: source(tls, tlsSummary, tlsDates) };
     },
 
-		/** The newest TLS reports of a domain (periods starting at or after `since`), for the MTA-STS page. No raw payloads. */
+		/**
+		 * The newest COUNTED TLS reports of a domain (authenticated, from a known reporter; periods starting at or after `since`), for the MTA-STS page. The page lists
+		 * what it counts and nothing else, so a stranger's reports can neither be mistaken for evidence nor crowd the real ones out of the LIMIT. No raw payloads.
+		 */
 		tlsRecent(domainId: number, since: number, limit: number) {
 			return db.all<TlsReportRow>(sql`
 				SELECT id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, reporter_tier, reporter_identity, created_at
 				FROM tls_reports
-				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since}
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND reporter_tier = 'counted'
 				ORDER BY date_begin DESC, id DESC LIMIT ${limit}`);
 		},
 
@@ -686,7 +689,8 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			return { counted: Number(rows[0]?.counted ?? 0), uncounted: Number(rows[0]?.uncounted ?? 0) };
 		},
 
-		async tlsSummary(domainId: number, since: number, until?: number) {
+		/** `countedOnly`: the sessions of the counted reports only, whatever REPORT_COUNTING says (the MTA-STS page: its sentence and its table are the same reports). */
+		async tlsSummary(domainId: number, since: number, until?: number, opts: { countedOnly?: boolean } = {}) {
 			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number }>(sql`
 				SELECT
 					COALESCE(SUM(total_success), 0) AS total_success,
@@ -695,7 +699,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 					COALESCE(SUM(sts_failure), 0) AS sts_failure,
 					COUNT(*) AS report_count
 				FROM tls_reports
-				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND ${C('tls_reports')}
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND ${opts.countedOnly ? sql`reporter_tier = 'counted'` : C('tls_reports')}
 				${until === undefined ? sql`` : sql`AND date_begin <= ${until}`}
 			`);
 			return rows[0] ?? null;

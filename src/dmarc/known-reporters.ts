@@ -188,6 +188,9 @@ export function parseOperatorEntries(raw: string | undefined): ParsedRegistry {
 }
 
 /** The built-in entries minus the disabled ones, plus the operator's. */
+/** The reporters whose signed TLS reports count (they have a TLS identity): today Google and Microsoft, plus what the operator added. For the words on the MTA-STS page. */
+export const tlsReporterLabels = (env: RegistryEnv): string[] => effectiveRegistry(env).filter((e) => e.tls).map((e) => e.label);
+
 export function effectiveRegistry(env: RegistryEnv): KnownReporter[] {
   const off = new Set((env.INTAKE_KNOWN_REPORTERS_DISABLE ?? '').split(/[\s,;]+/).map((t) => t.trim().toLowerCase()).filter(Boolean));
   return [...KNOWN_REPORTERS.filter((e) => !off.has(e.id)), ...parseOperatorEntries(env.INTAKE_KNOWN_REPORTERS).entries];

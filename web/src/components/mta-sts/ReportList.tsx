@@ -9,7 +9,7 @@ const types = (r: MtaStsReport) => (r.failure_types.length ? r.failure_types.map
 export function ReportList({ reports }: { reports: MtaStsReport[] }) {
 	if (reports.length === 0) {
 		return (
-			<EmptyState title="No TLS report yet" description="Senders usually send one a day after they deliver mail to you." />
+			<EmptyState title="No signed TLS report yet" description="Senders usually send one a day after they deliver mail to you." />
 		);
 	}
 	return (

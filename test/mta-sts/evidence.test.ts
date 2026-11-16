@@ -10,9 +10,45 @@ const cfg = (o: Partial<Parameters<typeof enforceReadiness>[0]> = {}) => ({
 const report = (o: Partial<EvidenceRow> = {}): EvidenceRow => ({ date_begin: NOW - 3 * DAY, date_end: NOW - 2 * DAY, sts_success: 40, sts_failure: 0, sts_failure_types: '[]', reporter_tier: 'counted', ...o });
 const MX = ['mx1.example.com', 'mx2.example.com'];
 
+describe('enforceReadiness: what is missing is said as it is', () => {
+  const reasonOf = (reports: EvidenceRow[], c = cfg()) => enforceReadiness(c, reports, MX, NOW).checks.find((k) => k.key === 'report')!.reasons;
+
+  it('no verified report at all', () => {
+    expect(reasonOf([])).toEqual(['No verified TLS report has arrived yet for this policy.']);
+    expect(reasonOf([report({ reporter_tier: 'unknown' }), report({ reporter_tier: 'unauthenticated' })])).toEqual(['No verified TLS report has arrived yet for this policy.']);
+  });
+
+  it('a verified report that ended before this policy was published (also after a switch back from enforce: the id changes)', () => {
+    const before = [report({ date_begin: NOW - 3 * DAY, date_end: NOW - 2 * DAY })];
+    expect(reasonOf(before, cfg({ policy_published_at: NOW - 3600, mode_changed_at: NOW - 10 * DAY }))).toEqual(['A verified report arrived, but it covers a period before this policy was published.']);
+  });
+
+  it('a verified report since the policy, without a successful session', () => {
+    expect(reasonOf([report({ sts_success: 0, sts_failure: 2, sts_failure_types: '["certificate-expired"]' })])).toEqual(['A verified report arrived for this policy, but it shows no successful session.']);
+  });
+
+  it('every line of the rule is a check, met or not, in the order of the reasons', () => {
+    const r = enforceReadiness(cfg({ mode_changed_at: NOW - 2 * DAY, state: 'waiting_certificate' }), [], ['other.example.net'], NOW);
+    expect(r.checks.map((k) => [k.key, k.met])).toEqual([['days', false], ['report', false], ['failures', true], ['mx', false], ['served', false]]);
+    expect(r.checks.flatMap((k) => k.reasons).sort()).toEqual([...r.reasons].sort());
+    expect(enforceReadiness(cfg(), [report()], MX, NOW).checks.every((k) => k.met)).toBe(true);
+  });
+
+  it('the senders named are the registry\'s, not "like Google or Microsoft"', () => {
+    const labels = enforceReadiness(cfg(), [], MX, NOW, { reporters: ['Google', 'Microsoft', 'Acme'] }).checks.find((k) => k.key === 'report')!.label;
+    expect(labels).toBe('A report signed by Google, Microsoft or Acme about this policy, with successful sessions');
+  });
+
+  it('a policy whose last fetch failed is not served: enforce is refused', () => {
+    const r = enforceReadiness({ ...cfg(), fetch_ok: 0 }, [report()], MX, NOW);
+    expect(r.checks.find((k) => k.key === 'served')).toMatchObject({ met: false, reasons: ['The policy cannot be reached right now.'] });
+    expect(r.ready).toBe(false);
+  });
+});
+
 describe('enforceReadiness', () => {
   it('is ready after 7+ days in testing, a report with successful MTA-STS sessions after publication, no blocking failures, and every MX a matching hostname', () => {
-    expect(enforceReadiness(cfg(), [report()], MX, NOW)).toEqual({ ready: true, reasons: [] });
+    expect(enforceReadiness(cfg(), [report()], MX, NOW)).toMatchObject({ ready: true, reasons: [] });
   });
 
   it('is already enforcing: nothing to do', () => {
@@ -35,7 +71,7 @@ describe('enforceReadiness', () => {
     // a report that ended before the policy was published says nothing about it
     expect(enforceReadiness(cfg(), [report({ date_end: NOW - 11 * DAY })], MX, NOW).ready).toBe(false);
     // failures only, no success
-    expect(enforceReadiness(cfg(), [report({ sts_success: 0, sts_failure: 3, sts_failure_types: '["starttls-not-supported"]' })], MX, NOW).reasons.join(' ')).toMatch(/No verified TLS report has arrived yet/);
+    expect(enforceReadiness(cfg(), [report({ sts_success: 0, sts_failure: 3, sts_failure_types: '["starttls-not-supported"]' })], MX, NOW).reasons).toContain('A verified report arrived for this policy, but it shows no successful session.');
     // sessions that are not MTA-STS (null = unknown on old rows, 0 = none) do not count
     expect(enforceReadiness(cfg(), [report({ sts_success: null })], MX, NOW).ready).toBe(false);
   });

@@ -37,7 +37,13 @@ function server() {
 			policy_host_status: { kind: 'saas_hostname', hostname: `mta-sts.${DOMAIN}`, route: true, certificate: { status: s.certActive ? 'active' : 'pending', ssl_status: s.certActive ? 'active' : 'pending_validation', active: s.certActive } },
 			summary: { total_success: s.reports.length * 50, total_failure: s.reports.length * 4, report_count: s.reports.length, sts_success: s.reports.length * 45, sts_failure: s.reports.length * 3 },
 			reports: s.reports,
-			enforce: s.state === 'testing' ? { ready: false, allowed: false, reasons: ['In testing for 1 of 7 days: 6 more.'] } : null,
+			enforce: s.state === 'testing' ? { ready: false, allowed: false, reasons: ['In testing for 1 of 7 days: 6 more.', 'No verified TLS report has arrived yet for this policy.'], checks: [
+				{ key: 'days', label: '7 days in testing', met: false, reasons: ['In testing for 1 of 7 days: 6 more.'] },
+				{ key: 'report', label: 'A report signed by Google or Microsoft about this policy, with successful sessions', met: s.reports.length > 0, reasons: s.reports.length > 0 ? [] : ['No verified TLS report has arrived yet for this policy.'] },
+				{ key: 'failures', label: 'No failures in signed reports in the last 14 days', met: true, reasons: [] },
+				{ key: 'mx', label: 'The MX hosts match the policy', met: true, reasons: [] },
+				{ key: 'served', label: 'The policy is served', met: true, reasons: [] },
+			] } : null,
 			served: s.state === 'testing' || s.state === 'enforce' ? { ok: true, checked_at: now() - 30, reason: null, message: null, action: null, url: `https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt` } : null,
 			evidence: { rule: 'x', no_reports_note: 'A domain that receives no TLS reports can never switch to enforce.', counted_reports: s.reports.length, uncounted_reports: 0, verifiable: true },
 			disable: s.state === 'enforce' ? { allowed: false, after: null, reason: 'Switch to testing first. Senders keep the enforce policy for up to 1 day; you can disable it after that.' } : { allowed: true, after: null, reason: null },
@@ -115,15 +121,18 @@ for (const width of [375, 1440]) {
 
 		// Check now: every check in place, and Testing, with no report yet.
 		await page.getByRole('button', { name: 'Check now' }).click();
-		await expect(page.getByText('Testing: mail is delivered as before and problems are reported.')).toBeVisible();
+		await expect(page.getByText('Testing: mail is delivered as before, and senders that send TLS reports tell you about problems.')).toBeVisible();
 		await expect(page.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Check now' })).toHaveCount(0); // served: nothing left to check by hand
-		await expect(page.getByText('No TLS report yet')).toBeVisible();
+		await expect(page.getByText('No signed TLS report yet')).toBeVisible();
 		await expect(page.getByText('Senders usually send one a day after they deliver mail to you.')).toBeVisible();
 		const enforce = page.getByRole('button', { name: 'Switch to enforce' });
 		await expect(enforce).toBeDisabled();
-		await expect(page.getByText('In testing for 1 of 7 days: 6 more.')).toBeVisible();
-		await expect(page.getByText(/Only reports signed by a known sender, like Google or Microsoft, count\./)).toBeVisible();
+		const rule = page.getByRole('list', { name: 'What enforce needs' });
+		await expect(rule.getByText('In testing for 1 of 7 days: 6 more.')).toBeVisible();
+		await expect(rule.getByText('A report signed by Google or Microsoft about this policy, with successful sessions')).toBeVisible();
+		await expect(rule.getByText('Met:')).toHaveCount(3);
+		await expect(rule.getByText('Missing:')).toHaveCount(2);
 		await expect(page.getByText('A domain that receives no TLS reports can never switch to enforce.')).toBeVisible();
 		// FOLD-01: the primary action is on the first screen
 		const box = await enforce.boundingBox();

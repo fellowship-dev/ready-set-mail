@@ -1,4 +1,4 @@
-// MTA-STS for one domain (ADR 0021): availability, the status a person reads, turning it on, checking it, changing its mode and turning it off.
+// MTA-STS for one domain (ADR 0026): availability, the status a person reads, turning it on, checking it, changing its mode and turning it off.
 //
 // One path for hosted and self-host: the three DNS records go into the CUSTOMER's zone (through their Cloudflare connection when one reaches the
 // zone, by hand otherwise) and the policy is served by this Worker on `mta-sts.<domain>`, reached the way src/mta-sts/policy-host.ts says.
@@ -28,8 +28,9 @@ import { getMode } from '../tenancy/mode';
 import {
   EVIDENCE_WINDOW_SECONDS, maxAgeFor, maxPolicyHosts, mtaStsHostedConfigured, policyHostConfig,
 } from './config';
-import { disableRule, enforceReadiness, EVIDENCE_RULE, NO_REPORTS_NOTE, maxAgeWords, splitHosts, type Readiness } from './evidence';
+import { disableRule, enforceReadiness, evidenceRule, NO_REPORTS_NOTE, maxAgeWords, splitHosts, type Readiness } from './evidence';
 import { authservConfigured } from '../dmarc/reporter-auth';
+import { tlsReporterLabels } from '../dmarc/known-reporters';
 import { policyText, servedMode } from './serve';
 import { OperatorZone, policyHostname, strategyFor, type PolicyHostStrategy } from './policy-host';
 import { retiringView } from './retire';
@@ -216,25 +217,26 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
   let reports: ReturnType<typeof reportView>[] = [];
   let summary: { total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number } | null = null;
   let enforce: (Readiness & { allowed: boolean }) | null = null;
-  let evidence: { rule: string; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null = null;
+  let evidence: { rule: string; reporters: string[]; no_reports_note: string; counted_reports: number; uncounted_reports: number; verifiable: boolean } | null = null;
   const verifiable = authservConfigured(tenant.env);
   let disable: ReturnType<typeof disableRule> | null = null;
   if (row) {
     const since30 = now - 30 * 86400;
     const [recent, totals, counted, counts] = await Promise.all([
       tenant.scope.reports.tlsRecent(domain.id, since30, 20),
-      tenant.scope.reports.tlsSummary(domain.id, since30),
+      tenant.scope.reports.tlsSummary(domain.id, since30, undefined, { countedOnly: true }),
       tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS),
       tenant.scope.reports.tlsCounts(domain.id, since30),
     ]);
-    evidence = { rule: EVIDENCE_RULE, no_reports_note: NO_REPORTS_NOTE, counted_reports: counts.counted, uncounted_reports: counts.uncounted, verifiable };
+    const reporters = tlsReporterLabels(tenant.env);
+    evidence = { rule: evidenceRule(reporters), reporters, no_reports_note: NO_REPORTS_NOTE, counted_reports: counts.counted, uncounted_reports: counts.uncounted, verifiable };
     reports = recent.map(reportView);
     summary = {
       total_success: totals?.total_success ?? 0, total_failure: totals?.total_failure ?? 0, report_count: totals?.report_count ?? 0,
       sts_success: totals?.sts_success ?? 0, sts_failure: totals?.sts_failure ?? 0,
     };
     if (row.mode === 'testing') {
-      const ready = enforceReadiness(row, counted, mx.status === 'ok' ? mx.hosts : null, now, { verifiable });
+      const ready = enforceReadiness(row, counted, mx.status === 'ok' ? mx.hosts : null, now, { verifiable, reporters });
       enforce = { ...ready, allowed: ready.ready };
     }
     disable = disableRule(row, now);
@@ -634,7 +636,7 @@ export async function changeMode(c: Ctx, mode: 'testing' | 'enforce'): Promise<R
   const now = nowSeconds();
   if (mode === 'enforce') {
     const [reports, mx] = await Promise.all([tenant.scope.reports.tlsEvidence(domain.id, now - EVIDENCE_WINDOW_SECONDS), readMx(domain.domain, resolverFor(tenant.env))]);
-    const ready = enforceReadiness(row, reports, mx.status === 'ok' ? mx.hosts : null, now, { verifiable: authservConfigured(tenant.env) });
+    const ready = enforceReadiness(row, reports, mx.status === 'ok' ? mx.hosts : null, now, { verifiable: authservConfigured(tenant.env), reporters: tlsReporterLabels(tenant.env) });
     if (!ready.ready) return fail(422, `MTA-STS cannot enforce yet: ${ready.reasons.join(' ')}`, { code: 'mta_sts_not_ready', reasons: ready.reasons });
   }
   const newId = nextPolicyId(row.policy_id);

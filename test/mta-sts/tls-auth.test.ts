@@ -145,8 +145,8 @@ describe('a TLS report is authenticated before it can count (RFC 8460 section 3)
     await armed(w);
     const view = await w.json(await w.mta(w.A.token, 'GET', 1));
     expect(view.evidence).toEqual({
-      rule: 'Enforce needs one TLS report signed by a known sender (Google or Microsoft) about the current policy, with successful sessions and no failure that would block mail in the last 14 days.',
-      no_reports_note: 'A domain that receives no TLS reports can never switch to enforce.', counted_reports: 0, uncounted_reports: 0, verifiable: true,
+      rule: 'Enforce needs one TLS report signed by Google or Microsoft about the current policy, with successful sessions and no failure that would block mail in the last 14 days.',
+      reporters: ['Google', 'Microsoft'], no_reports_note: 'A domain that receives no TLS reports can never switch to enforce.', counted_reports: 0, uncounted_reports: 0, verifiable: true,
     });
   });
 

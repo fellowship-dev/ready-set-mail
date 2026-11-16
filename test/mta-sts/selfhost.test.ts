@@ -154,13 +154,14 @@ describe('self-host: TLS reports are authenticated before they can count', () =>
     return { ...w, gate };
   }
 
-  it('with AUTHSERV_* unset (every existing install) reports are stored and shown, none can unlock enforce, and the page can say why', async () => {
+  it('with AUTHSERV_* unset (every existing install) reports are stored but not listed or summed, none can unlock enforce, and the page can say why', async () => {
     const w = await enabled();
     expect((await deliver(w, GOOGLE, report(GOOGLE, 40), false)).setReject).not.toHaveBeenCalled();
     expect(w.rows('SELECT reporter_tier, reporter_auth, total_success FROM tls_reports')).toEqual([{ reporter_tier: 'unauthenticated', reporter_auth: 'none', total_success: 40 }]);
     const view = (await (await w.mta('GET')).json()) as any;
-    expect(view.summary).toMatchObject({ total_success: 40, report_count: 1 }); // the numbers follow REPORT_COUNTING=all
-    expect(view.reports[0]).toMatchObject({ counted: false });
+    // The page's sentence and its table are one set: the counted reports. An unverified report is one separate sentence ("not counted: sender not verified"), whatever REPORT_COUNTING says.
+    expect(view.summary).toMatchObject({ total_success: 0, report_count: 0 });
+    expect(view.reports).toEqual([]);
     expect(view.evidence).toMatchObject({ counted_reports: 0, uncounted_reports: 1, verifiable: false });
     expect(view.enforce.allowed).toBe(false);
     expect(view.enforce.reasons.join(' ')).toMatch(/cannot tell who sent a report/);
@@ -179,7 +180,7 @@ describe('self-host: TLS reports are authenticated before they can count', () =>
     expect(w.rows("SELECT COUNT(*) AS n FROM tls_reports WHERE reporter_tier = 'counted'")).toEqual([{ n: 1 }]);
   });
 
-  it('REPORT_COUNTING=all changes the numbers, never the gate; the same report twice counts once', async () => {
+  it('REPORT_COUNTING=all changes the DMARC numbers, never the MTA-STS page or the gate; the same report twice counts once', async () => {
     const w = await enabled({ AUTHSERV_ID: 'mx.cloudflare.net', AUTHSERV_HEADER: 'ar', REPORT_COUNTING: 'all' });
     const json = report(STRANGER, 500);
     await deliver(w, STRANGER, json);

@@ -27,8 +27,7 @@ test('an unsigned TLS report is shown but never unlocks enforce', async ({ page,
 	expect(sent.status(), await sent.text()).toBeLessThan(300);
 
 	const status = await (await page.request.get(`/api/domains/${id}/mta-sts`)).json();
-	expect(status.reports).toHaveLength(1);
-	expect(status.reports[0]).toMatchObject({ counted: false, sts_successful_sessions: 900 });
+	expect(status.reports).toHaveLength(0); // the page lists and sums what it counts; the unverified one is a count of its own
 	expect(status.evidence).toMatchObject({ counted_reports: 0, uncounted_reports: 1 });
 	expect(status.enforce.allowed).toBe(false);
 	const refused = await page.request.patch(`/api/domains/${id}/mta-sts`, { data: { mode: 'enforce' }, headers: { Origin: baseURL! } });
@@ -36,5 +35,5 @@ test('an unsigned TLS report is shown but never unlocks enforce', async ({ page,
 
 	await page.goto(`/#/domains/${id}/mta-sts`);
 	await expect(page.getByRole('button', { name: 'Switch to enforce' })).toBeDisabled();
-	await expect(page.getByText('1 report is from other senders and not counted.')).toBeVisible();
+	await expect(page.getByText('1 more report arrived but is not counted: sender not verified.')).toBeVisible();
 });

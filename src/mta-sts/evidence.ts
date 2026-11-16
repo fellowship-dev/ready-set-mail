@@ -14,15 +14,22 @@ export const BLOCKING_FAILURE_TYPES: readonly string[] = [
 export interface EvidenceRow { date_begin: number; date_end: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; reporter_tier: string | null }
 
 /**
- * The evidence rule, in one sentence (shown on the page and decided in ADR 0021): ONE counted report is enough. A counted report is authenticated (a valid DKIM
+ * The evidence rule, in one sentence (shown on the page and decided in ADR 0026): ONE counted report is enough. A counted report is authenticated (a valid DKIM
  * signature by the reporting domain, RFC 8460 section 3) and from a known reporter (src/dmarc/known-reporters.ts: today Google or Microsoft), so it can only be
  * forged by forging that reporter's signature; a second reporter would add coverage, not authenticity, and requiring both would lock out the many small domains
  * that receive mail from only one of them.
  */
 export const NO_REPORTS_NOTE = 'A domain that receives no TLS reports can never switch to enforce.';
-export const EVIDENCE_RULE = 'Enforce needs one TLS report signed by a known sender (Google or Microsoft) about the current policy, with successful sessions and no failure that would block mail in the last 14 days.';
 
-export interface Readiness { ready: boolean; reasons: string[] }
+/** "Google or Microsoft", "Google, Microsoft or Acme": the senders whose signed TLS reports count (the registry's TLS identities, operator additions included). */
+export const senderNames = (labels: readonly string[]): string => (labels.length < 2 ? labels.join('') : `${labels.slice(0, -1).join(', ')} or ${labels[labels.length - 1]}`);
+
+export const evidenceRule = (labels: readonly string[]): string =>
+  `Enforce needs one TLS report signed by ${senderNames(labels)} about the current policy, with successful sessions and no failure that would block mail in the last 14 days.`;
+
+/** One line of the enforce rule: what is needed, whether it is met now, and why not (the same sentences as `reasons`). */
+export interface EnforceCheck { key: 'days' | 'report' | 'failures' | 'mx' | 'served'; label: string; met: boolean; reasons: string[] }
+export interface Readiness { ready: boolean; reasons: string[]; checks: EnforceCheck[] }
 
 export const splitHosts = (csv: string | null | undefined): string[] => (csv ?? '').split(',').map((h) => h.trim()).filter(Boolean);
 
@@ -42,25 +49,36 @@ const days = (s: number) => Math.round(s / 86400);
  *  - no failure of a blocking type in the counted reports of the last EVIDENCE_WINDOW_SECONDS that ended after that publication;
  *  - every MX host is a hostname (not an address) and matches the policy's mx list (`liveMx` is today's MX list, null when it could not be read).
  */
-export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'>, allReports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number, opts: { verifiable?: boolean } = {}): Readiness {
-  const reasons: string[] = [];
+export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'> & { fetch_ok?: number | null }, allReports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number, opts: { verifiable?: boolean; reporters?: readonly string[] } = {}): Readiness {
   const reports = allReports.filter((r) => r.reporter_tier === 'counted');
-  if (cfg.mode === 'enforce') return { ready: false, reasons: ['It is already enforcing.'] };
-  if (cfg.state !== 'active') reasons.push('Setup is not finished.');
+  const served: string[] = [], days_: string[] = [], report: string[] = [], failures: string[] = [], mx: string[] = [];
+  const checks = (): EnforceCheck[] => [
+    { key: 'days', label: `${days(ENFORCE_AFTER_SECONDS)} days in testing`, met: !days_.length, reasons: days_ },
+    { key: 'report', label: `A report signed by ${senderNames(opts.reporters ?? ['Google', 'Microsoft'])} about this policy, with successful sessions`, met: !report.length, reasons: report },
+    { key: 'failures', label: `No failures in signed reports in the last ${days(EVIDENCE_WINDOW_SECONDS)} days`, met: !failures.length, reasons: failures },
+    { key: 'mx', label: 'The MX hosts match the policy', met: !mx.length, reasons: mx },
+    { key: 'served', label: 'The policy is served', met: !served.length, reasons: served },
+  ];
+  if (cfg.mode === 'enforce') return { ready: false, reasons: ['It is already enforcing.'], checks: checks() };
+  if (cfg.state !== 'active') served.push('Setup is not finished.');
+  else if (cfg.fetch_ok === 0) served.push('The policy cannot be reached right now.');
 
   const inTesting = cfg.mode_changed_at ? now - cfg.mode_changed_at : 0;
   if (inTesting < ENFORCE_AFTER_SECONDS) {
     const left = Math.max(1, Math.ceil((ENFORCE_AFTER_SECONDS - inTesting) / 86400));
-    reasons.push(`In testing for ${Math.floor(inTesting / 86400)} of ${days(ENFORCE_AFTER_SECONDS)} days: ${left} more.`);
+    days_.push(`In testing for ${Math.floor(inTesting / 86400)} of ${days(ENFORCE_AFTER_SECONDS)} days: ${left} more.`);
   }
 
   const published = cfg.policy_published_at;
   const since = Math.max(now - EVIDENCE_WINDOW_SECONDS, published ?? 0);
-  if (published === null) reasons.push('The policy id is not published yet.');
+  if (published === null) report.push('The policy id is not published yet.');
   else if (!reports.some((r) => r.date_end > published && (r.sts_success ?? 0) > 0)) {
-    reasons.push(opts.verifiable === false
+    // Say which of the three it is: nothing verified at all, only a period from before this policy, or a period since without a successful session.
+    report.push(opts.verifiable === false
       ? 'This server cannot tell who sent a report (AUTHSERV_ID and AUTHSERV_HEADER are not set), so none counts.'
-      : 'No verified TLS report has arrived yet for this policy.');
+      : reports.length === 0 ? 'No verified TLS report has arrived yet for this policy.'
+      : reports.every((r) => r.date_end <= published) ? 'A verified report arrived, but it covers a period before this policy was published.'
+      : 'A verified report arrived for this policy, but it shows no successful session.');
   }
   const failed = new Set<string>();
   let unexplained = 0;
@@ -70,25 +88,28 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
     blocking.forEach((t) => failed.add(t));
     if ((r.sts_failure ?? 0) > 0 && blocking.length === 0 && parseTypes(r.sts_failure_types).length === 0) unexplained++;
   }
-  if (failed.size) reasons.push(`TLS failures in the last ${days(EVIDENCE_WINDOW_SECONDS)} days: ${[...failed].sort().join(', ')}.`);
-  if (unexplained) reasons.push(`${unexplained} ${unexplained === 1 ? 'report counts' : 'reports count'} failed sessions without saying why.`);
+  if (failed.size) failures.push(`TLS failures in the last ${days(EVIDENCE_WINDOW_SECONDS)} days: ${[...failed].sort().join(', ')}.`);
+  if (unexplained) failures.push(`${unexplained} ${unexplained === 1 ? 'report counts' : 'reports count'} failed sessions without saying why.`);
 
   const stored = splitHosts(cfg.mx_hosts);
   const ips = stored.filter(isIpLiteral);
-  if (ips.length) reasons.push(`MX ${ips.length === 1 ? 'host' : 'hosts'} ${ips.join(', ')} ${ips.length === 1 ? 'is an address' : 'are addresses'}: a certificate cannot match an address, so senders would refuse mail.`);
-  if (liveMx === null) reasons.push('The MX hosts could not be read just now; try again in a moment.');
-  else if (liveMx.length === 0) reasons.push('The domain has no MX records.');
+  if (ips.length) mx.push(`MX ${ips.length === 1 ? 'host' : 'hosts'} ${ips.join(', ')} ${ips.length === 1 ? 'is an address' : 'are addresses'}: a certificate cannot match an address, so senders would refuse mail.`);
+  if (liveMx === null) mx.push('The MX hosts could not be read just now; try again in a moment.');
+  else if (liveMx.length === 0) mx.push('The domain has no MX records.');
   else {
     const loose = liveMx.filter((h) => !stored.some((p) => mxMatchesPattern(h, p)));
-    if (loose.length) reasons.push(`MX ${loose.length === 1 ? 'host' : 'hosts'} ${loose.join(', ')} ${loose.length === 1 ? 'is' : 'are'} not in the published policy yet: refresh the MX hosts and wait for new reports.`);
+    if (loose.length) mx.push(`MX ${loose.length === 1 ? 'host' : 'hosts'} ${loose.join(', ')} ${loose.length === 1 ? 'is' : 'are'} not in the published policy yet: refresh the MX hosts and wait for new reports.`);
     const liveIps = liveMx.filter(isIpLiteral);
-    if (liveIps.length && !ips.length) reasons.push(`MX ${liveIps.join(', ')} ${liveIps.length === 1 ? 'is an address' : 'are addresses'}, not a hostname.`);
+    if (liveIps.length && !ips.length) mx.push(`MX ${liveIps.join(', ')} ${liveIps.length === 1 ? 'is an address' : 'are addresses'}, not a hostname.`);
   }
-  return { ready: reasons.length === 0, reasons };
+  const all = checks();
+  // The order of `reasons` is the order the rule has always listed them in: setup, days, report, failures, MX.
+  const reasons = [...served, ...days_, ...report, ...failures, ...mx];
+  return { ready: reasons.length === 0, reasons, checks: all };
 }
 
 /**
- * Disable rule (ADR 0021): only in testing, and only once senders that fetched an ENFORCE policy no longer hold it: its max_age (MAX_AGE_ENFORCE, a week) after
+ * Disable rule (ADR 0026): only in testing, and only once senders that fetched an ENFORCE policy no longer hold it: its max_age (MAX_AGE_ENFORCE, a week) after
  * the switch back. The testing policy's own max_age is shorter and says nothing about what senders still hold from before (RFC 8461 section 8.3: "the previously
  * published policy was last served plus that policy's max_age").
  */
