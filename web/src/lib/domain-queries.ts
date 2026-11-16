@@ -122,7 +122,7 @@ export const useOnboardingStatus = (id: number) =>
 	useQuery({ queryKey: domainKeys.onboarding(id), queryFn: () => api<OnboardingResult>(`/api/domains/${id}/onboarding-status`) });
 export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`) });
 export const useSpfFlatten = (id: number) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`) });
-export const useMtaSts = (id: number) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`) });
+export const useMtaSts = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`), enabled });
 export const useMonitorSubs = (id: number) =>
 	useQuery({ queryKey: domainKeys.monitorSubs(id), queryFn: () => api<{ subs: MonitorSub[] }>(`/api/domains/${id}/monitor-subs`).then((r) => r.subs) });
 

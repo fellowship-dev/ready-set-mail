@@ -35,6 +35,8 @@ export interface DomainAction {
 	writes?: boolean;
 	/** For lookups that failed: run them again. */
 	retry?: boolean;
+	/** Connect reports: the action is the reports panel on this page, which the link takes the person to. */
+	connectReports?: boolean;
 	/** The exact record this step offers to publish, and where. */
 	record?: string;
 	recordAt?: string;
@@ -94,6 +96,7 @@ function fromStep(step: DmarcStep, page: string, parentId: number | undefined, s
 		...(to ? { to, cta: step.where === 'parent' ? (parentId !== undefined ? `Open ${step.at}` : undefined) : CTA[step.where] } : {}),
 		...(step.where === 'dmarc-wizard' || step.where === 'dmarc-setup' ? { writes: true } : {}),
 		...(step.where === 'recheck' || step.where === 'reload-reports' ? { retry: true } : {}),
+		...(step.where === 'connect-reports' ? { connectReports: true, cta: CTA['connect-reports'] } : {}),
 		...(step.record ? { record: step.record, recordAt: step.recordAt } : {}),
 	};
 }

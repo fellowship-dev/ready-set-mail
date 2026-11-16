@@ -47,6 +47,10 @@ export interface ReportAddressView {
 	visibility?: ReportVisibilityFields | null;
 	state: ReportAddressState;
 	dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | null } | null;
+	/** A Cloudflare connection reaches this domain's zone, so Apply can write its DMARC record. */
+	apply_via_cloudflare?: boolean;
+	/** Not connected yet and Apply can write: the live record planned with the address connecting will use (now and after). */
+	preview?: { checked_at: number; error: string | null; plan: ReportAddressPlan | null } | null;
 	parent?: { domain_id: number; domain: string; connected: boolean } | null;
 }
 

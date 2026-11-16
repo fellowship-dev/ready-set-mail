@@ -1,6 +1,6 @@
 import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, CheckResult, CheckResultList, RecordBlock, StatusDot, toast } from '@ready-set-mail/ui';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
@@ -11,7 +11,8 @@ import { PublicDnsLive } from '../../../components/domain/PublicDnsLive';
 import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepNav } from '../../../components/wizard/StepNav';
-import { api, errorMessage } from '../../../lib/api';
+import { errorMessage } from '../../../lib/api';
+import { useApplyDmarc, type ApplyDmarcResponse } from '../../../lib/apply-dmarc';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
 import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
@@ -20,14 +21,6 @@ import { setupKeys } from './hooks';
 import { NextDmarcStep } from '../../../components/domain/NextDmarcStep';
 import type { StepProps } from './SpfStep';
 import { dmarcSeverity, dnsErrorDetail, dnsErrorsFor } from './steps';
-
-interface ApplyDmarcResponse {
-	ok: boolean;
-	record: string;
-	created: boolean;
-	/** Hosted: what writing the record did about the domain's reports. */
-	reports?: { state: 'connected' | 'limit' | 'refused' | 'unavailable'; address?: string; reason?: string };
-}
 
 export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const qc = useQueryClient();
@@ -46,7 +39,8 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const lookupSeverity = dmarcSeverity(dmarc, dmarcFailed.length > 0);
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
-	const hostedNoReports = useHosted() && !rua;
+	const hostedMode = useHosted();
+	const hostedNoReports = hostedMode && !rua;
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
@@ -81,26 +75,28 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 
 	const patch = (fn: (s: OnboardingStatus) => OnboardingStatus) => qc.setQueryData<OnboardingStatus>(setupKeys.status(status.domain_id), (s) => (s ? fn(s) : s));
 
-	const apply = useMutation({
-		mutationFn: () => api<ApplyDmarcResponse>(`/api/domains/${status.domain_id}/apply-dmarc`, { body: { record: recommended } }),
-		onSuccess: (res) => {
-			setApplied(true);
-			setWritten(res);
-			const note = res.reports?.state === 'connected' ? 'Reports are connected.' : res.reports?.reason;
-			toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: `Waiting to show in public DNS. ${note ?? ''}`.trim() });
-			patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: res.reports?.state === 'connected', current_record: res.record } }));
-		},
-	});
+	const apply = useApplyDmarc(status.domain_id);
+	const applyRecord = () =>
+		apply.mutate(recommended, {
+			onSuccess: (res) => {
+				setApplied(true);
+				setWritten(res);
+				const note = res.reports?.state === 'connected' ? 'Reports are connected.' : res.reports?.reason;
+				toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: `Waiting to show in public DNS. ${note ?? ''}`.trim() });
+				patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: res.reports?.state === 'connected', current_record: res.record } }));
+			},
+		});
 
 	// Re-applying the current record makes the server create the cross-domain authorization record as a side effect.
-	const provision = useMutation({
-		mutationFn: () => api<ApplyDmarcResponse>(`/api/domains/${status.domain_id}/apply-dmarc`, { body: { record: dmarc.current_record } }),
-		onSuccess: () => {
-			setAuthProvisioned(true);
-			toast({ variant: 'success', title: 'Authorization record created' });
-			patch((s) => ({ ...s, dmarc: { ...s.dmarc, auth_record: s.dmarc.auth_record ? { ...s.dmarc.auth_record, found: true } : s.dmarc.auth_record } }));
-		},
-	});
+	const provision = useApplyDmarc(status.domain_id);
+	const provisionAuth = () =>
+		provision.mutate(dmarc.current_record ?? null, {
+			onSuccess: () => {
+				setAuthProvisioned(true);
+				toast({ variant: 'success', title: 'Authorization record created' });
+				patch((s) => ({ ...s, dmarc: { ...s.dmarc, auth_record: s.dmarc.auth_record ? { ...s.dmarc.auth_record, found: true } : s.dmarc.auth_record } }));
+			},
+		});
 
 	const auth = dmarc.auth_record;
 	const authFound = auth?.found || authProvisioned;
@@ -211,7 +207,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
 							<div className="flex flex-col gap-2 sm:flex-row">
 								{cf_available ? (
-									<WriteButton loading={apply.isPending} onClick={() => apply.mutate()}>
+									<WriteButton loading={apply.isPending} onClick={applyRecord}>
 										Apply via Cloudflare
 									</WriteButton>
 								) : (
@@ -229,8 +225,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 				</>
 			)}
 
-			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. */}
-			{auth && !hostedNoReports && (dmarc.found || !!recommended) ? (
+			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. Hosted: there is no
+			    reports domain of the install's own to authorize (reports go to the shared address), so no such record exists to check. */}
+			{auth && !hostedMode && (dmarc.found || !!recommended) ? (
 				<section aria-label="Report authorization record" className="space-y-2">
 					<h3 className="text-sm font-semibold text-ink-1">Report authorization record</h3>
 					<CheckResultList>
@@ -261,7 +258,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 									<div className="mt-2 space-y-3">
 										<RecordBlock title="Required record" record={{ type: 'TXT', name: auth.record_name, value: 'v=DMARC1;' }} />
 										{cf_available && dmarc.current_record ? (
-											<WriteButton loading={provision.isPending} onClick={() => provision.mutate()}>
+											<WriteButton loading={provision.isPending} onClick={() => provisionAuth()}>
 												Create via Cloudflare
 											</WriteButton>
 										) : null}
