@@ -19,7 +19,7 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, Get Started | must-not-grow (standing rules) |
 | Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
 | Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE`; the one-sentence `OFFER_SUMMARY` (mirrors the website's fixture) sits in `src/lifecycle/email/offer.ts` until it can move next to them | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
-| Lifecycle emails (what is sent when, to whom, and the claim that makes each once) | `src/lifecycle/email/` | `runLifecycleForWorkspace`, `sendFirstReportNow`, `preferenceOffUrl`, the words in `copy.ts` | `src/cron.ts`, `src/notifications/first-report.ts`, the routes mounted in `src/funnel/routes.ts` and `src/hosted/routes.ts` | — |
+| Lifecycle emails (what is sent when, to whom, and the claim that makes each once) | `src/lifecycle/email/` | `runLifecycleForWorkspace`, `sendFirstReportNow`, `preferenceOffUrl`, the words in `copy.ts`; the sender and the links of every account-holder email: `accountSender`, `appLink` in `src/mail/compliance.ts` | `src/cron.ts`, `src/notifications/first-report.ts`, `src/monitor/notify.ts`, the routes mounted in `src/funnel/routes.ts` and `src/hosted/routes.ts` | — |
 | Sign-up attempt (fields kept until the account exists) | `src/auth/codes.ts` | `startAttempt`, `checkCode` | `src/auth/routes.ts` | — |
 
 ## Known duplicates: to be consolidated
