@@ -27,16 +27,16 @@ context:
 steps:
   - action: navigate
     url: /#/domains/1/mta-sts
-    expect: The MTA-STS page - one plain sentence of what it is, the MX hosts found now, testing mode explained, the action "Turn on in testing mode", and below it the exact records it will write in the Cloudflare zone
+    expect: The MTA-STS page - one plain sentence of what it is, the MX hosts found now, one sentence on testing mode, the action "Turn on in testing mode", and below it "Show records" (closed: Cloudflare writes them)
   - action: click
     selector: "text=Turn on in testing mode"
     effect: write
-    expect: The same page says Setting up (waiting for the certificate), with a Check now action; no TLS report yet
+    expect: The same page says Setting up (waiting for the certificate), with a Check now action
   - action: click
     selector: "text=Check now"
     effect: write
-    expect: The setup checks are in place, and the page says Testing, with the empty state "No TLS report yet. Senders usually send one a day after they deliver mail to you."
+    expect: The page says Testing and "Served at" the policy address (the result of a fetch of it), no Check now any more, "Switch to enforce" as the filled action with the reasons it is not allowed yet, and the empty state "No TLS report yet"
   - action: navigate
     url: /#/domains/1/mta-sts
-    expect: After a sender's first report has arrived, the TLS reports of the last 30 days list who sent it, the period, successful sessions, failed sessions and failure types
+    expect: After a signed sender's first report has arrived, the TLS reports of the last 30 days list who sent it, the period, successful sessions, failed sessions and failure types
     first_value: true

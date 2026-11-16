@@ -75,6 +75,15 @@ describe('the custom hostname', () => {
   });
 });
 
+describe('where the fetch goes', () => {
+  it('the policy address, unless a local run points POLICY_FETCH_BASE_URL at a localhost origin (anything else is ignored)', async () => {
+    const { policyFetchUrl } = await import('../../src/mta-sts/reconcile');
+    expect(policyFetchUrl('a-corp.com', {})).toBe('https://mta-sts.a-corp.com/.well-known/mta-sts.txt');
+    expect(policyFetchUrl('a-corp.com', { POLICY_FETCH_BASE_URL: 'http://127.0.0.1:8861' })).toBe('http://127.0.0.1:8861/policy-fetch/mta-sts.a-corp.com/.well-known/mta-sts.txt');
+    for (const bad of ['https://evil.example', 'http://127.0.0.1.evil.example', 'http://localhost:80@evil.example', '']) expect(policyFetchUrl('a-corp.com', { POLICY_FETCH_BASE_URL: bad }), bad).toBe('https://mta-sts.a-corp.com/.well-known/mta-sts.txt');
+  });
+});
+
 describe('a CAA record on the customer\'s domain', () => {
   it('when Cloudflare reports it as the reason the certificate is not issued, the row says so in one sentence, and stops saying it once it is gone', async () => {
     const w = await mtaWorld();

@@ -27,6 +27,16 @@ export interface PolicyProof { ok: boolean; reason: FetchReason | null }
 export const FETCH_TIMEOUT_MS = 8000;
 export const policyUrl = (domain: string): string => `https://${policyHostname(domain)}/.well-known/mta-sts.txt`;
 
+/**
+ * Where the fetch goes. Always the policy address, except on a local run: POLICY_FETCH_BASE_URL set to a localhost origin (like CLOUDFLARE_API_BASE_URL, anything else is
+ * ignored) sends it to `<origin>/policy-fetch/<policy hostname>/.well-known/mta-sts.txt`, where a local stand-in answers as the internet would (the walks and e2e of this
+ * repository: no certificate and no route exist on a laptop).
+ */
+export function policyFetchUrl(domain: string, env?: object): string {
+  const base = (env as { POLICY_FETCH_BASE_URL?: string } | undefined)?.POLICY_FETCH_BASE_URL?.trim();
+  return base && /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(base) ? `${base}/policy-fetch/${policyHostname(domain)}/.well-known/mta-sts.txt` : policyUrl(domain);
+}
+
 /** An error from fetch(): a timeout, a certificate or TLS failure (Workers refuse an invalid certificate), or any other way of not getting an answer. */
 function classify(e: unknown): FetchReason {
   const text = `${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`;
@@ -36,11 +46,11 @@ function classify(e: unknown): FetchReason {
 }
 
 /** Fetch the policy URL of `domain` and compare it with `expected` (the exact text we publish). Never throws. */
-export async function fetchPolicyProof(domain: string, expected: string, fetcher: typeof fetch = (...a) => fetch(...a)): Promise<PolicyProof> {
+export async function fetchPolicyProof(domain: string, expected: string, env?: object, fetcher: typeof fetch = (...a) => fetch(...a)): Promise<PolicyProof> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetcher(policyUrl(domain), { method: 'GET', redirect: 'manual', signal: abort.signal, headers: { 'Cache-Control': 'no-cache', Accept: 'text/plain' } });
+    const res = await fetcher(policyFetchUrl(domain, env), { method: 'GET', redirect: 'manual', signal: abort.signal, headers: { 'Cache-Control': 'no-cache', Accept: 'text/plain' } });
     const status = res.status;
     if (status >= 300 && status < 400) { await res.body?.cancel().catch(() => undefined); return { ok: false, reason: 'redirect' }; }
     if (status === 404) { await res.body?.cancel().catch(() => undefined); return { ok: false, reason: 'not_found' }; }
@@ -121,7 +131,7 @@ export async function reconcileMtaSts(c: Ctx, row: MtaStsRow, shared: ReconcileS
     }
   }
 
-  const proof = await fetchPolicyProof(domain.domain, policyText(row));
+  const proof = await fetchPolicyProof(domain.domain, policyText(row), tenant.env);
   const okNow = proof.ok ? 1 : 0;
   patch.fetch_checked_at = Math.floor(Date.now() / 1000);
   if (row.fetch_ok !== okNow) patch.fetch_ok = okNow;

@@ -13,6 +13,8 @@ export interface PolicyHostEnv extends HostedEnv {
   POLICY_HOST_TOKEN?: string;
   MAX_POLICY_HOSTS?: string;
   WORKER_NAME?: string;
+  /** Localhost only (ignored for anything else): where a local run's policy fetch goes instead of the internet (src/mta-sts/reconcile.ts `policyFetchUrl`). */
+  POLICY_FETCH_BASE_URL?: string;
   /** Subrequests one invocation may make (Workers Paid 10,000, the default; Workers Free 50): the daily job's budget follows it. */
   SUBREQUEST_LIMIT?: string;
   /** Localhost only (cfApiBase ignores anything else): a local run's fake Cloudflare. */

@@ -423,7 +423,7 @@ export async function enableMtaSts(c: Ctx): Promise<Result> {
       if (way.adopt.txt) await store({ mta_sts_record_id: way.adopt.txt }); // adopted: its id changes only when the policy is served
       if (certActive) {
         // The id is published only once the policy is SERVED: fetch it first (the CNAME was written just now, so this may need another try: waiting_policy).
-        const proof = await fetchPolicyProof(domain.domain, policyText({ mode: 'testing', mx_hosts: mx.hosts.join(',') }));
+        const proof = await fetchPolicyProof(domain.domain, policyText({ mode: 'testing', mx_hosts: mx.hosts.join(',') }), tenant.env);
         await store({ fetch_checked_at: nowSeconds(), fetch_ok: proof.ok ? 1 : 0, fetch_reason: proof.reason });
         if (proof.ok) {
           let txt = way.adopt.txt;
@@ -605,7 +605,7 @@ function changeFailure(e: unknown, prefix: string): Result {
 async function assertServed(c: Ctx, row: MtaStsRow): Promise<void> {
   if (row.via !== 'manual' && !row.mta_sts_record_id) return;
   const current = (await c.tenant.scope.mtaSts.get(c.domain.id)) ?? row;
-  const proof = await fetchPolicyProof(c.domain.domain, policyText(current));
+  const proof = await fetchPolicyProof(c.domain.domain, policyText(current), c.tenant.env);
   await c.tenant.scope.mtaSts.update(c.domain.id, { fetch_checked_at: nowSeconds(), fetch_ok: proof.ok ? 1 : 0, fetch_reason: proof.reason });
   if (!proof.ok) throw new PolicyUnreachable(proof.reason, c.domain.domain);
 }
