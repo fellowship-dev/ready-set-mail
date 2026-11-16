@@ -17,6 +17,7 @@ export function ContextHelp({ help }: { help: NonNullable<DomainVerdict['help']>
 const INDENT = ['', 'sm:pl-10', 'sm:pl-16', 'sm:pl-20'] as const;
 const indent = (depth: number) => INDENT[Math.min(depth, INDENT.length - 1)];
 
+const NO_LADDER = 'grid gap-x-6 gap-y-3 [grid-template-areas:"head"_"body"] lg:grid-cols-[minmax(0,1fr)]';
 const AREAS = 'grid gap-x-6 gap-y-3 [grid-template-areas:"head"_"ladder"_"body"] lg:grid-cols-[22rem_minmax(0,1fr)] lg:[grid-template-areas:"ladder_head"_"ladder_body"]';
 
 /**
@@ -31,6 +32,7 @@ export function DomainRow({
 	canWrite,
 	onRetry,
 	hideEvidence = false,
+	hideLadder = false,
 }: {
 	domain: { id: number; domain: string; cf_account_id?: string | null };
 	/** Set for a subdomain listed under its parent. */
@@ -42,6 +44,8 @@ export function DomainRow({
 	onRetry?: () => void;
 	/** Hosted before report intake: the overview says once that reports are not connected, so rows make no report claim. */
 	hideEvidence?: boolean;
+	/** A domain's first day, before any report: a ladder of levels it has not climbed is noise (it comes with the first report). */
+	hideLadder?: boolean;
 }) {
 	const nameId = useId();
 	const account = accountLabel(useCfConnections(canWrite).data, domain.cf_account_id);
@@ -72,7 +76,7 @@ export function DomainRow({
 
 	return (
 		<li aria-labelledby={nameId} data-status={verdict.status} className={cn('px-4 py-4 sm:px-5', indent(depth))}>
-			<div className={AREAS}>
+			<div className={hideLadder ? NO_LADDER : AREAS}>
 				<div className="min-w-0 space-y-0.5 [grid-area:head]">
 					<div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
 						<h3 id={nameId} className="min-w-0 font-mono text-base font-semibold [overflow-wrap:anywhere]">
@@ -85,7 +89,7 @@ export function DomainRow({
 					{parent ? <p className="text-xs text-ink-2">Subdomain of {parent}</p> : null}
 					{account ? <p className="text-xs text-ink-2">Cloudflare account {account}</p> : null}
 				</div>
-				<LevelLadder level={verdict.level} className="self-start [grid-area:ladder] lg:pt-1" aria-label={`${domain.domain}: protection level`} />
+				{hideLadder ? null : <LevelLadder level={verdict.level} className="self-start [grid-area:ladder] lg:pt-1" aria-label={`${domain.domain}: protection level`} />}
 				<div className="min-w-0 space-y-1.5 [grid-area:body]">
 					<p className="max-w-prose text-sm text-ink-1">{verdict.sentence}</p>
 					{verdict.evidence && !hideEvidence ? <p className="max-w-prose text-sm text-ink-2">{verdict.evidence}</p> : null}

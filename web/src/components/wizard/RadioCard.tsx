@@ -10,6 +10,7 @@ export function RadioCard({
 	badge,
 	children,
 	disabled,
+	compact = false,
 }: {
 	name: string;
 	value: string;
@@ -19,9 +20,11 @@ export function RadioCard({
 	badge?: ReactNode;
 	children?: ReactNode;
 	disabled?: boolean;
+	/** Less padding: a short list of short choices that must fit a phone's first screen. */
+	compact?: boolean;
 }) {
 	return (
-		<label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-surface-1 p-4 has-checked:border-2 has-checked:border-brand has-checked:bg-brand-subtle has-checked:p-[calc(1rem-1px)] has-disabled:cursor-not-allowed has-disabled:opacity-60">
+		<label className={`flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-surface-1 has-checked:border-2 has-checked:border-brand has-checked:bg-brand-subtle has-disabled:cursor-not-allowed has-disabled:opacity-60 ${compact ? 'p-3 has-checked:p-[calc(0.75rem-1px)]' : 'p-4 has-checked:p-[calc(1rem-1px)]'}`}>
 			<input type="radio" name={name} value={value} checked={checked} disabled={disabled} onChange={() => onChange(value)} className="mt-0.5 size-5 shrink-0" />
 			<span className="min-w-0 space-y-1">
 				<span className="flex flex-wrap items-center gap-2 font-semibold text-ink-1">

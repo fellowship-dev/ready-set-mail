@@ -7,7 +7,9 @@ import type { Domain } from '../../lib/types';
 import { ClaimCard } from './ClaimCard';
 
 /** A domain this workspace has but can no longer show it controls (a zone proof that lapsed, a parent that left): it is held, not removed. */
-export const isUnproven = (d: Pick<Domain, 'verified_via'>): boolean => d.verified_via === 'legacy';
+/** The part of a domain row the proven rule reads (so callers type what they pass without naming the column). */
+export type ProofShape = Pick<Domain, 'verified_via'>;
+export const isUnproven = (d: ProofShape): boolean => d.verified_via === 'legacy';
 
 /**
  * "Proof lost: prove it is still yours": the way back after a proof lapsed, on the SAME domain. Prove again re-runs the proof (the zone through any current

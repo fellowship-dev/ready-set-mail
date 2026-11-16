@@ -9,9 +9,15 @@
 // flow needs ONE of these, ADDED by this change (editing an older record does not count):
 //
 //   .flowchad/walks/<date>-<id>.md               the walk record FlowChad's gate writes (/flow-gate <id> --record .flowchad/walks).
+//       It may carry a tag after the id, <date>-<id>.<tag>.md (tag [a-z0-9-]+, for example 2026-11-16-<id>.pr177.md), so two pull
+//       requests that each walk the same flow on the same day do not add the same file name. `not-affected` is never a tag: it is the
+//       next record's own suffix.
 //       It must carry the gate's fields: Flow, Value moment, Walked (a full timestamp), Target, Commit, Kind, Gate and Rules;
-//       Gate PASS or PASS-WITH-OVERRIDES; Rules equal to the vendored gate's RULES_VERSION; walked after the base commit, at a
-//       commit that is not already in the base. A new flow's first record may be its baseline (Kind: baseline).
+//       Gate PASS or PASS-WITH-OVERRIDES; Rules equal to the vendored gate's RULES_VERSION; a Walked time that is not in the future; and a Commit that exists,
+//       is an ancestor of HEAD, is not already in the base, and after which no file the flow covers (its `covers:` files, the flow
+//       file and the flow map) changed up to HEAD. So a base that moves in files the flow does not cover leaves a walk valid, and a
+//       change to a covered file after the walked commit (in this pull request or in main) asks for a new walk. On a pull request
+//       HEAD is GitHub's merge of it into main. A new flow's first record may be its baseline (Kind: baseline).
 //   .flowchad/walks/<date>-<id>.not-affected.md  a reviewed "not affected" record, for a change to a mapped file that does not
 //       change what the person sees or does on the flow. Fields: Flow, Changed (every mapped file this change touches, in
 //       back-quotes), Reason (why the flow is unchanged), By, Date. Not accepted when the flow file or its map changed.
@@ -46,10 +52,13 @@ export const coversOf = (yml) => {
 };
 /** A `covers:` glob as the shell `case` in changed.sh reads it: `*` matches any characters, slashes included. */
 export const globMatches = (glob, file) => new RegExp(`^${glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(file);
+/** The names a record may have: `<date>-<id>.md`, or `<date>-<id>.<tag>.md` with a tag of [a-z0-9-]+ other than `not-affected`. */
+export const walkRecordName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}(?:\\.(?!not-affected\\.md$)[a-z0-9-]+)?\\.md$`);
+export const notAffectedName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
 const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 /** Problems with a walk record, or [] when it is valid for this change. */
-export function walkRecordProblems(text, { id, baseTime, newFlow, commitState }) {
+export function walkRecordProblems(text, { id, newFlow, commitState, coveredChangedSince }) {
   const p = [];
   const f = fields(text);
   if (!new RegExp(`^# Walk record: ${id}\\s*$`, 'm').test(text)) p.push(`first line is not "# Walk record: ${id}"`);
@@ -57,13 +66,19 @@ export function walkRecordProblems(text, { id, baseTime, newFlow, commitState })
   if (!/^[0-9a-f]{7,40}$/i.test(f.Commit ?? '')) p.push(`Commit is not a commit id: ${f.Commit ?? 'missing'}`);
   // The first record of a flow this change adds may be its baseline, measured on the base itself; reviewed in the PR.
   if (newFlow && f.Kind === 'baseline') return p;
-  if (p.length === 0 && commitState(f.Commit) === 'in-base') p.push(`Commit ${f.Commit} is already in the base: the walk is older than this change`);
+  if (p.length === 0) {
+    const state = commitState(f.Commit);
+    if (state === 'unknown') p.push(`Commit ${f.Commit} is not in this repository (fetch the full history, or the record names a commit that was never pushed)`);
+    else if (state === 'in-base') p.push(`Commit ${f.Commit} is already in the base: the walk is older than this change`);
+    else if (state === 'not-ancestor') p.push(`Commit ${f.Commit} is not an ancestor of HEAD: the walk is of a commit this change does not contain`);
+    else {
+      const moved = coveredChangedSince(f.Commit);
+      if (moved.length) p.push(`${moved.join(', ')} changed after the walked commit ${f.Commit}: walk the flow again at the current commit`);
+    }
+  }
   const t = Date.parse(f.Walked ?? '');
   if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(f.Walked ?? '') || !Number.isFinite(t)) p.push(`Walked is not the gate's timestamp: ${f.Walked ?? 'missing'}`);
-  else {
-    if (t <= baseTime) p.push(`Walked ${f.Walked} is not after the base commit (${new Date(baseTime).toISOString()})`);
-    if (t > Date.now() + CLOCK_SLACK_MS) p.push(`Walked ${f.Walked} is in the future`);
-  }
+  else if (t > Date.now() + CLOCK_SLACK_MS) p.push(`Walked ${f.Walked} is in the future`);
   if (f['Value moment'] === 'not declared') p.push('Value moment is "not declared"');
   if (f.Target === 'unknown') p.push('Target is "unknown"');
   if (/^(map|baseline)$/.test(f.Kind ?? '')) p.push(`Kind is ${f.Kind}: a protected flow needs a walk of its screens or calls, not a ${f.Kind}`);
@@ -97,15 +112,15 @@ function main(argv) {
   }
   if (!gitOk('rev-parse', '--verify', '--quiet', `${base}^{commit}`)) usage(`unknown base: ${base}`);
   const short = git('rev-parse', '--short', base);
-  const baseTime = Date.parse(git('show', '-s', '--format=%cI', base));
-  const baseDate = new Date(baseTime).toISOString().slice(0, 10);
+  const baseDate = new Date(Date.parse(git('show', '-s', '--format=%cI', base))).toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
 
   const changed = [...new Set([...git('diff', '--name-only', base).split('\n'), ...git('ls-files', '--others', '--exclude-standard').split('\n')].filter(Boolean))];
   const added = new Set([...git('diff', '--name-only', '--diff-filter=A', base, '--', WALKS).split('\n'), ...git('ls-files', '--others', '--exclude-standard', '--', WALKS).split('\n')].filter(Boolean));
   const commitState = (sha) => {
     if (!gitOk('rev-parse', '--verify', '--quiet', `${sha}^{commit}`)) return 'unknown';
-    return gitOk('merge-base', '--is-ancestor', sha, base) ? 'in-base' : 'new';
+    if (gitOk('merge-base', '--is-ancestor', sha, base)) return 'in-base';
+    return gitOk('merge-base', '--is-ancestor', sha, 'HEAD') ? 'new' : 'not-ancestor';
   };
 
   const verdicts = spawnSync('bash', [CHANGED, '--base', base], { encoding: 'utf8' });
@@ -124,21 +139,23 @@ function main(argv) {
     const flowChanged = changed.includes(flowPath) || changed.includes(mapPath);
     const hits = changed.filter((f) => coversOf(yml).some((g) => globMatches(g, f)));
     const newFlow = !gitOk('cat-file', '-e', `${base}:${flowPath}`);
-    const walkRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.md$`);
-    const naRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
+    const covered = (f) => f === flowPath || f === mapPath || coversOf(yml).some((g) => globMatches(g, f));
+    const coveredChangedSince = (sha) => git('diff', '--name-only', sha, 'HEAD').split('\n').filter((f) => f && covered(f));
+    const walkRe = walkRecordName(id);
+    const naRe = notAffectedName(id);
     const tried = [];
     let ok = null;
-    for (const file of [...added].filter((f) => walkRe.test(f)).sort().reverse()) {
-      const problems = walkRecordProblems(readFileSync(file, 'utf8'), { id, baseTime, newFlow, commitState });
+    for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && walkRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
+      const problems = walkRecordProblems(readFileSync(file, 'utf8'), { id, newFlow, commitState, coveredChangedSince });
       if (!problems.length) { ok = `walked (${file})`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
-    if (!ok) for (const file of [...added].filter((f) => naRe.test(f)).sort().reverse()) {
+    if (!ok) for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && naRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
       const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged });
       if (!problems.length) { ok = `not affected (${file}, reviewed)`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
-    const old = readdirSync(WALKS).filter((f) => f.endsWith(`-${id}.md`) || f.endsWith(`-${id}.not-affected.md`)).map((f) => `${WALKS}/${f}`).filter((f) => changed.includes(f) && !added.has(f));
+    const old = readdirSync(WALKS).filter((f) => walkRecordName(id).test(f) || notAffectedName(id).test(f)).map((f) => `${WALKS}/${f}`).filter((f) => changed.includes(f) && !added.has(f));
     if (ok) { console.log(`ok     ${id}: ${ok}`); continue; }
     failures.push([
       `REWALK ${id}: ${reason}`,
@@ -152,7 +169,7 @@ function main(argv) {
     console.log(failures.join('\n'));
     console.error(`
 A protected value flow changed (ADR 0012). For each flow above, add ONE record to this pull request:
-  - it changed what a person sees or does: walk it on a local copy of this commit and commit the gate's record:
+  - it changed what a person sees or does: walk it on a local copy of the current commit (a covered file that changes after the walked commit, here or in main, asks for a new walk) and commit the gate's record:
       /flow-walk <id>   then   /flow-gate <id> --target <url> --record ${WALKS}
     (if the flow itself changed, update ${FLOWS}/<id>.map.md first: map before building)
   - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md

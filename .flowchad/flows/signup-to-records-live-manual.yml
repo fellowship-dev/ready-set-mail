@@ -6,6 +6,11 @@ covers:
   - web/src/pages/auth/*
   - web/src/pages/wizards/SetupWizardPage.tsx
   - web/src/pages/wizards/cloudflare/FirstScreen.tsx
+  - web/src/pages/setup/*
+  - web/src/components/FirstDay.tsx
+  - web/src/lib/first-run.ts
+  - web/src/lib/first-day.ts
+  - web/src/lib/poll.ts
   - web/src/pages/wizards/setup/*
   - web/src/components/wizard/*
   - web/src/components/domain/ClaimCard.tsx
@@ -14,6 +19,9 @@ covers:
   # Server files that implement the steps: sign-up and the code, the first screen, ownership, adding domains, and the writes.
   - src/auth/routes.ts
   - src/auth/codes.ts
+  - src/auth/profile.ts
+  - src/auth/names.ts
+  - src/auth/mail.ts
   - src/auth/signup-policy.ts
   - src/auth/bot-protection.ts
   - src/auth/turnstile.ts
@@ -28,33 +36,29 @@ context:
   user: new_account
   auth: logged_out
   mode: hosted
+# Rebuilt by PR #177 as S1, S2, S3, S4 (the records path, polled) and the first-day dashboard: walk and re-baseline it in that PR.
 steps:
   - action: navigate
     url: /#/signup
-    expect: Create an account - email, password and the bot check
+    expect: Create your account - email and password; the bot check runs unseen on Continue
   - action: click
     selector: "button[type=submit]"
     effect: write
-    expect: Enter the 6-digit code sent by email
+    expect: S2 Tell us about yourself; the code email is already on its way
   - action: click
-    selector: "text=I'll add DNS records myself"
-    expect: Domain field (prefilled when the link carries a domain)
+    selector: "button[type=submit]"
+    effect: write
+    expect: S3 Check your inbox - one input for the 6-digit code
   - action: click
     selector: "text=Continue"
     effect: write
-    expect: Verify you own this domain - the TXT record and Verify
+    expect: S4 asks which domain you send email from
+  - action: click
+    selector: "text=Check"
+    effect: write
+    expect: One line of public DNS and the setup choice for the DNS host (the record path, with the provider named); the TXT proof record to add, looked for every 15 seconds
   - action: click
     selector: "text=Verify"
     effect: write
-    expect: Wizard SPF, DKIM, DMARC, Reports; DMARC published at the DNS host (with the report address only for a workspace HOSTED_CONNECT_REPORTS admits)
+    expect: Domain proven (found by itself, or by Verify); the dashboard's first-day card says it is waiting for the report address in DMARC, with the way to add it, and flips to the first reports are on their way when public DNS shows it
     first_value: true
-# Reviewed exceptions to blocker rules, copied into each walk and listed by the gate as OVERRIDDEN known rough edges.
-rule_overrides:
-  - id: FOLD-01
-    reason: "Known rough edge of main, not changed by pull request 178: the Connect Cloudflare card and the stepper push the domain field and several next actions below the first screen (walk of 2026-11-16: 0.09 to 0.71 viewport heights at 375 px, up to 0.19 at 1440 px). It is recorded in the 2026-11-15 baseline; a layout change is a separate design task."
-    by: "Claude (Fable 5.2) for Max F. Findel, PR #178; reviewer to accept"
-    date: 2026-11-16
-  - id: WORD-05
-    reason: "Pre-existing on main, not changed by pull request 178: in the setup wizard Check again refreshes only the reports panel, so the DMARC policy panel above it keeps saying No DMARC record found and Reports not connected yet while the panel below says Published and connected. The wizard files are unchanged since main; fixing it is a separate change."
-    by: "Claude (Fable 5.2) for Max F. Findel, PR #178; reviewer to accept"
-    date: 2026-11-16

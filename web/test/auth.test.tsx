@@ -117,13 +117,19 @@ describe('installer proof', () => {
 });
 
 describe('hosted sign-up', () => {
-	it('lets people create a workspace when sign-up is open, and switch back', async () => {
-		renderApp(<AuthPage />, { role: null, status: { mode: 'saas', signup_open: true } });
+	it('the sign-in screen offers "Create an account", which opens the sign-up address; sign-up links back to sign-in', async () => {
+		renderApp(
+			<Routes>
+				<Route path="/signup/*" element={<AuthPage initialMode="signup" />} />
+				<Route path="/" element={<AuthPage />} />
+			</Routes>,
+			{ role: null, status: { mode: 'saas', signup_open: true }, routes: { 'GET /api/auth/signup/pending': { pending: false } } },
+		);
 		const user = userEvent.setup();
 		await user.click(await screen.findByRole('button', { name: 'Create an account' }));
-		expect(screen.getByRole('heading', { name: 'Create an account' })).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument();
 		await user.click(screen.getByRole('button', { name: 'Sign in' }));
-		expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
 	});
 });
 
@@ -155,34 +161,8 @@ describe('the 6-digit code step', () => {
 		expect(calls.find((c) => c.path === '/api/auth/code')?.body).toEqual({ code: '654321' });
 	});
 
-	it('sign-up (hosted): email, one password with Show, the agreement above the button, then the code', async () => {
-		const { calls } = renderApp(<AuthPage initialMode="signup" />, {
-			role: null,
-			status: HOSTED as any,
-			routes: { 'POST /api/auth/signup': { code_required: true, purpose: 'signup', email: 'new@example.com', expires_in: 600 } },
-		});
-		const user = userEvent.setup();
-		await user.type(await screen.findByLabelText('Email'), 'new@example.com');
-		const password = screen.getByLabelText('Password');
-		await user.type(password, 'long-enough-1');
-		expect(screen.queryByLabelText('Confirm password')).toBeNull();
-		expect(password).toHaveAttribute('type', 'password');
-		await user.click(screen.getByRole('button', { name: 'Show password' }));
-		expect(password).toHaveAttribute('type', 'text');
-		expect(screen.queryByText(/DMARC reports are not connected yet/)).toBeNull();
-		const agreement = screen.getByText(/By creating an account you agree to the/);
-		expect(agreement).toHaveTextContent('By creating an account you agree to the Terms and the Privacy Policy.');
-		const button = screen.getByRole('button', { name: 'Create account' });
-		expect(agreement.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		await user.click(button);
-		expect(await screen.findByRole('heading', { name: 'Enter the 6-digit code we sent to new@example.com' })).toBeInTheDocument();
-		expect(calls.find((c) => c.path === '/api/auth/signup')?.body).toEqual({ email: 'new@example.com', password: 'long-enough-1' });
-		await user.click(screen.getByRole('button', { name: 'Use a different email' }));
-		expect(await screen.findByLabelText('Email')).toHaveValue('new@example.com');
-	});
-
 	it('the terms links open in a new tab; the hosted footer has Terms, Privacy and nothing on self-host', async () => {
-		const { unmount } = renderApp(<AuthPage initialMode="signup" />, { role: null, status: HOSTED as any });
+		const { unmount } = renderApp(<AuthPage initialMode="signup" />, { role: null, status: HOSTED as any, routes: { 'GET /api/auth/signup/pending': { pending: false } } });
 		const links = await screen.findAllByRole('link', { name: 'Terms' });
 		for (const l of links) {
 			expect(l).toHaveAttribute('href', 'https://readysetmail.com/terms');
@@ -260,7 +240,7 @@ describe('invite', () => {
 			},
 		});
 		const user = userEvent.setup();
-		expect(await screen.findByText('boss@example.com')).toBeInTheDocument();
+		expect(await screen.findByText(/boss@example\.com invited you as a/)).toBeInTheDocument();
 		expect(screen.getByLabelText('Invited email')).toHaveTextContent('new@example.com');
 		await user.type(screen.getByLabelText('Your name'), 'New Person');
 		await user.type(screen.getByLabelText('Password'), 'long-enough-1');

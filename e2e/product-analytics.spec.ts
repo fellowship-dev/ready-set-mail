@@ -53,17 +53,24 @@ const events = (sent: Sent[]) => sent.flatMap((r) => (JSON.parse(r.body) as { ba
 const mailedCodes = (inst: Instance) =>
 	existsSync(inst.logFile) ? [...readFileSync(inst.logFile, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map((m) => m[1]!) : [];
 
-/** Sign up through the screen, arriving by the website's sign-up link (checker result). */
+/** Sign up through the three screens, arriving by the website's sign-up link (checker result): S1, S2 "about you", S3 the code, then S4. */
 async function signUp(page: Page, inst: Instance, link: string) {
 	await page.goto(`${inst.url}/${link}`);
 	await page.locator('#email').fill(OWNER);
 	await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
-	await page.waitForTimeout(2500); // the Turnstile test widget
 	const before = mailedCodes(inst).length;
-	await page.getByRole('button', { name: /Create account|Sign up|Continue|Send/ }).first().click();
+	await page.getByRole('button', { name: 'Continue' }).click(); // the Turnstile test widget runs unseen on submit
+	await expect(page.getByRole('heading', { name: 'Tell us about yourself' })).toBeVisible({ timeout: 30_000 });
+	await page.getByLabel('Your name').fill('Dana Whitfield');
+	await page.getByLabel('Organization name').fill('Harbor Lane');
+	await page.getByLabel("My company's").check();
+	await page.getByLabel('Where did you hear about us? (optional)').fill('A friend at harbor-lane.org told me');
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await expect(page.getByRole('heading', { name: 'Check your inbox' })).toBeVisible({ timeout: 30_000 });
 	await expect.poll(() => mailedCodes(inst).length, { timeout: 30_000 }).toBeGreaterThan(before);
 	await page.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!);
-	await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
+	// S4: the checker's domain is checked on arrival
+	await expect(page.getByText(/^Domain: harbor-lane\.org/)).toBeVisible({ timeout: 60_000 });
 }
 
 /** The page's own session (cookie), as the dashboard would call the API. */
@@ -103,6 +110,8 @@ test(`hosted with PostHog configured: the walk from sign-up to a delivered order
 		const plan = (await call(page, 'POST', '/api/onboarding/dns-plan', { domain_ids: [domainId] })).json;
 		const applied = await call(page, 'POST', '/api/onboarding/dns-apply', { domain_ids: [domainId], step: 'dmarc', plan_id: plan.plan_id });
 		expect(applied.json.results[0]).toMatchObject({ ok: true, reports: 'connected' });
+		// S4 read the checker's domain moments ago; first-check reuses a public-DNS read of the last minute (src/domains/first-check.ts), which predates the record.
+		await page.waitForTimeout(61_000);
 		expect((await call(page, 'POST', '/api/onboarding/first-check', { domain_ids: [domainId] })).json.results).toEqual([{ domain_id: domainId, stored: true }]);
 		expect(inst.d1(`SELECT dmarc_rua FROM domains WHERE id = ${domainId}`)).toEqual([{ dmarc_rua: 1 }]);
 
@@ -130,6 +139,9 @@ test(`hosted with PostHog configured: the walk from sign-up to a delivered order
 			expect(hit, `${step} after ${t} in ${all.map((e) => `${e.timestamp.slice(11)} ${e.event}`).join(' > ')}`).toBeTruthy();
 			t = hit!.timestamp;
 		}
+		// S2's answers: closed values and whether "heard about" was filled; never the text, the name or the organization (the checks below)
+		expect(all.find((e) => e.event === 'Signup Profile Saved')!.properties).toMatchObject({ whose_email: 'company', role: 'none', heard_about_given: true });
+		expect(all.filter((e) => e.event === 'Signup Profile Saved')).toHaveLength(1);
 		expect(all.find((e) => e.event === 'Code Verified')!.properties).toMatchObject({ from_checker: true, entry: 'checker', purpose: 'signup' });
 		expect(all.find((e) => e.event === 'Signup Started')!.properties).toMatchObject({ method: 'email_code', entry: 'checker', from_checker: true });
 		expect(all.filter((e) => e.event === 'Cloudflare Connect Started').map((e) => e.properties.method)).toEqual(['token']);
@@ -147,7 +159,7 @@ test(`hosted with PostHog configured: the walk from sign-up to a delivered order
 				expect(Object.keys(e.properties)).not.toContain('$ip');
 				for (const v of Object.values(e.properties)) for (const re of FORBIDDEN) expect(String(v), `${re}`).not.toMatch(re);
 			}
-			for (const s of [OWNER, DOMAIN, ws, VID, order.json.order.id, 'correct-horse-battery', 'Example Co']) expect(r.body.toLowerCase(), s).not.toContain(s.toLowerCase());
+			for (const s of [OWNER, DOMAIN, ws, VID, order.json.order.id, 'correct-horse-battery', 'Example Co', 'Dana', 'Whitfield', 'Harbor Lane', 'A friend at']) expect(r.body.toLowerCase(), s).not.toContain(s.toLowerCase());
 		}
 	} finally {
 		await inst.stop();
