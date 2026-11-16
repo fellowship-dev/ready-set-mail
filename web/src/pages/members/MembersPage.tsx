@@ -156,7 +156,7 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 			</div>
 			{roleEditable ? (
 				<Select value={member.role} onValueChange={(v) => changeRole.mutate(v as 'admin' | 'member')} disabled={changeRole.isPending}>
-					<SelectTrigger aria-label={`Role of ${member.email}`} className="w-44">
+					<SelectTrigger aria-label={`Role of ${member.email}`} className="w-48">
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
