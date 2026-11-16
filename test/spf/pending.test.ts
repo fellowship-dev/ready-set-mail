@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const audits: Array<{ action: string; before_value?: any; after_value?: any; meta?: any }> = [];
 vi.mock('../../src/audit/log', () => ({ logAudit: vi.fn((_t: unknown, e: any) => { audits.push(e); }) }));
 
-import { enableSpf, refreshSpf, runSpfRefresh, newSpfBudget, spfView, SPF_PENDING_CONFIRM_SECONDS } from '../../src/spf/refresh';
+import { enableSpf, refreshSpf, rollbackSpf, runSpfRefresh, newSpfBudget, spfView, SPF_PENDING_CONFIRM_SECONDS } from '../../src/spf/refresh';
 import { silence, world } from './world';
 
 const T0 = 1_800_000_000_000; // ms
@@ -183,5 +183,15 @@ describe('a removal waits (ADR 0024)', () => {
     await runSpfRefresh(w.tenant, undefined, newSpfBudget(), { ...w.deps, now: () => T0 + DAY + 20 * H + 4 * H });
     expect(w.patches()).toHaveLength(1);
     expect(published(w)).toBe('v=spf1 ip4:203.0.113.9 -all');
+  });
+
+  it('one step back forgets what was waiting and what the older record authorised: the next check makes its own choice', async () => {
+    const w = await on();
+    w.cf.doh['mail.test'] = ['v=spf1 ip4:198.51.100.64/28 ~all'];
+    await check(w, DAY); // the new range is written, the old one waits
+    expect(w.row()!.pending_since).not.toBeNull();
+    expect(await rollbackSpf(w.tenant, w.domain, { ...w.deps, now: () => T0 + DAY + H })).toBe('rolled_back');
+    expect(published(w)).toBe(BEFORE);
+    expect(w.row()).toMatchObject({ provider_state: null, pending_removed: null, pending_since: null, pending_additions: null });
   });
 });

@@ -73,9 +73,9 @@ export function spfFlatteningSetting(env: Pick<BoundEnv, 'HOSTED_SPF_FLATTENING'
 }
 
 /** What each capability asks on the hosted service (self-host is answered before this). */
-const GATES: Record<Capability, (env: CapabilityEnv, scope: CapabilityScope) => Promise<CapabilityAnswer>> = {
-  spf_flattening: async (env, scope) => (await allowed(spfFlatteningSetting(env), env, scope.workspaceId)) ? { allowed: true, reason: 'operator_setting' } : { allowed: false, reason: 'not_enabled' },
-};
+const GATES: Readonly<Record<Capability, (env: CapabilityEnv, scope: CapabilityScope) => Promise<CapabilityAnswer>>> = Object.freeze({
+  spf_flattening: async (env: CapabilityEnv, scope: CapabilityScope): Promise<CapabilityAnswer> => (await allowed(spfFlatteningSetting(env), env, scope.workspaceId)) ? { allowed: true, reason: 'operator_setting' } : { allowed: false, reason: 'not_enabled' },
+});
 
 /**
  * May this workspace use this capability (for this domain)? Turning a capability OFF for a domain that has it is never refused by this answer:

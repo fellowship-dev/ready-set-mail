@@ -492,11 +492,11 @@ export async function settleSpfBeforeDisconnect(tenant: TenantContext, domains: 
 }
 
 export type SpfStopReason = 'connection_removed' | 'connection_revoked' | 'proof_lost';
-const STOP_SENTENCE: Record<SpfStopReason, (domain: string) => string> = {
+const STOP_SENTENCE: Readonly<Record<SpfStopReason, (domain: string) => string>> = Object.freeze({
   connection_removed: d => `The Cloudflare connection for ${d} was removed, so we can no longer change its DNS. We have stopped keeping your SPF record up to date.`,
   connection_revoked: d => `The Cloudflare connection for ${d} was disconnected, so we can no longer change its DNS. We have stopped keeping your SPF record up to date.`,
   proof_lost: d => `We can no longer show that you control ${d}, so we have stopped keeping your SPF record up to date.`,
-};
+});
 
 /**
  * Flattening stops where we cannot write any more (the connection is gone, or the proof of ownership is): no refresh, no write. The row stays, in the state
@@ -538,7 +538,9 @@ export async function rollbackSpf(tenant: TenantContext, domain: { id: number; d
     await target.write(live.id, row.previous_record);
     const back = await target.read();
     if (!('found' in back && back.found) || !sameSpfRecord(back.content, row.previous_record)) throw new NotKept();
-    const done = await q.finish(domain.id, claimed, { flattened_record: row.previous_record, previous_record: row.flattened_record, last_flattened_at: at });
+    // The record before this one came from an earlier resolution: what the published record authorises per provider is not known any more, and a removal that
+    // waited is moot. The next refresh makes its own choice from the original, as before.
+    const done = await q.finish(domain.id, claimed, { flattened_record: row.previous_record, previous_record: row.flattened_record, last_flattened_at: at, provider_state: null, pending_removed: null, pending_since: null, pending_additions: null });
     if (!done) { await undoLostClaim(tenant, row, target, live); return 'skipped'; }
     audit(tenant, deps, 'spf_flatten.rollback', domain, { spf_record: row.flattened_record }, { spf_record: row.previous_record }, { by: deps.actor ? 'user' : 'operator' });
     return 'rolled_back';
