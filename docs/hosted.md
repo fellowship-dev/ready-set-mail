@@ -321,6 +321,12 @@ Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_c
 `#/signup` (S1), `#/signup/about` (S2), `#/signup/code` (S3): the URL holds the step and the server's pending attempt says which
 screen is right, so a reload, a returning tab or the back button never starts again at S1 while an attempt waits.
 
+A person who comes from the website's checker (`#/signup?domain=<domain>&src=<page class>`) sees S1 say "You're setting up
+<domain>." in place of the general line; the domain is never asked for. It is kept in this browser
+(`web/src/lib/signup-intent.ts`, 24 hours, tied to the email S1 was submitted with), never sent with the sign-up, and S4 opens on it
+("Domain: <domain> · Not this domain?"). `src` and `from_checker` go with the sign-up request for analytics
+([analytics](analytics.md)).
+
 * `POST /api/auth/signup` is unchanged in what it checks and answers (bot check, per-IP limit, the mail allowance, the same answer
   for every address, "never says sent on a refused send"). It now runs when S1 is submitted, so the code email travels while S2 is
   filled in.

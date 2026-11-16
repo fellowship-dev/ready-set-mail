@@ -31,7 +31,7 @@ for (const [width, height, port] of [[375, 812, 8830], [1440, 900, 8831]] as con
 			await page.goto(`${inst.url}/#/signup?domain=harbor-lane.org`);
 			await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
 			expect(hash(page)).toBe('#/signup');
-			await expect(page.getByText('harbor-lane.org')).toHaveCount(0); // the checker's domain waits for S4
+			await expect(page.getByText("You're setting up harbor-lane.org.")).toBeVisible(); // the checker's domain is named, not asked for; S4 opens on it
 			await expect(page.getByRole('button', { name: 'Continue' })).toHaveCount(1);
 			await fitsTheWindow(page);
 			await fillSignUp(page, inst, 'dana@brightwave-mail.com');
