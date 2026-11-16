@@ -24,6 +24,8 @@ export interface Sender {
   country_code: string | null;
   provider: { id: string; name: string; evidence: string } | null;
   domains: string[];
+  /** The From domains its mail was sent as (a subdomain of the monitored domain, or the domain itself), lower-cased. */
+  from_domains: string[];
   messages: number;
   /** Share of all mail in scope, 0-100 with one decimal. */
   share_pct: number;
@@ -118,6 +120,7 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
         country_code: first(a, 'country_code') ?? null,
         provider: p ? { id: p.id, name: p.name, evidence: p.evidence } : null,
         domains: [...new Set(a.rows.map((r) => r.domain))].sort(),
+        from_domains: [...new Set(a.rows.map((r) => (r.header_from || r.domain).toLowerCase()))].sort(),
         messages: a.messages,
         share_pct: pct(a.messages, total),
         spf_aligned_pct: pct(a.spf, a.messages),

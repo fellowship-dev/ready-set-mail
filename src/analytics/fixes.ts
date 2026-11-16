@@ -172,15 +172,21 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
     if (!g.providerId && failShare >= AUTHORIZE_AT && material(g.dmarcFail)) {
       const enforcing = domain.dmarc_policy === 'quarantine' || domain.dmarc_policy === 'reject';
       const s0 = g.senders[0];
+      // The names this sender sent as (its From domains). The stored policy is the one in force for THIS domain's own name, so it is
+      // quoted only for mail sent as the domain itself; for a subdomain the policy that applies to that name is its own (see the names list).
+      const sentAs = [...new Set(g.senders.flatMap((x) => x.from_domains))].sort();
+      const names = sentAs.length ? sentAs.join(', ') : domain.domain;
+      const own = sentAs.every((n) => n === domain.domain);
+      const applies = own && enforcing ? `your DMARC policy (p=${domain.dmarc_policy}) already applies to it` : own ? 'enforcing DMARC may block it' : `the DMARC policy that applies to ${names} applies to it`;
       fixes.push({
         ...base, id: `investigate:${domain.id}:${g.key}`, kind: 'investigate-sender', severity: pct(g.dmarcFail, total) >= 5 ? 'high' : 'medium',
         title: `${fmtPct(share)} of your mail comes from ${g.name}, which we do not recognise`,
-        detail: `Estimated from the reports: ${fmtPct(pct(g.dmarcFail, g.messages))} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and ${enforcing ? `your DMARC policy (p=${domain.dmarc_policy}) already applies to it` : 'enforcing DMARC may block it'}.`,
+        detail: `Estimated from the reports: ${fmtPct(pct(g.dmarcFail, g.messages))} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and ${applies}.`,
         affected_pct: pct(g.dmarcFail, total), affected_messages: g.dmarcFail,
         steps: [
           `Find out what ${s0?.reverse_dns || s0?.source_ip || 'this server'} is${s0?.org ? ` (network owner: ${s0.org})` : ''}.`,
-          `If you send from it: set up DKIM signing as ${domain.domain} in the service (DKIM aligned with ${domain.domain} is enough for DMARC; SPF counts only when the service's return-path domain is under ${domain.domain}), then check again.`,
-          `If you do not: nothing to add. ${enforcing ? `Your policy (p=${domain.dmarc_policy}) already applies to it.` : 'Keep it in view until you move to enforcement.'}`,
+          `If you send from it: set up DKIM signing as ${names} in the service (DKIM aligned with the From domain is enough for DMARC; SPF counts only when the service's return-path domain is under it), then check again.`,
+          `If you do not: nothing to add. ${own && enforcing ? `Your policy (p=${domain.dmarc_policy}) already applies to it.` : own ? 'Keep it in view until you move to enforcement.' : `The policy that applies to ${names} already applies to it.`}`,
         ],
         records: [], guide_url: null,
       });

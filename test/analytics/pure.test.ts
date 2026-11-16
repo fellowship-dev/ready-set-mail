@@ -210,6 +210,14 @@ describe('buildFixes', () => {
     expect(enforcing.steps.join(' ') + enforcing.detail).not.toMatch(/until you move to enforcement|enforcing DMARC may block/);
   });
 
+  it('an unrecognised failing sender that sent as a SUBDOMAIN: names that subdomain, and does not quote this domain\'s policy for it', () => {
+    const rows = send([row({ messages: 900 }), row({ source_ip: '203.0.113.9', messages: 100, header_from: 'app.acme.com', spf_result: 'fail', dkim_result: 'none', org: 'Shady Hosting' })]);
+    const fix = buildFixes({ ...dom, dmarc_policy: 'reject' }, rows)[0]!;
+    expect(fix.steps[1]).toContain('set up DKIM signing as app.acme.com');
+    expect(fix.detail).toContain('the DMARC policy that applies to app.acme.com applies to it');
+    expect(fix.detail + fix.steps.join(' ')).not.toContain('p=reject');
+  });
+
   it('ignores noise and healthy senders; lists a new passing sender as low priority', () => {
     expect(buildFixes(dom, send([row({ messages: 5000 }), mailchimp({ messages: 3 })]))).toEqual([]);
     const fixes = buildFixes(dom, send([row({ messages: 900 }), row({ source_ip: '167.89.1.1', reverse_dns: 'o1.sendgrid.net', messages: 100, first_seen: NOW - DAY })]));
