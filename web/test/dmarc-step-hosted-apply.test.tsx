@@ -64,6 +64,18 @@ describe('setup step 4 on hosted', () => {
 		expect(text()).not.toContain(`rua=mailto:${ADDR}`);
 	});
 
+	it('says nothing of a "Report authorization record" or Routing on hosted (no reports domain of the install\'s own exists); self-host still does', async () => {
+		const withAuth = { ...onboarding(true, true), rua_address: ADDR, dmarc: { ...onboarding(true, true).dmarc, auth_record: { found: false, record_name: null } } };
+		const { unmount } = step4(base({ 'GET /api/domains/1/onboarding-status': withAuth }));
+		await screen.findByText('DMARC policy');
+		expect(text()).not.toContain('Report authorization record');
+		expect(text()).not.toContain('Set one up in Routing');
+		unmount();
+		renderApp(<Routes><Route path="/domains/:id/setup/:step" element={<SetupWizardPage />} /></Routes>, { route: '/domains/1/setup/4', status: { mode: 'self-host', has_domain: true } as never, routes: base({ 'GET /api/domains/1/onboarding-status': withAuth, 'GET /api/hosted/config': { enabled: false } }) as never });
+		expect(await screen.findByText('Report authorization record')).toBeInTheDocument();
+		expect(text()).toContain('Set one up in Routing');
+	});
+
 	for (const found of [false, true]) {
 		it(`without Cloudflare, ${found ? 'a record that already lists our address' : 'no record'}: the step says reports are not connected, offers no record with our address and no Copy of one`, async () => {
 			step4(base({ 'GET /api/domains/1/onboarding-status': onboarding(false, found) }));
