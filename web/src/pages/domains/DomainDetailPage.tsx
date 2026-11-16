@@ -21,7 +21,7 @@ import { ReportsNotConnected, useReportsNotConnected } from '../../components/Re
 import { Disclosure, ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section } from '../../components/states';
 import { actionsPending, domainActions } from '../../lib/actions';
 import { errorMessage } from '../../lib/api';
-import { useHostedInfo, useHostedLevelInput } from '../../lib/hosted';
+import { useDnsToolsOff, useHostedLevelInput } from '../../lib/hosted';
 import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, type ReportTotals } from '../../lib/verdict';
 import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
 import { recordAlignment } from '../../lib/dmarc-coverage';
@@ -272,10 +272,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const spfOff = useHosted(); // hosted: no SPF flattening (DnsTools)
+	const { spfOff, mtaOff } = useDnsToolsOff(domain.id); // the one predicate (src: web/src/lib/hosted.ts)
 	const spfTool = useSpfFlatten(domain.id, !spfOff);
-	const hostedRecords = useHostedInfo(domain.id); // a hook is never called behind `&&`: self-host asks nothing (same query as useHostedLevelInput below)
-	const mtaOff = useHosted() && !hostedRecords; // hosted without hosted records: no MTA-STS tool (DnsTools)
 	const mtaTool = useMtaSts(domain.id, !mtaOff);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
@@ -388,8 +386,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
-			{/* Wide (lg): the steps, the offer, then the reports panel, in the order they are read and tabbed: the offer stays where it always was and the panel is
-			    still in the first screen. Narrow: the panel is visually first (CSS order), so its action is in the first screen at 375 wide. */}
+			{/* The same order at every width: the steps, the offer, then the reports panel. The first screen gets the action from the connect-reports step
+			    itself, whose button presses the panel's. The offer stays where it always was. */}
 			<div className="flex flex-col gap-8">
 			<DoThisNext
 				actions={actions}
@@ -401,7 +399,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			/>
 			{/* An offer, not a nag: once, below the steps, never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
 			<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />
-			{connectLoading ? <div className="max-lg:order-first"><ListSkeleton rows={1} label="Loading the report address" /></div> : connectFirst ? <ConnectReports domain={domain} className="max-lg:order-first" /> : null}
+			{connectLoading ? <ListSkeleton rows={1} label="Loading the report address" /> : connectFirst ? <ConnectReports domain={domain} /> : null}
 			</div>
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 

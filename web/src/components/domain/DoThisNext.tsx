@@ -4,10 +4,13 @@ import { useId } from 'react';
 import { Link } from 'react-router';
 import type { DomainAction } from '../../lib/actions';
 
-/** The reports panel on this page (ConnectReports): bring its action into view and focus it. */
+/** The reports panel on this page (ConnectReports): press its action for the person (it opens the review, or connects) and bring it into view. */
 function focusConnectReports() {
-	const button = document.querySelector<HTMLElement>('[data-testid="connect-reports"] button');
-	button?.scrollIntoView({ block: 'center' });
+	const panel = document.querySelector<HTMLElement>('[data-testid="connect-reports"]');
+	// Only the panel's own "Connect reports" is pressed: never an Apply or a Disconnect that may be showing.
+	const button = [...(panel?.querySelectorAll<HTMLElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Connect reports');
+	button?.click();
+	(button ?? panel)?.scrollIntoView({ block: 'center' });
 	button?.focus();
 }
 

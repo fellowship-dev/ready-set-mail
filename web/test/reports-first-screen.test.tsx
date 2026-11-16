@@ -57,7 +57,6 @@ describe('the domain page', () => {
 		expect(within(panel).getByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
 		// The reading and tab order is the wide layout's: the steps, then the panel. On a narrow screen CSS puts the panel first.
 		expect(before(await screen.findByRole('heading', { name: 'Do this next' }), panel)).toBe(true);
-		expect(panel).toHaveClass('max-lg:order-first');
 		expect(screen.queryByTestId('reports-not-connected')).not.toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: 'Connect reports' })).toHaveLength(1);
 	});
@@ -68,7 +67,6 @@ describe('the domain page', () => {
 		await userEvent.click(await screen.findByRole('button', { name: 'Connect reports' }));
 		const panel = await screen.findByTestId('connect-reports');
 		expect(await within(panel).findByText('Connected, record not published yet')).toBeInTheDocument();
-		expect(panel).toHaveClass('max-lg:order-first'); // it does not move once acted on
 	});
 
 	it('where hosted refuses, the true sentence stays below and there is no button', async () => {
@@ -88,15 +86,19 @@ describe('the domain page', () => {
 
 describe('"Do this next" carries the action', () => {
 	const action = { key: 'connect-reports', status: 'note' as const, do: 'Connect reports so senders can be confirmed', why: 'Reports would show which services send.', who: 'You', cta: 'Connect reports', connectReports: true };
-	it('a button that takes the person to the panel; none for a read-only member', async () => {
+	it('a button that presses Connect reports and brings it into view; none for a read-only member', async () => {
+		(window as unknown as { pressed: number }).pressed = 0;
 		const { unmount } = renderApp(
 			<div>
 				<DoThisNext actions={[action]} pending={false} canWrite onRetry={() => {}} />
-				<div data-testid="connect-reports"><button type="button">Connect reports</button></div>
+				<div data-testid="connect-reports"><button type="button" onClick={() => (window as unknown as { pressed: number }).pressed++}>Connect reports</button><button type="button">Apply</button></div>
 			</div>,
 		);
 		const link = within(await screen.findByRole('list')).getByRole('button', { name: 'Connect reports' });
 		expect(link).toBeInTheDocument();
+		Element.prototype.scrollIntoView = () => {};
+		await userEvent.click(link);
+		expect((window as unknown as { pressed: number }).pressed).toBe(1); // it presses the panel's own Connect reports, nothing else
 		unmount();
 		renderApp(<DoThisNext actions={[action]} pending={false} canWrite={false} onRetry={() => {}} />);
 		expect(await screen.findByText('Connect reports so senders can be confirmed')).toBeInTheDocument();
