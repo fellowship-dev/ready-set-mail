@@ -2,7 +2,7 @@ import { authorizationProblem, pageHeaders, renderConsentPage, renderConsentProb
 import { CONNECTION_PREFIX, forgetApprovedClient, isLoopbackHost } from './registration';
 import { describedName } from './client-names';
 import type { OAuthProviderOptions, OAuthHelpers } from '@cloudflare/workers-oauth-provider';
-import { accessLookups, authLookups, forWorkspace, workspaceLifecycle } from '@ready-set-mail/db';
+import { accessLookups, authLookups, forWorkspace, globalQueries, workspaceLifecycle } from '@ready-set-mail/db';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../index';
 import { currentUser, passesCsrfCheck } from '../auth/session';
@@ -16,27 +16,27 @@ import { agentAuthorized } from '../product-analytics/steps';
 
 const prefix = CONNECTION_PREFIX;
 /** `name` is how the app is led with (`AppIdentity.lead`): an address, never a name the app chose. `calledItself` is that name, shown as the app's own words. */
-export interface AgentConnection { principalId: string; userId: string; workspaceId: string; clientId: string; name: string; calledItself?: string; /** The host of an app whose identity is verified (a client ID metadata document); absent for a self-registered app. */ verifiedHost?: string; createdAt: number; expiresAt: number; lastUsedAt?: number }
+export interface AgentConnection { principalId: string; userId: string; workspaceId: string; clientId: string; name: string; calledItself?: string; /** The app used the name of a well-known app, which is not kept or shown. */ nameWithheld?: boolean; /** The host of an app whose identity is verified (a client ID metadata document); absent for a self-registered app. */ verifiedHost?: string; createdAt: number; expiresAt: number; lastUsedAt?: number }
 /** What a connection can reach, read from its live grants: names, never ids. */
 export interface ConnectionAccess { workspaces: string[]; domains: string[]; products: string[]; actions: string[] }
 /** As listed to its owner: the workspace by name, never only its id; what it can reach; whether the app named itself (not verified). */
 export type ListedConnection = AgentConnection & { revoked: boolean; workspaceName: string | null; verified: boolean; access: ConnectionAccess };
 
 /** Who an app is, as a person is told. `lead` is what is verifiable: the publisher's host for an app with a client document, otherwise the address the app sends you back to. */
-export interface AppIdentity { lead: string; host: string; local: boolean; verifiedHost?: string; calledItself: string | null }
+export interface AppIdentity { lead: string; host: string; local: boolean; verifiedHost?: string; calledItself: string | null; /** It gave a name that was not stored because it is a well-known one. */ nameWithheld: boolean }
 
 /**
  * How an app is introduced and whether it is verified: one rule for the consent page, the approved-agents list and the connection record. A client ID metadata
  * document on its own HTTPS host is verified: that host is the publisher. Anything else named itself, and what it calls itself is never the lead.
  */
-export function clientIdentity(client: { clientName?: string } | null, clientId: string, redirectUri: string): AppIdentity {
+export function clientIdentity(client: { clientName?: string } | null, clientId: string, redirectUri: string, nameWithheld = false): AppIdentity {
  let verifiedHost: string | undefined;
  try { const url = new URL(clientId); if (url.protocol === 'https:' && url.pathname !== '/') verifiedHost = url.hostname; } catch { /* a registered app's id is not a URL */ }
  let host = '';
  try { host = new URL(redirectUri).hostname; } catch { /* the library has already refused an address that is not one */ }
  const local = isLoopbackHost(host);
  const lead = verifiedHost ?? (local ? 'An app on this computer' : host || UNNAMED_APP);
- return { lead, host: verifiedHost ?? host, local, ...(verifiedHost ? { verifiedHost } : {}), calledItself: describedName(client?.clientName) };
+ return { lead, host: verifiedHost ?? host, local, ...(verifiedHost ? { verifiedHost } : {}), calledItself: describedName(client?.clientName), nameWithheld: nameWithheld && !client?.clientName };
 }
 
 async function accessOf(env: BoundEnv, principalId: string, names: Map<string, string | null>): Promise<ConnectionAccess> {
@@ -116,7 +116,7 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
    const authRequest = await api.parseAuthRequest(request);
    if (authRequest.scope.some(s => s !== 'ready-set-mail' && s !== 'offline_access')) return authorizationFailure('invalid_scope');
    const description = await api.describeConsent(authRequest), consent = await api.beginConsent(authRequest);
-   const identity = clientIdentity(await api.lookupClient(authRequest.clientId), authRequest.clientId, authRequest.redirectUri);
+   const identity = clientIdentity(await api.lookupClient(authRequest.clientId), authRequest.clientId, authRequest.redirectUri, await globalQueries(env.DB).agentClients.nameWithheld(authRequest.clientId));
    const named = new Map((await workspaceLifecycle(env.DB).listForUser(user.id)).map(w => [w.id, w.name]));
    const workspaces: ConsentModel['workspaces'] = [];
    for (const m of memberships) {
@@ -130,7 +130,7 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
     workspaces.push({ id: m.workspace_id, name: cleanName(named.get(m.workspace_id)) || 'Unnamed workspace', choices });
    }
    const html = renderConsentPage({
-    client: { lead: identity.lead, calledItself: identity.calledItself, publisher: identity.verifiedHost, redirectHost: description.redirectHost, loopback: !!description.redirectIsLoopback || identity.local },
+    client: { lead: identity.lead, calledItself: identity.calledItself, nameWithheld: identity.nameWithheld, publisher: identity.verifiedHost, redirectHost: description.redirectHost, loopback: !!description.redirectIsLoopback || identity.local },
     account: user.email, handle: consent.handle, workspaces, now: Math.floor(Date.now() / 1000),
    });
    return new Response(html, { headers: pageHeaders(consent.headers) });
@@ -164,14 +164,15 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
    }
    const approved = await api.approveConsent(request, String(form.get('handle') ?? ''), { scope: ['ready-set-mail'] });
    // An approved app stays whatever its age: it leaves the list of apps that expire (src/mcp/registration.ts).
+   const nameWithheld = await globalQueries(env.DB).agentClients.nameWithheld(approved.request.clientId);
    await forgetApprovedClient(env, approved.request.clientId);
    const principalId = crypto.randomUUID(), workspaceId = selections[0]!.workspaceId, now = Math.floor(Date.now() / 1000), expiresAt = now + days * 86400;
-   const identity = clientIdentity(await api.lookupClient(approved.request.clientId), approved.request.clientId, approved.request.redirectUri);
+   const identity = clientIdentity(await api.lookupClient(approved.request.clientId), approved.request.clientId, approved.request.redirectUri, nameWithheld);
    await forWorkspace(env.DB, workspaceId).access.principals.create({ id: principalId, name: identity.lead, kind: 'human', user_id: user.id });
    try {
     for (const s of selections) await forWorkspace(env.DB, s.workspaceId).access.grants.create({ id: crypto.randomUUID(), workspace_id: s.workspaceId, principal_id: principalId, product_id: s.productId ?? null, domain: s.domain, actions: JSON.stringify(actions), expires_at: expiresAt });
     const local = mcpInstallation(env);
-    const record: AgentConnection = { principalId, userId: user.id, workspaceId, clientId: approved.request.clientId, name: identity.lead, ...(identity.calledItself ? { calledItself: identity.calledItself } : {}), ...(identity.verifiedHost ? { verifiedHost: identity.verifiedHost } : {}), createdAt: now, expiresAt };
+    const record: AgentConnection = { principalId, userId: user.id, workspaceId, clientId: approved.request.clientId, name: identity.lead, ...(identity.calledItself ? { calledItself: identity.calledItself } : {}), ...(identity.nameWithheld ? { nameWithheld: true } : {}), ...(identity.verifiedHost ? { verifiedHost: identity.verifiedHost } : {}), createdAt: now, expiresAt };
     await forWorkspace(env.DB, workspaceId).settings.set(`${prefix}${principalId}`, JSON.stringify(record));
     const completed = await api.completeAuthorization({ request: approved.request, userId: user.id, scope: ['ready-set-mail'], props: { principalId, ...local }, metadata: { principalId }, revokeExistingGrants: false });
     agentAuthorized(env, ctx, workspaceId, { actions: actions.length, domains: selections.length, days });

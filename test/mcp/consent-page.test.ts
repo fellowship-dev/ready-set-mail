@@ -100,6 +100,15 @@ describe('consent page', () => {
   expect(html).not.toMatch(/<input[^>]* checked/);
  });
 
+ it('says what is true when the name was withheld, and "It gave no name." only when there was none', () => {
+  const withheld = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, nameWithheld: true, redirectHost: 'client.example', loopback: false } })));
+  expect(withheld).toContain('It used the name of a well-known app, so the name is not shown: only the address below is known.');
+  expect(withheld).not.toContain('It gave no name.');
+  const none = visible(renderConsentPage(model({ client: { lead: 'client.example', calledItself: null, redirectHost: 'client.example', loopback: false } })));
+  expect(none).toContain('It gave no name.');
+  expect(none).not.toContain('well-known app');
+ });
+
  it('an app on this computer is called that, not by an address', () => {
   const html = renderConsentPage(model({ client: { lead: 'An app on this computer', calledItself: null, redirectHost: '127.0.0.1', loopback: true } }));
   expect(html).toContain('<h1>Allow an app on this computer to work with your domains?</h1>');

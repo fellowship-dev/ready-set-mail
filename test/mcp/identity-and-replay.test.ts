@@ -22,8 +22,14 @@ describe('a self-registered app is shown by its address, whatever it calls itsel
   expect(html).toContain('<h1>Allow the app at client.example to work with your domains?</h1>');
   expect(html).not.toMatch(/<h1>[^<]*Claude/);
   expect(visible(html)).not.toContain('Claude');
-  expect(visible(html)).toContain('Not verified: nobody has checked who this app is. It gave no name.');
+  expect(visible(html)).toContain('Not verified: nobody has checked who this app is. It used the name of a well-known app, so the name is not shown: only the address below is known.');
+  expect(visible(html)).not.toContain('It gave no name.');
   expect(html).not.toMatch(/<input[^>]* checked/);
+ });
+ it('an app that really gave no name is told apart from one whose name was withheld', async () => {
+  const html = await consent(await app.registerOk({ redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none' }));
+  expect(visible(html)).toContain('It gave no name.');
+  expect(visible(html)).not.toContain('well-known app');
  });
  it('a name that is not famous is shown as what the app calls itself, below the address', async () => {
   const html = await consent(await app.registerOk({ ...GOOD, client_name: 'Mail Helper' }));
@@ -45,6 +51,8 @@ describe('a self-registered app is shown by its address, whatever it calls itsel
   const f = (await app.connections()).find(x => x.clientId === famous);
   expect(f).toMatchObject({ name: 'famous.example', verified: false });
   expect(f.calledItself).toBeUndefined();
+  expect(f.nameWithheld).toBe(true);
+  expect(c.nameWithheld).toBeUndefined();
  }, 60000);
  it('approving an app takes it off the list of apps that expire, so the clean-up cannot take it', async () => {
   const id = await app.registerOk({ ...GOOD, redirect_uris: ['https://approved.example/cb'] });

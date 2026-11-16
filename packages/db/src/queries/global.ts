@@ -124,8 +124,12 @@ export function globalQueries(dbLike: DbLike) {
 		 * what is here is exactly what may be expired or evicted. The key range uses the unique index on `key`.
 		 */
 		agentClients: {
-			add: (clientId: string, nowMs: number) =>
-				db.insert(authRateLimits).values({ id: crypto.randomUUID(), key: `${AGENT_CLIENT_PREFIX}${clientId}`, count: 1, lastRequest: nowMs }).onConflictDoNothing().run(),
+			/** `nameWithheld` is kept in `count` (2 instead of 1): the app gave a name that was not stored, and the approval page says so while it waits. */
+			add: (clientId: string, nowMs: number, nameWithheld = false) =>
+				db.insert(authRateLimits).values({ id: crypto.randomUUID(), key: `${AGENT_CLIENT_PREFIX}${clientId}`, count: nameWithheld ? 2 : 1, lastRequest: nowMs }).onConflictDoNothing().run(),
+			/** Whether the waiting app gave a name that was withheld (a well-known one). False for an app that gave none, and for one no longer waiting. */
+			nameWithheld: (clientId: string) =>
+				db.select({ n: authRateLimits.count }).from(authRateLimits).where(eq(authRateLimits.key, `${AGENT_CLIENT_PREFIX}${clientId}`)).get().then((r) => (r?.n ?? 1) > 1),
 			/** The app was approved (or deleted): it is no longer a candidate for expiry. */
 			remove: (clientIds: string[]) => (clientIds.length ? db.delete(authRateLimits).where(inArray(authRateLimits.key, clientIds.map((c) => `${AGENT_CLIENT_PREFIX}${c}`))).run() : Promise.resolve()),
 			count: () => db.select({ n: sql<number>`COUNT(*)` }).from(authRateLimits).where(agentClientRange).get().then((r) => r?.n ?? 0),

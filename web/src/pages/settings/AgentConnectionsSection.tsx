@@ -18,6 +18,8 @@ interface Connection {
 	name: string;
 	/** The name the app gave itself, shown as its own words. */
 	calledItself?: string;
+	/** It used the name of a well-known app, which is not shown. */
+	nameWithheld?: boolean;
 	workspaceId: string;
 	workspaceName?: string | null;
 	createdAt: number;
@@ -105,6 +107,12 @@ function ApprovedAgents({ workspace }: { workspace: string | null | undefined })
 											<>
 												<dt>Calls itself</dt>
 												<dd className="min-w-0 [overflow-wrap:anywhere]">&ldquo;{cleanName(c.calledItself)}&rdquo;{c.verified ? '' : ' (its own word for itself)'}</dd>
+											</>
+										) : null}
+										{c.nameWithheld ? (
+											<>
+												<dt>Name</dt>
+												<dd className="min-w-0">It used the name of a well-known app, so the name is not shown: only the address above is known.</dd>
 											</>
 										) : null}
 										<dt>Workspace</dt>

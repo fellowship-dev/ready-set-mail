@@ -289,7 +289,8 @@ test('a self-registered app named Claude is led by its address, and signing in o
   // Nothing on the page says "Claude" as the app's own name, and nothing is ticked for it.
   const text = await page.locator('main').innerText();
   expect(text).not.toContain('Claude');
-  expect(text).toContain('It gave no name.');
+  expect(text).toContain('It used the name of a well-known app, so the name is not shown: only the address below is known.');
+  expect(text).not.toContain('It gave no name.');
   expect(await page.locator('input[type=checkbox]:checked').count()).toBe(0);
   for (const [width, height] of [[375, 812], [1440, 900]] as const) {
     await page.setViewportSize({ width, height });

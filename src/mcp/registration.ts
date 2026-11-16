@@ -185,7 +185,7 @@ export async function handleRegistration(request: Request, env: RegistrationEnv,
   const response = await forward(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(vetted.body) }));
   if (response.status === 201) {
     const clientId = ((await response.clone().json().catch(() => null)) as { client_id?: string } | null)?.client_id;
-    if (clientId) await agents.add(clientId, now);
+    if (clientId) await agents.add(clientId, now, !!vetted.withheld);
     audit(env, ctx, 'agent.client_registered', { id: clientId, name: vetted.name, meta: { redirect_hosts: hosts, ...(vetted.withheld ? { name_withheld: vetted.withheld } : {}) } });
   } else {
     await giveBack();

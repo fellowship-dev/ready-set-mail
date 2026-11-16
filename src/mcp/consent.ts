@@ -18,6 +18,8 @@ export const ACTION_COPY: Readonly<Record<Exclude<AccessAction, 'access:manage'>
 });
 /** Pre-selected for a verified client only: the two permissions a first useful answer needs (list the domains, read their report). */
 const DEFAULT_ACTIONS: readonly string[] = Object.freeze(['resources:read', 'reports:read']);
+/** Said when an app used the name of a well-known app: the name is not kept, and nothing about who it is can be said beyond its address. */
+export const NAME_WITHHELD = 'It used the name of a well-known app, so the name is not shown: only the address below is known.';
 /** An app that gave no name is shown, and listed, under this one. */
 export const UNNAMED_APP = 'Unnamed app';
 export const EXPIRY_CHOICES = [1, 7, 14, 30] as const;
@@ -28,7 +30,7 @@ export interface ConsentModel {
   * `lead` is what the person is told first, and it is verifiable: the publisher's host, or the address the app sends them back to (never a name the app chose).
   * `calledItself` is the name the app gave, shown as its own words. `publisher` is set only for a client whose identity is verified (a Client ID Metadata Document on its own HTTPS domain).
   */
- client: { lead: string; calledItself: string | null; publisher?: string; redirectHost: string; loopback: boolean };
+ client: { lead: string; calledItself: string | null; /** It gave a name that is not shown because it is a well-known one. */ nameWithheld?: boolean; publisher?: string; redirectHost: string; loopback: boolean };
  /** Email of the signed-in person approving. */
  account: string;
  /** Opaque consent handle from the OAuth provider. */
@@ -133,6 +135,7 @@ export function renderConsentPage(m: ConsentModel): string {
    : `<li><strong>Not verified:</strong> nobody has checked who this app is.</li>`,
   calls
    ? `<li><strong>It calls itself</strong> \u201c${calls}\u201d. ${verified ? 'That is its own description.' : 'The app chose that name, so it may not be who it says.'}</li>`
+   : m.client.nameWithheld ? `<li><strong>${escape(NAME_WITHHELD)}</strong></li>`
    : verified ? '' : `<li><strong>It gave no name.</strong></li>`,
   `<li><strong>Access goes to</strong> <span class="mono">${escape(m.client.redirectHost)}</span>${verified ? '' : '. Allow only if that is the app you are using right now.'}</li>`,
   `<li><strong>You are signed in as</strong> ${escape(m.account)}</li>`,

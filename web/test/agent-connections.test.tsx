@@ -265,6 +265,7 @@ describe('access keys for scripts and services', () => {
 				'GET /api/mcp/connections': {
 					connections: [
 						{ principalId: 'a1', name: 'evil.example', calledItself: 'Claude', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+						{ principalId: 'a4', name: 'famous.example', nameWithheld: true, workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
 						{ principalId: 'a2', name: 'An app on this computer', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
 					],
 				},
@@ -276,6 +277,9 @@ describe('access keys for scripts and services', () => {
 		expect(within(row).getByText('Calls itself')).toBeInTheDocument();
 		const local = screen.getByText('An app on this computer').closest('li')!;
 		expect(within(local).queryByText('Calls itself')).not.toBeInTheDocument();
+		expect(within(local).queryByText(/well-known app/)).not.toBeInTheDocument();
+		const famous = screen.getByText('famous.example').closest('li')!;
+		expect(within(famous).getByText('It used the name of a well-known app, so the name is not shown: only the address above is known.')).toBeInTheDocument();
 	});
 
 	it('shows unconfigured Google as unavailable and disables consent and sync controls', async () => {
