@@ -57,7 +57,8 @@ export function PlanBanners() {
 			</Alert>,
 		);
 	}
-	if (plan.payment_problem) {
+	// The Add domain page says it itself, in its own place: not twice.
+	if (plan.payment_problem && !(plan.action_required_url && owner) && !location.pathname.startsWith('/add')) {
 		items.push(
 			<Alert key="problem" variant="warning" title="Your last payment did not go through">
 				<span>{owner ? 'Update your card to add more domains. Your domains keep working.' : 'Ask the workspace owner to update the card. Your domains keep working.'}</span>

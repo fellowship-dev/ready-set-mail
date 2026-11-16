@@ -1,5 +1,6 @@
 import { cleanName } from '../../lib/names';
 import {
+	Alert,
 	Badge,
 	Button,
 	Dialog,
@@ -20,6 +21,7 @@ import {
 	toast,
 } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import { Copy } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { ListSkeleton, LoadError, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
@@ -27,7 +29,7 @@ import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
 import { useSession } from '../../lib/session';
 import { useWorkspaces } from '../../lib/workspaces';
-import { usd } from '../../lib/plan';
+import { errorCode as errorCodeOf, usd } from '../../lib/plan';
 import type { Role } from '../../lib/types';
 import { Field } from '../auth/AuthLayout';
 
@@ -165,7 +167,9 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 						<DialogDescription>They become the workspace's owner, and you become an admin. Only an owner can delete the workspace, export its data or hand ownership on.</DialogDescription>
 					</DialogHeader>
 					{owes ? <p className="text-sm text-ink-1">After the transfer this workspace costs {usd(owes.amount, owes.currency)} a {owes.interval}, billed to its card. Confirm to continue.</p> : null}
-					{transfer.isError && !owes ? <FieldError>{errorMessage(transfer.error)}</FieldError> : null}
+					{transfer.isError && !owes && errorCodeOf(transfer.error) === 'plan_required' ? (
+						<Alert variant="info"><p>{errorMessage(transfer.error)}</p><p className="pt-1"><Link to="/settings?plan=start" onClick={() => setHanding(false)}>Open Billing</Link></p></Alert>
+					) : transfer.isError && !owes ? <FieldError>{errorMessage(transfer.error)}</FieldError> : null}
 					<DialogFooter>
 						<Button variant="secondary" onClick={() => { setHanding(false); setOwes(null); transfer.reset(); }}>
 							Cancel

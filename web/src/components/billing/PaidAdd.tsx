@@ -68,7 +68,8 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 
 	// The confirm waits for the bank: it is done when the server says the plan has started (the page polls the plan).
 	useEffect(() => {
-		if (waiting && plan && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null });
+		// Done when the plan has STARTED (Stripe says paid), not merely when no payment is pending: the cached plan is the one from before the click.
+		if (waiting && plan && plan.name === 'payg' && !plan.pending) onAdded({ added: waiting.added.map((domain) => ({ domain, domain_id: 0 })), pending: [], resumed: [], failed: [], payment: null });
 	}, [waiting, plan?.pending]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	useEffect(() => { if (p && !p.needs_confirm && p.reason === 'free') onFree?.(); }, [p?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -124,7 +125,9 @@ export function PaidAdd({ domains, returnPath, onAdded, onCancel, onFree, cancel
 	const hasCard = !!b.card_on_file;
 	const cardName = cardMask(b.card);
 	// No card yet: the plain unit price and what happens next; the exact amount comes with the card, before anything is charged.
-	const lines = hasCard ? confirmSentence(p, cardName, domains.length) : p.unit_price ? [`${perInterval(p.unit_price)} ${domains.length > 1 ? `for each of these ${domains.length} domains` : 'for this domain'}. Subdomains included. Cancel any time.`, 'Add a card first: you see the exact amount before you pay.'] : [WORDS.noPreview];
+	const lines = hasCard ? confirmSentence(p, cardName, domains.length)
+		: p.unit_price ? [p.grandfather ? `Pay as you go bills ${p.grandfather.billable_after} ${p.grandfather.billable_after === 1 ? 'domain' : 'domains'} at ${perInterval(p.unit_price)} each. Subdomains included. Cancel any time.` : `${perInterval(p.unit_price)} ${domains.length > 1 ? `for each of these ${domains.length} domains` : 'for this domain'}. Subdomains included. Cancel any time.`, 'Add a card first: you see the exact amount before you pay.']
+		: [WORDS.noPreview];
 	const grandfather = p.grandfather && p.grandfather.units > 1 ? p.grandfather : null;
 
 	return (

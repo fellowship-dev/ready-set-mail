@@ -36,9 +36,10 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 		body = (
 			<div className="space-y-2">
 				{plan.lapsed ? <p className="text-sm text-ink-1">Pay as you go ended. {plan.paused_domains > 0 ? `${plan.includes_free_domain ? 'Domains beyond your free one are' : 'Your domains are'} paused: you can read and export them.` : ''}</p> : <p className="text-sm text-ink-1">{plan.includes_free_domain ? WORDS.freeIncludes : 'This workspace has no free domain.'}</p>}
-				{heldMore ? <p className="text-sm text-ink-2">{heldMore}</p> : null}
-				{plan.paid_available ? <p className="text-sm text-ink-2">{plan.lapsed ? 'Start pay as you go again to resume them.' : `More domains are pay as you go${money ? `: ${money} for each` : ''}. Cancel any time.`}</p> : <p className="text-sm text-ink-2">More domains: talk to us.</p>}
-				{!owner && plan.paid_available ? <p className="text-sm text-ink-1">{WORDS.askOwner}</p> : null}
+				{heldMore && !starting ? <p className="text-sm text-ink-2">{heldMore}</p> : null}
+				{!plan.paid_available ? <p className="text-sm text-ink-2">More domains: talk to us.</p>
+					: !owner ? <p className="text-sm text-ink-1">{plan.lapsed ? 'Ask the workspace owner to start pay as you go again to resume them.' : WORDS.askOwner}</p>
+					: <p className="text-sm text-ink-2">{plan.lapsed ? 'Start pay as you go again to resume them.' : `More domains are pay as you go${money ? `: ${money} for each` : ''}. Cancel any time.`}</p>}
 			</div>
 		);
 		if (owner && plan.paid_available && !starting) action = <Button onClick={() => setStarting(true)}>{plan.lapsed ? 'Start pay as you go again' : 'Start pay as you go'}</Button>;
@@ -52,7 +53,7 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 						<Line label="Domains billed">{plan.billable === 0 ? 'None yet' : `${plan.billable}${money ? ` × ${perInterval(unit!)}` : ''}`}</Line>
 						{plan.cancel_at_period_end && plan.period_end ? (
 							<Line label="Ends">{longDate(plan.period_end)}. Your domains keep working until then.</Line>
-						) : plan.next_invoice ? (
+						) : plan.next_invoice && plan.billable > 0 ? (
 							<Line label="Next invoice">{plan.next_invoice.date ? `${longDate(plan.next_invoice.date)}: ` : ''}{invoiceMoney(plan.next_invoice.amount_due, plan.next_invoice.currency)}</Line>
 						) : plan.billable === 0 ? <Line label="Next invoice">Nothing to pay yet</Line> : null}
 					</dl>
@@ -60,17 +61,17 @@ export function PlanCard({ plan, billing }: { plan: PlanView; billing: BillingVi
 				{owner && plan.domains.some((d) => d.billable) ? (
 					<ul className="divide-y divide-line rounded-md border border-line text-sm">
 						{plan.domains.filter((d) => d.billable).map((d) => (
-							<li key={d.id} className="flex items-center justify-between gap-3 px-3 py-2"><span className="font-mono [overflow-wrap:anywhere]">{d.name}</span><span className="shrink-0 text-ink-2">{money ?? ''}</span></li>
+							<li key={d.id} className="px-3 py-2"><span className="font-mono [overflow-wrap:anywhere]">{d.name}</span></li>
 						))}
 					</ul>
 				) : null}
-				{plan.payment_problem ? <Alert variant="warning" title="Your last payment did not go through">Update your card to add more domains. Your domains keep working.</Alert> : null}
-				{plan.action_required_url && owner ? <Alert variant="warning" title={WORDS.bank}>The renewal is waiting for you.</Alert> : null}
+				{plan.action_required_url && owner ? <Alert variant="warning" title={WORDS.bank}>The renewal is waiting for you.</Alert>
+					: plan.payment_problem ? <Alert variant="warning" title="Your last payment did not go through">Update your card to add more domains. Your domains keep working.</Alert> : null}
 			</div>
 		);
 		if (owner) {
-			if (plan.payment_problem) action = <Button loading={portal.isPending} onClick={() => portal.mutate()}><ExternalLink aria-hidden />Update your card</Button>;
-			else if (plan.action_required_url) action = <Button asChild><a href={plan.action_required_url} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden />Confirm the payment</a></Button>;
+			if (plan.action_required_url) action = <Button asChild><a href={plan.action_required_url} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden />Confirm the payment</a></Button>;
+			else if (plan.payment_problem) action = <Button loading={portal.isPending} onClick={() => portal.mutate()}><ExternalLink aria-hidden />Update your card</Button>;
 		}
 	}
 
@@ -126,10 +127,12 @@ function StartPlan({ plan, billing, onCancel, onStarted }: { plan: PlanView; bil
 	if (preview.isPending) return <Skeleton className="h-24 w-full" />;
 	if (!p) return <Alert variant="danger" title="That did not work">{preview.error ? errorMessage(preview.error) : WORDS.noPreview}</Alert>;
 	const hasCard = !!billing.card_on_file;
-	const lines = hasCard ? confirmSentence(p, cardMask(billing.card)) : [p.no_charge ? WORDS.noChargeUntil : WORDS.noPreview, 'Add a card first.'];
+	const lines = hasCard ? confirmSentence(p, cardMask(billing.card))
+		: p.grandfather && p.unit_price ? [`Starting bills ${p.grandfather.billable_now} ${p.grandfather.billable_now === 1 ? 'domain' : 'domains'} at ${perInterval(p.unit_price)} each.`, 'Add a card first: you see the exact amount before you pay.']
+		: [WORDS.noChargeUntil, 'Add a card first.'];
 	return (
 		<div className="space-y-3 border-t border-line pt-3">
-			{p.grandfather ? <p className="text-sm text-ink-1">This workspace holds {p.grandfather.units} domains and only one is free. Starting bills the other {p.grandfather.units - 1}.</p> : null}
+			{p.grandfather ? <p className="text-sm text-ink-1">This workspace holds {p.grandfather.units} domains and only one is free.</p> : null}
 			{lines.map((l, i) => <p key={i} className={i === 0 ? 'text-sm font-medium text-ink-1' : 'text-sm text-ink-2'}>{l}</p>)}
 			{problem ? <Alert variant="danger" title="That did not work">{problem}</Alert> : null}
 			<div className="flex flex-wrap gap-2">

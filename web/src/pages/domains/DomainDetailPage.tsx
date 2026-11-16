@@ -264,6 +264,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const qc = useQueryClient();
 	const [days, setDays] = useState<number>(7);
 	const stats = useStats(domain.id, days);
+	const plan = usePlan();
 	const week = useStats(domain.id, 7);
 	const sources = useFailingSources(domain.id);
 	const dns = useDnsCheck(domain.id);
@@ -372,6 +373,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
 			<PausedNotice domainId={domain.id} />
+			<IntakePlanNote visibility={stats.data ?? null} helpUrl={plan?.help_url ?? null} />
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
@@ -534,6 +536,24 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				) : null}
 			</div>
 		</div>
+	);
+}
+
+/**
+ * What the free plan did to this domain's reports, in the customer's own terms (the server's words): the daily limit of the free plan, and failing sources that were
+ * summarised. Nothing when neither happened. Plain, no alarm; the help link is the instance's (https only).
+ */
+function IntakePlanNote({ visibility, helpUrl }: { visibility: { intake?: { limit?: string | null; notice?: string | null; summarised?: { reports: number; sources: number } | null } } | null; helpUrl: string | null }) {
+	const i = visibility?.intake;
+	const limited = i && (i.limit === 'free_plan_day' || i.limit === 'domain_paused') ? i.notice ?? null : null;
+	const summarised = i?.summarised ?? null;
+	if (!limited && !summarised) return null;
+	return (
+		<Alert variant="info" title={limited ? 'Some reports were not saved' : 'Failing sources were summarised'}>
+			{limited ? <p>{limited}</p> : null}
+			{summarised ? <p>{summarised.sources.toLocaleString('en-US')} failing {summarised.sources === 1 ? 'source was' : 'sources were'} summarised by network in {summarised.reports} {summarised.reports === 1 ? 'report' : 'reports'}; the message totals are exact.</p> : null}
+			{limited && helpUrl?.startsWith('https://') ? <p><a href={helpUrl} target="_blank" rel="noreferrer">Talk to us</a></p> : null}
+		</Alert>
 	);
 }
 

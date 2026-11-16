@@ -15,13 +15,14 @@ export function useStripParams(): (...names: string[]) => void {
 }
 
 /** `strip: false` when the page removes the parameter itself, together with its others in one step (two router updates in one tick undo each other). */
-export function useCardReturn(opts: { strip?: boolean } = {}): void {
+export function useCardReturn(opts: { strip?: boolean; quiet?: boolean } = {}): void {
 	const [params] = useSearchParams();
 	const strip = useStripParams();
 	const card = params.get('card');
 	useEffect(() => {
 		if (!card) return;
-		if (card === 'added') toast({ variant: 'success', title: 'Card saved', description: 'It will be used for the next payment.' });
+		// `quiet`: the page shows the card itself (the paid-domain confirm), so a toast would only repeat it over the next screen.
+		if (card === 'added') { if (!opts.quiet) toast({ variant: 'success', title: 'Card saved', description: 'It will be used for the next payment.' }); }
 		else if (card === 'canceled') toast({ variant: 'info', title: 'No card was added', description: 'Nothing was changed.' });
 		else if (card === 'error') toast({ variant: 'danger', title: 'We could not confirm the card', description: 'Nothing was charged. Try adding it again.' });
 		if (opts.strip !== false) strip('card');

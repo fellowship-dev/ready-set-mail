@@ -215,7 +215,7 @@ export function AddDomainPage() {
 	const billing = useBilling();
 	const plan = billing.data?.plan ?? null;
 	const isOwner = billing.data?.role === 'owner';
-	useCardReturn({ strip: false });
+	useCardReturn({ strip: false, quiet: true });
 	// Back from Stripe's page with a card for this domain: the same confirm, now showing the card.
 	useEffect(() => {
 		const d = params.get('domain')?.trim().toLowerCase();
@@ -225,7 +225,9 @@ export function AddDomainPage() {
 	// No usable Cloudflare connection means no zone request: the domain is typed by hand.
 	const cf = useCfOffer();
 	// A prefilled domain that is not one of the listed zones is typed, not picked.
-	const zones = !manual && cf.zoneList.length > 0 && (input === '' || cf.zoneList.some((z) => z.name === input)) ? cf.zoneList : null;
+	// Hosted plan: the zones of the account are the checklist below (one confirm for the total), so the form is the typed name.
+	const planPicks = planEnforced(plan) && plan.paid_available && isOwner && !!cf.connection;
+	const zones = !manual && !planPicks && cf.zoneList.length > 0 && (input === '' || cf.zoneList.some((z) => z.name === input)) ? cf.zoneList : null;
 
 	// A name inside a connected, allowed zone is verified through it at once (the server proves it); anything else takes the DNS record.
 	const typed = normalizeDomain(input);
@@ -338,7 +340,7 @@ export function AddDomainPage() {
 					) : (
 						<Input id="domain-input" placeholder="yourcompany.com" value={input} onChange={(e) => setInput(e.target.value)} autoFocus autoComplete="off" autoCapitalize="none" spellCheck={false} aria-invalid={(add.isError && !planLimitOf(add.error)) || undefined} aria-describedby={add.isError && !planLimitOf(add.error) ? 'domain-error' : undefined} />
 					)}
-					{!cf.pending && !zones && cf.canConnect ? <ConnectCloudflareLink /> : null}
+					{!cf.pending && !zones && !planPicks && cf.canConnect ? <ConnectCloudflareLink /> : null}
 					{inZone ? <FieldHint>{normalizeDomain(input)} is in your Cloudflare zone {inZone}, so it is verified on the spot.</FieldHint> : null}
 					{add.isError && !planLimitOf(add.error) && !planRequiredOf(add.error) ? <FieldError id="domain-error">{domainErrorMessage(add.error)}</FieldError> : null}
 					{add.isError && planRequiredOf(add.error) ? <PlanRequiredNotice error={add.error} owner={isOwner} /> : null}
