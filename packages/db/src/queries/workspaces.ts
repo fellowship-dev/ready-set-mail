@@ -18,6 +18,9 @@ export interface WorkspaceSummary {
 	role: MembershipRole;
 	member_count: number;
 	created_at: number;
+	/** Hosted plan (0017): 'free' or 'payg', and whether this workspace holds the person's one free domain (only that person's own: the owner's). */
+	plan: 'free' | 'payg';
+	includes_free_domain: boolean;
 }
 
 export function workspaceLifecycle(dbLike: DbLike) {
@@ -32,12 +35,15 @@ export function workspaceLifecycle(dbLike: DbLike) {
 					role: memberships.role,
 					member_count: sql<number>`(SELECT COUNT(*) FROM memberships m2 WHERE m2.workspace_id = ${workspaces.id})`,
 					created_at: workspaces.created_at,
+					plan: workspaces.plan,
+					includes_free_domain: sql<boolean>`(${workspaces.free_owner_user_id} = ${userId})`,
 				})
 				.from(memberships)
 				.innerJoin(workspaces, eq(workspaces.id, memberships.workspace_id))
 				.where(/* workspace-scope-exempt: listing a user's own workspaces is the point of this lookup */ eq(memberships.user_id, userId))
 				.orderBy(memberships.created_at, sql`${memberships}.rowid`)
-				.all(),
+				.all()
+				.then((rows) => rows.map((r) => ({ ...r, includes_free_domain: !!r.includes_free_domain }))),
 
 		/** The user's role in a workspace, or null when they are not a member (or it does not exist). */
 		roleOf: (userId: string, workspaceId: string) =>

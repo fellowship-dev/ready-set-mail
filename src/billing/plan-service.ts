@@ -175,7 +175,7 @@ export interface PaidAddResult { added: { domain: string; domain_id: number }[];
  */
 export async function addPaidDomains(d: BillingDeps, tenant: TenantContext, ws: Ws, actor: Actor, input: PaidAddInput): Promise<PaidAddResult> {
   need(d);
-  await rateLimit(d, 'order', ws.id, actor.userId);
+  await rateLimit(d, 'plan', ws.id, actor.userId);
   const interval = input.interval ?? 'month';
   const names = [...new Set(input.domains.map((x) => requireDomainName(x)))];
   if (names.length === 0 || names.length > 10) throw new BillingError(400, 'invalid_domains', 'Choose between one and ten domains.');
@@ -287,7 +287,7 @@ export const syncQuantity = async (d: BillingDeps, workspaceId: string): Promise
 /** "Start pay as you go" from Settings: the card is on file, the subscription is created at what the workspace owes now (0 for most). */
 export async function startPlan(d: BillingDeps, ws: Ws, actor: Actor, input: { interval?: PlanInterval; expectedAmount?: number; expectedCurrency?: string }): Promise<{ plan: 'payg' }> {
   need(d);
-  await rateLimit(d, 'order', ws.id, actor.userId);
+  await rateLimit(d, 'plan', ws.id, actor.userId);
   const interval = input.interval ?? 'month';
   const price = await planPrice(d, interval, true);
   if (input.expectedAmount !== undefined && (input.expectedAmount !== price.amount || (input.expectedCurrency ?? 'usd').toLowerCase() !== price.currency)) {
@@ -482,7 +482,7 @@ export async function planView(d: BillingDeps, ws: Ws, who: { isOwner: boolean }
   const sub = st.subscription;
   const interval: PlanInterval = sub?.interval ?? 'month';
   let price: MoneyView | null = null;
-  if (paidPathAvailable(d.env) || sub) {
+  if (who.isOwner && (paidPathAvailable(d.env) || sub)) {
     try { const p = await planPrice(d, interval); price = { amount: p.amount, currency: p.currency, interval }; } catch { price = null; }
   }
   const state = subscriptionState(sub);

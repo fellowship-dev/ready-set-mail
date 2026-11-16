@@ -39,6 +39,8 @@ export interface BillingPreflight {
   reason?: string;
   livemode?: boolean;
   price?: 'ok' | 'misconfigured' | 'unreachable';
+  /** The hosted plan (HOSTED_PLAN): off, or free_one_domain with what the paid path needs: `paid` false means the free limits apply and more domains say "talk to us". */
+  plan?: { mode: 'off' | 'free_one_domain'; paid: boolean; prices?: 'ok' | 'misconfigured' | 'unreachable' };
 }
 
 export interface PublicReportStorage {

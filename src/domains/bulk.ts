@@ -8,7 +8,7 @@ import { logAudit } from '../audit/log';
 import { PlanLimitError } from '@ready-set-mail/db';
 import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
-import { domainCap, domainRefusal, planRefusal, roomForInsert } from './service';
+import { DomainServiceError, assertDomainRoom, domainCap, domainRefusal, planRefusal, roomForInsert } from './service';
 import { planEnforced } from '../hosted/plan';
 import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
@@ -119,6 +119,14 @@ export async function bulkInsertDomains(
 
     // Advisory (see service.ts): a domain that can never be added gets no claim. The INSERT below is what enforces the cap.
     if (!enforced && cap !== undefined && (atCap || held >= cap)) { atCap = true; results.push(atCapRow(tenant, domain, cap)); continue; }
+    if (enforced) {
+      // Advisory, as above: a domain that does not fit the free allowance gets no claim here (the paid add is the owner's, one domain at a time).
+      try { await assertDomainRoom(tenant, domain); } catch (e) {
+        if (!(e instanceof DomainServiceError)) throw e;
+        results.push({ domain, status: 'error', error: e.message, code: (e.body?.code as 'plan_limit' | 'plan_required') ?? 'plan_limit', help_url: (e.body?.help_url as string | null | undefined) ?? null });
+        continue;
+      }
+    }
 
     const admission = await admitDomain(tenant, domain);
     if (admission.kind === 'taken') { results.push({ domain, status: 'duplicate', error: 'already registered in another workspace' }); continue; }

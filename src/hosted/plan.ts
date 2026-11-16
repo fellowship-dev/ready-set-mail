@@ -28,6 +28,8 @@ export const paidPathAvailable = (env: BillingEnv & { HOSTED_PLAN?: string }): b
 
 /** Subdomain rows one free unit keeps (memo C3). The rest of a domain's subdomains are counted under the domain. */
 export const FREE_SUBDOMAIN_ROWS = 50;
+/** Invitations a day per free workspace (invitations are mail from this service; joining is always free). */
+export const FREE_INVITES_PER_DAY = 20;
 /** A safety bound on live rows of one workspace under the plan (units are capped separately). */
 export const PLAN_ROW_SAFETY = 500;
 

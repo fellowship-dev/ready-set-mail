@@ -128,6 +128,7 @@ import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, reco
 import { analyticsEnabled } from '../product-analytics/capture';
 import { loadTenant, refreshTenant } from '../tenancy/load';
 import { planAfterRemoval } from '../billing/plan-service';
+import { FREE_INVITES_PER_DAY, isFreePlan } from '../hosted/plan';
 import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
@@ -1750,6 +1751,12 @@ async function _handleApi(
       const existing = await globals(env.DB).users.byEmail(body.email.toLowerCase().trim());
       if (existing && (await tenant.scope.team.roleOf(existing.id))) return err('this person is already a member of the workspace', 409);
 
+      // The free plan's fair-use line (docs/hosted.md): 20 invitations a day per free workspace. Invitations are mail from this service. Joining a workspace is always free.
+      if (await isFreePlan(env, env.DB, tenant.workspaceId)) {
+        if (!(await globals(env.DB).rateLimit.hitUnder(`invite:ws:${tenant.workspaceId}`, Date.now(), 86_400_000, FREE_INVITES_PER_DAY))) {
+          return json({ error: `You've sent today's ${FREE_INVITES_PER_DAY} invites; try tomorrow.`, code: 'invite_limit' }, 429);
+        }
+      }
       const token = crypto.randomUUID();
       const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7 days
       const inviteEmail = body.email.toLowerCase().trim();

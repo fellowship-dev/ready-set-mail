@@ -24,6 +24,8 @@ const hex32 = () => crypto.randomUUID().replace(/-/g, '');
 export const BILLING_LIMITS = {
   order: { max: 5, windowMs: 10 * 60_000 },
   session: { max: 10, windowMs: 10 * 60_000 },
+  /** Pay as you go: a paid add or a start (each confirm, and each retry of one). More room than an order: a Cloudflare person may add several in a row. */
+  plan: { max: 20, windowMs: 10 * 60_000 },
 } as const;
 
 export async function rateLimit(d: BillingDeps, kind: keyof typeof BILLING_LIMITS, ws: string, userId: string): Promise<void> {
