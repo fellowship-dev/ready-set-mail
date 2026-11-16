@@ -6,6 +6,7 @@ import { forImplicitWorkspace, publicReportQueries } from '@ready-set-mail/db';
 import { storageBudget, type PublicReportEnv } from '../public-reports/limits';
 import type { BoundEnv } from '../index';
 import { mcpInstallation } from '../mcp/discovery';
+import { registrationLimits } from '../mcp/registration';
 import { hasEncryptionKey } from '../connections/crypto';
 import { getMode } from '../tenancy/mode';
 import { bookingUrl, helpUrl, sequenceEnabled } from '../funnel/config';
@@ -74,15 +75,23 @@ export interface AgentAvailability {
   available: boolean;
   /** The MCP server URL agents connect to, when available. */
   server_url: string | null;
+  /** Apps can register themselves (MCP_DCR_ENABLED=1): how Cursor and older assistants connect. Never true when `available` is false. */
+  dynamic_registration: boolean;
+  /** Apps that publish a client ID metadata document can connect (Claude, ChatGPT, VS Code): the Worker has the flag the OAuth library needs to fetch it. */
+  metadata_documents: boolean;
 }
 
-/** Can this instance accept agent connections? Needs instance-owned OAuth storage and a canonical HTTPS origin. */
-export function agentAvailability(env: Pick<BoundEnv, 'OAUTH_KV' | 'BETTER_AUTH_URL' | 'PUBLIC_BASE_URL'>): AgentAvailability {
-  if (!env.OAUTH_KV) return { available: false, server_url: null };
+/** The OAuth library offers client ID metadata documents only with this compatibility flag (wrangler.jsonc); it reads the same global. */
+const metadataDocumentsSupported = () => !!(globalThis as { Cloudflare?: { compatibilityFlags?: Record<string, boolean> } }).Cloudflare?.compatibilityFlags?.global_fetch_strictly_public;
+
+/** Can this instance accept agent connections, and which kinds of app? Needs instance-owned OAuth storage and a canonical HTTPS origin. The one place the dashboard learns it. */
+export function agentAvailability(env: Pick<BoundEnv, 'OAUTH_KV' | 'BETTER_AUTH_URL' | 'PUBLIC_BASE_URL' | 'MCP_DCR_ENABLED'>): AgentAvailability {
+  const unavailable = { available: false, server_url: null, dynamic_registration: false, metadata_documents: false };
+  if (!env.OAUTH_KV) return unavailable;
   try {
-    return { available: true, server_url: mcpInstallation(env).resource };
+    return { available: true, server_url: mcpInstallation(env).resource, dynamic_registration: env.MCP_DCR_ENABLED === '1', metadata_documents: metadataDocumentsSupported() };
   } catch {
-    return { available: false, server_url: null };
+    return unavailable;
   }
 }
 
@@ -121,7 +130,8 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
     items.push({ id: 'oauth_storage', severity: 'action', setting: 'OAUTH_KV', message: 'No OAUTH_KV namespace is bound. Create a KV namespace for this instance only and bind it as OAUTH_KV. Until then agents cannot connect.' });
   }
   if (env.MCP_DCR_ENABLED === '1') {
-    items.push({ id: 'client_registration', severity: 'note', setting: 'MCP_DCR_ENABLED', message: 'Open client registration is on: any app can register itself before asking you for access. Turn it off unless an agent you use needs it.' });
+    const limits = registrationLimits(env);
+    items.push({ id: 'client_registration', severity: 'note', setting: 'MCP_DCR_ENABLED', message: `Apps can register themselves: this is how Cursor and some older assistants connect. Anyone can add an app to the list, but an app gets no access until a signed-in person approves it on a page that shows it as not verified. Registrations are limited to ${limits.addressDailyLimit} a day for one address and ${limits.dailyLimit} a day for the whole instance, with ${limits.maxClients} apps stored at most; an app nobody approves is deleted after ${limits.unusedHours} hours; each one is written to the audit log. Remove MCP_DCR_ENABLED if none of your assistants needs it.` });
   }
 
   // Mail sender: password reset everywhere, and sign-up confirmation on the hosted service.

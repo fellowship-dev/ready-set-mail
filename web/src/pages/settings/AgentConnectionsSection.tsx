@@ -6,7 +6,7 @@ import { api, errorMessage } from '../../lib/api';
 import { cleanName } from '../../lib/names';
 import { useHosted, useSession, useWorkspaceId } from '../../lib/session';
 import { AccessKeysSection } from './AccessKeysSection';
-import { timestamp } from './access-model';
+import { actionLabel, timestamp } from './access-model';
 import { ConfirmButton } from './ConfirmButton';
 import { CopyValue } from './CopyValue';
 
@@ -14,14 +14,27 @@ export { accessKey, timestamp } from './access-model';
 
 interface Connection {
 	principalId: string;
+	/** What the app is led with: its publisher's host, or the address it sends you back to. Never a name the app chose. */
 	name: string;
+	/** The name the app gave itself, shown as its own words. */
+	calledItself?: string;
+	/** It used the name of a well-known app, which is not shown. */
+	nameWithheld?: boolean;
 	workspaceId: string;
 	workspaceName?: string | null;
 	createdAt: number;
 	expiresAt: number;
 	lastUsedAt?: number | null;
 	revoked?: boolean;
+	/** The app identified itself with a published client document; `verifiedHost` is its publisher. Otherwise it named itself. */
+	verified?: boolean;
+	verifiedHost?: string;
+	/** What it can reach, by name (live grants). */
+	access?: { workspaces: string[]; domains: string[]; products: string[]; actions: string[] };
 }
+
+const SHOWN_DOMAINS = 5;
+const list = (items: string[], shown = SHOWN_DOMAINS) => (items.length > shown ? `${items.slice(0, shown).join(', ')} and ${items.length - shown} more` : items.join(', '));
 
 /**
  * Settings → Agents: the agent address and the agents a person approved in the browser. On a self-hosted instance an
@@ -37,33 +50,18 @@ export function AgentConnectionsSection() {
 			<Section title="Agents" description="Let an AI agent look at your domains, with your approval.">
 				<Card>
 					<CardContent className="space-y-5">
-						<p className="text-sm text-ink-2">
-							New to agents?{' '}
-							<Link to="/agents" className="text-brand-ink underline underline-offset-4">
-								Agents
-							</Link>{' '}
-							explains what they can do here and gives you a first question to ask.
-						</p>
 						<CopyValue
 							label={hosted ? 'Agent address' : "This installation's MCP endpoint"}
 							value={endpoint}
 							copyLabel={hosted ? 'Copy agent address' : 'Copy MCP endpoint'}
 						/>
-						{hosted ? (
-							<ol className="list-decimal space-y-1 pl-5 text-sm text-ink-2">
-								<li>In your AI agent, add Ready Set Mail and paste the agent address above.</li>
-								<li>Restart the agent so it picks up Ready Set Mail.</li>
-								<li>Sign in here when asked and approve which domains it may see, what it may do and for how long.</li>
-								<li>Ask it for a health report on one of your domains. Adding it is not enough: it is connected once you approve.</li>
-							</ol>
-						) : (
-							<ol className="list-decimal space-y-1 pl-5 text-sm text-ink-2">
-								<li>Install the Ready Set Mail plugin and set this HTTPS endpoint.</li>
-								<li>Reload your client so its MCP tools become available.</li>
-								<li>Sign in to this installation and approve exact resources, actions and expiry.</li>
-								<li>Call whoami, then request a domain health report. Installation alone does not establish a connection.</li>
-							</ol>
-						)}
+						<p className="text-sm text-ink-2">
+							How to connect Claude, ChatGPT, Cursor or VS Code, and what an agent can and cannot do: see{' '}
+							<Link to="/agents" className="text-brand-ink underline underline-offset-4">
+								Agents
+							</Link>
+							.
+						</p>
 					</CardContent>
 				</Card>
 				<ApprovedAgents workspace={workspace} />
@@ -80,7 +78,7 @@ export function AgentConnectionsSection() {
 function ApprovedAgents({ workspace }: { workspace: string | null | undefined }) {
 	const qc = useQueryClient();
 	const H = useHeadingTag(1);
-	const connections = useQuery({ queryKey: ['agent-connections', workspace], queryFn: () => api<{ connections: Connection[] }>('/api/mcp/connections'), retry: false });
+	const connections = useQuery({ queryKey: ['agent-connections', workspace], queryFn: () => api<{ connections: Connection[] }>('/api/mcp/connections'), retry: false, staleTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: true });
 	async function revoke(id: string) {
 		await api(`/api/mcp/connections/${id}`, { method: 'DELETE' });
 		await qc.invalidateQueries({ queryKey: ['agent-connections'] });
@@ -100,16 +98,52 @@ function ApprovedAgents({ workspace }: { workspace: string | null | undefined })
 						{connections.data.connections.map((c) => (
 							<li key={c.principalId} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
 								<div className="min-w-0 space-y-1">
-									<p className="font-medium [overflow-wrap:anywhere]">{c.name}</p>
+									<p className="flex flex-wrap items-center gap-2 font-medium [overflow-wrap:anywhere]">
+										{c.name}
+										{c.verified ? null : <Badge variant="neutral">Not verified</Badge>}
+									</p>
 									<dl className="grid gap-x-4 gap-y-0.5 text-sm text-ink-2 sm:grid-cols-[auto_1fr]">
+										{c.calledItself ? (
+											<>
+												<dt>Calls itself</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">&ldquo;{cleanName(c.calledItself)}&rdquo;{c.verified ? '' : ' (its own word for itself)'}</dd>
+											</>
+										) : null}
+										{c.nameWithheld ? (
+											<>
+												<dt>Name</dt>
+												<dd className="min-w-0">It used the name of a well-known app, so the name is not shown: only the address above is known.</dd>
+											</>
+										) : null}
 										<dt>Workspace</dt>
 										<dd className="min-w-0 [overflow-wrap:anywhere]">{c.workspaceName ? cleanName(c.workspaceName) : 'This workspace'}</dd>
-										<dt>Created</dt>
+										{c.verified && c.verifiedHost ? (
+											<>
+												<dt>Published by</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">{c.verifiedHost}</dd>
+											</>
+										) : null}
+										<dt>Approved</dt>
 										<dd>{timestamp(c.createdAt)}</dd>
-										<dt>Expires</dt>
+										{c.access?.domains.length ? (
+											<>
+												<dt>Can see</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">
+													{list(c.access.domains)}
+													{c.access.products.length ? ` (groups: ${list(c.access.products)})` : ''}
+												</dd>
+											</>
+										) : null}
+										{c.access?.actions.length ? (
+											<>
+												<dt>Can do</dt>
+												<dd className="min-w-0">{c.access.actions.map(actionLabel).join(', ')}</dd>
+											</>
+										) : null}
+										<dt>{c.revoked ? 'Would have ended' : 'Ends'}</dt>
 										<dd>{timestamp(c.expiresAt)}</dd>
 										<dt>Last used</dt>
-										<dd>{c.lastUsedAt === undefined ? 'Not recorded' : timestamp(c.lastUsedAt)}</dd>
+										<dd>{c.lastUsedAt ? timestamp(c.lastUsedAt) : 'Not used yet'}</dd>
 									</dl>
 								</div>
 								{c.revoked ? (

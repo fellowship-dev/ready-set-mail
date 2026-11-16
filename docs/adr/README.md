@@ -21,8 +21,10 @@ Short records of decisions already made, with who made them. A change that contr
 | 0015 | reserved: open pull requests #180, #181 and #184 and the branches mta-sts-hosted each hold a 0015 of their own; they renumber when they merge | reserved |
 | 0016 | reserved: open pull request #180 | reserved |
 | 0017 | reserved: open pull request #180 | reserved |
-| 0018 | reserved: open pull request #186 and the branch spf-flattening-addon | reserved |
-| 0019 | reserved: the branch spf-flattening-addon | reserved |
+| 0018 | reserved: open pull requests #180, #184 and #189 | reserved |
+| 0019 | reserved: open pull requests #187 and #189 | reserved |
 | 0020 | [One function writes our report address into a DMARC record](0020-one-function-writes-the-report-address.md) | accepted |
+| 0021 | reserved: open pull request #188 | reserved |
+| 0022 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0022-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

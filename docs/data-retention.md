@@ -30,6 +30,9 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
 | Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
 | Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
+| Apps that registered themselves and were never approved | **24 hours** (`MCP_DCR_UNUSED_HOURS`) | `MCP_DCR_UNUSED_HOURS` | Deleted by the next registrations and the daily job. See [agent operations](agent-operations.md#letting-apps-register-themselves). |
+| Agent connections that ended (revoked, or past their end date) | **7 days** after they ended, then the record, its principal and grants, and the registered app when no record of it remains | | Daily job. The audit log keeps who approved, revoked and what was removed for its own 12 months. |
+| Used agent refresh tokens (`refresh_rotations`: the hash of the token, the time, the answer sealed under the token) | **30 days** after first use (a refresh token's life) | | Daily job. Only the 30 seconds after first use are ever read. |
 | Failed Cloudflare revocations of deleted workspaces | retried daily until they succeed, at most **30 days** | | See below. The sealed token is deleted with the row; giving up is logged and written to the audit log. |
 
 Backups: deleted data can remain in Cloudflare D1 Time Travel restore points until they roll off. Check the retention of your D1 plan; we state
