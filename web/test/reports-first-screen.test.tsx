@@ -50,12 +50,14 @@ const settings = (routes: Record<string, unknown>, opts: Parameters<typeof rende
 const before = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 describe('the domain page', () => {
-	it('puts the statement and the action before "Do this next", and no second panel further down', async () => {
+	it('puts the statement and the action in the first screen (first on a narrow one by CSS order, after the steps and the offer on a wide one), and no second panel further down', async () => {
 		detail(baseRoutes());
 		const panel = await screen.findByTestId('connect-reports');
 		expect(within(panel).getByText('Reports not connected yet')).toBeInTheDocument();
 		expect(within(panel).getByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
-		expect(before(panel, await screen.findByRole('heading', { name: 'Do this next' }))).toBe(true);
+		// The reading and tab order is the wide layout's: the steps, then the panel. On a narrow screen CSS puts the panel first.
+		expect(before(await screen.findByRole('heading', { name: 'Do this next' }), panel)).toBe(true);
+		expect(panel).toHaveClass('max-lg:order-first');
 		expect(screen.queryByTestId('reports-not-connected')).not.toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: 'Connect reports' })).toHaveLength(1);
 	});
@@ -66,7 +68,7 @@ describe('the domain page', () => {
 		await userEvent.click(await screen.findByRole('button', { name: 'Connect reports' }));
 		const panel = await screen.findByTestId('connect-reports');
 		expect(await within(panel).findByText('Connected, record not published yet')).toBeInTheDocument();
-		expect(before(panel, screen.getByRole('heading', { name: 'Do this next' }))).toBe(true);
+		expect(panel).toHaveClass('max-lg:order-first'); // it does not move once acted on
 	});
 
 	it('where hosted refuses, the true sentence stays below and there is no button', async () => {

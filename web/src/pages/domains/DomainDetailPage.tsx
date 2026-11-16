@@ -274,7 +274,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const health = useHealthReport(domain.id, healthOpen);
 	const spfOff = useHosted(); // hosted: no SPF flattening (DnsTools)
 	const spfTool = useSpfFlatten(domain.id, !spfOff);
-	const mtaOff = useHosted() && !useHostedInfo(domain.id); // hosted without hosted records: no MTA-STS tool (DnsTools)
+	const hostedRecords = useHostedInfo(domain.id); // a hook is never called behind `&&`: self-host asks nothing (same query as useHostedLevelInput below)
+	const mtaOff = useHosted() && !hostedRecords; // hosted without hosted records: no MTA-STS tool (DnsTools)
 	const mtaTool = useMtaSts(domain.id, !mtaOff);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
@@ -387,7 +388,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
-			{connectLoading ? <ListSkeleton rows={1} label="Loading the report address" /> : connectFirst ? <ConnectReports domain={domain} /> : null}
+			{/* Wide (lg): the steps, the offer, then the reports panel, in the order they are read and tabbed: the offer stays where it always was and the panel is
+			    still in the first screen. Narrow: the panel is visually first (CSS order), so its action is in the first screen at 375 wide. */}
+			<div className="flex flex-col gap-8">
 			<DoThisNext
 				actions={actions}
 				pending={actionsPending(actionInput)}
@@ -398,6 +401,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			/>
 			{/* An offer, not a nag: once, below the steps, never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
 			<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />
+			{connectLoading ? <div className="max-lg:order-first"><ListSkeleton rows={1} label="Loading the report address" /></div> : connectFirst ? <ConnectReports domain={domain} className="max-lg:order-first" /> : null}
+			</div>
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
 
 			{/* A name that does not resolve has nothing to host. */}

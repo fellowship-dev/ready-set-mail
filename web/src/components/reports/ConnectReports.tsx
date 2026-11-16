@@ -39,14 +39,14 @@ import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
  * container that already says reports are not connected (ReportsNotConnected): no section heading, and before reports
  * are connected only the action itself. `headless` drops only the section heading (a wizard step that has its own).
  */
-export function ConnectReports({ domain, bare = false, headless = false }: { domain: { id: number; domain: string }; bare?: boolean; headless?: boolean }) {
+export function ConnectReports({ domain, bare = false, headless = false, className }: { domain: { id: number; domain: string }; bare?: boolean; headless?: boolean; className?: string }) {
 	const enabled = useReportIntakeEnabled();
 	if (!enabled) return null;
 	const body = <Panel domainId={domain.id} domainName={domain.domain} bare={bare} />;
 	return bare || headless ? (
-		<div data-testid="connect-reports">{body}</div>
+		<div data-testid="connect-reports" className={className}>{body}</div>
 	) : (
-		<div data-testid="connect-reports">
+		<div data-testid="connect-reports" className={className}>
 			<Section title="DMARC reports">{body}</Section>
 		</div>
 	);
