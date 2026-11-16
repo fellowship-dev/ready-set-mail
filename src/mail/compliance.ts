@@ -44,19 +44,22 @@ export function footerHtml(unsubscribe: string | null, address: string | null): 
  * `requireLink` (default: on for the hosted service): refuse to send when no unsubscribe link can be built because
  * PUBLIC_BASE_URL is unset. Self-host alerts to the instance's own team may go out without a link; they are still
  * suppression-checked and carry the footer.
+ *
+ * `unsubscribeUrl`: the link to use instead of the address-wide one (a preference link that turns off one kind of email: src/lifecycle/email/).
+ * The footer and both List-Unsubscribe headers carry it, and the suppression check and postal footer apply as always.
  */
 export async function sendNonTransactional(
   env: BoundEnv,
   mailer: Mailer,
   m: Omit<MailMessage, 'headers'> & { headers?: Record<string, string> },
-  opts: { requireLink?: boolean } = {},
+  opts: { requireLink?: boolean; unsubscribeUrl?: string } = {},
 ): Promise<NonTransactionalResult> {
   const to = m.to.trim().toLowerCase();
   let message: MailMessage;
   // Everything before the provider call: a failure here means nothing was sent (an internal error, not a transient one).
   try {
     if (await isSuppressed(env, to)) return { ok: false, kind: 'suppressed', error: 'recipient is on the suppression list' };
-    const link = await unsubscribeUrl(env, to);
+    const link = opts.unsubscribeUrl ?? await unsubscribeUrl(env, to);
     if (!link && (opts.requireLink ?? hostedEnabled(env))) return { ok: false, kind: 'blocked', error: 'no unsubscribe link: PUBLIC_BASE_URL is not set' };
     const address = postalAddress(env);
     message = {

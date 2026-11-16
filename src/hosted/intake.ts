@@ -223,6 +223,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
       dropOverCap: carrier.class === 'registry',
       maxRecords: limits.recordsPerReport,
       maxNewIps: limits.newIpsPerReport,
+      ctx,
       token: { id: tgt.domain_id, domain: tgt.domain },
       // The fixed address was routed by the peek: the full parse must name the very same domain.
       ...(peeked ? { expectedDomain: peeked } : {}),

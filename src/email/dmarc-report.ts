@@ -67,6 +67,8 @@ export interface ReportOptions {
    * domain must be exactly this, or the report is refused and nothing is stored.
    */
   expectedDomain?: string;
+  /** The delivery's execution context, so the first-report email finishes after the answer (ctx.waitUntil). */
+  ctx?: Pick<ExecutionContext, 'waitUntil'>;
 }
 
 export interface ReportResult {
@@ -253,7 +255,7 @@ export async function handleDmarcReport(
 
   // 4. Store in D1: one batch, all or nothing
   try {
-    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter);
+    const stored = await storeReport(tenant, domain.id, report, rawXml, true, reporter, opts.ctx);
     if (stored.stored) return result('accepted', 'ok', { ...known, dedup: stored.superseded ? 'superseded' : 'new' });
     // Lost the race to a concurrent delivery of the same report: nothing was written, which is the right outcome.
     return result('duplicate', 'duplicate', { ...known, dedup: 'duplicate' });

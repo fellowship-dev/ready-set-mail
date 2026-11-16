@@ -1,290 +1,183 @@
+// "First report received": one module for both modes (src/notifications/first-report.ts, the email itself in src/lifecycle/email/).
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { makeTenant } from '../helpers/tenant';
-import { buildFirstReportBody, sendFirstReportNotification, ReportStats } from '../../src/notifications/first-report';
+import { sendFirstReportNotification } from '../../src/notifications/first-report';
+import { storeReport } from '../../src/dmarc/store-report';
+import { lifecycleWorld, MON_16_NOV, DAY } from '../lifecycle/email/world';
 
-// ── Fixtures ──────────────────────────────────────────────────
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const quiet = () => { vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}); };
 
-const ADMIN = { email: 'admin@acme.com', name: 'Acme Admin' };
+// ── Self-host: the workspace's own sender, the instance's own address ─
 
-const STATS: ReportStats = {
-  totalMessages: 150,
-  passMessages: 140,
-  failMessages: 10,
-  sourceCount: 5,
-};
-
-function makeEnv(overrides: { admin?: typeof ADMIN | null; sendEmail?: boolean; customDomain?: string | null } = {}) {
-  const admin = overrides.admin === undefined ? ADMIN : overrides.admin;
-  const customDomain = overrides.customDomain !== undefined ? overrides.customDomain : 'inbox.acme.com';
+function selfHost(o: { owner?: boolean; customDomain?: string | null; sendEmail?: boolean; publicBaseUrl?: string } = {}) {
   const db = createMigratedD1();
-  if (admin) {
-    // users.name is NOT NULL in the real schema; a null name is simulated by the caller via nullAdminName().
-    db.sqlite
-      .prepare("INSERT INTO users (id, email, name, role) VALUES ('u1', ?, ?, 'admin')")
-      .run(admin.email, admin.name ?? '');
+  if (o.owner !== false) {
+    db.sqlite.prepare("INSERT INTO users (id, email, name, role) VALUES ('u1', 'admin@acme.com', 'Acme Admin', 'admin')").run();
     db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES ('ws_default', 'u1', 'owner')").run();
   }
-  if (customDomain) {
-    db.sqlite
-      .prepare("INSERT INTO settings (workspace_id, key, value) VALUES ('ws_default', 'custom_domain', ?)")
-      .run(customDomain);
-  }
+  if (o.customDomain !== null) db.sqlite.prepare("INSERT INTO settings (workspace_id, key, value) VALUES ('ws_default', 'custom_domain', ?)").run(o.customDomain ?? 'inbox.acme.com');
+  db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address) VALUES (1, 'acme.com', 'rua@reports.acme.com')").run();
+  const send = vi.fn().mockResolvedValue(undefined);
+  const tenant = makeTenant({
+    db,
+    env: { ...(o.sendEmail === false ? {} : { SEND_EMAIL: { send } as any }), ...(o.publicBaseUrl ? { PUBLIC_BASE_URL: o.publicBaseUrl } : {}) },
+    settings: { fromEmail: 'noreply@reports.acme.com', workersSubdomain: 'testaccount' },
+  });
+  return { db, send, tenant };
+}
+
+function addReport(db: ReturnType<typeof createMigratedD1>, over: { total?: number; passed?: number } = {}) {
+  const total = over.total ?? 150, passed = over.passed ?? 140;
+  db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, reporter_known_as) VALUES (1, 1, 'google.com', 'r1', 1718236800, 1718323199, ?, ?, ?, 'Google')").run(total, passed, total - passed);
+  db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org) VALUES (1, '192.0.2.10', ?, 'none', 'pass', 'acme.com', 'pass', 'acme.com', 'acme.com', 'Acme Mail')").run(passed);
+  if (total > passed) db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org) VALUES (1, '198.51.100.7', ?, 'none', 'pass', 'sendgrid.net', 'fail', null, 'acme.com', 'SendGrid')").run(total - passed);
+}
+
+describe('sendFirstReportNotification (self-host)', () => {
+  it('sends the new email to the owner from the workspace\'s own address, with the dashboard link at its custom domain', async () => {
+    quiet();
+    const s = selfHost();
+    addReport(s.db);
+    await sendFirstReportNotification(s.tenant, undefined, 1, 1);
+    expect(s.send).toHaveBeenCalledOnce();
+    const m = s.send.mock.calls[0][0];
+    expect(m.from).toEqual({ name: 'Ready Set Mail', email: 'noreply@reports.acme.com' });
+    expect(m.to).toEqual(['admin@acme.com']);
+    expect(m.subject).toBe('First DMARC report for acme.com: 150 messages, 140 passed');
+    expect(m.text).toContain('Hi Acme,');
+    expect(m.text).toContain('Google sent the first DMARC report for acme.com.');
+    expect(m.text).toContain('Worth a look: 10 messages from SendGrid (198.51.100.7) did not pass DMARC. They passed DKIM for sendgrid.net, but not for acme.com.');
+    expect(m.text).toContain('https://inbox.acme.com/#/w/ws_default/domains/1');
+    // The old copy is gone: no celebration, no emoji, no "24-48 hours".
+    expect(m.subject + m.text + m.html).not.toMatch(/Great news|\p{Extended_Pictographic}|24-48/u);
+  });
+
+  it('uses the public address when there is one, else workers.dev with the workers subdomain', async () => {
+    quiet();
+    const pub = selfHost({ publicBaseUrl: 'https://mail.example.org' });
+    addReport(pub.db);
+    await sendFirstReportNotification(pub.tenant, undefined, 1, 1);
+    expect(pub.send.mock.calls[0][0].text).toContain('https://mail.example.org/#/w/ws_default/domains/1');
+    const dev = selfHost({ customDomain: null });
+    addReport(dev.db);
+    await sendFirstReportNotification(dev.tenant, undefined, 1, 1);
+    expect(dev.send.mock.calls[0][0].text).toContain('https://ready-set-mail-worker.testaccount.workers.dev/#/w/ws_default/domains/1');
+  });
+
+  it('sends once: a second call for the same report sends nothing', async () => {
+    quiet();
+    const s = selfHost();
+    addReport(s.db, { total: 10, passed: 10 });
+    await sendFirstReportNotification(s.tenant, undefined, 1, 1);
+    await sendFirstReportNotification(s.tenant, undefined, 1, 1);
+    expect(s.send).toHaveBeenCalledOnce();
+    expect(s.send.mock.calls[0][0].subject).toBe('First DMARC report for acme.com: 10 messages, all passed');
+  });
+
+  it('does not throw and does not claim anything when no mail can be sent (no binding), or nobody owns the workspace', async () => {
+    quiet();
+    const none = selfHost({ sendEmail: false });
+    addReport(none.db);
+    await expect(sendFirstReportNotification(none.tenant, undefined, 1, 1)).resolves.toBeUndefined();
+    expect(none.db.sqlite.prepare('SELECT COUNT(*) AS n FROM lifecycle_sends').get()).toEqual({ n: 0 });
+    const nobody = selfHost({ owner: false });
+    addReport(nobody.db);
+    await expect(sendFirstReportNotification(nobody.tenant, undefined, 1, 1)).resolves.toBeUndefined();
+    expect(nobody.send).not.toHaveBeenCalled();
+  });
+
+  it('does not need a verified address on self-host (nobody is asked to verify one there)', async () => {
+    quiet();
+    const s = selfHost();
+    expect(s.db.sqlite.prepare('SELECT email_verified FROM users').get()).toEqual({ email_verified: 0 });
+    addReport(s.db);
+    await sendFirstReportNotification(s.tenant, undefined, 1, 1);
+    expect(s.send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('hosted: the platform sender, never the per-workspace setting that does not exist there', () => {
+  it('sends from senderAddress(env) although the tenant has no fromEmail, to the owner, through the claim', async () => {
+    const w = await lifecycleWorld();
+    const id = w.addDomain({ domain: 'brightwave-mail.com' });
+    const rid = w.addReport({ domain: 'brightwave-mail.com', day: MON_16_NOV - DAY, records: [{ ip: '192.0.2.10', count: 14, spf: ['pass', 'brightwave-mail.com'], dkim: ['pass', 'brightwave-mail.com'], org: 'Google Workspace' }] });
+    const tenant = w.tenant();
+    expect(tenant.settings.fromEmail).toBeUndefined();
+    const { sendFirstReportNow } = await import('../../src/lifecycle/email/run');
+    await sendFirstReportNow(tenant, w.ctx, id, rid, 'https://app.readysetmail.com', w.deps);
+    expect(w.mailer.sent).toHaveLength(1);
+    expect(w.mailer.sent[0].from.email).toBe('noreply@app.readysetmail.com');
+    expect(w.mailer.sent[0].to).toBe('dana@brightwave-mail.com');
+    expect(w.rows('SELECT kind, period, state FROM lifecycle_sends')).toEqual([{ kind: 'first_report', period: 'once', state: 'sent' }]);
+  });
+});
+
+// ── The trigger in storeReport ────────────────────────────────
+
+function parsedReport() {
   return {
-    DB: db as unknown as D1Database,
-    ...(overrides.sendEmail !== false
-      ? { SEND_EMAIL: { send: vi.fn().mockResolvedValue(undefined) } as any }
-      : {}),
+    xml_schema: 'draft' as const,
+    report_metadata: { org_name: 'google.com', org_email: 'noreply@google.com', org_extra_contact_info: null, report_id: 'report-001', begin_date: '2024-06-13T00:00:00Z', end_date: '2024-06-13T23:59:59Z', errors: [] },
+    policy_published: { domain: 'acme.com', adkim: 'r' as const, aspf: 'r' as const, p: 'reject' as const, sp: 'reject' as const, pct: 100, fo: '0' },
+    records: [{
+      source: { ip: '1.2.3.4', reverse_dns: null, base_domain: null, country_code: null, country_name: null, subdivision: null, city: null },
+      count: 10,
+      alignment: { spf: true, dkim: true, dmarc: true },
+      policy_evaluated: { disposition: 'none' as const, dkim: 'pass' as const, spf: 'pass' as const, policy_override_reasons: [] },
+      identifiers: { header_from: 'acme.com', envelope_from: null, envelope_to: null },
+      auth_results: { dkim: [{ domain: 'acme.com', selector: 'sel', result: 'pass' as const }], spf: [{ domain: 'acme.com', scope: 'mfrom', result: 'pass' as const }] },
+    }],
   };
 }
 
-/** The tenant a test env belongs to. */
-function tn(env: { DB: D1Database; SEND_EMAIL?: SendEmail }) {
-  return makeTenant({
-    db: env.DB,
-    env: { SEND_EMAIL: env.SEND_EMAIL },
-    settings: { reportsDomain: 'reports.acme.com', fromEmail: 'noreply@reports.acme.com', workersSubdomain: 'testaccount' },
-  });
+function storeWorld(opts: { existingReports?: number; duplicate?: boolean } = {}) {
+  const { existingReports = 0, duplicate = false } = opts;
+  const db = createMigratedD1();
+  db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address) VALUES (1, 'acme.com', 'rua@reports.acme.com')").run();
+  db.sqlite.prepare("INSERT INTO users (id, email, name, role) VALUES ('u1', 'admin@acme.com', 'Admin', 'admin')").run();
+  db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES ('ws_default', 'u1', 'owner')").run();
+  for (let i = 0; i < existingReports; i++) db.sqlite.prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end) VALUES (1, 'x', ?, 0, 1)").run(i === 0 && duplicate ? 'report-001' : `old-${i}`);
+  const send = vi.fn().mockResolvedValue(undefined);
+  const waited: Promise<unknown>[] = [];
+  const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); } };
+  return { db, send, ctx, waited, tenant: makeTenant({ db, env: { SEND_EMAIL: { send } as any }, settings: { fromEmail: 'noreply@reports.acme.com' } }) };
 }
-
-/** The real schema forbids a NULL users.name; make the admin lookup return one anyway. */
-function nullAdminName(env: { DB: D1Database }) {
-  const db = env.DB as any;
-  const realPrepare = db.prepare.bind(db);
-  vi.spyOn(db, 'prepare').mockImplementation((sql: string) => {
-    const stmt = realPrepare(sql);
-    if (/from "users"/i.test(sql)) {
-      // Drizzle reads rows with .raw(): [id, email, name]
-      return { ...stmt, bind: () => ({ raw: async () => [['u1', 'admin@acme.com', null]] }) };
-    }
-    return stmt;
-  });
-}
-
-// ── buildFirstReportBody ──────────────────────────────────────
-
-describe('buildFirstReportBody', () => {
-  it('includes recipient name in greeting', () => {
-    const body = buildFirstReportBody('Acme Admin', 'acme.com', STATS, 'https://acme.com');
-    expect(body).toContain('Hi Acme Admin');
-  });
-
-  it('includes the domain name', () => {
-    const body = buildFirstReportBody('Acme Admin', 'acme.com', STATS, 'https://acme.com');
-    expect(body).toContain('acme.com');
-    expect(body).toContain('first DMARC aggregate report');
-  });
-
-  it('includes stats in body', () => {
-    const body = buildFirstReportBody('Acme Admin', 'acme.com', STATS, 'https://acme.com');
-    expect(body).toContain('150 email(s) analyzed');
-    expect(body).toContain('5 sending source(s) detected');
-    expect(body).toContain('93% pass rate');
-    expect(body).toContain('140 passed');
-    expect(body).toContain('10 failed');
-  });
-
-  it('includes dashboard link', () => {
-    const body = buildFirstReportBody('Acme Admin', 'acme.com', STATS, 'https://acme.com');
-    expect(body).toContain('https://acme.com');
-  });
-
-  it('handles zero messages gracefully (0% pass rate)', () => {
-    const zeroStats: ReportStats = { totalMessages: 0, passMessages: 0, failMessages: 0, sourceCount: 0 };
-    const body = buildFirstReportBody('Admin', 'acme.com', zeroStats, 'https://acme.com');
-    expect(body).toContain('0% pass rate');
-  });
-});
-
-// ── sendFirstReportNotification ───────────────────────────────
-
-describe('sendFirstReportNotification', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('sends email via SEND_EMAIL binding when configured', async () => {
-    const env = makeEnv();
-    await sendFirstReportNotification(tn(env), 'acme.com', STATS);
-
-    expect(env.SEND_EMAIL!.send).toHaveBeenCalledOnce();
-    const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.subject).toContain('First DMARC report received for acme.com');
-    expect(call.to).toEqual(['admin@acme.com']);
-    expect(call.text).toContain('150 email(s) analyzed');
-    expect(call.text).toContain('https://inbox.acme.com');
-  });
-
-  it('uses custom_domain for dashboard URL', async () => {
-    const env = makeEnv({ customDomain: 'mail.example.org' });
-    await sendFirstReportNotification(tn(env), 'example.org', STATS);
-
-    const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.text).toContain('https://mail.example.org');
-  });
-
-  it('falls back to workers.dev with subdomain when no custom_domain', async () => {
-    const env = makeEnv({ customDomain: null });
-    await sendFirstReportNotification(tn(env), 'acme.com', STATS);
-
-    const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.text).toContain('https://ready-set-mail-worker.testaccount.workers.dev');
-  });
-
-  it('logs instead of sending when SEND_EMAIL binding is absent', async () => {
-    const env = makeEnv({ sendEmail: false });
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await sendFirstReportNotification(tn(env), 'acme.com', STATS);
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('would send to admin@acme.com'),
-    );
-    consoleSpy.mockRestore();
-  });
-
-  it('does not throw when SEND_EMAIL binding is absent', async () => {
-    const env = makeEnv({ sendEmail: false });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await expect(sendFirstReportNotification(tn(env), 'acme.com', STATS)).resolves.not.toThrow();
-
-    vi.restoreAllMocks();
-  });
-
-  it('skips when no admin user exists', async () => {
-    const env = makeEnv({ admin: null });
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await sendFirstReportNotification(tn(env), 'acme.com', STATS);
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('no admin user found'),
-    );
-    consoleSpy.mockRestore();
-  });
-
-  it('uses fallback name "there" when admin has no name', async () => {
-    const env = makeEnv();
-    nullAdminName(env);
-    await sendFirstReportNotification(tn(env), 'acme.com', STATS);
-
-    const call = (env.SEND_EMAIL!.send as any).mock.calls[0][0];
-    expect(call.text).toContain('Hi there');
-  });
-});
-
-// ── First-report trigger in storeReport ───────────────────────
 
 describe('storeReport first-report trigger', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
+  it('sends on the first counted report, inside ctx.waitUntil so it is not cut off when the delivery ends', async () => {
+    quiet();
+    const s = storeWorld();
+    await storeReport(s.tenant, 1, parsedReport(), null, true, undefined, s.ctx);
+    expect(s.waited).toHaveLength(1); // handed to waitUntil, not floating
+    await Promise.all(s.waited);
+    expect(s.send).toHaveBeenCalledOnce();
+    expect(s.send.mock.calls[0][0].subject).toBe('First DMARC report for acme.com: 10 messages, all passed');
   });
 
-  function makeReport() {
-    return {
-      xml_schema: 'draft' as const,
-      report_metadata: {
-        org_name: 'google.com',
-        org_email: 'noreply@google.com',
-        org_extra_contact_info: null,
-        report_id: 'report-001',
-        begin_date: '2024-06-13T00:00:00Z',
-        end_date: '2024-06-13T23:59:59Z',
-        errors: [],
-      },
-      policy_published: {
-        domain: 'acme.com',
-        adkim: 'r' as const,
-        aspf: 'r' as const,
-        p: 'reject' as const,
-        sp: 'reject' as const,
-        pct: 100,
-        fo: '0',
-      },
-      records: [{
-        source: { ip: '1.2.3.4', reverse_dns: null, base_domain: null, country_code: null, country_name: null, subdivision: null, city: null },
-        count: 10,
-        alignment: { spf: true, dkim: true, dmarc: true },
-        policy_evaluated: { disposition: 'none' as const, dkim: 'pass' as const, spf: 'pass' as const, policy_override_reasons: [] },
-        identifiers: { header_from: 'acme.com', envelope_from: null, envelope_to: null },
-        auth_results: {
-          dkim: [{ domain: 'acme.com', selector: 'sel', result: 'pass' as const }],
-          spf: [{ domain: 'acme.com', scope: 'mfrom', result: 'pass' as const }],
-        },
-      }],
-    };
-  }
-
-  /** Real DB with acme.com (id 1), an admin, and `existingReports` earlier reports for the domain. */
-  function makeMockDb(opts: { existingReports?: number; duplicate?: boolean } = {}) {
-    const { existingReports = 0, duplicate = false } = opts;
-    const db = createMigratedD1();
-    db.sqlite.prepare("INSERT INTO domains (id, domain, rua_address) VALUES (1, 'acme.com', 'rua@reports.acme.com')").run();
-    db.sqlite.prepare("INSERT INTO users (id, email, name, role) VALUES ('u1', 'admin@acme.com', 'Admin', 'admin')").run();
-    db.sqlite.prepare("INSERT INTO memberships (workspace_id, user_id, role) VALUES ('ws_default', 'u1', 'owner')").run();
-    for (let i = 0; i < existingReports; i++) {
-      db.sqlite
-        .prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end) VALUES (1, 'x', ?, 0, 1)")
-        .run(i === 0 && duplicate ? 'report-001' : `old-${i}`);
-    }
-    return db as unknown as D1Database;
-  }
-
-  it('fires notification on first report (count=1)', async () => {
-    const { storeReport } = await import('../../src/dmarc/store-report');
-
-    const db = makeMockDb();
-    const sendEmail = { send: vi.fn().mockResolvedValue(undefined) };
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await storeReport(makeTenant({ db, env: { SEND_EMAIL: sendEmail as any } }), 1, makeReport(), null, true);
-
-    // fire-and-forget — wait for microtask queue to flush
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(sendEmail.send).toHaveBeenCalledOnce();
-    consoleSpy.mockRestore();
+  it('does NOT send on later reports (count > 1), on a duplicate, or when it is not requested', async () => {
+    quiet();
+    const later = storeWorld({ existingReports: 4 });
+    await storeReport(later.tenant, 1, parsedReport(), null, true, undefined, later.ctx);
+    await Promise.all(later.waited);
+    expect(later.send).not.toHaveBeenCalled();
+    const dup = storeWorld({ existingReports: 1, duplicate: true });
+    await storeReport(dup.tenant, 1, parsedReport(), null, true, undefined, dup.ctx);
+    await Promise.all(dup.waited);
+    expect(dup.send).not.toHaveBeenCalled();
+    const off = storeWorld();
+    await storeReport(off.tenant, 1, parsedReport());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(off.send).not.toHaveBeenCalled();
   });
 
-  it('does NOT fire notification on subsequent reports (count>1)', async () => {
-    const { storeReport } = await import('../../src/dmarc/store-report');
-
-    const db = makeMockDb({ existingReports: 4 });
-    const sendEmail = { send: vi.fn().mockResolvedValue(undefined) };
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    await storeReport(makeTenant({ db, env: { SEND_EMAIL: sendEmail as any } }), 1, makeReport(), null, true);
-
-    await new Promise(r => setTimeout(r, 10));
-
-    expect(sendEmail.send).not.toHaveBeenCalled();
-    consoleSpy.mockRestore();
-  });
-
-  it('does NOT fire notification on duplicate reports (stored=false)', async () => {
-    const { storeReport } = await import('../../src/dmarc/store-report');
-
-    const db = makeMockDb({ existingReports: 1, duplicate: true }); // report-001 already stored = duplicate
-    const sendEmail = { send: vi.fn().mockResolvedValue(undefined) };
-
-    await storeReport(makeTenant({ db, env: { SEND_EMAIL: sendEmail as any } }), 1, makeReport(), null, true);
-
-    await new Promise(r => setTimeout(r, 10));
-
-    expect(sendEmail.send).not.toHaveBeenCalled();
-  });
-
-  it('does NOT fire notification when it is not requested', async () => {
-    const { storeReport } = await import('../../src/dmarc/store-report');
-
-    const db = makeMockDb();
-    const sendEmail = { send: vi.fn().mockResolvedValue(undefined) };
-
-    await storeReport(makeTenant({ db }), 1, makeReport());
-
-    await new Promise(r => setTimeout(r, 10));
-
-    expect(sendEmail.send).not.toHaveBeenCalled();
+  it('without a context it still sends (the promise runs), and a failure never fails the report', async () => {
+    quiet();
+    const s = storeWorld();
+    s.send.mockRejectedValue(new Error('provider down'));
+    await expect(storeReport(s.tenant, 1, parsedReport(), null, true)).resolves.toMatchObject({ stored: true });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(s.send).toHaveBeenCalled();
   });
 });

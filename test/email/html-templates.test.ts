@@ -13,6 +13,8 @@ import type { DomainChange } from '../../src/monitor/check';
 import type { DnsCheckResult } from '../../src/email/dns-check';
 import type { AuthResultsHeader } from '../../src/email/parse-headers';
 import { DEFAULT_BRAND_COLOR } from '../../src/tenancy/context';
+import { render } from '../../src/lifecycle/email/copy';
+import { allVariants } from '../lifecycle/email/fixtures';
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -379,5 +381,36 @@ describe('default-brand HTML emails load nothing remote', () => {
     expect(html).not.toMatch(/@import/i);
     expect(html).not.toMatch(/<svg|data:image/i);
     expect(html).toMatch(/font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/);
+  });
+});
+
+// ── Lifecycle emails: nothing remote, no emoji, no scare words ──
+// Every variant of every lifecycle email (test/lifecycle/email/fixtures.ts), HTML and text.
+
+describe('lifecycle emails load nothing remote', () => {
+  const lifecycle = allVariants().map((v) => [v.name, render(v.mail)] as const);
+
+  it('renders every kind of lifecycle email', () => {
+    expect(new Set(allVariants().map((v) => v.mail.kind))).toEqual(new Set(['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next', 'tip_done']));
+  });
+
+  it.each(lifecycle)('%s', (_name, { html }) => {
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('url(');
+    expect(html).not.toMatch(/\ssrc\s*=/i);
+    expect(html).not.toMatch(/<link\b|@import|<svg|data:image|<script|<iframe/i);
+    expect(html).toMatch(/font-weight:700;letter-spacing:-0\.01em;">readysetmail<\/span>/);
+  });
+});
+
+describe('lifecycle emails have no emoji and none of the scare words', () => {
+  const lifecycle = allVariants().map((v) => [v.name, render(v.mail)] as const);
+  const banned = ['could not be authenticated', 'claims to be', 'spoof', 'attack', 'at risk', 'exposed', 'action needed'];
+
+  it.each(lifecycle)('%s', (_name, { subject, html, text }) => {
+    for (const [part, s] of [['subject', subject], ['html', html], ['text', text]] as const) {
+      expect(s, `${part} has an emoji`).not.toMatch(/\p{Extended_Pictographic}/u);
+      for (const phrase of banned) expect(s.toLowerCase(), `${part} says "${phrase}"`).not.toContain(phrase);
+    }
   });
 });

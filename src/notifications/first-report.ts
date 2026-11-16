@@ -1,95 +1,35 @@
-// "First report received" notification — fires once per domain when
-// the very first DMARC aggregate report is successfully stored.
-// Delivery: Cloudflare Email Workers (SEND_EMAIL binding).
-// Falls back to console.log if binding is absent.
+// "First report received": sent once per domain, when the first COUNTED aggregate report is stored.
+//
+// One module for both modes. The email itself (who gets it, its words, the claim that makes it once, the sender) is
+// src/lifecycle/email/: on the hosted service the sender is the platform's (src/auth/mail.ts `senderAddress`, because a workspace has no sender
+// of its own there), on self-host the workspace's own `fromEmail` when it has one. Called from storeReport (src/dmarc/store-report.ts) inside
+// ctx.waitUntil, so the Worker is not stopped before the send finishes; src/lifecycle/email/run.ts catches up a first report this
+// call missed.
 
+import { publicBaseUrl } from '../funnel/config';
+import { sendFirstReportNow } from '../lifecycle/email/run';
 import type { TenantContext } from '../tenancy/context';
 
-export interface ReportStats {
-  totalMessages: number;
-  passMessages: number;
-  failMessages: number;
-  sourceCount: number;
+/** Where the dashboard is: the instance's public address, else (self-host) its custom domain, else its workers.dev address. */
+async function dashboardBase(tenant: TenantContext): Promise<string | null> {
+  const configured = publicBaseUrl(tenant.env);
+  if (configured) return configured;
+  const custom = await tenant.scope.settings.get('custom_domain');
+  if (custom?.value) return `https://${custom.value}`;
+  const subdomain = await tenant.workersSubdomain();
+  return subdomain ? `https://${tenant.workerName}.${subdomain}.workers.dev` : `https://${tenant.workerName}.workers.dev`;
 }
 
-// ── Formatting ────────────────────────────────────────────────
-
-export function buildFirstReportBody(
-  recipientName: string,
-  domain: string,
-  stats: ReportStats,
-  dashboardUrl: string,
-): string {
-  const passRate = stats.totalMessages > 0
-    ? Math.round((stats.passMessages / stats.totalMessages) * 100)
-    : 0;
-
-  const lines: string[] = [
-    `Hi ${recipientName},`,
-    '',
-    `Great news! We just received the first DMARC aggregate report for ${domain}.`,
-    '',
-    'Here are the highlights:',
-    `  - ${stats.totalMessages.toLocaleString()} email(s) analyzed`,
-    `  - ${stats.sourceCount.toLocaleString()} sending source(s) detected`,
-    `  - ${passRate}% pass rate (${stats.passMessages.toLocaleString()} passed, ${stats.failMessages.toLocaleString()} failed)`,
-    '',
-    `View the full report on your dashboard: ${dashboardUrl}`,
-    '',
-    'It can take 24-48 hours after publishing your DMARC record for reports to start arriving.',
-    'Now that the first one is in, you can expect daily reports from major mailbox providers.',
-    '',
-    '—',
-    'Ready Set Mail notifications',
-  ];
-
-  return lines.join('\n');
-}
-
-// ── Delivery ──────────────────────────────────────────────────
-
+/** Never throws: a notification must not fail the report it is about. */
 export async function sendFirstReportNotification(
   tenant: TenantContext,
-  domain: string,
-  reportStats: ReportStats,
+  ctx: Pick<ExecutionContext, 'waitUntil'> | undefined,
+  domainId: number,
+  reportId: number,
 ): Promise<void> {
-  // Resolve dashboard URL: custom domain > {worker}.{subdomain}.workers.dev
-  const customDomain = await tenant.scope.settings.get('custom_domain');
-  let dashboardUrl: string;
-  if (customDomain?.value) {
-    dashboardUrl = `https://${customDomain.value}`;
-  } else {
-    const workerName = tenant.workerName;
-    const subdomain = await tenant.workersSubdomain();
-    dashboardUrl = subdomain
-      ? `https://${workerName}.${subdomain}.workers.dev`
-      : `https://${workerName}.workers.dev`;
-  }
-
-  // Get admin user email
-  const admin = await tenant.scope.team.firstAdmin();
-  if (!admin) {
-    console.log('[first-report] no admin user found — skipping notification');
-    return;
-  }
-
-  const subject = `\u{1F389} First DMARC report received for ${domain}`;
-  const body = buildFirstReportBody(admin.name ?? 'there', domain, reportStats, dashboardUrl);
-
-  if (!tenant.env.SEND_EMAIL) {
-    console.log(`[first-report] SEND_EMAIL binding not configured — would send to ${admin.email}: ${subject}\n${body}`);
-    return;
-  }
-
   try {
-    await tenant.env.SEND_EMAIL.send({
-      from: { name: 'Ready Set Mail', email: tenant.settings.fromEmail! },
-      to: [admin.email],
-      subject,
-      text: body,
-    });
-    console.log(`[first-report] sent notification to ${admin.email} for ${domain}`);
+    await sendFirstReportNow(tenant, ctx, domainId, reportId, await dashboardBase(tenant));
   } catch (e) {
-    console.error(`[first-report] send failed for ${admin.email}:`, e);
+    console.error('[first-report] not sent:', e instanceof Error ? e.name : 'error');
   }
 }

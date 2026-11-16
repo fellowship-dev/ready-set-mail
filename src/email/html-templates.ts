@@ -12,12 +12,13 @@ import { AuthResultsHeader } from './parse-headers';
 import { DEFAULT_BRAND_COLOR, type Brand } from '../tenancy/context';
 import { lightColors as c } from '../../packages/ui/src/tokens/tokens';
 
-const DEFAULT_BRAND: Readonly<Brand> = { color: DEFAULT_BRAND_COLOR };
+// Read at call time: tenancy/context imports modules that import this file, so DEFAULT_BRAND_COLOR is not yet defined while this module loads (it was `undefined` when the load order put context first).
+const defaultBrand = (): Brand => ({ color: DEFAULT_BRAND_COLOR });
 
 // ── Primitives ────────────────────────────────────────────────
 
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function badge(label: string, color: string): string {
@@ -86,15 +87,38 @@ function htmlLayout(title: string, bodyHtml: string, brand: Brand): string {
 
 // ── Plain letter (onboarding sequence) ────────────────────────
 
-export type LetterBlock = string | { heading: string } | { list: string[] } | { cta: { label: string; url: string } };
+/** A small plain table: `indent` rows are nested under the row above (a subdomain under its registrable domain). */
+export interface LetterTable { head: string[]; rows: Array<{ cells: string[]; indent?: boolean }> }
 
-/** A plain, text-first letter in the shared brand layout: paragraphs, headings, lists and one call-to-action button. */
+export type LetterBlock =
+  | string
+  | { heading: string }
+  | { list: string[] }
+  | { cta: { label: string; url: string } }
+  | { table: LetterTable }
+  | { code: string }
+  /** Footnote text, smaller and quieter than a paragraph. */
+  | { small: string }
+  /** Footnote links (text-styled, never a button). */
+  | { links: Array<{ label: string; url: string }> };
+
+/** A plain, text-first letter in the shared brand layout: paragraphs, headings, lists, small tables, code and one call-to-action button. */
 export function buildLetterHtml(p: { title: string; blocks: LetterBlock[]; brand?: Brand }): string {
-  const brand = p.brand ?? DEFAULT_BRAND;
+  const brand = p.brand ?? defaultBrand();
+  const ink = `color:${c['ink-1']};`;
   const body = p.blocks.map((b) => {
-    if (typeof b === 'string') return `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;">${esc(b)}</p>`;
-    if ('heading' in b) return `<h2 style="margin:20px 0 8px;font-size:16px;">${esc(b.heading)}</h2>`;
-    if ('list' in b) return `<ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;">${b.list.map((i) => `<li style="margin-bottom:6px;">${esc(i)}</li>`).join('')}</ul>`;
+    if (typeof b === 'string') return `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;${ink}">${esc(b)}</p>`;
+    if ('heading' in b) return `<h2 style="margin:20px 0 8px;font-size:16px;${ink}">${esc(b.heading)}</h2>`;
+    if ('list' in b) return `<ul style="margin:0 0 14px;padding-left:20px;font-size:15px;line-height:1.6;${ink}">${b.list.map((i) => `<li style="margin-bottom:6px;">${esc(i)}</li>`).join('')}</ul>`;
+    if ('table' in b) {
+      const cell = (t: string, i: number, extra = '') => `<td style="padding:6px 8px;${i > 0 ? 'text-align:right;' : ''}${extra}">${esc(t)}</td>`;
+      const head = `<tr style="background:${c['surface-0']};font-weight:600;">${b.table.head.map((h, i) => cell(h, i)).join('')}</tr>`;
+      const rows = b.table.rows.map((r) => `<tr style="border-bottom:1px solid ${c.line};">${r.cells.map((t, i) => cell(t, i, i === 0 && r.indent ? 'padding-left:24px;' : '')).join('')}</tr>`).join('');
+      return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:14px;${ink}">${head}${rows}</table>`;
+    }
+    if ('code' in b) return `<pre style="margin:0 0 14px;padding:10px 12px;background:${c['surface-0']};border:1px solid ${c.line};border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-all;${ink}">${esc(b.code)}</pre>`;
+    if ('small' in b) return `<p style="margin:16px 0 4px;font-size:12px;line-height:1.5;color:${c['ink-2']};">${esc(b.small)}</p>`;
+    if ('links' in b) return `<p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:${c['ink-2']};">${b.links.map((l) => `<a href="${esc(l.url)}" style="color:${c['ink-2']};text-decoration:underline;">${esc(l.label)}</a>`).join(' &middot; ')}</p>`;
     return `<p style="margin:20px 0;"><a href="${esc(b.cta.url)}" style="display:inline-block;padding:10px 18px;border-radius:4px;background:${esc(brand.color)};color:#fff;font-size:15px;font-weight:600;text-decoration:none;">${esc(b.cta.label)}</a></p>`;
   }).join('\n');
   return htmlLayout(p.title, body, brand);
@@ -106,6 +130,14 @@ export function buildLetterText(blocks: LetterBlock[]): string {
     if (typeof b === 'string') return b;
     if ('heading' in b) return b.heading.toUpperCase();
     if ('list' in b) return b.list.map((i) => `- ${i}`).join('\n');
+    if ('table' in b) {
+      const rows = [b.table.head, ...b.table.rows.map((r) => (r.indent ? [`  ${r.cells[0]}`, ...r.cells.slice(1)] : r.cells))];
+      const widths = b.table.head.map((_, i) => Math.max(...rows.map((r) => (r[i] ?? '').length)));
+      return rows.map((r) => r.map((t, i) => (i === 0 ? t.padEnd(widths[i]) : t.padStart(widths[i]))).join('   ').trimEnd()).join('\n');
+    }
+    if ('code' in b) return b.code.split('\n').map((l) => `    ${l}`).join('\n');
+    if ('small' in b) return b.small;
+    if ('links' in b) return b.links.map((l) => `${l.label}: ${l.url}`).join('\n');
     return `${b.cta.label}: ${b.cta.url}`;
   }).join('\n\n');
 }
@@ -184,7 +216,7 @@ export function buildWeeklyDigestHtml(p: WeeklyDigestHtmlParams): string {
     body += `<p style="font-size:12px;color:${c['ink-2']};">Ready Set Mail v${esc(u.latest!)} is available (you&rsquo;re on v${esc(u.current)}): <a href="${esc(u.release_url)}">release notes</a> &middot; <a href="${esc(u.upgrade_url)}">how to upgrade</a></p>`;
   }
 
-  return htmlLayout(`DMARC Weekly Digest — ${p.weekLabel}`, body, p.brand ?? DEFAULT_BRAND);
+  return htmlLayout(`DMARC Weekly Digest — ${p.weekLabel}`, body, p.brand ?? defaultBrand());
 }
 
 // ── Free-check report ─────────────────────────────────────────
@@ -272,7 +304,7 @@ export function buildFreeCheckHtml(p: FreeCheckHtmlParams): string {
 
   const steps = fixSteps(summary, auth, dns);
   if (steps.length > 0) {
-    const accent = esc((p.brand ?? DEFAULT_BRAND).color);
+    const accent = esc((p.brand ?? defaultBrand()).color);
     body += `<h3 style="margin:16px 0 8px;font-size:15px;">What to do next</h3>
 <ol style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.5;">`;
     for (const st of steps) {
@@ -292,7 +324,7 @@ export function buildFreeCheckHtml(p: FreeCheckHtmlParams): string {
 
   const share = shareLinks(summary, p.siteUrl);
   if (share.length) {
-    const accent = esc((p.brand ?? DEFAULT_BRAND).color);
+    const accent = esc((p.brand ?? defaultBrand()).color);
     const links = share.map(l => `<a href="${esc(l.url)}" style="color:${accent};">${esc(l.label)}</a>`).join(' · ');
     body += `<p style="margin:16px 0 0;font-size:14px;">${SHARE_IT} (optional, nothing is posted unless you post it): ${links}</p>`;
   }
@@ -305,7 +337,7 @@ export function buildFreeCheckHtml(p: FreeCheckHtmlParams): string {
   body += `<p style="margin:16px 0 0;font-size:12px;color:${c['ink-2']};">${esc(retentionSentence({ retentionDays: p.retentionDays, enrolled: p.disclosure, lead: p.lead }))}${site}</p>
 <p style="margin:16px 0 0;font-size:15px;font-weight:600;">${esc(HELP_LINE)}</p>`;
 
-  return htmlLayout(`Email Security Check — ${summary.domain}`, body, p.brand ?? DEFAULT_BRAND);
+  return htmlLayout(`Email Security Check — ${summary.domain}`, body, p.brand ?? defaultBrand());
 }
 
 // ── DNS change alert ──────────────────────────────────────────
@@ -319,7 +351,7 @@ export interface DnsAlertHtmlParams {
 
 export function buildDnsAlertHtml(p: DnsAlertHtmlParams): string {
   const hasDegraded = p.changes.some(c => c.severity === 'degraded');
-  const accent = (p.brand ?? DEFAULT_BRAND).color;
+  const accent = (p.brand ?? defaultBrand()).color;
 
   let body = `<h2 style="margin:0 0 12px;font-size:18px;">Email security configuration changed</h2>
 <p style="margin:0 0 16px;">We detected changes to the email security configuration of <strong>${esc(p.domain)}</strong>.</p>
@@ -346,5 +378,5 @@ Some changes may leave your domain exposed to spoofing.
     body += `<p style="color:${c['ink-2']};font-size:13px;">No action required — these look like improvements or routine updates.</p>`;
   }
 
-  return htmlLayout(`${p.domain} email security updated`, body, p.brand ?? DEFAULT_BRAND);
+  return htmlLayout(`${p.domain} email security updated`, body, p.brand ?? defaultBrand());
 }

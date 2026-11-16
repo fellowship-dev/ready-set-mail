@@ -18,17 +18,8 @@ import { MANUAL_STOPS, stopLead, unsubscribeEmail, type ManualStop } from './enr
 import { confirmMonitorSubscription } from './monitor-optin';
 import { readiness } from './sequence';
 import { SEQUENCE_DAYS } from './copy';
-import { lightColors as c } from '../../packages/ui/src/tokens/tokens';
-
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-function page(title: string, message: string, status = 200, extraHtml = ''): Response {
-  return new Response(
-    `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${esc(title)}</title></head>` +
-      `<body style="font-family:Arial,sans-serif;max-width:480px;margin:80px auto;padding:0 24px;color:${c['ink-1']};"><h1 style="font-size:20px;">${esc(title)}</h1><p style="line-height:1.6;">${esc(message)}</p>${extraHtml}</body></html>`,
-    { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
-  );
-}
+import { page } from './page';
+import { handleEmailPreferenceOff } from '../lifecycle/email/routes';
 
 /** Is the caller the person who runs this instance? OWNER_EMAIL if set; else (self-host only) the owner of the one workspace. */
 export function isInstanceOwner(env: Pick<BoundEnv, 'MODE' | 'OWNER_EMAIL'>, who: { kind?: string; email?: string | null; role?: string; workspaceId: string }): boolean {
@@ -41,6 +32,10 @@ export function isInstanceOwner(env: Pick<BoundEnv, 'MODE' | 'OWNER_EMAIL'>, who
 export async function handlePublicFunnelRoute(request: Request, env: BoundEnv): Promise<Response | null> {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
+
+  // Turn off one lifecycle email (hosted): the token names one person, one workspace and one preference (src/lifecycle/email/routes.ts).
+  const preference = await handleEmailPreferenceOff(request, env);
+  if (preference) return preference;
 
   if (url.pathname === '/api/unsubscribe' && (method === 'GET' || method === 'POST')) {
     const p = await verifyToken(env, url.searchParams.get('t') ?? '');
