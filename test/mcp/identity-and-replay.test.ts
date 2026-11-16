@@ -92,11 +92,40 @@ describe('a refresh token is used once', () => {
   expect((await app.mcp((await b.json() as { access_token: string }).access_token)).status).toBe(200);
  }, 60000);
 
- it('a token that was already replaced is refused, and the whole connection ends: its newer token, its access token and its approval', async () => {
+ it.each([2, 5, 20])('%i refreshes at the same moment with the same token all get 200 and the same new tokens, and the connection stays live', async (count) => {
+  const id = await app.registerOk({ ...GOOD, redirect_uris: [`https://parallel${count}.example/cb`] });
+  const first = await app.connect(id, { redirect: `https://parallel${count}.example/cb` });
+  const answers = await Promise.all(Array.from({ length: count }, () => refresh(id, first.refresh_token)));
+  expect(answers.map(a => a.status)).toEqual(Array(count).fill(200));
+  const bodies = await Promise.all(answers.map(a => a.json() as Promise<{ access_token: string; refresh_token: string }>));
+  expect(new Set(bodies.map(b => b.refresh_token)).size).toBe(1);
+  expect(new Set(bodies.map(b => b.access_token)).size).toBe(1);
+  // live: the new refresh token rotates again, the access token works on /mcp, Settings does not show it as revoked
+  expect((await app.mcp(bodies[0]!.access_token)).status).toBe(200);
+  const next = await refresh(id, bodies[0]!.refresh_token);
+  expect(next.status).toBe(200);
+  expect((await app.mcp((await next.json() as { access_token: string }).access_token)).status).toBe(200);
+  expect((await app.connections()).find(c => c.clientId === id)).toMatchObject({ revoked: false });
+  expect((await app.audit()).filter(a => a.action === 'agent.refresh_token_replayed')).toHaveLength(0);
+ }, 60000);
+
+ it('the same token again inside 30 seconds gets the same tokens, not a second rotation', async () => {
+  const id = await app.registerOk({ ...GOOD, redirect_uris: ['https://again.example/cb'] });
+  const first = await app.connect(id, { redirect: 'https://again.example/cb' });
+  const a = await (await refresh(id, first.refresh_token)).json() as { refresh_token: string; access_token: string };
+  const b = await refresh(id, first.refresh_token);
+  expect(b.status).toBe(200);
+  expect(await b.json()).toMatchObject({ refresh_token: a.refresh_token, access_token: a.access_token });
+  expect((await app.connections()).find(c => c.clientId === id)).toMatchObject({ revoked: false });
+ }, 60000);
+
+ it('the same token after 30 seconds ends the whole connection: its newer token, its access token and its approval', async () => {
   const id = await app.registerOk({ ...GOOD, redirect_uris: ['https://replay.example/cb'] });
   const first = await app.connect(id, { redirect: 'https://replay.example/cb' });
   const rotated = await (await refresh(id, first.refresh_token)).json() as { refresh_token: string; access_token: string };
   expect((await app.mcp(rotated.access_token)).status).toBe(200);
+  // 31 seconds on: what the clock would say, as the row of that first use says it
+  await app.db.prepare('UPDATE refresh_rotations SET first_used_at = first_used_at - 31000').run();
   const replay = await refresh(id, first.refresh_token);
   expect(replay.status).toBe(400);
   expect(await replay.json()).toMatchObject({ error: 'invalid_grant', error_description: expect.stringContaining('already used') });
@@ -104,6 +133,18 @@ describe('a refresh token is used once', () => {
   expect((await app.mcp(rotated.access_token)).status).toBe(401);
   expect((await app.connections()).find(c => c.clientId === id)).toMatchObject({ revoked: true });
   expect((await app.audit()).filter(a => a.action === 'agent.refresh_token_replayed')).toHaveLength(1);
+ }, 60000);
+
+ it('a token two rotations old ends it even inside the window', async () => {
+  const id = await app.registerOk({ ...GOOD, redirect_uris: ['https://stolen.example/cb'] });
+  const first = await app.connect(id, { redirect: 'https://stolen.example/cb' });
+  const second = await (await refresh(id, first.refresh_token)).json() as { refresh_token: string };
+  const third = await (await refresh(id, second.refresh_token)).json() as { refresh_token: string; access_token: string };
+  const stolen = await refresh(id, first.refresh_token);
+  expect(stolen.status).toBe(400);
+  expect((await refresh(id, third.refresh_token)).status).toBe(400);
+  expect((await app.mcp(third.access_token)).status).toBe(401);
+  expect((await app.connections()).find(c => c.clientId === id)).toMatchObject({ revoked: true });
  }, 60000);
 
  it('a made-up or foreign token is the library\'s ordinary refusal, and ends nothing', async () => {

@@ -51,6 +51,18 @@ export const SINGLE: Single[] = [
     owners: ['src/mcp/client-names.ts'],
   },
   {
+    concept: 'Refresh token reuse (the 30-second grace window and the revocation of a leaked token)',
+    // the library's record of the previous token, and the table that holds the first use: a second check would end connections the first one keeps (ADR 0022)
+    signature: /\bpreviousRefreshTokenId\b|\brefreshRotations\b|\brefresh_rotations\b/,
+    owners: ['src/mcp/refresh-replay.ts', 'packages/db/src/queries/global.ts', 'packages/db/src/schema.ts'],
+  },
+  {
+    concept: 'How many apps a person or workspace may keep connected, and how long an ended connection is kept',
+    // the numbers and the check live in one module; the approval page only asks it (ADR 0022)
+    signature: /\bAPPROVAL_LIMITS\b|\bapprovalLimitReached\b|\bCONNECTION_RETENTION_DAYS\b/,
+    owners: ['src/mcp/connection-limits.ts', 'src/mcp/connections.ts'],
+  },
+  {
     concept: 'Writing our report address into a DMARC record (hosted)',
     // the splice that puts an address into a rua= list, and the review and apply that carry it (ADR 0020): a new caller is a second way to write it
     signature: /\b(?:withReportAddress|reviewReportRecord|applyReportRecord)\(/,

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { forgetApprovedClient, handleRegistration, REGISTRATION_DEFAULTS, registrationLimits, sweepUnusedClients } from '../../src/mcp/registration';
 import { addressKey } from '../../src/mcp/rate-limit';
 import { makeEnv, type TestDb } from '../auth/helpers';
+import { addConnection } from './fixtures';
 import { GOOD, ORIGIN, startRuntime, type Installation } from './runtime';
 
 const ip = (n: number) => ({ 'cf-connecting-ip': `198.51.100.${n}` });
@@ -108,6 +109,16 @@ describe('the clean-up at the lifecycle job (workerd)', () => {
   const page = await app.fetch('/oauth/authorize?' + app.authorizeQuery(stale), { headers: { cookie: app.cookie } });
   expect(page.status).toBe(400); expect(page.headers.get('location')).toBeNull();
  }, 60000);
+ it('clears a backlog of 97 expired apps (D1 allows 100 bound values per statement), and then 250', async () => {
+  for (const count of [97, 250]) {
+   const ids: string[] = [];
+   for (let i = 0; i < count; i++) ids.push(await app.registerOk({ ...GOOD, client_name: `Backlog ${count}-${i}` }));
+   await app.db.prepare("UPDATE auth_rate_limits SET last_request = ? WHERE key LIKE 'agent-client:%'").bind(Date.now() - 25 * HOUR).run();
+   await (await app.runtime.getWorker()).scheduled({ cron: '0 4 * * *' });
+   expect(await app.db.prepare("SELECT COUNT(*) AS n FROM auth_rate_limits WHERE key LIKE 'agent-client:%'").first()).toEqual({ n: 0 });
+   expect((await app.kv.list({ prefix: 'client:' })).keys.filter(k => ids.includes(k.name.slice('client:'.length)))).toHaveLength(0);
+  }
+ }, 240000);
  it('the generic rate-limit sweep leaves a waiting app alone, however old: only its own clean-up deletes it, together with the app', async () => {
   const waiting = await app.registerOk();
   await app.db.prepare('UPDATE auth_rate_limits SET last_request = 1 WHERE key = ?').bind('agent-client:' + waiting).run();
@@ -202,7 +213,7 @@ describe('the store cannot fill and stay full (simulated)', () => {
   const w = world({ MCP_DCR_MAX_CLIENTS: '5', MCP_DCR_ADDRESS_DAILY_LIMIT: '1000' });
   for (let i = 0; i < 5; i++) await w.register(`192.0.2.${i}`, T0 + i);
   for (let i = 1; i <= 5; i++) {
-   w.sqlite.prepare("INSERT INTO settings(workspace_id,key,value) VALUES ('ws_default',?,?)").run(`mcp_connection:p${i}`, JSON.stringify({ clientId: `app${i}` }));
+   addConnection(w.sqlite, { principalId: `p${i}`, clientId: `app${i}`, createdAt: T0 / 1000 });
    await forgetApprovedClient(w.env, `app${i}`);
   }
   expect((await w.register('192.0.2.99', T0 + 10_000)).status).toBe(503);
@@ -237,10 +248,80 @@ describe('the store cannot fill and stay full (simulated)', () => {
  it('a registry row left by an approval is healed, not deleted with a live app', async () => {
   const w = world();
   await w.register('192.0.2.1', T0);
-  w.sqlite.prepare("INSERT INTO settings(workspace_id,key,value) VALUES ('ws_default','mcp_connection:p1',?)").run(JSON.stringify({ clientId: 'app1' }));
+  addConnection(w.sqlite, { principalId: 'p1', clientId: 'app1', createdAt: T0 / 1000 });
   await sweepUnusedClients(w.env, T0 + 2 * DAY);
   expect(w.store.store.has('client:app1')).toBe(true);
   expect(w.sqlite.prepare("SELECT COUNT(*) AS n FROM auth_rate_limits WHERE key LIKE 'agent-client:%'").get()).toEqual({ n: 0 });
+ });
+});
+
+describe('the daily job on a backlog (D1 binds at most 100 values per statement)', () => {
+ // 97 is the smallest backlog that broke the job on D1: a batch of 97 ids plus the statement's own 4 values is 101.
+ it.each([96, 97, 100, 250, 800])('clears %i expired apps in one run', async (count) => {
+  const w = world({ MCP_DCR_ADDRESS_DAILY_LIMIT: '100000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 0; i < count; i++) await w.register(`10.2.${Math.floor(i / 250)}.${i % 250}`, T0 + i);
+  expect(w.clients()).toBe(count);
+  const result = await sweepUnusedClients(w.env, T0 + 2 * DAY);
+  expect(result).toMatchObject({ deleted: count, truncated: false, remaining: 0 });
+  expect(w.clients()).toBe(0);
+ }, 60000);
+
+ it('goes on past a page that deletes nothing: a page of apps that turn out to be approved does not end the run', async () => {
+  const w = world({ MCP_DCR_ADDRESS_DAILY_LIMIT: '100000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 0; i < 100; i++) await w.register(`10.3.0.${i}`, T0 + i);
+  // The oldest 95 have a connection record (their registry row was left behind): healed, not deleted. The last 5 are just expired.
+  for (let i = 1; i <= 95; i++) addConnection(w.sqlite, { principalId: `p${i}`, clientId: `app${i}`, createdAt: T0 / 1000 });
+  const result = await sweepUnusedClients(w.env, T0 + 2 * DAY);
+  expect(result).toMatchObject({ deleted: 5, truncated: false, remaining: 0 });
+  expect(w.clients()).toBe(95);
+  expect(w.sqlite.prepare("SELECT COUNT(*) AS n FROM auth_rate_limits WHERE key LIKE 'agent-client:%'").get()).toEqual({ n: 0 });
+ }, 60000);
+});
+
+describe('the ceiling counts apps in use, not records (simulated)', () => {
+ const NOW = T0 / 1000;
+ const fullWorld = () => {
+  const w = world({ MCP_DCR_MAX_CLIENTS: '5', MCP_DCR_ADDRESS_DAILY_LIMIT: '1000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 1; i <= 5; i++) addConnection(w.sqlite, { principalId: `p${i}`, clientId: `app${i}`, userId: 'u1', createdAt: NOW });
+  return w;
+ };
+ it('every place taken by an app in use: refused, with Retry-After', async () => {
+  const w = fullWorld();
+  const r = await w.register('192.0.2.1', T0);
+  expect(r.status).toBe(503);
+  expect(r.headers.get('retry-after')).toBe('3600');
+ });
+ it('revoking a connection gives its place back at once, without waiting for the clean-up', async () => {
+  const w = fullWorld();
+  expect((await w.register('192.0.2.1', T0)).status).toBe(503);
+  w.sqlite.prepare("UPDATE access_principals SET disabled_at = ? WHERE id = 'p1'").run(NOW + 5);
+  expect((await w.register('192.0.2.2', T0 + 10_000)).status).toBe(201);
+  expect((await w.register('192.0.2.3', T0 + 11_000)).status).toBe(503);
+ });
+ it('a connection past its end date stops counting too', async () => {
+  const w = fullWorld();
+  expect((await w.register('192.0.2.1', T0)).status).toBe(503);
+  expect((await w.register('192.0.2.2', T0 + 8 * DAY)).status).toBe(201);
+ });
+ it('an app that waits past its time stops counting, one inside its time counts', async () => {
+  const w = world({ MCP_DCR_MAX_CLIENTS: '3', MCP_DCR_ADDRESS_DAILY_LIMIT: '1000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 0; i < 3; i++) await w.register(`192.0.2.${i}`, T0 + i);
+  // all three wait and none is approved: the oldest makes room, as before
+  expect((await w.register('192.0.2.9', T0 + 1000)).status).toBe(201);
+  expect(w.clients()).toBe(3);
+ });
+ it('an app that publishes a client document is not a stored app and does not take a place', async () => {
+  const w = world({ MCP_DCR_MAX_CLIENTS: '2', MCP_DCR_ADDRESS_DAILY_LIMIT: '1000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 1; i <= 3; i++) addConnection(w.sqlite, { principalId: `c${i}`, clientId: `https://app${i}.example/client.json`, createdAt: NOW });
+  expect((await w.register('192.0.2.1', T0)).status).toBe(201);
+ });
+ it('the registration of a person cycling approve-and-revoke is never the reason another person gets a 503: the places are given back as they revoke', async () => {
+  const w = world({ MCP_DCR_MAX_CLIENTS: '5', MCP_DCR_ADDRESS_DAILY_LIMIT: '100000', MCP_DCR_DAILY_LIMIT: '100000' });
+  for (let i = 1; i <= 100; i++) {
+   addConnection(w.sqlite, { principalId: `p${i}`, clientId: `old${i}`, userId: 'u1', createdAt: NOW + i, revokedAt: NOW + i + 1 });
+  }
+  expect(w.sqlite.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'mcp_connection:%'").get()).toEqual({ n: 100 });
+  for (let i = 0; i < 6; i++) expect((await w.register(`192.0.2.${i}`, T0 + 10_000 + i)).status, `registration ${i}`).toBe(201);
  });
 });
 

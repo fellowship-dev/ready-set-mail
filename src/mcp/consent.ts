@@ -16,8 +16,6 @@ export const ACTION_COPY: Readonly<Record<Exclude<AccessAction, 'access:manage'>
  'remediation:plan': { label: 'Suggest fixes', detail: 'Writes the DNS changes it recommends, for you to review. It cannot apply them.' },
  'domains:manage': { label: 'Add domains and check ownership', detail: 'Starts monitoring a domain and checks its ownership record. It does not edit DNS or send email.' },
 });
-/** Pre-selected for a verified client only: the two permissions a first useful answer needs (list the domains, read their report). */
-const DEFAULT_ACTIONS: readonly string[] = Object.freeze(['resources:read', 'reports:read']);
 /** Said when an app used the name of a well-known app: the name is not kept, and nothing about who it is can be said beyond its address. */
 export const NAME_WITHHELD = 'It used the name of a well-known app, so the name is not shown: only the address below is known.';
 /** An app that gave no name is shown, and listed, under this one. */
@@ -47,6 +45,7 @@ const css = (() => {
 :root{color-scheme:light;${vars(lightColors)};--shadow:${shadows.light.sm}}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;${vars(darkOverrides)};--shadow:${shadows.dark.sm}}}
 *{box-sizing:border-box}
+html{scroll-padding-bottom:8rem}
 body{margin:0;background:var(--surface-0);color:var(--ink-1);font:400 1rem/1.6 ${fonts.sans};-webkit-font-smoothing:antialiased}
 .wrap{max-width:40rem;margin:0 auto;padding:40px 16px 64px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-0.01em;margin-bottom:24px;color:var(--ink-1)}
@@ -125,7 +124,7 @@ const expiryDate = (now: number, days: number) => new Date((now + days * 86400) 
 
 export function renderConsentPage(m: ConsentModel): string {
  const lead = escape(m.client.lead);
- // Only a verified client gets anything pre-ticked; a self-registered app is a claim.
+ // Nothing is pre-ticked for any app, verified or not: a person ticks what they allow, so no permission is granted by leaving a box as it was.
  const verified = !!m.client.publisher;
  const total = m.workspaces.reduce((n, w) => n + w.choices.length, 0);
  const calls = m.client.calledItself ? escape(m.client.calledItself) : null;
@@ -143,13 +142,13 @@ export function renderConsentPage(m: ConsentModel): string {
  const loopback = m.client.loopback ? '<p class="notice" role="note"><strong>This sends access to an app on your own computer.</strong> Continue only if you started this connection from that app just now.</p>' : '';
  const domains = total === 0
   ? '<p class="muted small">You have no domains yet. Add one below, or add domains in the dashboard first.</p>'
-  : m.workspaces.filter(w => w.choices.length).map(w => `<div class="group" role="group" aria-label="${escape(w.name)}"><p class="group-name">${escape(w.name)}</p>${w.choices.map(c => `<label class="option"><input type="checkbox" name="selection" value="${escape(c.value)}"${verified && total === 1 ? ' checked' : ''}><span><span class="mono">${escape(c.domain)}</span>${c.product ? `<span class="detail">Only for ${escape(c.product)}</span>` : ''}</span></label>`).join('')}</div>`).join('');
- const actions = (Object.keys(ACTION_COPY) as Array<keyof typeof ACTION_COPY>).map(a => `<label class="option"><input type="checkbox" name="actions" value="${a}"${verified && DEFAULT_ACTIONS.includes(a) ? ' checked' : ''}><span><span>${escape(ACTION_COPY[a].label)}</span><span class="detail">${escape(ACTION_COPY[a].detail)}</span><span class="scope">${a}</span></span></label>`).join('');
+  : m.workspaces.filter(w => w.choices.length).map(w => `<div class="group" role="group" aria-label="${escape(w.name)}"><p class="group-name">${escape(w.name)}</p>${w.choices.map(c => `<label class="option"><input type="checkbox" name="selection" value="${escape(c.value)}"><span><span class="mono">${escape(c.domain)}</span>${c.product ? `<span class="detail">Only for ${escape(c.product)}</span>` : ''}</span></label>`).join('')}</div>`).join('');
+ const actions = (Object.keys(ACTION_COPY) as Array<keyof typeof ACTION_COPY>).map(a => `<label class="option"><input type="checkbox" name="actions" value="${a}"><span><span>${escape(ACTION_COPY[a].label)}</span><span class="detail">${escape(ACTION_COPY[a].detail)}</span><span class="scope">${a}</span></span></label>`).join('');
  const expiry = EXPIRY_CHOICES.map(d => `<option value="${d}"${d === DEFAULT_EXPIRY ? ' selected' : ''}>${d === 1 ? '1 day' : `${d} days`}, until ${expiryDate(m.now, d)}</option>`).join('');
  const workspaceOptions = m.workspaces.map(w => `<option value="${escape(w.id)}">${escape(w.name)}</option>`).join('');
  const heading = verified ? `Allow ${lead} to work with your domains?` : m.client.loopback ? 'Allow an app on this computer to work with your domains?' : `Allow the app at ${lead} to work with your domains?`;
  return agentPage(verified ? `Allow ${lead}?` : 'An app is asking for access', `<h1>${heading}</h1>
-<p class="muted">Choose exactly what it may see and do. It gets nothing else, and access ends on the date you pick.</p>
+<p class="muted">Nothing is ticked yet: you choose the domains it may use and what it may do. It gets nothing else, and access ends on the date you pick.</p>
 <ul class="facts">${identity}</ul>${loopback}
 <form method="post">
 <input type="hidden" name="handle" value="${escape(m.handle)}">
@@ -213,4 +212,9 @@ export function renderConsentProblem(message: string, problem?: AuthorizationPro
  if (!problem) return agentPage('Check your choices', `<h1>Check your choices</h1><p>${escape(message)}</p><p class="muted">Nothing was shared. Use your browser's back button to change your choices, or start the connection again from the app.</p>`);
  const copy = PROBLEM_COPY[problem];
  return agentPage(copy.title, `<h1>${escape(copy.title)}</h1><p>${escape(copy.message)}</p><p class="muted">Start the connection again from the app. To see which apps can connect here, and how, open Agents in Ready Set Mail.</p><div class="actions"><a class="button primary" href="/#/agents">Open Agents</a></div>`);
+}
+
+/** A limit on connected apps was reached (src/mcp/connection-limits.ts): the sentence says which, and what the person can do. Nothing was shared. */
+export function renderApprovalLimit(sentence: string): string {
+ return agentPage('Limit reached', `<h1>This app cannot be connected right now</h1><p>${escape(sentence)}</p><p class="muted">Nothing was shared.</p><div class="actions"><a class="button primary" href="/#/agents">Open Agents</a></div>`);
 }

@@ -9,7 +9,8 @@ import { invalidTokenResponse, mcpInstallation, mcpResourceMetadataUrl, PROTECTE
 import { CONNECTION_PREFIX, handleRegistration, sweepUnusedClients } from '../mcp/registration';
 import { handleMcpConnections } from '../mcp/connections';
 import { refuseClientDocumentRedirects } from '../mcp/client-document-fetch';
-import { refuseRefreshReplay } from '../mcp/refresh-replay';
+import { sweepEndedConnections } from '../mcp/connection-limits';
+import { handleRefreshToken, purgeOldRotations, REFRESH_TOKEN_TTL_SECONDS } from '../mcp/refresh-replay';
 import { limitAnonymousAgentRequest, limitBrowserRequest, limitMcpRequest } from '../mcp/rate-limit';
 
 // The OAuth library fetches client documents with the default (follow redirects); the draft forbids it (src/mcp/client-document-fetch.ts).
@@ -84,7 +85,7 @@ async function mcpProviderOptions(env: BoundEnv, origin: string, handler: McpHan
   clientIdMetadataDocumentEnabled: true,
   resourceMetadata: { resource: local.resource, authorization_servers: [local.issuer], resource_name: 'Ready Set Mail' },
   scopesSupported: ['ready-set-mail'], requiredScopes: ['ready-set-mail'],
-  accessTokenTTL: 900, refreshTokenTTL: 30 * 86400,
+  accessTokenTTL: 900, refreshTokenTTL: REFRESH_TOKEN_TTL_SECONDS,
   async resolveExternalToken({ token, env }) {
    const key = await resolveApiKey(env.DB, token);
    if (!key) return null;
@@ -104,11 +105,21 @@ export async function createMcpProvider(env: BoundEnv, origin: string, handler: 
  return new OAuthProvider(await mcpProviderOptions(env, origin, handler, fallback));
 }
 
-/** Daily: delete the registered apps nobody approved in time (src/mcp/registration.ts). Nothing to do without agent storage. */
+/**
+ * Daily: delete the registered apps nobody approved in time (src/mcp/registration.ts), the connections that ended more than a week ago with the apps only they
+ * used (src/mcp/connection-limits.ts), and the refresh tokens' grace rows that cannot matter any more (src/mcp/refresh-replay.ts). Nothing to do without agent storage.
+ * Each part runs on its own: one failing does not stop the others, and the first error is thrown at the end so the cron logs it.
+ */
 export async function sweepAgentClients(env: BoundEnv) {
  if (!env.OAUTH_KV) return null;
  try { mcpInstallation(env); } catch { return null; }
- return sweepUnusedClients(env);
+ const failures: unknown[] = [];
+ const run = async <T>(job: () => Promise<T>) => { try { return await job(); } catch (e) { failures.push(e); return null; } };
+ const unapproved = await run(() => sweepUnusedClients(env));
+ const ended = await run(() => sweepEndedConnections(env));
+ const rotations = await run(() => purgeOldRotations(env));
+ if (failures.length) throw failures[0];
+ return { ...unapproved!, ended: ended!, rotationsPurged: rotations! };
 }
 
 /** Route only protocol/connection endpoints through OAuth; other Worker behavior remains intact. */
@@ -137,11 +148,11 @@ export function withMcpAuthorization<T extends DefaultHandler>(worker: T, handle
    const provider = await createMcpProvider(env, new URL(request.url).origin, handler, worker);
    // RFC 9728: a client that does not read the 401 challenge tries the root address. It gets the same document as the /mcp one.
    if (path === PROTECTED_RESOURCE_ROOT_PATH) request = new Request(mcpResourceMetadataUrl(env), request);
-   // A refresh token that was already replaced is a leak: refuse it and end the connection (src/mcp/refresh-replay.ts).
+   // A refresh token is used once, with a short grace window; one used again after it, or an older one, ends the connection (src/mcp/refresh-replay.ts).
    if (path === '/oauth/token' && env.OAUTH_KV) {
     const { getOAuthApi } = await import('@cloudflare/workers-oauth-provider');
-    const replay = await refuseRefreshReplay(request, env, ctx, getOAuthApi(await mcpProviderOptions(env, new URL(request.url).origin, handler, worker), env));
-    if (replay) return replay;
+    const refreshed = await handleRefreshToken(request, env, ctx, getOAuthApi(await mcpProviderOptions(env, new URL(request.url).origin, handler, worker), env), forwarded => provider.fetch(forwarded, env, ctx));
+    if (refreshed) return refreshed;
    }
    // Open registration (MCP_DCR_ENABLED=1) is vetted, counted and audited before the library stores anything.
    if (path === '/oauth/register' && request.method === 'POST' && env.MCP_DCR_ENABLED === '1') return await handleRegistration(request, env, ctx, forwarded => provider.fetch(forwarded, env, ctx));

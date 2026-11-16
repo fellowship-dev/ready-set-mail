@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACTION_COPY, escape, EXPIRY_CHOICES, PAGE_CSP, pageHeaders, renderConsentPage, renderConsentProblem, renderSignedOutPage, type ConsentModel } from '../../src/mcp/consent';
+import { ACTION_COPY, escape, EXPIRY_CHOICES, PAGE_CSP, pageHeaders, renderApprovalLimit, renderConsentPage, renderConsentProblem, renderSignedOutPage, type ConsentModel } from '../../src/mcp/consent';
 import { ACCESS_ACTIONS } from '../../src/access/grant';
 
 const attack = '"><img src=x onerror=alert(1)><script>alert(1)</script>';
@@ -57,10 +57,36 @@ describe('consent page', () => {
    expect(html).toContain(`<span class="scope">${action}</span>`);
   }
   expect(html).not.toContain('access:manage');
-  // The two read permissions a first answer needs start ticked; nothing that adds domains does.
-  expect(html).toContain('value="resources:read" checked');
-  expect(html).toContain('value="reports:read" checked');
-  expect(html).not.toContain('value="domains:manage" checked');
+  expect(html).not.toMatch(/<input[^>]* checked/);
+ });
+
+ it('ticks nothing for any app, verified or not, with one domain or many, and says so before the choices', () => {
+  const verified = model({ workspaces: [{ id: 'w', name: 'Solo', choices: [{ value: '{"workspaceId":"w","domain":"solo.example"}', domain: 'solo.example' }] }] });
+  const registered = model({ ...verified, client: { lead: 'app.example', calledItself: 'My Helper', redirectHost: 'app.example', loopback: false } });
+  for (const m of [model(), verified, registered]) {
+   const html = renderConsentPage(m);
+   expect(html).not.toMatch(/<input[^>]* checked/);
+   expect(html.match(/<input type="checkbox"/g)!.length).toBeGreaterThan(6);
+   const text = visible(html);
+   expect(text).toContain('Nothing is ticked yet: you choose the domains it may use and what it may do.');
+   // the sentence comes before the first choice
+   expect(text.indexOf('Nothing is ticked yet')).toBeLessThan(text.indexOf('See the domains you select'));
+  }
+ });
+
+ it('keeps a focused control out from under the bar that stays at the bottom: scroll padding at least the bar is tall', () => {
+  const html = renderConsentPage(model());
+  expect(html).toMatch(/html\{scroll-padding-bottom:8rem\}/);
+  // the bar is one button row of 44px with 12px above and below, plus its border: well under 8rem (128px)
+  expect(8 * 16).toBeGreaterThanOrEqual(12 + 44 + 12 + 1 + 4);
+ });
+
+ it('says plainly which limit was reached and what to do, with a way to the list of apps', () => {
+  const html = renderApprovalLimit('You have approved 20 apps in the last 24 hours, which is the most one person can approve in a day. Try again tomorrow.');
+  expect(visible(html)).toContain('Try again tomorrow.');
+  expect(visible(html)).toContain('Nothing was shared.');
+  expect(html).toContain('href="/#/agents"');
+  expect(html).not.toMatch(/<script/i);
  });
 
  it('states when access ends, as dates, with 7 days preselected and nothing beyond 30', () => {
@@ -127,9 +153,7 @@ describe('consent page', () => {
   expect(html).toContain('@media (pointer:coarse){select,input[type=text]{height:44px}}');
  });
 
- it('preselects the only domain when there is exactly one, and explains an empty portfolio', () => {
-  const one = renderConsentPage(model({ workspaces: [{ id: 'w', name: 'Solo', choices: [{ value: '{"workspaceId":"w","domain":"solo.example"}', domain: 'solo.example' }] }] }));
-  expect(one).toMatch(/name="selection" value="[^"]+" checked/);
+ it('explains an empty portfolio', () => {
   const none = visible(renderConsentPage(model({ workspaces: [{ id: 'w', name: 'Empty', choices: [] }] })));
   expect(none).toContain('You have no domains yet.');
  });

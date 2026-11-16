@@ -3,11 +3,13 @@
 //   - what a registration may say (name, redirect addresses, public clients only), checked BEFORE the library stores anything;
 //   - how many may arrive: a per-address budget per minute (src/mcp/rate-limit.ts), a per-address budget per day, a whole-instance budget per day
 //     that one address cannot use up, and a ceiling on stored apps that evicts the oldest unapproved app instead of refusing;
+//   - a ceiling on the apps in use: it counts the apps with a LIVE connection (not revoked, not past their end date) and the unapproved ones still inside their
+//     time, so revoking or ending a connection gives its place back at once, and the clean-up (src/mcp/connection-limits.ts) deletes the ended records;
 //   - how long an app nobody approved is kept (hours, not days): a registry of unapproved apps (globalQueries.agentClients), emptied by an
 //     opportunistic clean-up on every registration and by the daily job, both scanning by age, so the store cannot fill and stay full;
 //   - an audit entry for each registration, refusal and deletion.
 // The library still validates and stores; this module only narrows what reaches it.
-import { accessLookups, globalQueries, IMPLICIT_WORKSPACE_ID } from '@ready-set-mail/db';
+import { accessLookups, globalQueries, IMPLICIT_WORKSPACE_ID, IN_LIST_MAX } from '@ready-set-mail/db';
 import type { BoundEnv } from '../index';
 import { logAudit } from '../audit/log';
 import { UNNAMED_APP } from './consent';
@@ -26,8 +28,13 @@ import { addressKey, tooManyRequests } from './rate-limit';
 export const REGISTRATION_DEFAULTS = { dailyLimit: 2000, addressDailyLimit: 20, maxClients: 5000, unusedHours: 24 } as const;
 /** Opportunistic clean-up on each registration: how many expired apps to delete first. */
 const CLEANUP_PER_REGISTRATION = 10;
-/** The daily job: apps deleted per run (each is one KV delete, and a Worker invocation has a subrequest budget), and the time it may take. */
-const SWEEP_BATCH = 100, SWEEP_MAX_DELETIONS = 800, SWEEP_BUDGET_MS = 25_000;
+/** At the ceiling, how many times to evict and count again (expired apps are evicted first and count for nothing). */
+const MAX_ROOM_ROUNDS = 10;
+/**
+ * The daily job: apps deleted per run (each is one KV delete, and a Worker invocation has a subrequest budget), the time it may take, and how many it looks at
+ * at once. A batch is at most IN_LIST_MAX (90) so the ids it asks about fit D1's 100 bound values per statement together with the statement's own.
+ */
+const SWEEP_BATCH = IN_LIST_MAX, SWEEP_MAX_DELETIONS = 800, SWEEP_BUDGET_MS = 25_000;
 export const MAX_REDIRECT_URIS = 5;
 export { MAX_NAME_LENGTH };
 const MAX_BODY_BYTES = 16 * 1024;
@@ -113,7 +120,7 @@ function refusal(status: number, code: string, description: string, retryAfter?:
 }
 
 /** Instance-level events (no person, no workspace yet) go to the instance's own audit scope, the one the platform's other instance settings use. */
-function audit(env: Pick<BoundEnv, 'DB'>, ctx: ExecutionContext | undefined, action: string, entry: { id?: string; name?: string; meta?: Record<string, unknown> }) {
+export function audit(env: Pick<BoundEnv, 'DB'>, ctx: ExecutionContext | undefined, action: string, entry: { id?: string; name?: string; meta?: Record<string, unknown> }) {
   logAudit({ db: env.DB, workspaceId: IMPLICIT_WORKSPACE_ID }, { actor_type: 'system', action, resource_type: 'agent_client', resource_id: entry.id ?? null, resource_name: entry.name ?? null, meta: entry.meta ?? null }, ctx);
 }
 
@@ -122,11 +129,11 @@ function audit(env: Pick<BoundEnv, 'DB'>, ctx: ExecutionContext | undefined, act
  * (`forgetApprovedClient`), so every row is an unapproved app; the connection records are still asked, so a row that outlived an approval is healed
  * rather than deleted with a live app. The app's record is deleted straight from storage: an app that was never approved has no grants to revoke.
  */
-export async function expireUnapprovedClients(env: Pick<RegistrationEnv, 'DB' | 'OAUTH_KV' | 'MCP_DCR_UNUSED_HOURS' | 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_ADDRESS_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS'>, ctx: ExecutionContext | undefined, max: number, now = Date.now(), why: 'expired' | 'evicted' = 'expired'): Promise<number> {
+export async function expireUnapprovedClients(env: Pick<RegistrationEnv, 'DB' | 'OAUTH_KV' | 'MCP_DCR_UNUSED_HOURS' | 'MCP_DCR_DAILY_LIMIT' | 'MCP_DCR_ADDRESS_DAILY_LIMIT' | 'MCP_DCR_MAX_CLIENTS'>, ctx: ExecutionContext | undefined, max: number, now = Date.now(), why: 'expired' | 'evicted' = 'expired'): Promise<{ deleted: number; examined: number }> {
   const q = globalQueries(env.DB).agentClients;
   const cutoff = why === 'expired' ? now - registrationLimits(env).unusedHours * HOUR_MS : undefined;
   const due = await q.oldest(max, cutoff);
-  if (!due.length) return 0;
+  if (!due.length) return { deleted: 0, examined: 0 };
   const used = await accessLookups(env.DB).connectedClientIds(CONNECTION_PREFIX, due.map(d => d.clientId));
   const gone: string[] = [], healed: string[] = [];
   for (const app of due) {
@@ -136,7 +143,7 @@ export async function expireUnapprovedClients(env: Pick<RegistrationEnv, 'DB' | 
     audit(env, ctx, why === 'expired' ? 'agent.client_expired' : 'agent.client_evicted', { id: app.clientId, meta: { registered_at: Math.floor(app.registeredAt / 1000), unused_hours: registrationLimits(env).unusedHours } });
   }
   await q.remove([...gone, ...healed]);
-  return gone.length;
+  return { deleted: gone.length, examined: due.length };
 }
 
 /** An app was approved: it stays, whatever its age (its refresh tokens need it), so it is no longer a candidate for expiry. */
@@ -160,7 +167,7 @@ export async function handleRegistration(request: Request, env: RegistrationEnv,
   const meta = { name: vetted.name, redirect_hosts: hosts, ...(vetted.withheld ? { name_withheld: vetted.withheld } : {}) };
   const agents = globalQueries(env.DB).agentClients;
   // Clean up first, a few at a time, so the store drains at least as fast as it fills (the daily job takes the rest).
-  await expireUnapprovedClients(env, ctx, CLEANUP_PER_REGISTRATION, now).catch(() => 0);
+  await expireUnapprovedClients(env, ctx, CLEANUP_PER_REGISTRATION, now).catch(() => null);
   const q = globalQueries(env.DB).rateLimit;
   // This address's day first: a refused address spends nothing of the instance's budget, so one address cannot use the others' up.
   const address = `${ADDRESS_DAILY_PREFIX}${addressKey(request)}`;
@@ -176,9 +183,16 @@ export async function handleRegistration(request: Request, env: RegistrationEnv,
     return refused(tooManyRequests(row ? Math.max(1, Math.ceil((row.lastRequest + DAY_MS - now) / 1000)) : 3600, 'This server has accepted as many new app registrations as it allows for today. Try again later.'), 'daily_limit', meta);
   }
   const giveBack = () => Promise.all([q.giveBack(DAILY_KEY, counted.lastRequest), q.giveBack(address, mine.lastRequest)]);
-  // The ceiling counts every stored app. At it, the oldest app nobody approved makes room; only when every stored app is approved is the registration refused.
-  const stored = await agents.count() + await accessLookups(env.DB).connectedClientCount(CONNECTION_PREFIX);
-  if (stored >= limits.maxClients && await expireUnapprovedClients(env, ctx, Math.min(CLEANUP_PER_REGISTRATION, stored - limits.maxClients + 1), now, 'evicted') === 0) {
+  // The ceiling counts the apps in use (a live connection) and the ones still waiting inside their time; an ended connection or an app past its time does not count.
+  // At it, the oldest app nobody approved makes room (expired ones first, which count for nothing, so look again); only when the room is taken by approved apps is the registration refused.
+  const appsCounted = async () => await agents.count(now - limits.unusedHours * HOUR_MS) + await accessLookups(env.DB).liveConnectedClientCount(CONNECTION_PREFIX, Math.floor(now / 1000));
+  let stored = await appsCounted();
+  for (let rounds = 0; stored >= limits.maxClients && rounds < MAX_ROOM_ROUNDS; rounds++) {
+    const { deleted } = await expireUnapprovedClients(env, ctx, Math.min(CLEANUP_PER_REGISTRATION, stored - limits.maxClients + 1), now, 'evicted');
+    if (deleted === 0) break;
+    stored = await appsCounted();
+  }
+  if (stored >= limits.maxClients) {
     await giveBack();
     return refused(refusal(503, 'temporarily_unavailable', 'This server has reached its limit of registered apps, and every one of them is in use. Try again later, or ask the person who runs it.', 3600), 'client_cap', meta);
   }
@@ -194,6 +208,12 @@ export async function handleRegistration(request: Request, env: RegistrationEnv,
   return response;
 }
 
+/** A scheduled run has no request to wait on: collect the audit writes and wait for them before it ends. */
+export function scheduledContext() {
+  const pending: Promise<unknown>[] = [];
+  return { ctx: { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as ExecutionContext, settle: () => Promise.allSettled(pending) };
+}
+
 export interface SweepResult { deleted: number; truncated: boolean; remaining: number }
 
 /**
@@ -201,20 +221,19 @@ export interface SweepResult { deleted: number; truncated: boolean; remaining: n
  * left, the run has deleted as many as one invocation's subrequest budget allows, or its time is up. An approved app stays, whatever its age.
  */
 export async function sweepUnusedClients(env: RegistrationEnv, now = Date.now(), clock: () => number = Date.now): Promise<SweepResult> {
-  // A scheduled run has no request to wait on: collect the audit writes and wait for them before it ends.
-  const pending: Promise<unknown>[] = [];
-  const ctx = { waitUntil: (p: Promise<unknown>) => { pending.push(p); } } as ExecutionContext;
+  const { ctx, settle } = scheduledContext();
   const started = clock();
   let deleted = 0, truncated = false;
   try {
     for (;;) {
       if (deleted >= SWEEP_MAX_DELETIONS || clock() - started > SWEEP_BUDGET_MS) { truncated = true; break; }
-      const n = await expireUnapprovedClients(env, ctx, Math.min(SWEEP_BATCH, SWEEP_MAX_DELETIONS - deleted), now);
-      deleted += n;
-      if (n === 0) break;
+      // Each app looked at leaves the list (deleted, or healed because it was approved), so the next page is the next due ones: stop only when none are left.
+      const page = await expireUnapprovedClients(env, ctx, Math.min(SWEEP_BATCH, SWEEP_MAX_DELETIONS - deleted), now);
+      deleted += page.deleted;
+      if (page.examined === 0) break;
     }
     const cutoff = now - registrationLimits(env).unusedHours * HOUR_MS;
     const remaining = truncated ? (await globalQueries(env.DB).agentClients.oldest(1, cutoff)).length : 0;
     return { deleted, truncated: truncated && remaining > 0, remaining };
-  } finally { await Promise.allSettled(pending); }
+  } finally { await settle(); }
 }

@@ -1,8 +1,10 @@
-import { authorizationProblem, pageHeaders, renderConsentPage, renderConsentProblem, renderSignedOutPage, resumePath, UNNAMED_APP, type ConsentModel } from './consent';
+import { authorizationProblem, pageHeaders, renderApprovalLimit, renderConsentPage, renderConsentProblem, renderSignedOutPage, resumePath, UNNAMED_APP, type ConsentModel } from './consent';
 import { CONNECTION_PREFIX, forgetApprovedClient, isLoopbackHost } from './registration';
 import { describedName } from './client-names';
+import { approvalLimitReached, LIMIT_SENTENCES, type ApprovalLimit } from './connection-limits';
+import { logAudit } from '../audit/log';
 import type { OAuthProviderOptions, OAuthHelpers } from '@cloudflare/workers-oauth-provider';
-import { accessLookups, authLookups, forWorkspace, globalQueries, workspaceLifecycle } from '@ready-set-mail/db';
+import { accessLookups, authLookups, forWorkspace, globalQueries, IMPLICIT_WORKSPACE_ID, workspaceLifecycle } from '@ready-set-mail/db';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../index';
 import { currentUser, passesCsrfCheck } from '../auth/session';
@@ -107,6 +109,7 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
   if (!p || p.user_id !== user.id) return Response.json({ error: 'not found' }, { status: 404 });
   // Cleanup is best effort; denial is durable in D1 even when KV cannot be reached.
   await forWorkspace(env.DB, p.workspace_id).access.principals.disable(id, Math.floor(Date.now() / 1000));
+  if (p.disabled_at === null) logAudit({ db: env.DB, workspaceId: p.workspace_id }, { actor_id: user.id, actor_email: user.email, actor_type: 'user', action: 'agent.connection_revoked', resource_type: 'agent_connection', resource_id: id, resource_name: p.name }, ctx);
   ctx.waitUntil(revokeAgentConnection(env, user.id, id, api).catch(() => {}));
   return Response.json({ revoked: true });
  }
@@ -115,6 +118,9 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
   if (request.method === 'GET') {
    const authRequest = await api.parseAuthRequest(request);
    if (authRequest.scope.some(s => s !== 'ready-set-mail' && s !== 'offline_access')) return authorizationFailure('invalid_scope');
+   // A person who already has as many apps connected as they may (or approved as many today) is told so before the form, not after filling it in.
+   const reached = await approvalLimitReached(env, user.id, []);
+   if (reached) return limitPage(env, ctx, user, reached);
    const description = await api.describeConsent(authRequest), consent = await api.beginConsent(authRequest);
    const identity = clientIdentity(await api.lookupClient(authRequest.clientId), authRequest.clientId, authRequest.redirectUri, await globalQueries(env.DB).agentClients.nameWithheld(authRequest.clientId));
    const named = new Map((await workspaceLifecycle(env.DB).listForUser(user.id)).map(w => [w.id, w.name]));
@@ -162,6 +168,8 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
     }
     for (const action of actions) await authorizeResource(env.DB, actor, action, s);
    }
+   const reached = await approvalLimitReached(env, user.id, [selections[0]!.workspaceId]);
+   if (reached) return limitPage(env, ctx, user, reached);
    const approved = await api.approveConsent(request, String(form.get('handle') ?? ''), { scope: ['ready-set-mail'] });
    // An approved app stays whatever its age: it leaves the list of apps that expire (src/mcp/registration.ts).
    const nameWithheld = await globalQueries(env.DB).agentClients.nameWithheld(approved.request.clientId);
@@ -175,6 +183,7 @@ export async function handleMcpConnections(request: Request, env: BoundEnv, ctx:
     const record: AgentConnection = { principalId, userId: user.id, workspaceId, clientId: approved.request.clientId, name: identity.lead, ...(identity.calledItself ? { calledItself: identity.calledItself } : {}), ...(identity.nameWithheld ? { nameWithheld: true } : {}), ...(identity.verifiedHost ? { verifiedHost: identity.verifiedHost } : {}), createdAt: now, expiresAt };
     await forWorkspace(env.DB, workspaceId).settings.set(`${prefix}${principalId}`, JSON.stringify(record));
     const completed = await api.completeAuthorization({ request: approved.request, userId: user.id, scope: ['ready-set-mail'], props: { principalId, ...local }, metadata: { principalId }, revokeExistingGrants: false });
+    logAudit({ db: env.DB, workspaceId }, { actor_id: user.id, actor_email: user.email, actor_type: 'user', action: 'agent.connection_approved', resource_type: 'agent_connection', resource_id: principalId, resource_name: identity.lead, meta: { client_id: approved.request.clientId, actions, domains: selections.length, days } }, ctx);
     agentAuthorized(env, ctx, workspaceId, { actions: actions.length, domains: selections.length, days });
     const headers = new Headers(approved.headers); headers.set('Location', completed.redirectTo); headers.set('Cache-Control', 'no-store');
     return new Response(null, { status: 302, headers });
@@ -197,3 +206,9 @@ function failureOf(e: unknown): string | undefined {
 }
 function authorizationFailure(description: string | undefined) { return new Response(renderConsentProblem('', authorizationProblem(description)), { status: 400, headers: pageHeaders() }); }
 function problem(message: string, status: number) { return new Response(renderConsentProblem(message), { status, headers: pageHeaders() }); }
+/** A limit on connected apps was reached (src/mcp/connection-limits.ts): the page says which and what to do, and the audit log counts it so the numbers can be judged. */
+function limitPage(env: BoundEnv, ctx: ExecutionContext, user: { id: string; email: string }, limit: ApprovalLimit) {
+ const workspaceId = IMPLICIT_WORKSPACE_ID;
+ logAudit({ db: env.DB, workspaceId }, { actor_id: user.id, actor_email: user.email, actor_type: 'user', action: 'agent.approval_limit_reached', resource_type: 'agent_connection', meta: { limit } }, ctx);
+ return new Response(renderApprovalLimit(LIMIT_SENTENCES[limit]), { status: 429, headers: pageHeaders() });
+}
