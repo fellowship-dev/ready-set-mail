@@ -148,11 +148,9 @@ export function oauthSignedUp(env: AnalyticsEnv, ctx: Ctx, method: 'oauth_google
   }));
 }
 
-// ── Waiting on the new sign-up screens (draft PR 177, `onboarding-signup-first-run`; docs/analytics.md) ──
-// These are defined and tested here; the routes they belong to exist only on that branch. When it merges, wire them with one line each:
-//  - POST /api/auth/signup/profile, after saveAttemptProfile succeeds:  signupProfileSaved(env, ctx, handle, checked.profile);
-//  - POST /api/auth/signup/resend, as the answerWithCode option:        { notice: 'signup', analytics: signupHooks(env, ctx, await signupTag(env, handle, {})) }
-//  - the S4 setup choice, at the server call it makes (or a POST the screen adds): setupPathChosen(env, ctx, workspaceId, path, dnsProvider)
+// ── The new sign-up screens (PR 177; docs/analytics.md) ──
+// Called from POST /api/auth/signup/profile (signupProfileSaved), POST /api/auth/signup/resend (signupHooks) and the S4 choice
+// (POST /api/onboarding/setup-path and the hand-off invite: setupPathChosen).
 
 /** S2 "about you" saved on the pending attempt: only the closed answers, and whether the free-text "heard about" was filled. */
 export async function signupProfileSaved(env: AnalyticsEnv, ctx: Ctx, handle: string | null, profile: { whose_email: string; role?: string; heard_about?: string }): Promise<void> {

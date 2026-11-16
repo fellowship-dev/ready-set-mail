@@ -49,7 +49,7 @@ function pct(n: number, total: number): string {
 
 // ── Shared layout ─────────────────────────────────────────────
 
-function htmlLayout(title: string, bodyHtml: string, brand: Brand): string {
+function htmlLayout(title: string, bodyHtml: string, brand: Brand, footer = 'Ready Set Mail — automated email security monitoring'): string {
   const accent = esc(brand.color);
   const logo = brand.logoUrl;
   // A workspace's own logo keeps its coloured band. Otherwise the header is the wordmark as plain text: no remote
@@ -69,14 +69,14 @@ function htmlLayout(title: string, bodyHtml: string, brand: Brand): string {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${c['surface-2']};font-family:Arial,sans-serif;font-size:14px;color:${c['ink-1']};">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:${c['surface-2']};">
-<tr><td align="center" style="padding:16px 8px;">
-<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${c['surface-1']};border-radius:6px;overflow:hidden;">
+<tr><td align="center" style="padding:24px 8px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:${c['surface-1']};border-radius:6px;overflow:hidden;width:100%;max-width:600px;">
   ${header}
   <tr><td style="padding:20px 16px;word-wrap:break-word;overflow-wrap:break-word;">
     ${bodyHtml}
   </td></tr>
   <tr><td style="padding:12px 24px;background:${c['surface-0']};border-top:1px solid ${c.line};font-size:11px;color:${c['ink-2']};text-align:center;">
-    Ready Set Mail — automated email security monitoring
+    ${esc(footer)}
   </td></tr>
 </table>
 </td></tr>
@@ -140,6 +140,57 @@ export function buildLetterText(blocks: LetterBlock[]): string {
     if ('links' in b) return b.links.map((l) => `${l.label}: ${l.url}`).join('\n');
     return `${b.cta.label}: ${b.cta.url}`;
   }).join('\n\n');
+}
+
+// ── Sign-in code ──────────────────────────────────────────────
+
+export interface CodeEmailHtmlParams {
+  code: string;
+  /** The one sentence: what entering the code does. */
+  sentence: string;
+  /** "It works for 10 minutes, once, …": the lifetime and where to enter it. */
+  validity: string;
+  /** "If you didn't ask for this, you can ignore this email." and the lines that follow it, each its own paragraph. */
+  notes: string[];
+  /** Small print under the notes (where it was asked for, advice after a sign-in). */
+  fine: string[];
+  /** The operator line (who runs the service, privacy link), or empty. */
+  footer: string;
+}
+
+/**
+ * The code email: the wordmark as text (no images, like every default-brand email), one sentence, the code alone in very large
+ * selectable monospace digits in a light panel, how long it works, and what to do if it was not asked for. Nothing in it is a
+ * link, so nothing in it can be mistaken for the way to enter the code.
+ */
+export function buildCodeEmailHtml(p: CodeEmailHtmlParams): string {
+  const body = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${esc(p.sentence)}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 16px;"><tr><td align="center" style="background:${c['surface-2']};border:1px solid ${c.line};border-radius:6px;padding:20px 8px;">
+      <span style="display:block;font-family:'Courier New',Courier,monospace;font-size:40px;line-height:1.2;font-weight:700;letter-spacing:0.25em;color:${c['ink-1']};user-select:all;-webkit-user-select:all;">${esc(p.code)}</span>
+    </td></tr></table>
+    <p style="margin:0 0 16px;font-size:14px;line-height:1.5;">${esc(p.validity)}</p>
+    ${p.notes.map((n) => `<p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:${c['ink-2']};">${esc(n)}</p>`).join('\n    ')}
+    ${p.fine.map((n) => `<p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:${c['ink-2']};">${esc(n)}</p>`).join('\n    ')}`;
+  return htmlLayout(`${p.code} is your Ready Set Mail code`, body, { color: DEFAULT_BRAND_COLOR }, p.footer || 'Ready Set Mail');
+}
+
+// ── Hand setup to a teammate ──────────────────────────────────
+
+export interface HandoffEmailHtmlParams {
+  /** The one fixed paragraph, with the names filled in. */
+  paragraph: string;
+  /** "The link works for 7 days." */
+  validity: string;
+  url: string;
+  footer: string;
+}
+
+/** The hand-off invitation: the same wordmark layout as the code email, one fixed paragraph and one button. No free text. */
+export function buildHandoffEmailHtml(p: HandoffEmailHtmlParams): string {
+  const body = `<p style="margin:0 0 16px;font-size:16px;line-height:1.5;">${esc(p.paragraph)}</p>
+    <p style="margin:0 0 16px;"><a href="${esc(p.url)}" style="display:inline-block;padding:12px 20px;border-radius:4px;background:${DEFAULT_BRAND_COLOR};color:#fff;font-size:16px;font-weight:600;text-decoration:none;">Open Ready Set Mail</a></p>
+    <p style="margin:0;font-size:14px;line-height:1.5;color:${c['ink-2']};">${esc(p.validity)}</p>`;
+  return htmlLayout('Finish setting up email', body, { color: DEFAULT_BRAND_COLOR }, p.footer || 'Ready Set Mail');
 }
 
 // ── Weekly digest ─────────────────────────────────────────────

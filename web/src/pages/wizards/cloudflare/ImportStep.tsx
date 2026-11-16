@@ -1,11 +1,13 @@
 import { Button, Checkbox, FieldError, Skeleton } from '@ready-set-mail/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { LoadError, WriteButton } from '../../../components/states';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepFooter } from '../../../components/wizard/StepNav';
 import { ApiError, errorMessage } from '../../../lib/api';
-import { cfKeys, importAll, importSummary, type CfConnection, type ImportedNote, type ImportResult } from '../../../lib/cloudflare';
+import { cfKeys, fetchZones, importAll, importSummary, type CfConnection, type ImportedNote, type ImportResult } from '../../../lib/cloudflare';
+import { zoneCovering, zonesNotAdded } from '../../../lib/first-run';
 import { keys } from '../../../lib/queries';
 
 type Selection = NonNullable<ImportResult['needs_selection']>;
@@ -13,15 +15,26 @@ type Selection = NonNullable<ImportResult['needs_selection']>;
 /**
  * Hosted, right after connecting: every active zone the connection can see becomes a verified domain, with nothing written to DNS.
  * Only when they would not all fit the plan does the person choose which to add. `onDone` leaves for the dashboard.
+ *
+ * `agency` ("My clients'"): the account holds many clients, so only the zone of each client domain being set up (`agency.targets`, the
+ * workspace's pending claims) is added; the other zones are listed ("Also in this Cloudflare account") and nothing is imported for them.
+ * With no target at all nothing is added, and Add domain offers the account's zones one at a time.
  */
-export function ImportStep({ connection, onDone }: { connection: CfConnection; onDone: (note?: ImportedNote) => void }) {
+export function ImportStep({ connection, onDone, agency }: { connection: CfConnection; onDone: (note?: ImportedNote) => void; agency?: { targets: string[] } }) {
 	const qc = useQueryClient();
 	const started = useRef(false);
-	const [state, setState] = useState<{ kind: 'running' } | { kind: 'choose'; selection: Selection } | { kind: 'empty' } | { kind: 'error'; error: unknown }>({ kind: 'running' });
+	const [state, setState] = useState<{ kind: 'running' } | { kind: 'choose'; selection: Selection } | { kind: 'empty' } | { kind: 'missing'; domains: string[]; others: string[] } | { kind: 'error'; error: unknown }>({ kind: 'running' });
 
 	async function run(zoneIds?: string[]) {
 		setState({ kind: 'running' });
 		try {
+			if (agency && !zoneIds) {
+				if (agency.targets.length === 0) return onDone({ text: "Connected to Cloudflare. Nothing was added: add each client's domain with Add domain, which offers this account's zones.", ok: false });
+				const zones = await fetchZones(connection);
+				const ids = [...new Set(agency.targets.flatMap((t) => { const z = zoneCovering(t, zones); return z ? [z.id] : []; }))];
+				if (ids.length === 0) return setState({ kind: 'missing', domains: agency.targets, others: zonesNotAdded(zones, []).map((z) => z.name) });
+				zoneIds = ids;
+			}
 			const { totals, selection } = await importAll(connection.id, zoneIds);
 			void qc.invalidateQueries({ queryKey: keys.domains });
 			void qc.invalidateQueries({ queryKey: ['auth-status'] });
@@ -54,6 +67,27 @@ export function ImportStep({ connection, onDone }: { connection: CfConnection; o
 		);
 	}
 	if (state.kind === 'error') return <LoadError error={state.error} onRetry={() => void run()} title="Could not add your Cloudflare domains" />;
+	if (state.kind === 'missing') {
+		return (
+			<StepCard title={`${state.domains.join(', ')} isn't in this Cloudflare account`}>
+				<div className="space-y-4">
+					<p className="max-w-prose text-sm text-ink-2">Nothing was added. Connect the account that holds {state.domains.length === 1 ? 'it' : 'them'}, or add the records yourself.</p>
+					{state.others.length > 0 ? (
+						<p className="max-w-prose text-sm text-ink-2" data-testid="also-in-account">
+							Also in this Cloudflare account: {state.others.join(', ')}.
+						</p>
+					) : null}
+					<StepFooter
+						end={
+							<Button asChild>
+								<Link to="/setup">Back to your domain</Link>
+							</Button>
+						}
+					/>
+				</div>
+			</StepCard>
+		);
+	}
 	if (state.kind === 'empty') {
 		return (
 			<StepCard title="No domains found">

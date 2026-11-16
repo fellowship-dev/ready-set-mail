@@ -7,9 +7,9 @@
 // Hosted sign-up asks Cloudflare's Turnstile test endpoint (challenges.cloudflare.com) to check a dummy token: this spec needs that network access.
 // Ports 8815-8820. Needs `npm run build:dashboard`. Run alone: npx playwright test e2e/cloudflare-first-run.spec.ts
 import { expect, test, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { connectWithToken, enterDomain, signUp } from './support/signup';
 
 interface Instance { url: string; logFile: string; fake: { url: string }; stop(): Promise<void>; verificationLinks(): string[]; d1(sql: string): Array<Record<string, unknown>> }
 const nativeImport = new Function('u', 'return import(u)') as (u: string) => Promise<{ startInstance(o: Record<string, unknown>): Promise<Instance> }>;
@@ -18,28 +18,13 @@ const startInstance = async (o: Record<string, unknown>) => (await nativeImport(
 test.setTimeout(240_000);
 
 const ZONES = ['brightwave-mail.com', 'harbor-lane.org', 'quietfield.net'];
+/** Public name servers of the fake zones: Cloudflare's, so S4 offers Connect Cloudflare. */
+const CF_NS = Object.fromEntries(ZONES.map((z) => [z, ['ns1.ns.cloudflare.com']]));
 type FakeState = { records: Record<string, Array<{ type: string; name: string; content: string }>> };
 const dnsRecords = async (inst: Instance) => {
 	const s = (await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState;
 	return Object.values(s.records).flat().map((r) => `${r.type} ${r.name} ${r.content}`).sort();
 };
-
-/** The 6-digit codes the Worker mailed (the local send_email simulation logs each message's subject in the Worker's log). */
-const mailedCodes = (inst: Instance) =>
-	existsSync(inst.logFile) ? [...readFileSync(inst.logFile, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').matchAll(/(\d{6}) is your Ready Set Mail code/g)].map((m) => m[1]!) : [];
-
-/** Sign up on a hosted instance through the screen: email and password, the code emailed to confirm the address, and the app. */
-async function signUp(page: Page, inst: Instance, email: string) {
-	await page.goto(`${inst.url}/#/signup`);
-	await page.locator('#email').fill(email);
-	await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
-	await page.waitForTimeout(2500); // the Turnstile test widget
-	const before = mailedCodes(inst).length;
-	await page.getByRole('button', { name: /Create account|Sign up|Continue|Send/ }).first().click();
-	await expect.poll(() => mailedCodes(inst).length, { timeout: 30_000 }).toBeGreaterThan(before);
-	await page.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!); // the sixth digit submits
-	await expect(page.getByRole('heading', { name: "Let's set up Ready Set Mail" })).toBeVisible({ timeout: 30_000 });
-}
 
 /**
  * The setup status reads public DNS for the domain page itself (not through the fake), and the fake's made-up names do not exist there:
@@ -57,23 +42,25 @@ async function publicDnsHasNoDmarc(page: Page) {
 	});
 }
 
-async function connectWithToken(page: Page) {
-	await page.getByLabel('Cloudflare API token').fill('e2e-fake-token-not-a-real-secret-0000');
-	await page.getByRole('button', { name: 'Connect', exact: true }).click();
-}
-
 test('hosted: connect, every zone is added and verified, nothing is written to DNS, and the dashboard shows them', async ({ page }) => {
-	const inst = await startInstance({ mode: 'hosted', port: 8815, tokenKey: true });
+	const inst = await startInstance({ mode: 'hosted', port: 8815, tokenKey: true, dohNs: CF_NS });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
 		const before = await dnsRecords(inst);
 
+		await enterDomain(page, 'harbor-lane.org');
+		await expect(page.getByRole('heading', { name: 'harbor-lane.org uses Cloudflare for DNS' })).toBeVisible();
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 		await connectWithToken(page);
 
-		// No zone list to tick and no DNS plan: the dashboard, with the domains and the status line.
+		// Every zone is added and verified; the review (C2) comes next, and nothing has been written yet.
+		await expect(page.getByRole('heading', { name: /^1 change to harbor-lane\.org$/ })).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText('Also in Example Co: 2 more domains, added and watched. Nothing was written to them.')).toBeVisible();
+		expect(await dnsRecords(inst)).toEqual(before);
+		await page.getByRole('button', { name: 'Skip for now' }).click();
+
+		// The dashboard, with the domains.
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByText('Added 3 domains from Example Co. Nothing in your DNS was changed.').first()).toBeVisible();
 		for (const z of ZONES) await expect(page.getByRole('link', { name: z, exact: true })).toBeVisible();
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
 
@@ -88,9 +75,10 @@ test('hosted: connect, every zone is added and verified, nothing is written to D
 });
 
 test('hosted, a plan that covers fewer domains than there are zones: the list, then only the chosen ones', async ({ page }) => {
-	const inst = await startInstance({ mode: 'hosted', port: 8816, tokenKey: true, vars: { MAX_DOMAINS_PER_WORKSPACE: '2' } });
+	const inst = await startInstance({ mode: 'hosted', port: 8816, tokenKey: true, dohNs: CF_NS, vars: { MAX_DOMAINS_PER_WORKSPACE: '2' } });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
+		await enterDomain(page, 'harbor-lane.org');
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 		await connectWithToken(page);
 
@@ -104,6 +92,8 @@ test('hosted, a plan that covers fewer domains than there are zones: the list, t
 		await page.getByRole('checkbox', { name: 'harbor-lane.org' }).uncheck();
 		await page.getByRole('button', { name: 'Add 2 domains' }).click();
 
+		await expect(page.getByRole('heading', { name: /change to / })).toBeVisible({ timeout: 60_000 }); // the review of the first of them
+		await page.getByRole('button', { name: 'Skip for now' }).click();
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByRole('link', { name: 'brightwave-mail.com', exact: true })).toBeVisible();
 		await expect(page.getByRole('link', { name: 'quietfield.net', exact: true })).toBeVisible();
@@ -116,8 +106,8 @@ test('hosted, a plan that covers fewer domains than there are zones: the list, t
 	}
 });
 
-test('hosted, a domain waiting for proof is first on the overview, and connecting Cloudflare verifies it with no click', async ({ page }) => {
-	const inst = await startInstance({ mode: 'hosted', port: 8817, tokenKey: true });
+test('hosted, a domain waiting for proof is on the overview (after the first-day card), and connecting Cloudflare verifies it with no click', async ({ page }) => {
+	const inst = await startInstance({ mode: 'hosted', port: 8817, tokenKey: true, dohNs: CF_NS });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
 		const claimed = await page.evaluate(async () => (await fetch('/api/domains', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ domain: 'harbor-lane.org' }) })).status);
@@ -126,15 +116,19 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 		await page.reload();
 
 		const waiting = page.getByRole('heading', { name: 'Waiting for verification' });
-		const firstAnswer = page.getByRole('heading', { name: 'Get to your first answer' });
+		const firstDay = page.getByRole('heading', { name: 'Waiting for the DNS record that proves harbor-lane.org' });
 		await expect(waiting).toBeVisible();
-		await expect(firstAnswer).toBeVisible();
-		expect((await waiting.boundingBox())!.y).toBeLessThan((await firstAnswer.boundingBox())!.y);
+		await expect(firstDay).toBeVisible();
+		// the first-day card is the first thing on the page; the proof block follows it
+		expect((await firstDay.boundingBox())!.y).toBeLessThan((await waiting.boundingBox())!.y);
 
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).first().click();
 		await expect(page).toHaveURL(/setup\/cloudflare/);
 		await connectWithToken(page);
 
+		// Connecting verified it with no click; the review of it comes next.
+		await expect(page.getByRole('heading', { name: /^\d+ changes? to / })).toBeVisible({ timeout: 60_000 });
+		await page.getByRole('button', { name: 'Skip for now' }).click();
 		await expect(page.getByRole('link', { name: 'harbor-lane.org', exact: true })).toBeVisible({ timeout: 60_000 });
 		await expect(page.getByText('Waiting for verification')).toHaveCount(0);
 		expect(inst.d1('SELECT domain, verified_via FROM domains WHERE domain = \'harbor-lane.org\'')).toEqual([{ domain: 'harbor-lane.org', verified_via: 'cloudflare' }]);
@@ -146,7 +140,7 @@ test('hosted, a domain waiting for proof is first on the overview, and connectin
 
 test('hosted, the owner\'s state before this release (a claim from sign-up, then a connection whose saved zone list has that zone): the next overview verifies and links it with one live check, and Apply keeps p=reject and adds the report address', async ({ page }) => {
 	const intake = 'rua.intake.example.net';
-	const inst = await startInstance({ mode: 'hosted', port: 8820, tokenKey: true, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
+	const inst = await startInstance({ mode: 'hosted', port: 8820, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
 		const state = async () => (await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState & { zones: Array<{ id: string; name: string; account: { id: string } }>; zoneReads: Record<string, number> };
@@ -167,6 +161,8 @@ test('hosted, the owner\'s state before this release (a claim from sign-up, then
 		expect(inst.d1('SELECT domain FROM domains')).toEqual([]);
 		const readsBefore = (await state()).zoneReads['harbor-lane.org'] ?? 0;
 
+		// This is the state from before the review existed: the dashboard itself does the one live check, so the review must not take the page over.
+		await page.evaluate((w) => localStorage.setItem(`rsm_review_done:${w}`, '1'), ws);
 		const list = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/domains' && r.request().method() === 'GET');
 		await page.goto(`${inst.url}/#/`);
 		await page.reload();
@@ -191,11 +187,13 @@ test('hosted, the owner\'s state before this release (a claim from sign-up, then
 
 test('hosted with report intake: Apply writes the DMARC record with the report address, connects reports, and says "live" only after public DNS shows it', async ({ page }) => {
 	const intake = 'rua.intake.example.net'; // configuration, not a product constant
-	const inst = await startInstance({ mode: 'hosted', port: 8818, tokenKey: true, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
+	const inst = await startInstance({ mode: 'hosted', port: 8818, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
+		await enterDomain(page, 'harbor-lane.org');
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 		await connectWithToken(page);
+		await page.getByRole('button', { name: 'Skip for now' }).click(); // C2 has its own tests below; this one is about the domain page's Apply
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
 		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
 
@@ -218,11 +216,13 @@ test('hosted with report intake: Apply writes the DMARC record with the report a
 });
 
 test('hosted where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the record is written without the address and the page says why', async ({ page }) => {
-	const inst = await startInstance({ mode: 'hosted', port: 8819, tokenKey: true, vars: { INTAKE_DOMAIN: 'rua.intake.example.net', HOSTED_CONNECT_REPORTS: 'owner' } });
+	const inst = await startInstance({ mode: 'hosted', port: 8819, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: 'rua.intake.example.net', HOSTED_CONNECT_REPORTS: 'owner' } });
 	try {
 		await signUp(page, inst, 'owner@harbor-lane.org');
+		await enterDomain(page, 'harbor-lane.org');
 		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
 		await connectWithToken(page);
+		await page.getByRole('button', { name: 'Skip for now' }).click(); // C2 has its own tests below; this one is about the domain page's Apply
 		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
 		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
 		await publicDnsHasNoDmarc(page);
@@ -233,6 +233,60 @@ test('hosted where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the 
 		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
 		expect(inst.d1(`SELECT rua_address FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: '' }]);
+	} finally {
+		await inst.stop();
+	}
+});
+
+test('hosted C2: connect, review the one change with the report address, Apply, and the dashboard says it is waiting for public DNS', async ({ page }) => {
+	const intake = 'rua.intake.example.net';
+	const inst = await startInstance({ mode: 'hosted', port: 8834, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
+	try {
+		await signUp(page, inst, 'owner@harbor-lane.org');
+		await enterDomain(page, 'harbor-lane.org');
+		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
+		await connectWithToken(page);
+
+		await expect(page.getByRole('heading', { name: '1 change to harbor-lane.org' })).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText(/Step \d of \d/)).toHaveCount(0); // one counter or none: none
+		await expect(page.locator('[data-testid^="change-dmarc:"]')).toContainText(`rua=mailto:rua@${intake}`);
+		await expect(page.getByText('Not changed: SPF and DKIM,', { exact: false })).toBeVisible();
+		await expect(page.getByRole('button', { name: /copy/i })).toHaveCount(0);
+		await expect(page.getByText('only the operator', { exact: false })).toHaveCount(0);
+		await page.getByRole('button', { name: 'Apply 1 change' }).click();
+
+		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
+		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
+		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual([`v=DMARC1; p=none; rua=mailto:rua@${intake}`]);
+		expect(inst.d1("SELECT rua_address, reports_connected_at IS NOT NULL AS connected FROM domains WHERE domain = 'harbor-lane.org'")).toEqual([{ rua_address: `rua@${intake}`, connected: 1 }]);
+		// D1: no red, no stepper; the card says what happens next.
+		await expect(page.getByRole('region', { name: 'Get to your first answer' })).toHaveCount(0);
+		// The record is written and read back from Cloudflare; public DNS (not the fake) does not show it, and the card says exactly that.
+		await expect(page.getByRole('heading', { name: "Written to Cloudflare: waiting for public DNS to show harbor-lane.org's new record" })).toBeVisible({ timeout: 60_000 });
+	} finally {
+		await inst.stop();
+	}
+});
+
+test('hosted C2 where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the review says the record has no report address, and the dashboard does not promise reports', async ({ page }) => {
+	const inst = await startInstance({ mode: 'hosted', port: 8835, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: 'rua.intake.example.net', HOSTED_CONNECT_REPORTS: 'owner' } });
+	try {
+		await signUp(page, inst, 'owner@harbor-lane.org');
+		await enterDomain(page, 'harbor-lane.org');
+		await page.getByRole('button', { name: 'Connect Cloudflare' }).click();
+		await connectWithToken(page);
+
+		await expect(page.getByRole('heading', { name: '1 change to harbor-lane.org' })).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByTestId('reports-note')).toContainText('Reports are not connected for this workspace.');
+		await expect(page.locator('[data-testid^="change-dmarc:"]')).not.toContainText('rua=');
+		await page.getByRole('button', { name: 'Apply 1 change' }).click();
+
+		await expect(page.getByRole('heading', { name: 'Domains', exact: true })).toBeVisible({ timeout: 60_000 });
+		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
+		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
+		await expect(page.getByTestId('first-day')).toBeVisible({ timeout: 60_000 });
+		await expect(page.getByText('first reports are on their way', { exact: false })).toHaveCount(0);
+		await expect(page.getByText("DMARC reports can't reach this workspace yet", { exact: false })).toBeVisible();
 	} finally {
 		await inst.stop();
 	}

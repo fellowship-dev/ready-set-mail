@@ -25,11 +25,11 @@ test('first-run setup, add the first domain, see its records', async ({ page }) 
 		await expect(page).toHaveURL(/\/domains\/\d+$/);
 	}
 
-	// The domain is listed as a row with its level ladder, then opens to its records.
+	// The domain is listed as a row (its level ladder comes with the first report, not on its first day), then opens to its records.
 	await page.goto('/#/');
 	const row = page.getByRole('listitem', { name: DOMAIN });
 	await expect(row).toBeVisible();
-	await expect(row.getByRole('progressbar')).toHaveAttribute('aria-valuetext', /Level [012] of 2|Level not known yet/);
+	await expect(row.getByRole('progressbar')).toHaveCount(0);
 	await row.getByRole('link', { name: DOMAIN, exact: true }).click();
 
 	await expect(page.getByRole('heading', { name: DOMAIN, level: 1 })).toBeVisible();

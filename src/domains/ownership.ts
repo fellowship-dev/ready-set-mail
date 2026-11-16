@@ -10,10 +10,11 @@
 // wins", and everything downstream of `domains` (reports, stats, check results, DNS writes, hosted records) never sees
 // a pending claim. Several workspaces may hold a pending claim on the same name at once; when one verifies, the
 // others are marked `lost`.
-import { claimLookups, isUnprovenRow, ProofIncompleteError, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
+import { claimLookups, isUnprovenRow, ProofIncompleteError, workspaceLifecycle, type DomainClaimRow, type DomainRow, type ZoneProofColumns } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
 import { sendEvictionNotice } from '../auth/mail';
+import { cleanName, PLACEHOLDER_NAME_KEY } from '../auth/names';
 import { loadTenant } from '../tenancy/load';
 import { resolverFor } from '../dns/resolver';
 import { removeAuthRecord, removeHostedRecords } from './remove';
@@ -297,6 +298,51 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
  * Creates the pending claim when proof is needed; never inserts into `domains` (the caller does, on 'verified').
  */
 export async function admitDomain(tenant: TenantContext, domain: string): Promise<Admission> {
+  const admission = await admitDomainInner(tenant, domain);
+  if (admission.kind !== 'taken' && admission.kind !== 'limit') await nameClientWorkspace(tenant, domain);
+  return admission;
+}
+
+/** settings key: the domain the first run (S4, C2, the first-day card) is about, whichever browser asks. */
+export const FIRST_RUN_DOMAIN_KEY = 'first_run_domain';
+
+/**
+ * The domain typed on S4 is the one the setup is about, held on the server (not in a browser's memory: a second browser after Cloudflare's
+ * Allow must name the same domain, not the first one imported). Only a workspace's FIRST domain or claim counts: with nothing else in it
+ * the name is (re)written, so a typo'd first domain that was removed is replaced; later domains never move it. Hosted only; never fails the request.
+ * Called by the typed path (POST /api/domains, which is S4), not by a bulk import, which would pay two list reads per row.
+ */
+export async function rememberFirstRunDomain(tenant: TenantContext, domain: string): Promise<void> {
+  if (getMode(tenant.env) !== 'saas') return;
+  try {
+    const others = [...(await tenant.scope.domains.list()).map(d => d.domain), ...(await tenant.scope.claims.list()).map(c => c.domain)].filter(n => n !== domain);
+    if (others.length === 0) await tenant.scope.settings.set(FIRST_RUN_DOMAIN_KEY, domain);
+  } catch {
+    /* a hint for the screens, not a rule */
+  }
+}
+
+/**
+ * An agency's first workspace is named after the first client domain entered in it. Only a workspace flagged as carrying the product's
+ * placeholder name (src/auth/names.ts PLACEHOLDER_NAME_KEY) is touched, never one that merely has the same words; the flag stays while
+ * this is still its only domain or claim (a typo'd first domain, removed and replaced, renames it again). Never fails the request it rides on.
+ */
+async function nameClientWorkspace(tenant: TenantContext, domain: string): Promise<void> {
+  if (getMode(tenant.env) !== 'saas') return;
+  try {
+    if (!(await tenant.scope.settings.get(PLACEHOLDER_NAME_KEY))) return;
+    const others = [...(await tenant.scope.domains.list()).map(d => d.domain), ...(await tenant.scope.claims.list()).map(c => c.domain)].filter(n => n !== domain);
+    const first = !(await tenant.scope.settings.get('name_from_domain'));
+    if (first || others.length === 0) {
+      await workspaceLifecycle(tenant.db).rename(tenant.workspaceId, cleanName(domain));
+      await tenant.scope.settings.set('name_from_domain', domain);
+    }
+  } catch {
+    /* the name is a nicety */
+  }
+}
+
+async function admitDomainInner(tenant: TenantContext, domain: string): Promise<Admission> {
   if (getMode(tenant.env) !== 'saas') return { kind: 'verified', via: 'selfhost' };
   // Already ours and proven: the insert reports the duplicate. Ours but UNPROVEN (a proof that lapsed, a parent that left): not "existing", the proof
   // runs again below and, when it holds, restores the row in place (restoreInPlace), history and all. When it does not, a claim is opened for the TXT record.

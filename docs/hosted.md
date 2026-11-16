@@ -225,7 +225,9 @@ the pointer instructions name `h.<zone>` from config, so they must read the doma
 ## Trust model: who can do what
 
 **Sign-in codes.** Sign-up, sign-in, password reset and hosted invite acceptance end with a six-digit code emailed to the
-address (`src/auth/codes.ts`). Sign-up asks for the email and one password (and the bot check); sign-in asks for the email and
+address (`src/auth/codes.ts`). Sign-up is three screens: S1 asks for the email and one password (the bot check runs unseen on
+Continue and shows only if Cloudflare needs a click) and sends the code, S2 "Tell us about yourself" is filled in while the email
+travels, and S3 "Check your inbox" takes the code ([Sign-up screens](#sign-up-screens)); sign-in asks for the email and
 password and, only when the password is right, emails a code. Every sign-in needs a fresh code: there is no "remember this
 device". A reset asks for the email (and the bot check when the keys are set), then the code and a new password on one screen;
 saving signs in without a second code and ends every other session. Sign-in, sign-up and invite codes are sent before the
@@ -277,11 +279,13 @@ their own account, within the sign-up allowance.
   wrong codes for this account today. Try again tomorrow, or reset your password to sign in now."; a reset clears it. At the
   10th wrong sign-in code in a day the owner gets, once a day at most, "Someone entered your Ready Set Mail password": whoever
   typed the codes knew the password. Wrong sign-in codes never feed the wrong-password throttle. Code mail per address, in
-  separate allowances: sign-up and invites 2 an hour and 4 a day (also the "someone tried to sign up" notice), sign-in 10 an hour
+  separate allowances: sign-up and invites 5 an hour and 10 a day (raised from 2 and 4 in PR 177 round 3; also the "someone tried to sign up" notice), sign-in 10 an hour
   and 30 a day, reset 3 an hour and 10 a day, and a separate reset allowance of 3 an hour and 10 a day for a request carrying the
   account's device cookie. The allowance is spent the same way for every address, account or not, so over it the answer can say
   so without revealing anything: "Several codes were sent to this address recently. Use the newest one, or try again in N
-  minutes." (`429 code_mail_limit`); nothing is stored or sent, so only mailed codes can be guessed at. Hosted reset always needs
+  minutes." (`429 code_mail_limit`). A new sign-up attempt (S1, for example "Start over" and the same address again) says "We sent several codes to this address
+  recently, so we can't send another yet. Try again in N minutes.": the earlier attempt's codes are gone, and a mailed code is never reused for a new
+  attempt (it confirms the password of the attempt it was sent for). Nothing is stored or sent, so only mailed codes can be guessed at. Hosted reset always needs
   the bot check; without the keys it answers "Password reset isn't available right now. Try again later." Per IP: sign-up 10 an hour, sign-in 10 a minute, reset 10 an hour
   (D1), plus `AUTH_LIMITER`.
 * **Guessing.** Each guess is a 1-in-1,000,000 chance, and a 1% chance needs about 10,050 guesses. Against one address a day:
@@ -307,9 +311,17 @@ their own account, within the sign-up allowance.
 password was chosen, to reset the password (which sends a code); the token is not used. `POST /api/auth/welcome` and
 `POST /api/auth/resend-verification` answer `410` `link_retired`. An old reset link (`#/reset/<token>`) says to ask for a code.
 
-**Names.** Names typed before the address was proven are not kept: sign-up asks for no name, and verification sets the display
-name to the email address (the person can change it in Settings) and the sign-up workspace's name from the email's domain.
-Names are stored and shown without control or invisible format characters, at most 80 characters.
+**Names.** Names typed before the address was proven are not kept: the account does not exist until the code is right. S2's
+answers are held with the pending attempt (below) and applied by the right code: the display name is the name the person gave
+(else the email address, as before). The first workspace is named from the fork answer: "My company's" and "Just looking around"
+use the organization name; "My clients'" (an agency or IT provider) keeps the organization name as the agency's own name on the
+account (`/api/me` `agency_name`, the workspace switcher's heading) and calls the first workspace "New client" until the first
+client domain is entered in it, when it is renamed to that domain (once, only while it is flagged as carrying the placeholder: the `name_is_placeholder` workspace setting, so a workspace someone
+named "New client" is never renamed; the flag stays while that domain is the workspace's only domain or claim, so a typo corrected
+renames it again, and it goes when the owner renames the workspace). Without
+S2's answers (the API skipped them) the old rule applies: the email's domain, or "My workspace" for free mail. Invited people are
+never asked. Names are stored and shown without control or invisible format characters, at most 80 characters (the organization
+name is bounded by the same number because it becomes a workspace name).
 
 **Sign-in throttle.** Besides the per-IP limits, wrong passwords are counted per address (a hash of it): after 10 in 15 minutes,
 attempts for that address answer `429` "Too many sign-in attempts for this address. Try again in N minutes, or reset your
@@ -327,7 +339,9 @@ account (an OAuth callback included). Existing users are never locked out by mis
 the check, since the page cannot render it; or by OAuth) and reset their password by code. The status says exactly that:
 `signup_open: false`, `signin_available: true`, `signup_unavailable_reason: bot_protection_not_configured`. When the keys are
 configured, sign-up, sign-in, reset requests and "Send a new code" pass the check; the pages render it with Turnstile's
-`interaction-only` appearance, under the fields and above the button, and the code screen shows it only after "Send a new code".
+`interaction-only` appearance. Sign-up S1 runs it with `execution: execute`, `size: flexible`, on Continue (one plain line, "One more check
+from Cloudflare, then we continue.", and the widget appear under the button only if Cloudflare needs a click); the code screen has no
+widget until "Not seeing it?" is opened, and then it runs when "Send a new code" is used. Other forms keep the check under the fields.
 OAuth logins link to an existing account only when both the local account's email and the provider's are verified, and an OAuth
 sign-up matches a pending invite only on a provider-verified email. OAuth sign-in does not ask for an emailed code (the provider
 proves the person). Code mail uses the platform sender (`from_email` setting of the default workspace) over `SEND_EMAIL`; without
@@ -344,6 +358,91 @@ be sent (it goes out after the answer), so the reset form does not tell anyone w
 link or the installer proof) opens the owner's session with no code. Self-host invites work as before. Settings → Account →
 Sign-in says which mode the instance is in; `GET /api/auth/status` has `signin_codes` and `signin_codes_reason`
 (`hosted`, `mail`, `no_mail`, `turned_off`), and `GET /api/auth/codes` (signed in) says whether codes are on for the caller.
+
+#### Sign-up screens
+
+`#/signup` (S1), `#/signup/about` (S2), `#/signup/code` (S3): the URL holds the step and the server's pending attempt says which
+screen is right, so a reload, a returning tab or the back button never starts again at S1 while an attempt waits.
+
+* `POST /api/auth/signup` is unchanged in what it checks and answers (bot check, per-IP limit, the mail allowance, the same answer
+  for every address, "never says sent on a refused send"). It now runs when S1 is submitted, so the code email travels while S2 is
+  filled in.
+* `GET /api/auth/signup/pending` (the pending cookie; nothing is spent): `{ pending: false }`, or `{ pending: true, email, step:
+  "about" | "code", expires_in, lifetime_seconds, profile? }`. `step` is `code` once S2's answers are saved. Only the browser that
+  holds the attempt's cookie gets anything, and it only echoes what that browser typed; a decoy attempt (an address that already
+  has an account) answers the same way.
+* `POST /api/auth/signup/profile` saves S2's answers **on the pending attempt** (key `prof` in the attempt's JSON row in
+  `verifications`; no migration), with one conditional statement that touches nothing else in the row (not the try counter) and
+  ends with the attempt. Strict: `name` (required, at most 100 characters), `organization` (required, at most 80),
+  `whose_email` (`company`, `clients`, `looking`), `role` (optional: `founder`, `developer`, `it`, `marketing`, `agency`,
+  `other`), `heard_about` (optional, at most 200); over-long values and unknown enum values are refused, never cut; text is cleaned
+  like every name; unknown keys are never stored; bodies over 4 KiB are refused. It is profile text only: never an instruction or a
+  permission. No account exists at this point. A decoy attempt takes the answers too, so the answer says nothing about accounts.
+* The right code applies them **once**, in the same request that creates the account and its workspace: the display name, the
+  first workspace's name (above) and a row `account-profile:<user id>` in `verifications` (the same place `code-proven:` and
+  `device-epoch:` live; 20-year expiry; removed with the account). The right code deletes the attempt, so a replay finds nothing.
+  A new attempt (a new sign-up, "Start over") never inherits another's answers; only "Send a new code" from the same cookie carries
+  them over, with the password hash.
+* `POST /api/auth/signup/resend` ("Send a new code" on S3): the same attempt with a new code and a new handle (the old code stops
+  working). It needs the same bot check as sign-up, spends the same per-IP and per-address allowances and answers like sign-up. It
+  exists because a reload loses the password in the browser.
+* `POST /api/auth/signup/cancel` ("Wrong address? Start over"): drops the attempt and clears the cookie.
+* The lifetime is unchanged (10 minutes from S1's submit, `CODE_SECONDS`); S3 states `lifetime_seconds` from the server.
+
+The code email is HTML and plain text: the wordmark as text (no images), one sentence, the code alone in large selectable digits,
+how long it works and where to enter it, "If you didn't ask for this, you can ignore this email.", and, when `MAIL_REPLY_TO` is set
+(the mailbox the free-check report and the funnel already use), a Reply-To header and "Reply to this email and a person will
+answer." The approximate place the code was asked for from stays in the small print for every purpose (it is the cue the
+phishing-relay defence below relies on, and a relayed sign-up can pre-hijack an account); the password advice stays for sign-in.
+
+#### First run (hosted): S4, C2 and the first-day card
+
+After the code, a person who can write lands on **S4** (`#/setup`, no domain yet; with a domain they land on the dashboard). One screen: the
+domain (cold: "Which domain do you send email from?"; an agency: "Add your first client's domain", which names the first client workspace after
+it; from the website checker: "Domain: x · Not this domain?" and a Check button, never added on its own), one line of what public DNS says
+(`GET /api/domains/claims/:id/preview` for a domain still to be proven, `/api/domains/:id/onboarding-status` for one already proven), and the setup
+choice by who hosts DNS (`web/src/lib/dns-host.ts`, `GET /api/domains/dns-host`): Cloudflare name servers: "Connect Cloudflare" is the only
+primary (or "Continue with <account>" when an active connection already holds the zone); the records path, "I'll add the records myself", is a
+quiet secondary. Any other host, or one we cannot tell, or Cloudflare name servers on an instance that cannot connect Cloudflare (no
+`TOKEN_ENCRYPTION_KEY`, no OAuth or token path): the existing record path in place, with the provider named, and no message about Cloudflare. The hosted
+dashboard never shows "Cloudflare can't be connected" or a server command. Self-host does not show S4: its first run is the home-base setup.
+
+**C2** (`#/setup/review`) follows Cloudflare's return (and "Continue with <account>"): the oldest or chosen first-run domain's DMARC change from the same
+plan the Cloudflare wizard writes from (`POST /api/onboarding/dns-plan`, `dns-apply`): what is there now, what will be written, one "Apply N change(s)", the
+note "Not changed: SPF and DKIM", "Also in <account>: N more domains, added and watched. Nothing was written to them.", then the dashboard. The report
+address in the record is main's rule: the hosted address when `HOSTED_CONNECT_REPORTS` admits the workspace (`all`, or `owner` and this is the owner's),
+else the record is written without one and the screen shows the server's own sentence ("Reports are not connected for this workspace. …"). A later
+visit to the dashboard returns to C2 once per tab while Cloudflare is connected, the first domain was proven through it and its DMARC record does not yet
+name our address, until C2 was applied or skipped. Only in the browser that set the domain up (it remembers which domain S4 was given): another browser
+or device does not know which imported domain was "the first", so it opens the dashboard, whose card links to the review.
+
+**The domain the first run is about** is the one S4 was given, held on the server (workspace setting `first_run_domain`, written by `POST /api/domains` for a workspace's first domain or claim, hosted only, and returned by `GET /api/domains`). Every browser names the same domain on C2 and the first-day card, even after Cloudflare imported other zones first; this browser's memory is only a fallback. The first-day card is for the setup just finished: a domain older than 14 days (`FIRST_RUN_WINDOW_DAYS`) keeps the overview it had before, with no card. S2's answers are kept in `sessionStorage` (never the password) across "Start over" and cleared once the account exists.
+
+**D1** replaces "Get to your first answer": one card for that domain, from what the server knows (proof, `report_connect`, the stored `dmarc_rua`, the
+report totals, the domain's age): waiting for proof; waiting for the report address in DMARC (with "Review the change" when Cloudflare is connected);
+"Your first reports are on their way" (records live, no report yet); "No reports yet" after 3 days; reports that cannot reach this workspace (no promise of
+reports, the server's reason, DNS still checked daily); the first reports (once, then the normal overview). "Test a real email" opens the Email check where
+it can work. What blocks progress (a domain waiting for proof, a Cloudflare connection that stopped, a domain that needs action) still comes first.
+
+#### Hand setup to a teammate
+
+An owner (only an owner can invite an admin) can hand a domain's setup to a teammate from S4 or C2: `#/setup/hand-off?domain=…` asks for "Their work email" and calls
+the ordinary `POST /api/team/invite` with `role: "admin"` and `handoff_domain`. Nothing new in the schema: the invite is the existing one (7 days, the same member
+check, claim and accept paths); what it carries beyond that is one `verifications` row `invite-handoff:<invite token>` (workspace, the domain's name, who asked, where it
+was sent; kept 30 days so the inviter's dashboard can say where it stands). The domain must be this workspace's own (a domain or a claim waiting for proof), at most
+5 hand-offs wait at once and 10 are sent a day per workspace (and per account), the invite is revoked and nothing is kept when an email we tried to send is refused (the answer is then 503, never "sent"),
+and it is hosted only. **Whether we email it is one rule, `mayEmailHandoff` in `src/team/handoff.ts`:** the teammate is at the sender's own email domain and that is not a free-mail domain
+(`isFreeMailDomain`, `src/auth/names.ts`, which also knows country variants such as hotmail.co.uk; gmail to gmail is two strangers), or a domain in the workspace is proven. Any other case is not refused: the invite and the hand-off row are created as usual and
+the answer is `{ token, url, emailed: false }`, so the owner copies the link and sends it themselves (H1 shows it in a read-only field with "Copy link"; H2 says "Link made for <email>" and offers "Get a new link").
+A developer at another company, or a person at the same free-mail provider, therefore costs us no email to a stranger; the emailed case answers `emailed: true`. The invitation is fixed wording with the inviter's cleaned name and address, the workspace and domain: subject "<name> asked you to finish setting up
+email for <domain>", HTML and text in the code email's wordmark layout, one button, Reply-To `MAIL_REPLY_TO` when set.
+
+The invitee (I1): `GET /api/invites/:token` adds `handoff: { domain, inviter_name }` (and `inviter_name` for every invite); the page says "<name> asked you to finish setting up
+email authentication for <domain>. You'll join as an admin." (an ordinary invite: "<name> invited you as an Admin."), a password, the emailed code, then
+`#/setup?domain=<domain>`: S4 for that domain, no profile questions. `POST /api/auth/code` (and the one-click accept for someone who already has a login) answers
+`handoff_domain` for it. The inviter's dashboard (H2): `GET /api/team/handoffs` (owner, admin) lists them with when the teammate joined; the card "<email> is finishing setup"
+replaces the first-day card until the records are live, with "Resend invitation" (`POST /api/team/handoffs/:id/resend`, owner only; the old link stops working) until they
+join and "Finish it myself". No email is sent to the inviter when the records go live (that is a slice-2 email), so the card does not say one will be.
 
 **Terms and privacy.** Hosted sign-up shows "By creating an account you agree to the Terms and the Privacy Policy." above the
 button, linking to `TERMS_URL` and `PRIVACY_URL` (default `SITE_URL/terms` and `SITE_URL/privacy`, with `SITE_URL` defaulting to

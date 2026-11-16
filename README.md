@@ -82,7 +82,7 @@ Everything else is in [docs/self-hosting.md](docs/self-hosting.md): what the ins
 
 ### Set up your domain
 
-After creating your account, the setup wizard walks you through five steps:
+On a self-hosted instance, after creating the owner account, the setup wizard walks you through five steps (the hosted service has its own shorter first run: sign-up in three screens, then one screen for the domain, a review before anything is written, and a first-day card; see [docs/hosted.md](docs/hosted.md#sign-up-screens)):
 
 1. **Domain** — enter your domain (e.g. `yourdomain.com`). With Cloudflare connected, the zone and account are found automatically.
 2. **SPF** — checks your SPF record and lookup depth

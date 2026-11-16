@@ -41,24 +41,24 @@ describe('1. a flood of resets cannot use up the code a sign-up sends, and repea
     expect((await enterCode(w.env, pendingCookieOf(own), await lastCodeFor(w.env, 'victim@example.com'))).status).toBe(200);
   }, 30000);
 
-  it('repeated sign-ups cannot flood: 2 an hour and 4 a day from the sign-up allowance; past it one plain refusal', async () => {
-    expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 2, day: 4 });
+  it('repeated sign-ups cannot flood: 5 an hour and 10 a day from the sign-up allowance; past it one plain refusal', async () => {
+    expect(CODE_MAIL_CAPS.signup).toEqual({ hour: 5, day: 10 });
     const w = hosted();
     const t0 = Date.now();
     const bodies = new Set<string>();
     const statuses: number[] = [];
-    for (let hour = 0; hour < 4; hour++) {
+    for (let hour = 0; hour < 3; hour++) {
       vi.spyOn(Date, 'now').mockReturnValue(t0 + hour * 3601_000);
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 6; i++) {
         const r = await call(w.env, 'POST', '/api/auth/signup', { body: { email: 'v@example.com', password: 'pass-word-123' }, ...ip() });
         statuses.push(r.status);
         if (r.status === 200) bodies.add(JSON.stringify(await json(r)));
       }
     }
     await Promise.all((ctx.waitUntil as any).mock.calls.map((c: any[]) => c[0])); // background sends finished
-    expect(statuses).toEqual([200, 200, 429, 200, 200, 429, 429, 429, 429, 429, 429, 429]);
+    expect(statuses).toEqual([200, 200, 200, 200, 200, 429, 200, 200, 200, 200, 200, 429, 429, 429, 429, 429, 429, 429]);
     expect(bodies.size).toBe(1);
-    expect(w.sentTo('v@example.com')).toBe(4);
+    expect(w.sentTo('v@example.com')).toBe(10);
   }, 30000);
 });
 
