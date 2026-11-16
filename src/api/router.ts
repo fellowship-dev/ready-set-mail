@@ -139,6 +139,7 @@ import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
+import { spfLookupsView } from '../spf/breakdown';
 import { adoptSpf, disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, restoreSpfBeforeRemoval, spfIsOn, spfView } from '../spf/refresh';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
@@ -1953,6 +1954,16 @@ async function _handleApi(
 
     // SPF flattening: GET /api/domains/:id/spf-flatten, /preview; POST /spf-flatten (turn on), /spf-flatten/refresh ("Try again", or Replace after an outside edit); DELETE (turn off).
     // The gate (capability above) already answered 404 where it is not available. Everything below is src/spf/refresh.ts: the one engine.
+    // GET /api/domains/:id/spf-lookups — where the lookups of the SPF record go (any workspace; reading only)
+    const spfLookupsMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-lookups$/);
+    if (spfLookupsMatch) {
+      if (method !== 'GET') return err('method not allowed', 405);
+      const domain = await tenant.scope.domains.getById(parseInt(spfLookupsMatch[1], 10));
+      if (!domain) return err('domain not found', 404);
+      const view = await spfLookupsView(tenant, domain);
+      return json(view);
+    }
+
     const spfMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh|adopt))?$/);
     if (spfMatch) {
       const id = parseInt(spfMatch[1], 10);

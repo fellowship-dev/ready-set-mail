@@ -12,7 +12,8 @@ import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { domainKeys } from '../../lib/domain-queries';
-import { onSentence, plural, spfState, SPF_CHECK_AT, SPF_LOOKUP_ALLOWED, staleSentence } from '../../lib/spf-flatten';
+import { CHECK_AGAIN_NOW, droppedTerms, NOT_ALLOWED_ON_SENTENCE, NOT_NEEDED_WHY, onSentence, pendingSentence, PENDING_WHY, plural, spfState, SPF_CHECK_AT, SPF_LOOKUP_ALLOWED, staleSentence, stoppedSentence, TURN_ON_RISK } from '../../lib/spf-flatten';
+import { RadioCard } from '../../components/wizard/RadioCard';
 import { useAddOns } from '../../lib/session';
 import type { SpfFlatConfig, SpfFlatPreview, SpfFlatStatus } from '../../lib/types';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
@@ -31,11 +32,18 @@ async function loadFlatten(domainId: number): Promise<FlattenData> {
 		if (e instanceof ApiError && e.status === 404) return { available: false, config: null, lookup_count: null };
 		throw e;
 	});
+	if (flat.access?.allowed === false) return { flat, preview: null, previewFailed: false }; // the add-on went away: the preview route answers 404
 	try {
 		return { flat, preview: await api<SpfFlatPreview>(`/api/domains/${domainId}/spf-flatten/preview`), previewFailed: false };
 	} catch {
 		return { flat, preview: null, previewFailed: true };
 	}
+}
+
+/** What discarding an edit drops: the terms of the record in Cloudflare now that the flattened record does not have. */
+function dropSentence(live: string, flat: string): string {
+	const dropped = droppedTerms(live, flat);
+	return dropped.length ? `These will be dropped: ${dropped.join(', ')}.` : 'Nothing in it will be dropped.';
 }
 
 /** The page behind a pasted address on a workspace without the add-on: the same sentence the API gives. */
@@ -60,7 +68,8 @@ function SpfFlattenWizard() {
 	const q = useQuery({ queryKey, queryFn: () => loadFlatten(domainId), staleTime: 0, refetchOnMount: 'always' });
 	const [step, setStep] = useState(0);
 	const [anyway, setAnyway] = useState(false);
-	const [confirm, setConfirm] = useState<'off' | 'replace' | null>(null);
+	const [confirm, setConfirm] = useState<'off' | 'discard' | null>(null);
+	const [choice, setChoice] = useState<'adopt' | 'discard'>('adopt'); // the safe one: the person's edit is kept
 
 	const reload = async () => {
 		await qc.invalidateQueries({ queryKey });
@@ -87,11 +96,19 @@ function SpfFlattenWizard() {
 			setStep(0);
 		},
 	});
+	const adopt = useMutation({
+		mutationFn: () => api<{ outcome: string; config: SpfFlatConfig }>(`/api/domains/${domainId}/spf-flatten/adopt`, { method: 'POST', body: {} }),
+		onSuccess: async () => {
+			toast({ title: 'Your edit is the new original', description: 'Ready Set Mail keeps it and flattens from it.', variant: 'success' });
+			await reload();
+		},
+	});
 	const checkNow = useMutation({
-		mutationFn: (replace: boolean) => api<{ outcome: string; config: SpfFlatConfig }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST', body: { replace } }),
+		mutationFn: (replace: boolean) => api<{ outcome: string; message?: string; config: SpfFlatConfig }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST', body: { replace } }),
 		onSuccess: async (r) => {
 			setConfirm(null);
-			if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
+			if (r.outcome === 'pending') toast({ title: 'Still waiting to confirm', description: r.message, variant: 'info' });
+			else if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
 			else if (r.outcome === 'unchanged') toast({ title: 'Checked', description: 'Nothing changed.', variant: 'success' });
 			await reload();
 		},
@@ -105,8 +122,42 @@ function SpfFlattenWizard() {
 		const { flat, preview, previewFailed } = q.data;
 		const state = spfState(flat);
 		const toolsApi = flat.available;
+		const allowed = flat.access?.allowed !== false;
 
-		if (state.kind === 'on' || state.kind === 'problem' || state.kind === 'turning_off_failed') {
+		if (!allowed && state.kind === 'off') {
+			body = <NotAvailable />;
+		} else if (!allowed && state.kind !== 'off') {
+			// The add-on went away while a domain had flattening on: the record keeps what the last check wrote and nothing refreshes it. Only what still works is offered.
+			const c = state.config;
+			body = (
+				<>
+					<StepCard title="SPF flattening is not available here any more">
+						<p className="text-sm text-ink-2">{NOT_ALLOWED_ON_SENTENCE}</p>
+						{turnOff.isError && !confirm ? <Alert variant="danger" title="That did not work">{errorMessage(turnOff.error)}</Alert> : null}
+						<StepFooter
+							start={<WriteButton variant="danger" onClick={() => setConfirm('off')}>Turn off</WriteButton>}
+							end={<Button asChild><Link to={back}>Back to domain</Link></Button>}
+						/>
+						<RecordPair>
+							<TxtRecord title="Your original record" value={c.original_record} />
+							{c.flattened_record ? <TxtRecord title="Published record (from the last check)" value={c.flattened_record} copyable={false} /> : null}
+						</RecordPair>
+					</StepCard>
+					<ConfirmDialog
+						open={confirm === 'off'}
+						onOpenChange={(o) => { if (!o) { setConfirm(null); turnOff.reset(); } }}
+						title="Turn off SPF flattening?"
+						description="Your original SPF record goes back in Cloudflare. It may need more than 10 lookups again."
+						confirmLabel="Turn off"
+						busyLabel="Turning off…"
+						variant="danger"
+						busy={turnOff.isPending}
+						error={turnOff.isError ? errorMessage(turnOff.error) : null}
+						onConfirm={() => turnOff.mutate()}
+					/>
+				</>
+			);
+		} else if (state.kind === 'on' || state.kind === 'problem' || state.kind === 'turning_off_failed' || state.kind === 'stopped') {
 			const c = state.config;
 			const review = params.get('review') === '1' && state.kind === 'problem' && (state.problem.kind === 'edited_outside' || state.problem.kind === 'record_missing');
 			body = (
@@ -123,7 +174,19 @@ function SpfFlattenWizard() {
 								{preview?.flat ? <TxtRecord title="Flattened from your original" value={preview.flat.record} copyable={false} /> : <TxtRecord title="Your original record" value={c.original_record} copyable={false} />}
 							</RecordPair>
 							{preview?.problem ? <Alert variant="warning">{preview.problem.message}</Alert> : null}
+							{preview?.live && preview.flat ? (
+								<fieldset className="space-y-2">
+									<legend className="text-sm font-medium text-ink-1">What should Ready Set Mail do with your edit?</legend>
+									<RadioCard name="spf-edit" value="adopt" checked={choice === 'adopt'} onChange={() => setChoice('adopt')} title="Use my edit as the new original">
+										It becomes your original record, and the flattened record is made from it, so what you added stays. Addresses it already lists stay as written and no longer follow a provider.
+									</RadioCard>
+									<RadioCard name="spf-edit" value="discard" checked={choice === 'discard'} onChange={() => setChoice('discard')} title="Discard my edit">
+										The flattened record from your original is written. {dropSentence(preview.live, preview.flat.record)}
+									</RadioCard>
+								</fieldset>
+							) : null}
 							{checkNow.isError ? <Alert variant="danger" title="That did not work">{errorMessage(checkNow.error)}</Alert> : null}
+							{adopt.isError ? <Alert variant="danger" title="That did not work">{errorMessage(adopt.error)}</Alert> : null}
 							<StepFooter
 								start={
 									<Button variant="ghost" onClick={() => setConfirm('off')}>
@@ -131,21 +194,33 @@ function SpfFlattenWizard() {
 									</Button>
 								}
 								end={
-									<WriteButton disabled={!preview?.flat || !preview.live} onClick={() => setConfirm('replace')}>
-										Replace with the flattened record
+									<WriteButton
+										disabled={!preview?.flat || !preview.live}
+										loading={adopt.isPending}
+										onClick={() => (choice === 'adopt' ? adopt.mutate() : setConfirm('discard'))}
+									>
+										{choice === 'adopt' ? 'Use my edit' : 'Discard my edit'}
 									</WriteButton>
 								}
 							/>
 						</StepCard>
 					) : (
-						<StepCard title={state.kind === 'turning_off_failed' ? 'Turning off did not finish' : 'SPF flattening is on'}>
+						<StepCard title={state.kind === 'turning_off_failed' ? 'Turning off did not finish' : state.kind === 'stopped' ? 'SPF flattening has stopped' : 'SPF flattening is on'}>
 							{state.kind === 'turning_off_failed' ? (
 								<Alert variant="warning">{state.message} It is below: copy it into Cloudflare, or try again.</Alert>
+							) : state.kind === 'stopped' ? (
+								<Alert variant="warning">{stoppedSentence(state.reason)}</Alert>
 							) : (
 								<>
 									<p className="text-sm text-ink-2">{onSentence(c)}</p>
 									{state.kind === 'problem' ? <Alert variant="warning">{state.problem.message}</Alert> : null}
 									{state.kind === 'on' && state.stale ? <p className="text-sm text-ink-2">{staleSentence(c)}</p> : null}
+									{c.pending ? (
+										<Alert variant="info" data-testid="spf-pending">
+											<p>{pendingSentence(c.pending)}</p>
+											<p className="mt-1">{PENDING_WHY}</p>
+										</Alert>
+									) : null}
 								</>
 							)}
 							{turnOff.isError && !confirm ? <Alert variant="danger" title="That did not work">{errorMessage(turnOff.error)}</Alert> : null}
@@ -155,16 +230,27 @@ function SpfFlattenWizard() {
 									state.kind === 'on' || state.kind === 'problem' ? (
 										<div className="flex flex-wrap gap-2">
 											<WriteButton variant="secondary" loading={checkNow.isPending} onClick={() => checkNow.mutate(false)}>
-												{checkNow.isPending ? 'Checking…' : 'Check now'}
+												{checkNow.isPending ? 'Checking…' : c.pending ? CHECK_AGAIN_NOW : 'Check now'}
 											</WriteButton>
 											<WriteButton variant="danger" onClick={() => setConfirm('off')}>
 												Turn off
 											</WriteButton>
 										</div>
 									) : (
-										<WriteButton variant="secondary" loading={turnOff.isPending} onClick={() => turnOff.mutate()}>
-											{turnOff.isPending ? 'Trying…' : 'Try again'}
-										</WriteButton>
+										<div className="flex flex-wrap gap-2">
+											<WriteButton variant="secondary" loading={turnOff.isPending} onClick={() => turnOff.mutate()}>
+												{turnOff.isPending ? 'Trying…' : state.kind === 'stopped' ? 'Try to put it back' : 'Try again'}
+											</WriteButton>
+											{state.kind === 'stopped' ? (
+												state.reason === 'connection_gone' ? (
+													<ConnectCloudflareLink>Reconnect Cloudflare</ConnectCloudflareLink>
+												) : (
+													<Button asChild variant="secondary">
+														<Link to={back}>Prove ownership again</Link>
+													</Button>
+												)
+											) : null}
+										</div>
 									)
 								}
 								end={
@@ -176,6 +262,11 @@ function SpfFlattenWizard() {
 
 							{state.kind === 'turning_off_failed' ? (
 								<TxtRecord title="Your original record" value={c.original_record} />
+							) : state.kind === 'stopped' ? (
+								<RecordPair>
+									<TxtRecord title="Your original record" value={c.original_record} />
+									<TxtRecord title={preview?.live ? 'In Cloudflare now' : 'In Cloudflare (as of the last check; it cannot be read now)'} value={preview?.live ?? c.flattened_record ?? ''} copyable={false} />
+								</RecordPair>
 							) : (
 								<>
 									<RecordPair>
@@ -205,12 +296,13 @@ function SpfFlattenWizard() {
 						onConfirm={() => turnOff.mutate()}
 					/>
 					<ConfirmDialog
-						open={confirm === 'replace'}
+						open={confirm === 'discard'}
 						onOpenChange={(o) => !o && setConfirm(null)}
-						title="Replace the record in Cloudflare?"
-						description="This replaces what is in Cloudflare now with the flattened record. What is there now is kept as the record before this change."
-						confirmLabel="Replace"
+						title="Discard your edit?"
+						description={preview?.live && preview.flat ? `The record in Cloudflare is replaced with the flattened record. ${dropSentence(preview.live, preview.flat.record)} What is there now is kept as the record before this change, and in the audit log.` : 'The record in Cloudflare is replaced with the flattened record.'}
+						confirmLabel="Discard my edit"
 						busyLabel="Replacing…"
+						variant="danger"
 						busy={checkNow.isPending}
 						error={checkNow.isError ? errorMessage(checkNow.error) : null}
 						onConfirm={() => checkNow.mutate(true)}
@@ -269,6 +361,7 @@ function SpfFlattenWizard() {
 									<p className="text-sm text-ink-2">
 										Your record needs {lookups} of the {SPF_LOOKUP_ALLOWED} lookups receivers allow, so it is fine as it is. Flattening is not needed.
 									</p>
+									<p className="text-sm text-ink-2">{NOT_NEEDED_WHY}</p>
 								</>
 							) : (
 								<>
@@ -318,6 +411,8 @@ function SpfFlattenWizard() {
 							<Alert variant="warning" title="This changes your live DNS">
 								Turning on replaces the SPF record in Cloudflare with the flattened record. Your original record is kept; turning off puts it back.
 							</Alert>
+							<p className="text-sm text-ink-1" data-testid="spf-risk">{TURN_ON_RISK}</p>
+							{anyway && within ? <p className="text-sm text-ink-2">{NOT_NEEDED_WHY}</p> : null}
 							<p className="text-sm text-ink-2">
 								Every day around {SPF_CHECK_AT} we read your includes again. If your providers changed their addresses we update the record. If we cannot read them we leave the record as it is and show it here.
 							</p>

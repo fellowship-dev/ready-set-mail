@@ -136,4 +136,14 @@ describe('SPF flattening routes', () => {
     expect(await r.json()).toMatchObject({ ok: true, config: { original_record: 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 ip4:192.0.2.9 -all', problem: null } });
     expect((await w.send('GET', '/api/domains/1/spf-flatten/adopt')).status).toBe(405);
   });
+
+  it('GET /spf-lookups: where the lookups go, term by term; the original while flattening is on', async () => {
+    const w = setup();
+    const before = await (await w.send('GET', '/api/domains/1/spf-lookups')).json() as any;
+    expect(before).toMatchObject({ ok: true, source: 'published', record: ORIGINAL, total: 2, items: [{ term: 'include:mail.test', kind: 'include', cost: 1 }, { term: 'include:other.test', kind: 'include', cost: 1 }] });
+    await w.send('POST', '/api/domains/1/spf-flatten', { anyway: true });
+    expect(await (await w.send('GET', '/api/domains/1/spf-lookups')).json()).toMatchObject({ ok: true, source: 'original', record: ORIGINAL, total: 2 });
+    expect((await w.send('GET', '/api/domains/99/spf-lookups')).status).toBe(404);
+    expect((await w.send('POST', '/api/domains/1/spf-lookups', {})).status).toBe(405);
+  });
 });

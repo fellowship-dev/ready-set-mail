@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { entryCovered, flattenFromSource, type SpfFlatOptions, normalizeSpfRecord, sameSpfRecord, SPF_FLAT_MAX_BYTES } from '../src/spf-flatten';
+import { entryCovered, flattenFromSource, lookupBreakdown, type SpfFlatOptions, normalizeSpfRecord, sameSpfRecord, SPF_FLAT_MAX_BYTES } from '../src/spf-flatten';
 import { fakeResolver, type Zone } from './helpers';
 import { SpfEval, type World } from './spf-eval';
 
@@ -369,5 +369,30 @@ describe('entryCovered', () => {
     expect(entryCovered(['ip4:0.0.0.0/0'], 'ip6:fe80::1')).toBe(false); // another kind
     expect(entryCovered(['a:v.test'], 'a:v.test')).toBe(true);
     expect(entryCovered(['a:v.test'], 'mx:v.test')).toBe(false);
+  });
+});
+
+describe('lookupBreakdown: where the lookups go', () => {
+  it('names every term that costs a lookup, the includes with what is inside them, and the total', async () => {
+    const zone: Zone = {
+      'TXT big.test': txt('v=spf1 include:inner1.test include:inner2.test a -all'),
+      'TXT inner1.test': txt('v=spf1 ip4:1.1.1.1 -all'),
+      'TXT inner2.test': txt('v=spf1 include:deep.test mx -all'),
+      'TXT deep.test': txt('v=spf1 ip4:2.2.2.2 -all'),
+      'TXT small.test': txt('v=spf1 ip4:3.3.3.3 -all'),
+    };
+    const r = await lookupBreakdown('x.com', 'v=spf1 include:big.test include:small.test mx ip4:9.9.9.9 -all', fakeResolver(zone));
+    expect(r).toEqual({
+      ok: true, total: 8,
+      items: [
+        { term: 'include:big.test', kind: 'include', target: 'big.test', cost: 6, nested: [{ target: 'inner1.test', cost: 1 }, { target: 'inner2.test', cost: 3 }] },
+        { term: 'include:small.test', kind: 'include', target: 'small.test', cost: 1, nested: [] },
+        { term: 'mx', kind: 'mx', target: null, cost: 1, nested: [] },
+      ],
+    });
+  });
+  it('says why it could not, in one sentence', async () => {
+    const r = await lookupBreakdown('x.com', 'v=spf1 include:gone.test -all', fakeResolver({}));
+    expect(r).toMatchObject({ ok: false, message: expect.stringContaining('gone.test') });
   });
 });

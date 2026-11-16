@@ -187,7 +187,7 @@ export async function previewSpf(tenant: TenantContext, domain: { id: number; do
   const within = asWritten.ok && asWritten.flat.lookupsBefore <= 10 && new TextEncoder().encode(original).length <= 450;
   const res = await flattenFromSource(domain.domain, original, resolver, { inline: within ? 'most' : 'fewest' });
   let live: string | null = null;
-  if (spfIsOn(row)) {
+  if (row && row.flattened_record !== null) { // also a stopped row: what Cloudflare holds now, when it can be read
     try { const r = await (deps.target ?? cloudflareTarget(tenant, domain.domain)).read(); live = 'found' in r && r.found ? r.content : null; } catch { live = null; }
   }
   return { original, flat: res.ok ? res.flat : null, problem: res.ok ? null : refusal(res.problems[0]!), within_limits: within, live };

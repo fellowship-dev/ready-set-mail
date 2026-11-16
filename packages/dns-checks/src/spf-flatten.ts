@@ -115,6 +115,8 @@ interface Node {
   fullCost: number;
   /** May the include be replaced by `ips` + `kept` without changing who passes. */
   safe: boolean;
+  /** The includes and redirects this record reaches, with what each costs (itself and what is inside it): for the by-hand breakdown. */
+  children: Array<{ target: string; cost: number }>;
 }
 
 type RootItem =
@@ -186,7 +188,7 @@ class Flattener {
   async node(domain: string, path: string[]): Promise<Node> {
     const done = this.nodes.get(domain);
     if (done) return done;
-    const n: Node = { ips: new Set(), kept: new Set(), inlinedCost: 0, fullCost: 0, safe: true };
+    const n: Node = { ips: new Set(), kept: new Set(), inlinedCost: 0, fullCost: 0, safe: true, children: [] };
     await this.walkIncluded(domain, await this.record(domain), path, n);
     this.nodes.set(domain, n);
     return n;
@@ -215,6 +217,7 @@ class Flattener {
         const target = this.target(t, domain, path);
         const child = await this.node(target, [...path, target]);
         n.fullCost += 1 + child.fullCost;
+        n.children.push({ target, cost: 1 + child.fullCost });
         if (t.qualifier === '+') {
           for (const ip of child.ips) n.ips.add(ip);
           for (const k of child.kept) n.kept.add(k);
@@ -233,7 +236,9 @@ class Flattener {
     if (redirect) {
       const target = this.target(redirect, domain, path);
       n.fullCost += 1;
+      const before = n.fullCost;
       await this.walkIncluded(target, await this.record(target), [...path, target], n);
+      n.children.push({ target, cost: n.fullCost - before + 1 });
     }
   }
 
@@ -459,6 +464,43 @@ function refuseResult(w: Flattener, kind: SpfProblemKind, domain: string | null,
 /** Decode the quoted strings (decodeTxtData), collapse spaces, lowercase everything but macros. */
 export function normalizeSpfRecord(raw: string): string {
   return decodeTxtData(raw).trim().split(/\s+/).map(lower).join(' ');
+}
+
+export interface SpfLookupItem {
+  /** The term as written (or pinned: a bare `a` in a redirect target names its domain). */
+  term: string;
+  kind: 'include' | 'a' | 'mx' | 'ptr' | 'exists';
+  /** The include's domain. */
+  target: string | null;
+  /** Lookups it costs: itself and everything inside it. */
+  cost: number;
+  /** For an include: the includes inside it, with their costs. */
+  nested: Array<{ target: string; cost: number }>;
+}
+export type SpfBreakdown = { ok: true; total: number; items: SpfLookupItem[] } | { ok: false; message: string };
+
+/**
+ * Where a record's lookups go (RFC 7208 §4.6.4), term by term, for the person who cuts them by hand: the same walk as the flattening (includes and redirects read
+ * once, a bound on DNS reads), without choosing or building anything.
+ */
+export async function lookupBreakdown(domain: string, source: string, resolver: Resolver, opts: { maxFetches?: number } = {}): Promise<SpfBreakdown> {
+  const name = normalizeName(domain);
+  const w = new Flattener(withSource(resolver, name, source), name, opts.maxFetches ?? SPF_FLAT_MAX_FETCHES);
+  try {
+    if (!isSpfRecord(source)) refuse('include_unresolved', name, 'The record does not start with v=spf1.');
+    const items: RootItem[] = [];
+    const st = { all: null as string | null, exp: null as string | null, before: 0 };
+    await w.root(name, source.trim(), [name], items, st);
+    const out: SpfLookupItem[] = [];
+    for (const it of items) {
+      if (it.t === 'inc') out.push({ term: it.text, kind: 'include', target: it.target, cost: 1 + it.node.fullCost, nested: it.node.children });
+      else if (!it.ip) out.push({ term: it.text, kind: it.text.replace(/^[+\-~?]/, '').match(/^[a-z]+/i)![0].toLowerCase() as SpfLookupItem['kind'], target: null, cost: it.cost, nested: [] });
+    }
+    return { ok: true, total: st.before, items: out };
+  } catch (e) {
+    if (e instanceof Refuse) return { ok: false, message: e.problem.message };
+    throw e;
+  }
 }
 
 /**

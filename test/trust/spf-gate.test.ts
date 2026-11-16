@@ -41,6 +41,15 @@ describe('hosted: off by default, nothing read or written', () => {
   });
 });
 
+describe('hosted, not admitted: the by-hand breakdown of the lookups is still there', () => {
+  it('GET /spf-lookups answers (reading only; it is the other way to the same end as flattening)', async () => {
+    const w = await hosted();
+    const res = await call(w.env, 'GET', '/api/domains/1/spf-lookups', { key: w.key });
+    expect(res.status).toBe(200);
+    expect(typeof (await json(res)).ok).toBe('boolean'); // an answer about the record (or why it could not be read), never a 404
+  });
+});
+
 describe('hosted: the operator admits a workspace', () => {
   const reachable = async (w: Awaited<ReturnType<typeof hosted>>) => {
     const res = await call(w.env, 'GET', '/api/domains/1/spf-flatten', { key: w.key });

@@ -142,7 +142,7 @@ export interface AggregateReport {
 }
 
 /** Why SPF flattening is not keeping a record current (src/spf/refresh.ts). */
-export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses' | 'connection_lost' | 'edited_outside' | 'record_missing' | 'restore_failed';
+export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses' | 'connection_lost' | 'edited_outside' | 'record_missing' | 'restore_failed' | 'connection_gone' | 'proof_lost';
 
 /** What the API returns for a domain with flattening on (never the raw row). */
 export interface SpfFlatConfig {
@@ -158,6 +158,19 @@ export interface SpfFlatConfig {
   last_changed_at: number | null;
   last_refreshed_at: number | null;
   problem: { kind: SpfProblemKind; message: string | null; since: number | null } | null;
+  /** A removal waiting for its second look (docs/adr/0024); absent or null when none is. */
+  pending?: SpfPending | null;
+}
+
+export interface SpfPending {
+  /** The addresses (and lookup terms) that left a provider and are still in the record, by provider. */
+  removed: Record<string, string[]>;
+  providers: string[];
+  since: number;
+  /** The earliest time a check confirms the removal (unix seconds). */
+  confirm_after: number;
+  /** The record was written with the additions; false: both together do not fit, so nothing was written. */
+  additions_written: boolean;
 }
 
 export interface SpfFlatStatus {

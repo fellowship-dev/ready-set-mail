@@ -1,4 +1,4 @@
-import { Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
+import { Alert, Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, CircleDashed } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -7,7 +7,7 @@ import { api, errorMessage } from '../../lib/api';
 import { connectCloudflarePath } from '../../lib/cloudflare';
 import { domainKeys } from '../../lib/domain-queries';
 import { formatDate } from '../../lib/format';
-import { ACTION_LABEL, NOT_ALLOWED_ON_SENTENCE, offSentence, onSentence, spfState, staleSentence, SPF_LOOKUP_ALLOWED, type SpfAction } from '../../lib/spf-flatten';
+import { ACTION_LABEL, CHECK_AGAIN_NOW, NOT_ALLOWED_ON_SENTENCE, offSentence, onSentence, pendingSentence, PENDING_WHY, spfState, staleSentence, stoppedSentence, SPF_LOOKUP_ALLOWED, type SpfAction } from '../../lib/spf-flatten';
 import type { SpfFlatStatus } from '../../lib/types';
 import { TxtRecord } from '../wizard/RecordPair';
 import { WriteButton } from '../states';
@@ -46,9 +46,10 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 	};
 
 	const checkNow = useMutation({
-		mutationFn: () => api<{ outcome: 'changed' | 'unchanged' | 'problem' }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST' }),
+		mutationFn: () => api<{ outcome: 'changed' | 'unchanged' | 'pending' | 'problem'; message?: string }>(`/api/domains/${domainId}/spf-flatten/refresh`, { method: 'POST' }),
 		onSuccess: async (r) => {
-			if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
+			if (r.outcome === 'pending') toast({ title: 'Still waiting to confirm', description: r.message, variant: 'info' });
+			else if (r.outcome === 'changed') toast({ title: 'Your record was updated', description: 'Your providers changed their addresses.', variant: 'success' });
 			else if (r.outcome === 'unchanged') toast({ title: 'Checked', description: 'Nothing changed.', variant: 'success' });
 			await refreshAll();
 		},
@@ -95,6 +96,18 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 		text = allowed ? onSentence(state.config) : NOT_ALLOWED_ON_SENTENCE;
 		details = true;
 		if (allowed && state.stale) extra = <p className="text-sm text-ink-2">{staleSentence(state.config)}</p>;
+		if (allowed && state.config.pending) {
+			extra = (
+				<>
+					{extra}
+					<Alert variant="info" data-testid="spf-pending">
+						<p>{pendingSentence(state.config.pending)}</p>
+						<p className="mt-1">{PENDING_WHY}</p>
+					</Alert>
+				</>
+			);
+			action = { kind: 'try_again', label: CHECK_AGAIN_NOW };
+		}
 		if (!allowed) action = { kind: 'turn_off', label: ACTION_LABEL.turn_off };
 		if (state.config.previous_record !== null && state.config.flattened_record) {
 			extra = (
@@ -120,6 +133,22 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 		text = state.problem.message ?? 'We could not keep your record current.';
 		action = { kind: state.action, label: ACTION_LABEL[state.action] };
 		details = true;
+	} else if (state.kind === 'stopped') {
+		badge = (
+			<Badge variant="warning">
+				<AlertTriangle aria-hidden />
+				Stopped
+			</Badge>
+		);
+		text = stoppedSentence(state.reason);
+		details = true;
+		extra = (
+			<div className="space-y-3">
+				{state.config.flattened_record ? <TxtRecord title="In Cloudflare now (as of the last check)" value={state.config.flattened_record} copyable={false} /> : null}
+				<TxtRecord title="Your original record" value={state.config.original_record} />
+			</div>
+		);
+		action = { kind: state.reason === 'connection_gone' ? 'reconnect' : 'prove', label: ACTION_LABEL[state.reason === 'connection_gone' ? 'reconnect' : 'prove'] };
 	} else {
 		badge = (
 			<Badge variant="warning">
@@ -136,6 +165,10 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 		action.kind === 'reconnect' ? (
 			<Button asChild size="sm">
 				<Link to={connectCloudflarePath(pathname, search)}>{action.label}</Link>
+			</Button>
+		) : action.kind === 'prove' ? (
+			<Button asChild size="sm">
+				<Link to={`/domains/${domainId}`}>{action.label}</Link>
 			</Button>
 		) : action.kind === 'review' ? (
 			<Button asChild size="sm">
@@ -177,6 +210,11 @@ export function SpfCard({ domainId, status }: { domainId: number; status: SpfFla
 					{state.kind === 'on' && allowed ? (
 						<WriteButton variant="danger" size="sm" onClick={() => setConfirm(true)}>
 							Turn off
+						</WriteButton>
+					) : null}
+					{state.kind === 'stopped' ? (
+						<WriteButton variant="secondary" size="sm" loading={turnOff.isPending} onClick={() => turnOff.mutate()}>
+							{turnOff.isPending ? 'Trying…' : 'Try to put it back'}
 						</WriteButton>
 					) : null}
 					{details ? (
