@@ -1,6 +1,6 @@
 // Port of unzip-inboxangel outreach-tools/tests/test_mail_check.py and the finding half of test_bimi.py.
 import { describe, expect, it } from 'vitest';
-import { build, factsOf, findingsOf, pctOf, type Finding } from '../src/index';
+import { buildReport, build, factsOf, findingsOf, pctOf, type Finding } from '../src/index';
 import { CHECKED, GOOGLE, RESEND, SES, bimiRec, makeRec, type RecOptions } from './helpers';
 import type { DomainReport } from '@ready-set-mail/dns-checks';
 
@@ -216,5 +216,27 @@ describe('BIMI findings (test_bimi.py)', () => {
   it('recommendations do not overclaim Apple', () => {
     const f = findingsOf(enforced({ bimi: bimiRec({ vmc: 'not-declared' }) }), CHECKED).find(x => x.id === 'bimi-no-certificate')!;
     expect(f.recommendation).not.toMatch(/Gmail and Apple Mail (will not|need)|can show in Gmail and Apple Mail/);
+  });
+});
+
+describe('buildReport with report evidence', () => {
+  const rec = makeRec('app.readysetmail.com', {
+    dmarc: 'found', dmarcRaw: 'v=DMARC1; p=reject; rua=mailto:r@readysetmail.com', dmarcPolicy: 'reject', rua: ['mailto:r@readysetmail.com'], mx: ['none', []], dkim: ['cf-bounce'],
+  });
+  const from = { from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 0, from_unjudged: 9 };
+  const spf = (m: ReturnType<typeof buildReport>) => m.findings.find(f => f.id === 'spf-missing')!;
+  it('regrades and softens spf-missing', () => {
+    const m = buildReport({ runs: [rec], from, generatedAt: CHECKED });
+    expect(m.grade.level).not.toBe(0);
+    expect(m.grade.label).not.toBe('Unprotected');
+    expect(m.grade.reasons.join(' ')).not.toContain('SPF is checked at the return-path (MAIL FROM) domain of each message');
+    expect(spf(m)).toMatchObject({ severity: 'low', impact: 0.3 });
+    expect(spf(m).evidence).toContain('Reports, last 30 days: none of the 49 messages sent as app.readysetmail.com used app.readysetmail.com as its SPF (return-path) domain');
+    expect(spf(m).recommendation).toContain('none of the 49 messages sent as app.readysetmail.com');
+  });
+  it('without evidence keeps today\'s grade and finding', () => {
+    const m = buildReport({ runs: [rec], generatedAt: CHECKED });
+    expect(m.grade.level).toBe(0);
+    expect(spf(m).severity).not.toBe('low');
   });
 });
