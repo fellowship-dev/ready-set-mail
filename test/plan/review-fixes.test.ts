@@ -1,7 +1,7 @@
 // The second review (real-Stripe sandbox, round B): quantity repair, busy refusals and the rate limit, the payment-problem add path, the first payment
 // that waits for the bank. One file so the fixes read together.
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { planWorld, json, rows, type PlanWorld } from './world';
+import { planWorld, json, rows, call, type PlanWorld } from './world';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -162,5 +162,58 @@ describe('S9: a plan that ended because the card was declined says so; one cance
     await w.fake.flush();
     const p = (await json(await w.api(w.owner, 'GET', '/api/billing'))).plan;
     expect(p).toMatchObject({ lapsed: true, card_declined: false });
+  });
+});
+
+describe('S11: a workspace intent cannot attach to a workspace that exists', () => {
+  it('an intent whose id is an existing workspace changes nothing there: not its customer, not its plan, not its members', async () => {
+    const w = await planWorld();
+    await w.addFree(w.owner, 'one.example.com');
+    await w.addCard(w.owner);
+    await w.addPaid(w.owner, 'two.example.org'); // the victim: it has a customer and a subscription
+    const victim = w.owner.workspaceId;
+    const customer = w.ws(victim).stripe_customer_id;
+    const sub = w.sub(victim);
+    const mine = await w.person('attacker@example.com');
+    await w.addCard(mine); // an attacker who already pays somewhere may create more workspaces
+    await w.addPaid(mine, 'attacker-paid.example.net').catch(() => undefined);
+    const start = await w.api(mine, 'POST', '/api/billing/workspace-intents', { name: 'Looks harmless' });
+    // the id is the server's, never the request's: a body that names an id is ignored
+    expect(start.status).toBeLessThan(500);
+    const intent = rows(w.db, "SELECT * FROM workspace_intents WHERE name = 'Looks harmless'")[0];
+    expect(intent?.id).toMatch(/^ws_[0-9a-f]{32}$/);
+    expect(intent?.id).not.toBe(victim);
+    const spoof = await w.api(mine, 'POST', '/api/billing/workspace-intents', { name: 'Spoof', id: victim, workspace_id: victim });
+    expect(spoof.status).toBeLessThan(500);
+    expect(rows(w.db, "SELECT id FROM workspace_intents WHERE name = 'Spoof'").map((r) => r.id)).not.toContain(victim);
+    // and even a tampered row (the id rewritten behind the API's back) cannot take the existing workspace over
+    expect(start.status).toBe(200);
+    {
+      w.db.sqlite.prepare('PRAGMA foreign_keys = OFF').run();
+      w.db.sqlite.prepare('UPDATE workspace_intents SET id = ? WHERE id = ?').run(victim, intent.id);
+      w.db.sqlite.prepare('UPDATE billing_checkout_sessions SET workspace_id = ? WHERE workspace_id = ?').run(victim, intent.id);
+      w.db.sqlite.prepare('PRAGMA foreign_keys = ON').run();
+      const { url } = await json(start);
+      const target = w.fake.completeCheckout(url.split('/pay/')[1], { card: 'ok' });
+      const back = await call(w.env, 'GET', target.replace(/^https?:\/\/[^/]+/, ''), { key: mine.token });
+      expect(back.headers.get('location') ?? '').not.toContain('workspace=created');
+    }
+    expect(w.ws(victim).stripe_customer_id).toBe(customer);
+    expect(w.sub(victim)).toEqual(sub);
+    expect(rows(w.db, 'SELECT user_id FROM memberships WHERE workspace_id = ?', victim).map((r) => r.user_id)).toEqual(
+      rows(w.db, "SELECT id FROM users WHERE email = 'owner@example.com'").map((r) => r.id));
+  });
+});
+
+describe('S11: an admin can remove a billable domain (it lowers the bill; admins manage domains), and cannot add one', () => {
+  it('removal by an admin brings the quantity down; a paid add by the same admin is refused', async () => {
+    const { w, ws } = await ready();
+    const admin = await w.addMember(ws, 'admin@example.com', 'admin');
+    const id = rows(w.db, "SELECT id FROM domains WHERE domain = 'two.example.org'")[0].id;
+    expect(itemQty(w)).toEqual([1]);
+    expect((await w.api(admin, 'DELETE', `/api/domains/${id}`)).status).toBe(200);
+    expect(itemQty(w)).toEqual([0]);
+    expect((await w.addPaid(admin, 'three.example.net')).status).toBe(403);
+    expect(itemQty(w)).toEqual([0]);
   });
 });
