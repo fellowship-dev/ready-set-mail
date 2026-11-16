@@ -528,7 +528,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				)}
 
 				{toolsShown ? (
-					<Disclosure title="DNS tools" summary="Optional tools that change your DNS for you: SPF flattening and MTA-STS.">
+					<Disclosure title="DNS tools" summary={`Optional tools that change your DNS for you: ${spfAddOn ? 'SPF flattening and MTA-STS' : 'MTA-STS'}.`}>
 						<DnsTools domainId={domain.id} />
 					</Disclosure>
 				) : null}
