@@ -166,6 +166,10 @@ A hosted Worker needs all six ratelimit bindings below. A missing one fails open
 
 `OAUTH_TOKEN_LIMITER`, `MCP_ANON_LIMITER` and `MCP_LIMITER` are new with the agent limits; launch configs derived before them have only the first three. See [agent limits](agent-operations.md#agents-page-limits-and-the-setup-check).
 
+### Agent connections (MCP)
+
+On the hosted service, assistants that publish a client ID metadata document (Claude, ChatGPT, VS Code) connect with no setting. `MCP_DCR_ENABLED` is **unset by default** (ADR 0018): without it Cursor and other assistants that must register themselves cannot connect, and the Agents page says so. The operator turns it on with `MCP_DCR_ENABLED=1`; it is then limited per address, to `MCP_DCR_DAILY_LIMIT` (default 200) registrations a day and `MCP_DCR_MAX_CLIENTS` (default 1000) stored apps, an app nobody approves is deleted after `MCP_DCR_UNUSED_DAYS` (default 7) days by the 04:00 job, and every registration and deletion is an audit entry in the instance scope. The settings, the checks to run after switching it on and the discovery addresses are in [agent operations](agent-operations.md#letting-apps-register-themselves). Every 401 from `/mcp` names the protected-resource metadata address, and both `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` answer it.
+
 **Plan caps.** Variables in `wrangler.jsonc` `vars`, hosted mode only (self-host has no caps):
 
 | Variable | Default | |

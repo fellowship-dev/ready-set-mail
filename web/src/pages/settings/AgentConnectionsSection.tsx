@@ -6,7 +6,7 @@ import { api, errorMessage } from '../../lib/api';
 import { cleanName } from '../../lib/names';
 import { useHosted, useSession, useWorkspaceId } from '../../lib/session';
 import { AccessKeysSection } from './AccessKeysSection';
-import { timestamp } from './access-model';
+import { actionLabel, timestamp } from './access-model';
 import { ConfirmButton } from './ConfirmButton';
 import { CopyValue } from './CopyValue';
 
@@ -21,7 +21,15 @@ interface Connection {
 	expiresAt: number;
 	lastUsedAt?: number | null;
 	revoked?: boolean;
+	/** The app identified itself with a published client document; `verifiedHost` is its publisher. Otherwise it named itself. */
+	verified?: boolean;
+	verifiedHost?: string;
+	/** What it can reach, by name (live grants). */
+	access?: { workspaces: string[]; domains: string[]; products: string[]; actions: string[] };
 }
+
+const SHOWN_DOMAINS = 5;
+const list = (items: string[], shown = SHOWN_DOMAINS) => (items.length > shown ? `${items.slice(0, shown).join(', ')} and ${items.length - shown} more` : items.join(', '));
 
 /**
  * Settings → Agents: the agent address and the agents a person approved in the browser. On a self-hosted instance an
@@ -80,7 +88,7 @@ export function AgentConnectionsSection() {
 function ApprovedAgents({ workspace }: { workspace: string | null | undefined }) {
 	const qc = useQueryClient();
 	const H = useHeadingTag(1);
-	const connections = useQuery({ queryKey: ['agent-connections', workspace], queryFn: () => api<{ connections: Connection[] }>('/api/mcp/connections'), retry: false });
+	const connections = useQuery({ queryKey: ['agent-connections', workspace], queryFn: () => api<{ connections: Connection[] }>('/api/mcp/connections'), retry: false, staleTime: 0, refetchOnMount: 'always', refetchOnWindowFocus: true });
 	async function revoke(id: string) {
 		await api(`/api/mcp/connections/${id}`, { method: 'DELETE' });
 		await qc.invalidateQueries({ queryKey: ['agent-connections'] });
@@ -100,16 +108,40 @@ function ApprovedAgents({ workspace }: { workspace: string | null | undefined })
 						{connections.data.connections.map((c) => (
 							<li key={c.principalId} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
 								<div className="min-w-0 space-y-1">
-									<p className="font-medium [overflow-wrap:anywhere]">{c.name}</p>
+									<p className="flex flex-wrap items-center gap-2 font-medium [overflow-wrap:anywhere]">
+										{c.name}
+										{c.verified ? null : <Badge variant="neutral">Not verified</Badge>}
+									</p>
 									<dl className="grid gap-x-4 gap-y-0.5 text-sm text-ink-2 sm:grid-cols-[auto_1fr]">
 										<dt>Workspace</dt>
 										<dd className="min-w-0 [overflow-wrap:anywhere]">{c.workspaceName ? cleanName(c.workspaceName) : 'This workspace'}</dd>
-										<dt>Created</dt>
+										{c.verified && c.verifiedHost ? (
+											<>
+												<dt>Published by</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">{c.verifiedHost}</dd>
+											</>
+										) : null}
+										<dt>Approved</dt>
 										<dd>{timestamp(c.createdAt)}</dd>
-										<dt>Expires</dt>
+										{c.access?.domains.length ? (
+											<>
+												<dt>Can see</dt>
+												<dd className="min-w-0 [overflow-wrap:anywhere]">
+													{list(c.access.domains)}
+													{c.access.products.length ? ` (groups: ${list(c.access.products)})` : ''}
+												</dd>
+											</>
+										) : null}
+										{c.access?.actions.length ? (
+											<>
+												<dt>Can do</dt>
+												<dd className="min-w-0">{c.access.actions.map(actionLabel).join(', ')}</dd>
+											</>
+										) : null}
+										<dt>{c.revoked ? 'Would have ended' : 'Ends'}</dt>
 										<dd>{timestamp(c.expiresAt)}</dd>
 										<dt>Last used</dt>
-										<dd>{c.lastUsedAt === undefined ? 'Not recorded' : timestamp(c.lastUsedAt)}</dd>
+										<dd>{c.lastUsedAt ? timestamp(c.lastUsedAt) : 'Not used yet'}</dd>
 									</dl>
 								</div>
 								{c.revoked ? (

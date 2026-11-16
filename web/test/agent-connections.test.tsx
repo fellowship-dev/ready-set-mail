@@ -215,6 +215,36 @@ describe('access keys for scripts and services', () => {
 		await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/mcp/connections/a1')).toBe(true));
 	});
 
+	it('lists each approved app by name, with what it can reach, when it was approved and last used, and whether it is verified', async () => {
+		const day = 1_700_000_000;
+		renderApp(<AgentConnectionsSection />, {
+			role: 'admin',
+			routes: {
+				'GET /api/mcp/connections': {
+					connections: [
+						{ principalId: 'a1', name: 'Cursor', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 7 * 86400, lastUsedAt: day + 3600, verified: false, access: { workspaces: ['Acme'], domains: ['a.example', 'b.example', 'c.example', 'd.example', 'e.example', 'f.example', 'g.example'], products: ['Receipts'], actions: ['resources:read', 'reports:read'] } },
+						{ principalId: 'a2', name: 'Document assistant', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, lastUsedAt: null, verified: true, verifiedHost: 'cimd.example', access: { workspaces: ['Acme'], domains: ['a.example'], products: [], actions: ['diagnostics:run'] } },
+						{ principalId: 'a3', name: 'Old one', workspaceId: 'ws_default', createdAt: day, expiresAt: day + 86400, revoked: true },
+					],
+				},
+			},
+		});
+		const cursor = (await screen.findByText('Cursor')).closest('li')!;
+		expect(within(cursor).getByText('Not verified')).toBeInTheDocument();
+		expect(within(cursor).getByText('a.example, b.example, c.example, d.example, e.example and 2 more (groups: Receipts)')).toBeInTheDocument();
+		expect(within(cursor).getByText('See its domains, Read email health reports')).toBeInTheDocument();
+		expect(within(cursor).getByText('Acme')).toBeInTheDocument();
+		expect(within(cursor).queryByText('Not used yet')).not.toBeInTheDocument();
+		const doc = screen.getByText('Document assistant').closest('li')!;
+		expect(within(doc).queryByText('Not verified')).not.toBeInTheDocument();
+		expect(within(doc).getByText('cimd.example')).toBeInTheDocument();
+		expect(within(doc).getByText('Run live DNS checks')).toBeInTheDocument();
+		expect(within(doc).getByText('Not used yet')).toBeInTheDocument();
+		const old = screen.getByText('Old one').closest('li')!;
+		expect(within(old).getByText('Revoked')).toBeInTheDocument();
+		expect(within(old).queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument();
+	});
+
 	it('shows unconfigured Google as unavailable and disables consent and sync controls', async () => {
 		renderApp(<MetricConnectionsSection />, {
 			routes: { 'GET /api/metrics/google/connections': { configured: false, connections: [{ domainId: 7, domain: 'mail.example.com', status: 'not_connected' }] } },

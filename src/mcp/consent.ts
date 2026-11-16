@@ -18,6 +18,8 @@ export const ACTION_COPY: Readonly<Record<Exclude<AccessAction, 'access:manage'>
 });
 /** Pre-selected for a verified client only: the two permissions a first useful answer needs (list the domains, read their report). */
 const DEFAULT_ACTIONS: readonly string[] = Object.freeze(['resources:read', 'reports:read']);
+/** An app that gave no name is shown, and listed, under this one. */
+export const UNNAMED_APP = 'Unnamed app';
 export const EXPIRY_CHOICES = [1, 7, 14, 30] as const;
 const DEFAULT_EXPIRY = 7;
 
@@ -123,7 +125,9 @@ export function renderConsentPage(m: ConsentModel): string {
  const identity = [
   verified
    ? `<li><strong>Published by</strong> <span class="mono">${escape(m.client.publisher)}</span></li>`
-   : `<li><strong>Name it gives</strong> "${client}". <strong>Not verified:</strong> the app chose this name itself, so it may not be who it says.</li>`,
+   : m.client.name === UNNAMED_APP
+    ? `<li><strong>Name it gives</strong> none. <strong>Not verified:</strong> nobody has checked who this app is.</li>`
+    : `<li><strong>Name it gives</strong> "${client}". <strong>Not verified:</strong> the app chose this name itself, so it may not be who it says.</li>`,
   `<li><strong>Access goes to</strong> <span class="mono">${escape(m.client.redirectHost)}</span>${verified ? '' : '. Allow only if that is the app you are using right now.'}</li>`,
   `<li><strong>You are signed in as</strong> ${escape(m.account)}</li>`,
  ].join('');
@@ -146,7 +150,7 @@ export function renderConsentPage(m: ConsentModel): string {
 <label class="field">Domain<input type="text" name="domain" inputmode="url" autocomplete="off" spellcheck="false" placeholder="example.com"></label>
 </fieldset>
 <fieldset><legend>What it may do</legend>${actions}</fieldset>
-<fieldset><legend>When access ends</legend><label class="field">Access ends<select name="days">${expiry}</select></label><p class="hint">Dates are in UTC. You can revoke access sooner in Settings, under Agents and product access.</p></fieldset>
+<fieldset><legend>When access ends</legend><label class="field">Access ends<select name="days">${expiry}</select></label><p class="hint">Dates are in UTC. You can revoke access sooner in Settings, under Agents.</p></fieldset>
 <div class="never"><h2>It can never do these</h2><ul><li>Change your DNS records</li><li>Tighten your DMARC policy</li><li>Send email or invite people</li><li>Give itself more access</li></ul><p class="muted last">You make those changes yourself, in the dashboard or at your DNS provider.</p></div>
 <div class="actions"><button class="button primary" type="submit" name="decision" value="allow">Allow access</button><button class="button secondary" type="submit" name="decision" value="deny" formnovalidate>Don't allow</button></div>
 </form>`);
@@ -160,7 +164,32 @@ export function renderSignedOutPage(reason: 'signed_out' | 'unverified'): string
  return agentPage(reason === 'unverified' ? 'Confirm your email' : 'Sign in', `${body}<div class="actions"><a class="button primary" href="/">Open the dashboard</a></div>`);
 }
 
-/** A consent form that cannot be accepted as sent. */
-export function renderConsentProblem(message: string): string {
- return agentPage('Check your choices', `<h1>Check your choices</h1><p>${escape(message)}</p><p class="muted">Nothing was shared. Use your browser's back button to change your choices, or start the connection again from the app.</p>`);
+/** Why an authorization request could not be shown or accepted. The library's wording is never shown: it names parameters, not what to do. */
+export type AuthorizationProblem = 'unknown_app' | 'wrong_address' | 'expired' | 'incomplete';
+
+const PROBLEM_COPY: Readonly<Record<AuthorizationProblem, { title: string; message: string }>> = Object.freeze({
+ unknown_app: { title: "Ready Set Mail doesn't recognise this app", message: 'It could not find or read the registration of the app that sent you here, so nothing was shared.' },
+ wrong_address: { title: 'This app asked to send you somewhere it did not register', message: 'Nothing was shared, and you were not sent anywhere.' },
+ expired: { title: 'This approval page has expired', message: 'It was open too long, was already used, or was opened in a different browser than the one that started it. Nothing was shared.' },
+ incomplete: { title: "The app's link is incomplete", message: 'It left out something Ready Set Mail needs before it can ask you, so nothing was shared.' },
+});
+
+/** Which of the four the library's refusal means. Anything it does not name is the app's link being incomplete. */
+export function authorizationProblem(description: string | undefined): AuthorizationProblem {
+ const text = description ?? '';
+ if (/client_id/i.test(text)) return 'unknown_app';
+ if (/redirect uri/i.test(text)) return 'wrong_address';
+ if (/expired|already used|browser|transaction handle/i.test(text)) return 'expired';
+ return 'incomplete';
+}
+
+/**
+ * A page for what cannot go on. Without a `problem` it is a consent form that cannot be accepted as sent. With one it is an authorization
+ * request that cannot be shown: the person gets a sentence and a way back to the app's Agents page, never a redirect to an address
+ * the app supplied (the address is not trusted until the app and its redirect address have been checked).
+ */
+export function renderConsentProblem(message: string, problem?: AuthorizationProblem): string {
+ if (!problem) return agentPage('Check your choices', `<h1>Check your choices</h1><p>${escape(message)}</p><p class="muted">Nothing was shared. Use your browser's back button to change your choices, or start the connection again from the app.</p>`);
+ const copy = PROBLEM_COPY[problem];
+ return agentPage(copy.title, `<h1>${escape(copy.title)}</h1><p>${escape(copy.message)}</p><p class="muted">Start the connection again from the app. To see which apps can connect here, and how, open Agents in Ready Set Mail.</p><div class="actions"><a class="button primary" href="/#/agents">Open Agents</a></div>`);
 }

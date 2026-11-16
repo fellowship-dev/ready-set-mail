@@ -1,6 +1,6 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb, type DbLike } from '../client';
-import { accessPrincipals, accessGrants, accessCredentials, products, productDomains, domains } from '../schema';
+import { accessPrincipals, accessGrants, accessCredentials, products, productDomains, domains, settings } from '../schema';
 
 /** The only unscoped reads identify a credential/principal before selecting its workspace. */
 export function accessLookups(dbLike: DbLike) {
@@ -10,6 +10,17 @@ export function accessLookups(dbLike: DbLike) {
   credentialByHash: (hash: string) => db.select().from(accessCredentials).where(/* workspace-scope-exempt: credential hash identifies its workspace */ eq(accessCredentials.key_hash, hash)).get(),
   principalById: (id: string) => db.select().from(accessPrincipals).where(/* workspace-scope-exempt: resolving an authenticated principal identity */ eq(accessPrincipals.id, id)).get(),
   humanPrincipalsForUser: (userId: string) => db.select().from(accessPrincipals).where(/* workspace-scope-exempt: own-user connection management survives membership removal */ and(eq(accessPrincipals.user_id, userId), eq(accessPrincipals.kind, 'human'))).all(),
+  /**
+   * Which of these app ids appear in an approved agent connection, in any workspace: the apps a person approved at least once.
+   * `prefix` is the key of a connection record (`mcp_connection:`); a plain prefix comparison, not LIKE, so `_` is an ordinary character.
+   */
+  connectedClientIds: async (prefix: string, clientIds: string[]): Promise<Set<string>> => {
+   if (!clientIds.length) return new Set();
+   // CASE keeps json_extract away from every other setting's value, which need not be JSON.
+   const clientId = sql<string>`CASE WHEN substr(${settings.key}, 1, ${prefix.length}) = ${prefix} AND json_valid(${settings.value}) THEN json_extract(${settings.value}, '$.clientId') END`;
+   const rows = await db.select({ id: clientId }).from(settings).where(/* workspace-scope-exempt: the daily sweep asks about apps across every workspace */ inArray(clientId, clientIds)).all();
+   return new Set(rows.map(r => r.id));
+  },
   grantsForPrincipal: (id: string) => db.select().from(accessGrants).where(/* workspace-scope-exempt: finite portfolio consent enumerates workspaces */ eq(accessGrants.principal_id, id)).all(),
  };
 }

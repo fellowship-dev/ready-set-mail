@@ -15,7 +15,7 @@ Upgrades build, migrate and deploy in that order (`npm run deploy`). Creating a 
 ## First useful report
 
 1. Complete owner setup, then enroll a domain in the browser. A clean self-host can use manual enrollment; the report does not require granting Cloudflare DNS write access. Hosted enrollment returns a durable pending claim until ownership is proved; retrying resumes the claim rather than creating another monitored domain.
-2. In **Settings → Agents and product access**, copy this installation's HTTPS `/mcp` endpoint.
+2. In **Settings → Agents**, copy this installation's HTTPS `/mcp` endpoint (the **Agents** page in the navigation shows it too, with the steps for each assistant).
 3. From the repository, create a new installation-specific plugin directory:
 
    ```sh
@@ -26,11 +26,11 @@ Upgrades build, migrate and deploy in that order (`npm run deploy`). Creating a 
 4. Start the client's browser sign-in. Review the requesting client's publisher/name, token-return hostname, exact workspace/product/domain tuples, actions and expiry. A self-registered client's name is not verified; a loopback redirect sends access to a local application. Consent lasts 1–30 days. Newly added domains, products and memberships do not expand an existing finite grant.
 5. Confirm callable tools exist, call `whoami`, then `list_domains` and `get_email_report` for the exact permitted domain. The report must contain live DNS findings, observed source evidence or precise unavailable states, and proposed fixes with prerequisites and verification.
 
-Installation, tool reload, browser authorization, a successful identity call and a useful report are separate checkpoints. Never label an installed plugin connected just because its configuration exists. Direct MCP clients may use the same HTTPS endpoint without the plugin. Client-ID metadata documents are supported; dynamic client registration is off by default and requires the operator's explicit `MCP_DCR_ENABLED=1` setting for clients that need it.
+Installation, tool reload, browser authorization, a successful identity call and a useful report are separate checkpoints. Never label an installed plugin connected just because its configuration exists. Direct MCP clients may use the same HTTPS endpoint without the plugin. Client-ID metadata documents are supported (Claude, ChatGPT and VS Code use them when they can); dynamic client registration is off by default and needs the operator's explicit `MCP_DCR_ENABLED=1` ([below](#letting-apps-register-themselves)) for clients that need it, such as Cursor.
 
 ## Agents page, limits and the setup check
 
-**Agents** in the dashboard navigation explains what an agent can do on this installation, shows the MCP server URL and a first prompt to paste into Claude or ChatGPT, and links to the connection list in Settings. It shows the setup only when the installation can accept agents (`OAUTH_KV` bound and `BETTER_AUTH_URL` a canonical HTTPS origin); otherwise the instance owner sees what to configure and everyone else sees that agents are not set up yet.
+**Agents** in the dashboard navigation explains what an agent can do on this installation, shows the MCP server URL, the steps for each assistant (Claude, ChatGPT, Cursor, VS Code: one list, `web/src/lib/agent-clients.ts`) and a first prompt, and links to the connection list in Settings. It asks the server what this installation supports (`GET /api/agents/status`: `dynamic_registration`, `metadata_documents`) and says which assistants can connect now; where registration is off it tells the instance owner (and only the owner) the one setting that lets the others connect. It shows the setup only when the installation can accept agents (`OAUTH_KV` bound and `BETTER_AUTH_URL` a canonical HTTPS origin); otherwise the instance owner sees what to configure and everyone else sees that agents are not set up yet.
 
 `/mcp` is answered by the OAuth provider before the API router, so it has its own limits (`src/mcp/rate-limit.ts`):
 
@@ -40,6 +40,7 @@ Installation, tool reload, browser authorization, a successful identity call and
 | Requests per workspace, all its agents together | 200 per 60 s (`API_LIMITER`, key `mcp:workspace:<id>`) | HTTP 429, `Retry-After: 60` |
 | `/oauth/token`, per IP | 600 per 60 s (`OAUTH_TOKEN_LIMITER`, key `oauth-token:<ip>`) | HTTP 429, `Retry-After: 60` |
 | `/oauth/register`, per IP | 10 per 60 s (`AUTH_LIMITER`, key `oauth-register:<ip>`, separate from sign-in) | HTTP 429, `Retry-After: 60` |
+| `/oauth/register`, whole instance, when registration is on | `MCP_DCR_DAILY_LIMIT` per 24 hours, default 200 (D1 counter `oauth-register:day`, conditional write) | HTTP 429, `Retry-After` the seconds left |
 | `/mcp` without an `Authorization` header, per IP | 60 per 60 s (`MCP_ANON_LIMITER`, key `mcp-anon:<ip>`) | HTTP 429, `Retry-After: 60` |
 | Live DNS checks per connection (`inspect_domain`, `get_email_report`, `query_email_metrics`, `plan_remediation`, `get_source_status`) | 10 per 60 s (D1 counter, conditional write) | Tool error `rate_limited` with `retryAfterSeconds` |
 | Live DNS checks per workspace | 30 per 60 s (D1 counter, conditional write) | Tool error `rate_limited` with `retryAfterSeconds` |
@@ -47,6 +48,34 @@ Installation, tool reload, browser authorization, a successful identity call and
 A Workers ratelimit binding has one fixed number, so the per-connection limit has its own binding at half the workspace limit: one agent at full speed leaves room for the others. Authenticated agent requests are never limited per IP address, because assistants share cloud egress addresses. The per-IP budgets are separate, so registrations from an address never block a token refresh from it, and a request that presents a token is never limited per IP: a bad or expired token always gets 401, so the client refreshes. Each live DNS check count is one conditional D1 write that counts only while the window is under its limit, so simultaneous calls cannot pass it: at most 10 per connection and 30 per workspace in a fixed 60-second window that starts with the first check. The workspace is counted first and gets its count back when the connection refuses, so a refused check leaves nothing spent (in the moment between, a parallel check in that workspace can be refused one count early). Expired counter rows are deleted now and then as checks run. Each live DNS check sends about 45–60 DNS-over-HTTPS lookups to each of two resolvers, so roughly 90–120 Worker subrequests per call (more than the Workers Free plan's 50). The consent page and the connection list keep the dashboard's per-IP budget.
 
 **Missing bindings.** On a self-hosted instance a missing ratelimit binding means that limit does not apply. On the hosted service (`MODE=saas`) `/mcp` answers 503 instead of running unlimited when `MCP_LIMITER` or `API_LIMITER` is missing, and the setup check lists every missing binding (`API_LIMITER`, `AUTH_LIMITER`, `MCP_LIMITER`, `OAUTH_TOKEN_LIMITER`, `MCP_ANON_LIMITER`, `DNS_PREVIEW_LIMITER`) as action needed. The entries are in `wrangler.jsonc` and [docs/hosted.md](hosted.md#ratelimit-bindings).
+
+## Letting apps register themselves
+
+Assistants that publish a client ID metadata document (Claude, ChatGPT, VS Code) connect with no setting. Cursor and older assistants register themselves first (`POST /oauth/register`, RFC 7591). That is **off** until the operator sets `MCP_DCR_ENABLED=1` as a Worker variable (a plain `vars` entry, like the other settings; it is not a secret), then deploys. Removing it turns registration off again; apps already approved keep working. Why it is off, and the limits below: [ADR 0018](adr/0018-apps-introduce-themselves-by-document-or-by-vetted-registration.md).
+
+What protects it (`src/mcp/registration.ts`). A registration gets no access: a signed-in person must approve the app on the consent page, which shows it as **Not verified**.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MCP_DCR_ENABLED` | unset (off) | `1` turns registration on. |
+| `MCP_DCR_DAILY_LIMIT` | `200` | Registrations accepted per 24 hours, whole instance. Over it: 429 with `Retry-After`. |
+| `MCP_DCR_MAX_CLIENTS` | `1000` | Registered apps kept at once. Over it: 503 `temporarily_unavailable` with `Retry-After`. |
+| `MCP_DCR_UNUSED_DAYS` | `7` | A registered app that nobody approved is deleted by the 04:00 UTC lifecycle job after this many days, at most 50 a run. An approved app is never deleted by it. |
+
+A registration is refused (400, an RFC 7591 error body) unless it lists one to five redirect addresses, each `https` or `http` on `localhost`, `127.0.0.1` or `[::1]` (any port, no fragment, no user name, no wildcard); gives a plain-text name of at most 80 characters (no `<`, `>`, `&` or web address; none is stored as "Unnamed app"); asks for a public client (`token_endpoint_auth_method` `none`, or left out), the `authorization_code` and `refresh_token` grants and the `code` response. The one private-use address accepted, only as a listed extra, is `cursor://anysphere.cursor-mcp/oauth/callback`. Each registration, refusal and deletion is an audit entry (`agent.client_registered`, `agent.client_registration_refused` with `reason`, `agent.client_expired`) in the instance's own scope (`ws_default`, actor type `system`); no caller address is stored. The setup check shows a note while it is on, with the limits in effect.
+
+After switching it on, check (replace `$ORIGIN`):
+
+```sh
+curl -s $ORIGIN/.well-known/oauth-protected-resource       # resource $ORIGIN/mcp, authorization_servers [$ORIGIN]
+curl -s $ORIGIN/.well-known/oauth-protected-resource/mcp   # the same document
+curl -s $ORIGIN/.well-known/oauth-authorization-server     # has registration_endpoint, code_challenge_methods_supported ["S256"], "none" in token_endpoint_auth_methods_supported
+curl -si -X POST $ORIGIN/mcp | head -5                     # 401 with WWW-Authenticate: Bearer ... resource_metadata="$ORIGIN/.well-known/oauth-protected-resource/mcp"
+curl -s -X POST $ORIGIN/oauth/register -H 'content-type: application/json' -d '{"client_name":"Check","redirect_uris":["https://example.com/callback"],"token_endpoint_auth_method":"none"}'   # 201 with a client_id
+curl -s -X POST $ORIGIN/oauth/register -H 'content-type: application/json' -d '{"client_name":"Check","redirect_uris":["http://example.com/callback"],"token_endpoint_auth_method":"none"}'    # 400 invalid_redirect_uri
+```
+
+The check's own registration stays in the list until the sweep deletes it after `MCP_DCR_UNUSED_DAYS` days.
 
 The instance owner (and nobody else) sees a configuration check in **Settings → Instance**, and a banner on every page while a setting needs action. It names missing or inconsistent settings (mode, `BETTER_AUTH_URL`, `OAUTH_KV`, mail sender, Turnstile keys, ratelimit bindings, `BOOKING_URL`, open client registration) and never shows a configured value (`GET /api/instance/preflight`). On a self-hosted instance the owner is the owner of the first workspace, or the account in `OWNER_EMAIL` when set. **On the hosted service the owner is only the verified account whose email is `OWNER_EMAIL`: without `OWNER_EMAIL` nobody can see the setup check.**
 

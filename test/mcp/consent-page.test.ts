@@ -138,3 +138,35 @@ describe('consent page', () => {
   expect(visible(problem)).toContain('Nothing was shared.');
  });
 });
+
+describe('consent page wording that names the product', () => {
+ it('names the Settings section that exists (Settings, under Agents) and no other', () => {
+  const text = visible(renderConsentPage(model()));
+  expect(text).toContain('You can revoke access sooner in Settings, under Agents.');
+  expect(text).not.toContain('Agents and product access');
+ });
+ it('an app that gave no name is shown as having given none, not as a name it chose', () => {
+  const text = visible(renderConsentPage(model({ client: { name: 'Unnamed app', redirectHost: 'client.example', loopback: false } })));
+  expect(text).toContain('Name it gives none. Not verified: nobody has checked who this app is.');
+  expect(text).not.toContain('the app chose this name itself');
+  expect(visible(renderConsentPage(model({ client: { name: 'Cursor', redirectHost: 'cursor.com', loopback: false } })))).toContain('the app chose this name itself');
+ });
+});
+
+describe('the page for a link that cannot go on', () => {
+ it.each([
+  ['Invalid client_id', /doesn't recognise this app/], ['client_id is required', /doesn't recognise this app/],
+  ['Invalid redirect URI', /did not register/], ['This authorization expired or was already used; start again', /has expired/],
+  ['This authorization was not started in this browser; start again', /has expired/], ['PKCE code_challenge is required', /incomplete/], [undefined, /incomplete/],
+ ])('%s', async (description, title) => {
+  const { authorizationProblem } = await import('../../src/mcp/consent');
+  const html = renderConsentProblem('', authorizationProblem(description));
+  const text = visible(html);
+  expect(text).toMatch(title);
+  expect(text).toMatch(/nothing was shared/i);
+  expect(html).toContain('<a class="button primary" href="/#/agents">Open Agents</a>');
+  expect(html).not.toMatch(/<script/i);
+  // the library's words are never shown
+  expect(text).not.toMatch(/PKCE|code_challenge|client_id|redirect URI/);
+ });
+});

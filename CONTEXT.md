@@ -123,3 +123,8 @@ Home: `src/billing/offer.ts`, order states `src/billing/orders.ts`; `docs/billin
 An AI client acting for a person through the MCP server or the API, with finite grants the person consented to. The MCP tools never write DNS. Two change state: `add_domain` (`addDomain` in `src/mcp/tools/index.ts`: `assertAgentEnrollmentSafe` in `src/domains/service.ts` first, which refuses with 409 when another workspace holds an unproven `legacy` row for the name, because taking it over needs a signed-in person; then `enrollDomain`) and `verify_domain`. Both can, as a side effect of the ownership rule, withdraw another workspace's lapsed zone proof and email that workspace's owners (`sendProofLostNotice`), although the tool descriptions and the consent page say they send no mail.
 _Avoid_: bot, integration
 Home: `src/mcp/`, grants `src/access/`; `docs/agent-operations.md`.
+
+**App** (an agent's software) and **app registration**:
+The assistant or program an agent connection is made through (Claude, ChatGPT, Cursor, VS Code). An app introduces itself in one of two ways: it publishes a **client ID metadata document** at its own HTTPS address (the app is then **verified** by that host), or it **registers itself** with `POST /oauth/register` (dynamic client registration; off unless the operator sets `MCP_DCR_ENABLED=1`; the app is then **not verified**, its name is a claim). Registration is vetted, counted and audited (ADR 0018). An approved app appears in Settings → Agents under its name.
+_Avoid_: client (in UI copy), plugin
+Home: `src/mcp/registration.ts`, `src/mcp/connections.ts`; the list of assistants `web/src/lib/agent-clients.ts`; `docs/agent-operations.md`.

@@ -152,12 +152,12 @@ describe('every query on tenant data carries a workspace predicate (per statemen
 		expect(scan(walk(join(ROOT, 'src'))).found).toEqual([]);
 	});
 
-	it('the query layer (except global.ts) is scoped, with the documented exemptions (one elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; four in access-grants.ts: credential id/hash, principal identity and finite portfolio consent; nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace)', () => {
+	it('the query layer (except global.ts) is scoped, with the documented exemptions (one elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; five in access-grants.ts: credential id/hash, principal identity, finite portfolio consent and which registered apps an approved connection names (the daily sweep of apps nobody approved); nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace)', () => {
 		const files = walk(join(ROOT, 'packages/db/src/queries')).filter((f) => !/global(-lifecycle)?\.ts$/.test(f));
 		expect(files.length).toBeGreaterThan(5);
 		const { found, exemptions } = scan(files);
 		expect(found).toEqual([]);
-		expect(exemptions).toBe(47);
+		expect(exemptions).toBe(48);
 	});
 
 	it('pins the privileged access lookup census without exempting scoped access queries', () => {
@@ -165,10 +165,11 @@ describe('every query on tenant data carries a workspace predicate (per statemen
 		const [lookups, scoped] = raw.split('export function accessQueries');
 		expect(lookups).toContain('export function accessLookups');
 		const privileged = chains(lookups).filter(chain => /workspace-scope-exempt:/.test(chain));
-		expect(privileged).toHaveLength(5);
+		expect(privileged).toHaveLength(6);
 		for (const [table, field] of [['accessCredentials', 'id'], ['accessCredentials', 'key_hash'], ['accessPrincipals', 'id'], ['accessGrants', 'principal_id']]) {
 			expect(privileged.filter(chain => chain.includes(`eq(${table}.${field},`))).toHaveLength(1);
 		}
+		expect(privileged.filter(chain => chain.includes('connectedClientIds') || chain.includes('inArray(clientId, clientIds)'))).toHaveLength(1);
 		expect(privileged.filter(chain => chain.includes('eq(accessPrincipals.user_id, userId)') && chain.includes("eq(accessPrincipals.kind, 'human')"))).toHaveLength(1);
 		expect(scoped).toBeTruthy();
 		expect(scoped).not.toContain('workspace-scope-exempt:');
