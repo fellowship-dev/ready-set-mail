@@ -10,8 +10,11 @@ function focusConnectReports() {
 	// Only the panel's own "Connect reports" is pressed: never an Apply or a Disconnect that may be showing.
 	const button = [...(panel?.querySelectorAll<HTMLElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Connect reports');
 	button?.click();
-	(button ?? panel)?.scrollIntoView({ block: 'center' });
-	button?.focus();
+	// After the panel has taken its place (it comes first once there is a review to Apply).
+	window.setTimeout(() => {
+		(document.querySelector<HTMLElement>('[data-testid="connect-reports"]') ?? panel)?.scrollIntoView({ block: 'start' });
+		document.querySelector<HTMLElement>('[data-testid="connect-reports"] button')?.focus();
+	}, 60);
 }
 
 /**

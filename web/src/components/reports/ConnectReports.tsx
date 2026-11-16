@@ -39,14 +39,20 @@ import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
  * container that already says reports are not connected (ReportsNotConnected): no section heading, and before reports
  * are connected only the action itself. `headless` drops only the section heading (a wizard step that has its own).
  */
+/**
+ * On the domain page the panel follows the steps and the offer while it is only a statement and an action (so it does not push the offer down);
+ * once the person is acting on it (a review to Apply, or connected and the record not written yet) it comes first, so its Apply is in the first screen.
+ */
+const ACTIVE = 'has-[[data-active]]:order-first';
+
 export function ConnectReports({ domain, bare = false, headless = false }: { domain: { id: number; domain: string }; bare?: boolean; headless?: boolean }) {
 	const enabled = useReportIntakeEnabled();
 	if (!enabled) return null;
 	const body = <Panel domainId={domain.id} domainName={domain.domain} bare={bare} />;
 	return bare || headless ? (
-		<div data-testid="connect-reports">{body}</div>
+		<div data-testid="connect-reports" className={ACTIVE}>{body}</div>
 	) : (
-		<div data-testid="connect-reports">
+		<div data-testid="connect-reports" className={ACTIVE}>
 			<Section title="DMARC reports">{body}</Section>
 		</div>
 	);
@@ -103,7 +109,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 		const open = s.can_connect && s.apply_via_cloudflare && applyable(s.review);
 		if (open && (reviewing || changed)) {
 			return (
-				<div className="space-y-3 rounded-lg border border-line bg-surface-1 p-4" data-state="review">
+				<div className="space-y-3 rounded-lg border border-line bg-surface-1 p-4" data-state="review" data-active>
 					{applyFailed}
 					<ReviewRecord review={review!} changed={!!changed} pending={m.apply.isPending} onApply={onApply} onCancel={() => { setReviewing(false); m.apply.reset(); }} />
 				</div>
@@ -143,7 +149,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	// Apply is offered while the record in the zone does not list the address yet; once it does (written), only public DNS is being waited for.
 	const canApply = s.apply_via_cloudflare === true && applyable(review) && s.state !== 'written' && s.state !== 'waiting' && s.state !== 'receiving';
 	return (
-		<div className="space-y-4 rounded-lg border border-line bg-surface-1 p-4" data-state={s.state}>
+		<div className="space-y-4 rounded-lg border border-line bg-surface-1 p-4" data-state={s.state} {...(s.state === 'not_published' ? { 'data-active': true } : {})}>
 			{applyFailed}
 			{m.apply.isSuccess && m.apply.data.wrote ? <p className="text-sm font-medium text-ink-1">Report address added.</p> : null}
 			<StateLine
