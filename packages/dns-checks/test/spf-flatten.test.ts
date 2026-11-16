@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { flattenFromSource, type SpfFlatOptions, normalizeSpfRecord, sameSpfRecord, SPF_FLAT_MAX_BYTES } from '../src/spf-flatten';
 import { fakeResolver, type Zone } from './helpers';
+import { SpfEval, type World } from './spf-eval';
 
 const txt = (...v: string[]) => v;
 const ips = (n: number, pre: string) => Array.from({ length: n }, (_, i) => `ip4:${pre}.${i}.0/24`);
@@ -215,5 +216,90 @@ describe('comparing records', () => {
     expect(sameSpfRecord('v=spf1 ip4:1.1.1.1 -all', 'v=spf1 ip4:1.1.1.1 ~all')).toBe(false);
     expect(sameSpfRecord(null, 'v=spf1 -all')).toBe(false);
     expect(normalizeSpfRecord('"v=spf1 exists:%{I}.X.test -all"')).toBe('v=spf1 exists:%{I}.X.test -all');
+  });
+});
+
+// What flattening never changes: one test per case in docs/spf-flattening.md ("What flattening never changes").
+describe('audit: what a term means once it moves into the customer\'s record', () => {
+  const macroRefusal = (domain: string) => `The record of ${domain}, which your record hands over to with redirect=, uses a macro that depends on that name, so it cannot be copied into your record.`;
+
+  it('a macro in a term of a redirect target is refused, for every mechanism that takes one (RFC 7208 §6.1, §7.3: %{d} is the target)', async () => {
+    for (const term of ['exists:%{i}._spf.%{d}', 'a:%{d}', 'mx:%{d}/24', '-exists:%{i}._e.%{d}', 'ptr:%{d}', 'a:%{l}.%{d}']) {
+      const p = await refused('v=spf1 ip4:1.1.1.1 redirect=t.test', { 'TXT t.test': txt(`v=spf1 ${term} -all`) });
+      expect([term, p.kind]).toEqual([term, 'macro']);
+      expect(p.message).toBe(macroRefusal('t.test'));
+    }
+  });
+  it('...at any depth of the redirect chain, and in a bare include target there', async () => {
+    const z: Zone = { 'TXT t1.test': txt('v=spf1 ip4:2.2.2.2 redirect=t2.test'), 'TXT t2.test': txt('v=spf1 ip4:3.3.3.3 redirect=t3.test'), 'TXT t3.test': txt('v=spf1 a:%{d} -all') };
+    expect(await refused('v=spf1 redirect=t1.test', z)).toMatchObject({ kind: 'macro', domain: 't3.test', message: macroRefusal('t3.test') });
+    expect(await refused('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 include:%{d}.x.test -all') })).toMatchObject({ kind: 'macro' });
+  });
+  it('a macro in the customer\'s own record stays as written: %{d} is the customer\'s domain there', async () => {
+    const f = await okFlat('v=spf1 exists:%{i}._spf.%{d} include:a.test -all', { 'TXT a.test': txt('v=spf1 ip4:1.1.1.1 -all') });
+    expect(f.record).toBe('v=spf1 exists:%{i}._spf.%{d} ip4:1.1.1.1 -all');
+  });
+  it('a macro in an included record keeps the include (its %{d} is the include\'s domain, never ours)', async () => {
+    const f = await okFlat('v=spf1 include:a.test -all', { 'TXT a.test': txt('v=spf1 ip4:1.1.1.1 exists:%{i}.%{d} -all') });
+    expect(f.record).toBe('v=spf1 include:a.test -all');
+  });
+  it('a bare a, mx or ptr in a redirect target is written with the target\'s name (§5.3 to §5.5 default to the current domain, §6.1)', async () => {
+    const f = await okFlat('v=spf1 ip4:1.1.1.1 redirect=t.test', { 'TXT t.test': txt('v=spf1 a mx/24 ptr -a//64 -all') });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 a:t.test mx:t.test/24 ptr:t.test -a:t.test//64 -all');
+  });
+  it('a bare a, mx or ptr in an included record is written with the include\'s name, also when it is reached through that record\'s redirect', async () => {
+    const f = await okFlat('v=spf1 include:v.test -all', { 'TXT v.test': txt('v=spf1 a ip4:1.1.1.1 redirect=w.test'), 'TXT w.test': txt('v=spf1 mx ptr -all') });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 a:v.test mx:w.test ptr:w.test -all');
+  });
+  it('exists always names its domain (§5.7); without a macro it moves unchanged, without a domain the record is refused', async () => {
+    const f = await okFlat('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 exists:check.vendor.test -all') });
+    expect(f.record).toBe('v=spf1 exists:check.vendor.test -all');
+    expect((await refused('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 exists -all') })).kind).toBe('include_unresolved');
+  });
+  it('a redirect target\'s +all, qualified terms and own all keep their order and qualifier at the top', async () => {
+    const f = await okFlat('v=spf1 ~ip4:9.9.9.9 redirect=t.test', { 'TXT t.test': txt('v=spf1 -ip4:1.1.1.1 ip4:1.1.0.0/16 ?mx +all') });
+    expect(f.record).toBe('v=spf1 ~ip4:9.9.9.9 -ip4:1.1.1.1 ip4:1.1.0.0/16 ?mx:t.test all');
+  });
+  it('the customer\'s redirect is ignored when the record has an all anywhere, also after it (§6.1)', async () => {
+    const f = await okFlat('v=spf1 redirect=t.test ip4:1.1.1.1 -all', { 'TXT t.test': txt('v=spf1 ip4:2.2.2.2 -all') });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 -all');
+  });
+  it('terms after all are never evaluated and are dropped; a modifier after all still counts', async () => {
+    const f = await okFlat('v=spf1 ip4:1.1.1.1 -all ip4:2.2.2.2 include:nope.test exp=why.example.test', {});
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 -all exp=why.example.test');
+  });
+  it('a record with a syntax error anywhere, also after all, is refused: receivers give a permanent error for the whole record (§4.6)', async () => {
+    expect((await refused('v=spf1 ip4:1.1.1.1 -all foo:bar', {})).kind).toBe('include_unresolved');
+    expect((await refused('v=spf1 ip4:1.1.1.1 -all ip4:300.1.1.1', {})).kind).toBe('include_unresolved');
+    expect((await refused('v=spf1 include:a.test -all', { 'TXT a.test': txt('v=spf1 ip4:1.1.1.1 -all bogus:x') })).kind).toBe('include_unresolved');
+    expect((await refused('v=spf1 ip4:1.1.1.1 redirect=a.test redirect=b.test', {})).message).toMatch(/more than one redirect=/);
+    expect((await refused('v=spf1 ip4:1.1.1.1 exp=a.test exp=b.test -all', {})).message).toMatch(/more than one exp=/);
+  });
+  it('exp= changes only the explanation: the customer\'s is kept, a redirect target\'s is carried when the customer has none and it has no macro', async () => {
+    expect((await okFlat('v=spf1 redirect=t.test exp=mine.test', { 'TXT t.test': txt('v=spf1 ip4:2.2.2.2 -all exp=theirs.test') })).record).toBe('v=spf1 ip4:2.2.2.2 -all exp=mine.test');
+    expect((await okFlat('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 ip4:2.2.2.2 -all exp=theirs.test') })).record).toBe('v=spf1 ip4:2.2.2.2 -all exp=theirs.test');
+    expect((await okFlat('v=spf1 redirect=t.test', { 'TXT t.test': txt('v=spf1 ip4:2.2.2.2 -all exp=%{d}.theirs.test') })).record).toBe('v=spf1 ip4:2.2.2.2 -all');
+  });
+  it('an include\'s own redirect is followed after its mechanisms, wherever the modifier stands (§6.1), so the lookups keep their order', async () => {
+    const f = await okFlat('v=spf1 include:v.test -all', { 'TXT v.test': txt('v=spf1 redirect=w.test a:good.test ip4:1.1.1.1'), 'TXT w.test': txt('v=spf1 a:void.test -all') });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 a:good.test a:void.test -all');
+  });
+  it('pinned lookups use the names the original used, in the original order, so the flattened record never makes a void lookup the original would not (§4.6.4)', async () => {
+    const zone = {
+      'customer.test': 'v=spf1 include:v.test -all',
+      'v.test': 'v=spf1 redirect=w.test a:good.test',
+      'w.test': 'v=spf1 a:v1.test a:v2.test a:v3.test -all',
+    };
+    const world: World = { txt: new Map(Object.entries(zone).map(([k, v]) => [k, [v]])), a: new Map([['good.test', ['192.0.2.7']]]), mx: new Map(), ptr: new Map() };
+    const f = await okFlat(zone['customer.test'], Object.fromEntries(Object.entries(zone).map(([k, v]) => [`TXT ${k}`, [v]])));
+    const o = new SpfEval(world, '192.0.2.7', false);
+    const n = new SpfEval(world, '192.0.2.7', true);
+    expect([o.check('customer.test'), n.check('customer.test', f.record)]).toEqual(['pass', 'pass']);
+    expect(n.voids).toBeLessThanOrEqual(o.voids);
+  });
+  it('void lookups: a pinned a:/mx: whose name has no record is looked up where, and only if, the original looked it up', async () => {
+    const f = await okFlat('v=spf1 ip4:1.1.1.1 include:v.test -all', { 'TXT v.test': txt('v=spf1 ip4:2.2.2.2 mx a -all') });
+    expect(f.record).toBe('v=spf1 ip4:1.1.1.1 ip4:2.2.2.2 mx:v.test a:v.test -all');
+    expect(f.lookupsAfter).toBe(2); // the same two lookups the include cost, minus the include itself
   });
 });

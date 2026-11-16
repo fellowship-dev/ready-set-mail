@@ -35,9 +35,15 @@ export function gen(seed: number): Gen {
   }
   const qual = () => (chance(0.82) ? pick(['', '', '+']) : pick(['-', '~', '?']));
   const allQ = () => pick(['-all', '~all', '?all', '+all', '', '-all', '~all']);
+  // some worlds are full of names nobody published: lookups that return nothing (void lookups, RFC 7208 §4.6.4, limit 2)
+  const voidy = chance(0.2);
   const term = (self: string, _idx: number, provIdx: number): string => {
     const k = R();
     const q = qual();
+    if (voidy && chance(0.45)) {
+      const name = `void${Math.floor(R() * 4)}.prov.test`;
+      return pick([`${q}a:${name}`, `${q}mx:${name}`, `${q}exists:%{i}.${name}`]);
+    }
     if (k < 0.45) { const bits = pick([32, 32, 32, 30, 28, 24]); return `${q}ip4:${ip()}${bits === 32 ? pick(['', '/32']) : '/' + bits}`; }
     if (k < 0.52) return `${q}ip6:2001:db8:${Math.floor(R() * 99)}::/48`;
     if (k < 0.70 && provIdx + 1 < provs.length) {
@@ -45,21 +51,39 @@ export function gen(seed: number): Gen {
       const tgt = chance(0.03) && provIdx > 0 ? provs[0]! : pick(later);
       return `${q}include:${tgt}`;
     }
-    if (k < 0.76) return `${q}a${pick(['', '', ':' + pick(hosts), ':' + self])}${pick(['', '', '/24', '/30'])}`;
-    if (k < 0.81) return `${q}mx${pick(['', ':' + self])}${pick(['', '/24'])}`;
-    if (k < 0.86) return `${q}exists:%{i}._e.${pick(['%{d}', self, '%{d}'])}`;
-    if (k < 0.88) return `${q}ptr${pick(['', ':' + self])}`;
+    // a, mx, ptr and exists: bare (the CURRENT domain), with a host, with a macro of the current domain, with a name nobody published (a void lookup)
+    if (k < 0.74) return `${q}a${pick(['', '', ':' + pick(hosts), ':' + self, ':%{d}', ':void' + Math.floor(R() * 3) + '.prov.test'])}${pick(['', '', '/24', '/30'])}`;
+    if (k < 0.79) return `${q}mx${pick(['', ':' + self, ':%{d}', ':void' + Math.floor(R() * 3) + '.prov.test'])}${pick(['', '/24'])}`;
+    if (k < 0.85) return `${q}exists:%{i}._e.${pick(['%{d}', self, '%{d}', pick(provs), 'void.prov.test'])}`;
+    if (k < 0.87) return `${q}ptr${pick(['', ':' + self, ':%{d}'])}`;
+    if (k < 0.88) return `${q}include:%{d}`;
     return `${q}ip4:${ip()}`;
   };
   provs.forEach((p, i) => {
     const n = 1 + Math.floor(R() * 5);
-    const terms = Array.from({ length: n }, (_, j) => term(p, j, i));
-    let rec = `v=spf1 ${terms.join(' ')}`;
-    if (chance(0.15) && i + 1 < provs.length) rec += ` redirect=${pick(provs.slice(i + 1))}`;
-    else { const a = allQ(); if (a) rec += ` ${a}`; }
-    if (chance(0.05)) { const r2 = rec.split(' '); const j = 1 + Math.floor(R() * (r2.length - 1)); r2.splice(j, 0, '-all'); rec = r2.join(' '); }
-    w.txt.set(p, [rec, ...(chance(0.2) ? ['google-site-verification=xyz'] : [])]);
+    const tokens = Array.from({ length: n }, (_, j) => term(p, j, i));
+    const later = provs.slice(i + 1);
+    const mods: string[] = [];
+    if (chance(0.25) && later.length) mods.push(`redirect=${pick(later)}`);
+    else { const a = allQ(); if (a) mods.push(a); }
+    if (chance(0.15)) mods.push(`exp=${pick(['explain.' + p, '%{d}.explain.prov.test', 'explain.prov.test'])}`);
+    if (chance(0.03) && later.length) mods.push(`redirect=${pick(later)}`); // twice: a permanent error for receivers
+    if (chance(0.03)) mods.push('-all'); // an all next to a redirect, or a second all
+    if (chance(0.02)) mods.push('foo:bar'); // not a mechanism: the record is invalid wherever it stands
+    // modifiers and `all` stand anywhere in the record, not only at the end
+    for (const m of mods) tokens.splice(chance(0.5) ? tokens.length : Math.floor(R() * (tokens.length + 1)), 0, m);
+    w.txt.set(p, [`v=spf1 ${tokens.join(' ')}`, ...(chance(0.2) ? ['google-site-verification=xyz'] : [])]);
   });
+  // The order of the lookups an included record makes: `redirect=` is evaluated after every mechanism, wherever it stands in the record
+  // (RFC 7208 §6.1). The first provider answers from its own host; its redirect target only makes void lookups.
+  const ordered = chance(0.1);
+  if (ordered) {
+    const tail = provs[provs.length - 1]!;
+    w.txt.set(tail, [`v=spf1 a:void0.prov.test a:void1.prov.test mx:void2.prov.test ${pick(['', '-all', '~all'])}`.trim()]);
+    const tokens = [`a:${pick(hosts)}`, `ip4:${ip()}`];
+    tokens.splice(Math.floor(R() * 3), 0, `redirect=${tail}`);
+    w.txt.set(provs[0]!, [`v=spf1 ${tokens.join(' ')}`]);
+  }
   for (let k = 0; k < 60; k++) { const x = ip(); w.a.set(`${x}._e.${pick([...provs, 'customer.test'])}`, ['127.0.0.2']); }
   for (let k = 0; k < 30; k++) { const x = ip(); const h = `mail${k}.${pick([...provs, 'customer.test'])}`; w.ptr.set(x, [h]); if (chance(0.7)) w.a.set(h, [x]); }
   w.a.set('customer.test', [ip()]);
@@ -67,12 +91,17 @@ export function gen(seed: number): Gen {
   const rootTerms: string[] = [];
   const nInc = 1 + Math.floor(R() * Math.min(6, provs.length));
   const shuffled = [...provs].sort(() => R() - 0.5).slice(0, nInc);
+  if (ordered && !shuffled.includes(provs[0]!)) shuffled.push(provs[0]!);
   for (const p of shuffled) rootTerms.push(`${chance(0.9) ? '' : pick(['-', '~', '?'])}include:${p}`);
   for (let k = 0; k < Math.floor(R() * 3); k++) rootTerms.splice(Math.floor(R() * rootTerms.length), 0, term('customer.test', k, -1).replace(/include:.*/, `ip4:${ip()}`));
   rootTerms.sort(() => R() - 0.5);
   let root = `v=spf1 ${rootTerms.join(' ')}`;
-  if (chance(0.15)) root = `v=spf1 ${rootTerms.slice(0, 1).join(' ')} redirect=${pick(provs)}`;
-  else { const a = pick(['-all', '~all', '?all', '', '+all', '~all', '-all']); if (a) root += ` ${a}`; }
+  if (chance(0.3)) {
+    // the customer hands over with redirect=, a chain of providers (they redirect on, see above); macros and bare a/mx/ptr are in their records
+    const own = rootTerms.slice(0, Math.floor(R() * 3));
+    own.splice(chance(0.5) ? own.length : Math.floor(R() * (own.length + 1)), 0, `redirect=${pick(provs)}`);
+    root = `v=spf1 ${own.join(' ')}`;
+  } else { const a = pick(['-all', '~all', '?all', '', '+all', '~all', '-all']); if (a) root += ` ${a}`; }
   if (chance(0.05)) root += ' foo=bar';
   if (chance(0.05)) root += ' exp=explain.customer.test';
   w.txt.set('customer.test', [root]);

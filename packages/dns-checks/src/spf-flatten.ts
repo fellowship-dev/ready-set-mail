@@ -90,10 +90,10 @@ function ipEntry(t: SpfTerm): string {
 }
 
 interface Node {
-  /** `+ip4:`/`+ip6:` entries (qualifier omitted) the include matches. */
-  ips: string[];
-  /** Lookup terms copied when the include is inlined (a, mx, ptr, exists, pinned to the include's domain). */
-  kept: string[];
+  /** `+ip4:`/`+ip6:` entries (qualifier omitted) the include matches, once each, in the order they are met. */
+  ips: Set<string>;
+  /** Lookup terms copied when the include is inlined (a, mx, ptr, exists, pinned to the include's domain), once each, in order. */
+  kept: Set<string>;
   /** Lookups the inlined form still costs (one per kept term). */
   inlinedCost: number;
   /** Lookups the include's record costs when kept as an include (not counting the include term itself). */
@@ -109,6 +109,8 @@ type RootItem =
 class Flattener {
   fetches = 0;
   private cache = new Map<string, Promise<string>>();
+  /** Includes read to the end without a refusal: what one says does not depend on how we got to it, so a lattice of includes is read once. */
+  private nodes = new Map<string, Node>();
   constructor(private resolver: Resolver, private rootName: string, private maxFetches: number) {}
 
   private async record(domain: string): Promise<string> {
@@ -130,6 +132,33 @@ class Flattener {
     return p;
   }
 
+  /**
+   * The terms of a record, after the checks a receiver makes on the WHOLE record before it evaluates a term (RFC 7208 §4.6: a syntax
+   * error anywhere, also after `all`, is a permanent error for everyone). We refuse such a record instead of turning it into a valid one.
+   */
+  private checked(domain: string, raw: string): SpfTerm[] {
+    const terms = parseSpfTerms(raw);
+    const seen = new Set<string>();
+    for (const t of terms) {
+      if (t.kind === 'modifier') {
+        // §6: redirect and exp may appear once each
+        if (t.name === 'redirect' || t.name === 'exp') {
+          if (seen.has(t.name)) refuse('include_unresolved', domain, `The SPF record of ${domain} has more than one ${t.name}=, which receivers treat as an error, so we left it as it is.`);
+          seen.add(t.name);
+        }
+        continue;
+      }
+      if (t.name === 'ip4' || t.name === 'ip6') {
+        if (ipProblem(t.name, t.value ?? '')) refuse('include_unresolved', domain, `The SPF record of ${domain} lists ${t.raw}, which is not an address.`);
+      } else if (t.name === 'include' || t.name === 'exists') {
+        if (!t.value) refuse('include_unresolved', domain, `${t.raw} in the record of ${domain} has no domain.`);
+      } else if (!['all', 'a', 'mx', 'ptr'].includes(t.name)) {
+        refuse('include_unresolved', domain, `The SPF record of ${domain} uses ${t.raw}, which is not an SPF mechanism.`);
+      }
+    }
+    return terms;
+  }
+
   private target(t: SpfTerm, domain: string, path: string[]): string {
     const target = t.value ? normalizeName(t.value) : '';
     if (!target) return refuse('include_unresolved', domain, `${t.raw} in the record of ${domain} has no domain.`);
@@ -140,21 +169,22 @@ class Flattener {
 
   /** An included record, with include semantics: only a `pass` matches. */
   async node(domain: string, path: string[]): Promise<Node> {
-    const n: Node = { ips: [], kept: [], inlinedCost: 0, fullCost: 0, safe: true };
+    const done = this.nodes.get(domain);
+    if (done) return done;
+    const n: Node = { ips: new Set(), kept: new Set(), inlinedCost: 0, fullCost: 0, safe: true };
     await this.walkIncluded(domain, await this.record(domain), path, n);
+    this.nodes.set(domain, n);
     return n;
   }
 
   private async walkIncluded(domain: string, raw: string, path: string[], n: Node): Promise<void> {
-    const terms = parseSpfTerms(raw);
+    const terms = this.checked(domain, raw);
     const hasAll = terms.some(t => t.kind === 'mechanism' && t.name === 'all');
+    // `redirect=` is evaluated after every mechanism, wherever the modifier stands in the record (§6.1): the order of the lookups we keep follows.
+    let redirect: SpfTerm | null = null;
     for (const t of terms) {
       if (t.kind === 'modifier') {
-        if (t.name === 'redirect' && !hasAll) {
-          const target = this.target(t, domain, path);
-          n.fullCost += 1;
-          await this.walkIncluded(target, await this.record(target), [...path, target], n);
-        }
+        if (t.name === 'redirect' && !hasAll) redirect = t;
         continue;
       }
       if (t.name === 'all') {
@@ -162,8 +192,7 @@ class Flattener {
         return; // anything after `all` is never evaluated
       }
       if (t.name === 'ip4' || t.name === 'ip6') {
-        if (ipProblem(t.name, t.value ?? '')) refuse('include_unresolved', domain, `The SPF record of ${domain} lists ${t.raw}, which is not an address.`);
-        if (t.qualifier === '+') n.ips.push(ipEntry(t).replace(/^\+/, ''));
+        if (t.qualifier === '+') n.ips.add(ipEntry(t).replace(/^\+/, ''));
         else n.safe = false; // a fail/softfail/neutral term decides the include: copying it as a pass would widen it
         continue;
       }
@@ -172,22 +201,24 @@ class Flattener {
         const child = await this.node(target, [...path, target]);
         n.fullCost += 1 + child.fullCost;
         if (t.qualifier === '+') {
-          n.ips.push(...child.ips);
-          n.kept.push(...child.kept);
+          for (const ip of child.ips) n.ips.add(ip);
+          for (const k of child.kept) n.kept.add(k);
           n.inlinedCost += child.inlinedCost;
           if (!child.safe) n.safe = false;
         } else n.safe = false;
         continue;
       }
-      if (t.name === 'a' || t.name === 'mx' || t.name === 'ptr' || t.name === 'exists') {
-        n.fullCost += 1;
-        // A copied term is evaluated for the customer's domain: macros (%{d}) and a qualifier other than + change what it means.
-        if (t.qualifier !== '+' || hasMacro(t.raw)) { n.safe = false; continue; }
-        n.kept.push(this.pin(t, domain));
-        n.inlinedCost += 1;
-        continue;
-      }
-      refuse('include_unresolved', domain, `The SPF record of ${domain} uses ${t.raw}, which is not an SPF mechanism.`);
+      // a, mx, ptr, exists (checked() refused anything else)
+      n.fullCost += 1;
+      // A copied term is evaluated for the customer's domain: macros (%{d}) and a qualifier other than + change what it means.
+      if (t.qualifier !== '+' || hasMacro(t.raw)) { n.safe = false; continue; }
+      n.kept.add(this.pin(t, domain));
+      n.inlinedCost += 1;
+    }
+    if (redirect) {
+      const target = this.target(redirect, domain, path);
+      n.fullCost += 1;
+      await this.walkIncluded(target, await this.record(target), [...path, target], n);
     }
   }
 
@@ -198,32 +229,45 @@ class Flattener {
     return `${qual(t)}${t.name}:${domain}${cidr}`;
   }
 
-  /** Walk the original and its redirect chain, in order. `before` counts what the source costs as written. */
+  /**
+   * Walk the original and its redirect chain, in order. `before` counts what the source costs as written.
+   *
+   * After `redirect=`, the target is the CURRENT domain (RFC 7208 §6.1) and the macro letter `d` means it (§7.3). Copying a term of the
+   * target into the customer's record would make `d` the customer's domain, so a macro in a term reached through a redirect is refused.
+   * A bare `a`, `mx` or `ptr` means the current domain too: it is written with the target's name.
+   */
   async root(domain: string, raw: string, path: string[], items: RootItem[], st: { all: string | null; exp: string | null; before: number }): Promise<void> {
-    const terms = parseSpfTerms(raw);
+    const terms = this.checked(domain, raw);
+    const inChain = domain !== this.rootName;
     const hasAll = terms.some(t => t.kind === 'mechanism' && t.name === 'all');
     let redirect: SpfTerm | null = null;
+    let ended = false; // `all` was seen: no later mechanism is evaluated, a later modifier still counts
     for (const t of terms) {
       if (t.kind === 'modifier') {
-        if (t.name === 'redirect' && !hasAll && !redirect) redirect = t;
-        else if (t.name === 'exp' && domain === this.rootName && t.value) st.exp = lower(t.raw);
+        if (t.name === 'redirect' && !hasAll) redirect = t;
+        // exp= only changes the explanation a receiver shows, never the result. The customer's own is kept; a redirect target's is
+        // carried when the customer has none and it has no macro (its `d` would be the customer's domain).
+        else if (t.name === 'exp' && t.value && (!inChain || !hasMacro(t.raw))) st.exp = st.exp ?? lower(t.raw);
         continue;
       }
-      if (t.name === 'all') { st.all = `${qual(t)}all`; break; }
+      if (ended) continue;
+      if (t.name === 'all') { st.all = `${qual(t)}all`; ended = true; continue; }
       if (t.name === 'ip4' || t.name === 'ip6') {
-        if (ipProblem(t.name, t.value ?? '')) refuse('include_unresolved', domain, `The SPF record of ${domain} lists ${t.raw}, which is not an address.`);
         items.push({ t: 'text', text: ipEntry(t), ip: true, cost: 0 });
       } else if (t.name === 'include') {
         const target = this.target(t, domain, path);
         const node = await this.node(target, [...path, target]);
         st.before += 1 + node.fullCost;
         items.push({ t: 'inc', target, text: `${qual(t)}include:${target}`, node, inlineable: t.qualifier === '+' && node.safe });
-      } else if (t.name === 'a' || t.name === 'mx' || t.name === 'ptr' || t.name === 'exists') {
+      } else {
+        if (inChain && hasMacro(t.raw)) {
+          refuse('macro', domain, `The record of ${domain}, which your record hands over to with redirect=, uses a macro that depends on that name, so it cannot be copied into your record.`);
+        }
         st.before += 1;
-        items.push({ t: 'text', text: domain === this.rootName ? lower(t.raw) : this.pin(t, domain), ip: false, cost: 1 });
-      } else refuse('include_unresolved', domain, `The SPF record of ${domain} uses ${t.raw}, which is not an SPF mechanism.`);
+        items.push({ t: 'text', text: inChain ? this.pin(t, domain) : lower(t.raw), ip: false, cost: 1 });
+      }
     }
-    if (redirect && !st.all) {
+    if (redirect) {
       const target = this.target(redirect, domain, path);
       st.before += 1;
       await this.root(target, await this.record(target), [...path, target], items, st);
@@ -327,9 +371,23 @@ export function normalizeSpfRecord(raw: string): string {
   return raw.trim().replace(/^"|"$/g, '').trim().split(/\s+/).map(lower).join(' ');
 }
 
-/** Same record regardless of the order of its terms, case, quotes and spacing. */
+/**
+ * Same record regardless of case, quotes and spacing, and of the order of addresses that stand next to each other. The order of every
+ * other term is kept: `-ip4:1.2.3.4 ip4:1.2.0.0/16` and the same terms the other way round give different results (RFC 7208 §4.6.2:
+ * the first term that matches decides), so a reordered record is a different record.
+ */
 export function sameSpfRecord(a: string | null | undefined, b: string | null | undefined): boolean {
   if (a == null || b == null) return false;
-  const norm = (s: string) => normalizeSpfRecord(s).split(' ').sort().join(' ');
-  return norm(a) === norm(b);
+  const canonical = (s: string): string => {
+    const out: string[] = [];
+    let run: string[] = [];
+    const flush = () => { out.push(...run.sort()); run = []; };
+    for (const t of normalizeSpfRecord(s).split(' ')) {
+      if (/^\+?ip[46]:/.test(t)) run.push(t);
+      else { flush(); out.push(t); }
+    }
+    flush();
+    return out.join(' ');
+  };
+  return canonical(a) === canonical(b);
 }
