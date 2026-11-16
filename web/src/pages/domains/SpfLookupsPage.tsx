@@ -27,6 +27,15 @@ export function SpfLookupsPage() {
 		const tips = byHandTips(v);
 		body = (
 			<StepCard title={v.total > SPF_LOOKUP_ALLOWED ? `Your SPF record needs ${v.total} lookups; receivers stop at ${SPF_LOOKUP_ALLOWED}` : `Your SPF record needs ${v.total} of the ${SPF_LOOKUP_ALLOWED} lookups receivers allow`}>
+				<div className="flex flex-wrap items-center gap-2">
+					<Button asChild>
+						<Link to={`/domains/${domainId}/setup/2`}>Edit your SPF record</Link>
+					</Button>
+					<Button asChild variant="secondary">
+						<Link to={back}>Back to domain</Link>
+					</Button>
+					<Badge variant="outline">Counted just now from public DNS</Badge>
+				</div>
 				<TxtRecord title={v.source === 'original' ? 'Your original record' : 'Your record'} value={v.record} badge={<LookupBadge count={v.total} />} copyable={false} />
 				<div className="overflow-x-auto">
 					<table className="w-full text-sm">
@@ -62,15 +71,6 @@ export function SpfLookupsPage() {
 				) : (
 					<p className="text-sm text-ink-2">That is within the limit, so there is nothing to bring down.</p>
 				)}
-				<div className="flex flex-wrap items-center gap-2">
-					<Button asChild>
-						<Link to={`/domains/${domainId}/setup/2`}>Edit your SPF record</Link>
-					</Button>
-					<Button asChild variant="secondary">
-						<Link to={back}>Back to domain</Link>
-					</Button>
-					<Badge variant="outline">Counted just now from public DNS</Badge>
-				</div>
 			</StepCard>
 		);
 	}
