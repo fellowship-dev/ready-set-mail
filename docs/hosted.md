@@ -69,6 +69,9 @@ In `wrangler.jsonc` `vars` (or the dashboard):
 | `RETENTION_UNCOUNTED_REPORTS_DAYS` | `30` | days a report of tier `unknown` or `unauthenticated` is kept, swept by the one daily `0 4 * * *` cron. Not applied when `REPORT_COUNTING=all` (there those reports are the numbers). The earlier name `RETENTION_UNAUTHENTICATED_REPORTS_DAYS` (when it covered only unauthenticated reports) is still honoured when the new one is unset. A reporter an owner promotes later becomes tier `counted` and leaves this sweep (the sweep and the budgets read `reporter_tier`, never the identity) |
 | `RETENTION_INTAKE_COUNTERS_DAYS`, `RETENTION_INTAKE_FAILURES_DAYS` | `8`, `90` | how long the daily counters and the "could not be processed" markers are kept |
 | `HOSTED_MAX_DOMAINS_PER_WORKSPACE` | `10` | optional: domains per workspace that may use hosted records (enabling more answers 429) |
+| `LIFECYCLE_EMAILS_OFF` | empty | kill switch of the [lifecycle emails](#lifecycle-emails): a comma list of `records_live`, `first_report`, `no_reports`, `summary`, `tips`, or `all`. Empty: all on |
+| `LIFECYCLE_TIPS_DEFAULT` | `on` | `on` or `off`: whether an owner who never chose gets the tips email. An explicit choice in Settings always wins; admins never get tips unless they turn them on |
+| `ONBOARDING_SEQUENCE_ENABLED` | unset (off) | `1` turns the free-check onboarding sequence on; see [email-funnel.md](email-funnel.md) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_LOOKUP_KEY` | unset | optional: in-app purchase of "Fix one domain" (restricted key, webhook signing secret, price lookup key `rsm_fix_one_domain`). Billing is off, with no offer and no routes, unless both secrets are set; see [billing.md](billing.md) |
 
 A report's `policy_published` domain must be the token's domain or a subdomain of it; it is filed under the token's domain, or under the subdomain's own row if the same workspace has that subdomain as a verified domain. Each stored report also records whether its
@@ -134,6 +137,27 @@ The daily hosted job runs inside the existing `0 11 * * *` trigger (after the pe
 3. **SPF refresh**: re-flattens every hosted SPF from its stored source and updates the record if the providers' ranges moved. A source that cannot be fully resolved leaves the current record alone.
 4. **Pointer verification** for every hosted domain.
 5. Forgets expired canary addresses.
+6. **Lifecycle emails** (every workspace, once per run; [below](#lifecycle-emails)): the records-live watch, the first-report catch-up, no reports yet, the weekly summary and tips. Nothing here depends on `0 8`, `0 10` or `0 9 * * 1`, which the hosted operator may hold: the weekly summary and everything else runs only at `0 11 * * *`, and the Monday digest returns at once on the hosted service (its address, sender and link are the self-host forms).
+
+### Lifecycle emails
+
+Hosted account holders get a few emails that follow what happened to their domains. Code: `src/lifecycle/email/` (state, analysis, copy, send, routes). Each is sent because a stored fact became true, or verifiably did not happen by a deadline measured from a stored fact; never on a bare timer.
+
+| Email | Sent when | To | Cron |
+|---|---|---|---|
+| Records live (`records_live`) | the `0 11` job is the first to see a connected domain's DMARC record name its report address (`domain_milestones.live_seen_by = 'job'`). If a person's own read (setup screens, domain page) saw it first (`'app'`), nothing is sent. Only while no report has arrived and the sighting is under 7 days old | owners, plus the admin who added the domain when the audit log recorded who | `0 11 * * *` |
+| First report (`first_report`) | the first COUNTED report of a domain is stored (real time, inside `ctx.waitUntil`); the `0 11` job catches it up when its claim is missing and the report is under 3 days old. One module for both modes (`src/notifications/first-report.ts`) | as above (self-host: owners; no verified-address rule there) | real time, caught up by `0 11 * * *` |
+| No reports yet (`no_reports`) | the records have been live for 3 days (`NO_REPORT_AFTER_SECONDS`), no counted or uncounted report was stored since, after one live DNS read of the record. Once per domain | as above | `0 11 * * *` |
+| Weekly summary (`summary`) | on the first `0 11` run after a complete ISO week (Mon 00:00 to Sun 24:00 UTC) has ended, keyed by that week (`2026-W46`), when the workspace has a proven, connected domain and the week had counted messages or something changed (a new source, a source that started failing, a domain that stopped getting reports). Otherwise nothing is sent and nothing is claimed | owners (on until turned off); admins who turned it on; members never | `0 11 * * *` |
+| Tips (`tip_fix`, `tip_next`, `tip_done`) | only when true and only for the last complete week(s): a source that passed DKIM/SPF for another domain but failed for this one (10+ messages, most of its mail); two clean weeks and the rule module (`dmarcSteps`) proposes a stricter record, after a live read of the policy; `p=reject` at 100% and two clean weeks. One per person per rolling 7 days, once per source / policy state | as the summary (the tips preference; an owner's default is `LIFECYCLE_TIPS_DEFAULT`) | `0 11 * * *` |
+
+**Never twice.** Every email is claimed first (`lifecycle_sends`, `INSERT OR IGNORE` on workspace, person, domain, kind and period) and only the run whose insert changed a row sends. A claim that sent nothing for a reason that may pass (no provider, a configuration error, a suppressed address) is deleted again so a later run can try; one whose outcome is unknown (`transient`) or that the provider refused is marked `failed` and never retried. Limits: 3 emails per person per run, `MAX_LIFECYCLE_SENDS_PER_RUN` (100) per invocation over every workspace, at most 25 DNS reads for domains waiting to be seen live and 25 for no-report checks, 25 for the live read before a tip.
+
+**Consent.** Summary and tips are non-transactional: suppression list, one-click `List-Unsubscribe` (+ `List-Unsubscribe-Post`) and a visible link in the footer, all of them pointing at `/api/email-preferences/off?t=<token>`, which turns off exactly that one preference for that one person in that one workspace (a `GET` only shows a confirm button; link scanners must not unsubscribe). Records live, first report and no reports are transactional (account notices): no unsubscribe header, a footer line that says why, and a link to Settings. The only commercial content is the offer paragraph of the fix tip, and only with billing on, a cached price, `POSTAL_ADDRESS` set and no order on the domain. People change their choices in Settings, Email (`GET`/`PUT /api/email-preferences`).
+
+**Sender.** The platform sender (`senderAddress` in `src/auth/mail.ts`, `noreply@app.readysetmail.com` on the live instance), `MAIL_REPLY_TO` as Reply-To when set. Mail goes through the Worker's `send_email` binding like the other owner-facing mail.
+
+**Switching it off.** `LIFECYCLE_EMAILS_OFF=all` (or a list of kinds). The free-check onboarding sequence is a separate thing and is off on hosted unless `ONBOARDING_SEQUENCE_ENABLED=1`.
 
 ### 6. Plan, DNS preview limiter and caps
 
