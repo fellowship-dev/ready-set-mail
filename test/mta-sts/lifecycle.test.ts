@@ -33,7 +33,7 @@ describe('availability and the gate: every refusal is a true sentence, nothing i
   it('not configured on this service: 403 with the reason, no dead button', async () => {
     const w = await mtaWorld({ POLICY_HOST_TOKEN: '' });
     const get = await w.json(await w.mta(w.A.token, 'GET', 1));
-    expect(get).toMatchObject({ available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', via: null });
+    expect(get).toMatchObject({ available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', via: null, records: [], mx_preview: { status: 'ok', hosts: ['mx.a-corp.com'], error: null } });
     const post = await w.mta(w.A.token, 'POST', 1);
     expect(post.status).toBe(403);
     expect(await w.json(post)).toMatchObject({ code: 'mta_sts_unavailable', reason: 'not_configured' });

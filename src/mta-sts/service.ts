@@ -225,7 +225,8 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       via: row ? (row.via ?? 'cloudflare') : av.via,
       policy_host: row ? row.policy_host : av.strategy?.kind ?? null,
       mx_preview: mx,
-      records: recordsFor(domain.domain, {
+      // Nothing to show or add when it cannot be turned on here.
+      records: !row && !av.available ? [] : recordsFor(domain.domain, {
         target: target.target, proxied: strategy?.cnameProxied ?? false, address: tlsRptAddress(tenant), policyId: row?.policy_id ?? null, row, strategy: av.strategy,
       }),
       records_problem: target.problem,
