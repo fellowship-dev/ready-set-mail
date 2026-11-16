@@ -171,7 +171,7 @@ export async function instancePreflight(env: BoundEnv, requestOrigin: string): P
   // Booking link: the day-14 follow-up email offers a call through it, and hosted dashboards show it as "Talk to Max".
   // Hosted uses the same https-only rule as the dashboard link (helpUrl), so this check and the link always agree.
   if (hosted && !helpUrl(env)) {
-    items.push({ id: 'booking_link', severity: 'note', setting: 'BOOKING_URL', message: 'No https booking link is set (BOOKING_URL), so the dashboard shows no "Talk to Max" link and the day-14 follow-up email, which offers a call, is held until there is one.' });
+    items.push({ id: 'booking_link', severity: 'note', setting: 'BOOKING_URL', message: `No https booking link is set (BOOKING_URL), so the dashboard shows no "Talk to Max" link${sequenceEnabled(env) ? ' and the day-14 follow-up email, which offers a call, is held until there is one' : ''}.` });
   } else if (!hosted && sequenceEnabled(env) && !bookingUrl(env)) {
     items.push({ id: 'booking_link', severity: 'note', setting: 'BOOKING_URL', message: 'No booking link is set (BOOKING_URL, an http or https address), so the day-14 follow-up email, which offers a call, is held until there is one.' });
   }
