@@ -4,7 +4,7 @@ import { Section } from '../../components/states';
 import { ApiError, errorMessage } from '../../lib/api';
 import { useDomains } from '../../lib/queries';
 import { useSession } from '../../lib/session';
-import { switchToWorkspace, useDeleteWorkspace, useLeaveWorkspace, useRenameWorkspace, useWorkspaces } from '../../lib/workspaces';
+import { canCreateWorkspace, switchToWorkspace, useDeleteWorkspace, useLeaveWorkspace, useRenameWorkspace, useWorkspaces } from '../../lib/workspaces';
 import { Field } from '../auth/AuthLayout';
 
 /** The open workspace, whether it can be left or deleted (only when there is another one to land in), and where to go after. */
@@ -17,10 +17,17 @@ export function useCurrentWorkspace() {
 	return { current, others, goElsewhere };
 }
 
+/** Your only workspace cannot be left or deleted: the one sentence says what to do instead, for whoever can start another workspace and whoever cannot. */
+export const onlyWorkspaceNote = (canCreate: boolean): string =>
+	canCreate
+		? 'This is your only workspace, so it cannot be left or deleted: start another one from the workspace menu first, or delete your account below to leave altogether.'
+		: 'This is your only workspace, so it cannot be left or deleted: ask the owner of this instance to add you to another one first, or delete your account below to leave altogether.';
+
 /** Name and rename (owners) for the workspace that is open. Leaving and deleting it are in the danger zone. */
 export function WorkspaceSection() {
-	const { me, role } = useSession();
+	const { me, role, status } = useSession();
 	const { current, others } = useCurrentWorkspace();
+	const all = useWorkspaces(!!me?.user).data ?? [];
 	if (!me?.user || !current) return null;
 	const isOwner = role === 'owner';
 
@@ -32,7 +39,7 @@ export function WorkspaceSection() {
 					<p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
 						Your role here: {role ? <Badge variant="brand">{role}</Badge> : null} · {current.member_count} {current.member_count === 1 ? 'member' : 'members'}
 					</p>
-					{others.length === 0 ? <p className="text-sm text-ink-2">This is your only workspace, so it cannot be left or deleted.</p> : null}
+					{others.length === 0 ? <p className="text-sm text-ink-2">{onlyWorkspaceNote(canCreateWorkspace(status?.mode, all))}</p> : null}
 				</CardContent>
 			</Card>
 		</Section>

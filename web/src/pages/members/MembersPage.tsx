@@ -25,7 +25,7 @@ import { useState, type FormEvent } from 'react';
 import { ListSkeleton, LoadError, ReadOnlyNotice, Section, WriteButton } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatDate } from '../../lib/format';
-import { useSession } from '../../lib/session';
+import { useHosted, useSession } from '../../lib/session';
 import { useWorkspaces } from '../../lib/workspaces';
 import type { Role } from '../../lib/types';
 import { Field } from '../auth/AuthLayout';
@@ -37,6 +37,8 @@ interface TeamMember {
 	role: Role;
 	last_login_at: number | null;
 	created_at: number;
+	/** In how many other workspaces they are a member: with none, removing them deletes their login. */
+	other_workspaces?: number;
 }
 interface TeamResponse {
 	users: TeamMember[];
@@ -123,6 +125,17 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 		},
 	});
 
+	// The owner changes everyone else's role, except the owner row and their own (hand ownership on instead).
+	const changeRole = useMutation({
+		mutationFn: (role: 'admin' | 'member') => api(`/api/workspaces/${workspaceId}/members/${member.id}/role`, { method: 'POST', body: { role } }),
+		onSuccess: async (_r, role) => {
+			toast({ variant: 'success', title: role === 'admin' ? `${member.email} is now an admin` : `${member.email} is now a member`, description: role === 'admin' ? 'They can change things in this workspace.' : 'They are read-only now.' });
+			await qc.invalidateQueries({ queryKey: teamKey });
+		},
+		onError: (e) => toast({ variant: 'danger', title: 'Could not change the role', description: errorMessage(e) }),
+	});
+	const roleEditable = myRole === 'owner' && !isSelf && member.role !== 'owner';
+
 	// The API refuses these; say so up front instead of offering a button that fails.
 	let blocked: string | null = null;
 	if (isSelf) blocked = 'You cannot remove yourself.';
@@ -134,14 +147,26 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 			<span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-subtle text-sm font-semibold text-brand-ink">
 				{(cleanName(member.name) || member.email).charAt(0).toUpperCase()}
 			</span>
-			<div className="min-w-0 flex-1">
+			<div className="min-w-0 flex-1 basis-56">
 				<p className="truncate font-medium">
 					{cleanName(member.name) || member.email}
 					{isSelf ? <span className="ml-2 text-sm font-normal text-ink-2">(you)</span> : null}
 				</p>
 				<p className="truncate text-sm text-ink-2">{member.email}</p>
 			</div>
-			<Badge variant={member.role === 'member' ? 'neutral' : 'brand'}>{member.role}</Badge>
+			{roleEditable ? (
+				<Select value={member.role} onValueChange={(v) => changeRole.mutate(v as 'admin' | 'member')} disabled={changeRole.isPending}>
+					<SelectTrigger aria-label={`Role of ${member.email}`} className="w-36">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						<SelectItem value="member">Member (read-only)</SelectItem>
+						<SelectItem value="admin">Admin</SelectItem>
+					</SelectContent>
+				</Select>
+			) : (
+				<Badge variant={member.role === 'member' ? 'neutral' : 'brand'}>{member.role}</Badge>
+			)}
 			<p className="text-sm text-ink-2">{member.last_login_at ? `Last sign-in ${formatDate(member.last_login_at)}` : 'Never signed in'}</p>
 			{myRole === 'owner' && !isSelf && member.role !== 'owner' ? (
 				<Button variant="secondary" size="sm" onClick={() => setHanding(true)} aria-label={`Make ${member.email} the owner`}>
@@ -172,7 +197,10 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>Remove {member.email}?</DialogTitle>
-						<DialogDescription>They lose access immediately, and their API keys stop working. This cannot be undone.</DialogDescription>
+						<DialogDescription>
+							They lose access immediately, and their API keys stop working. This cannot be undone.
+							{member.other_workspaces === 0 ? ` This is the only workspace ${member.email} belongs to, so removing them also deletes their login: they would have to sign up again.` : ''}
+						</DialogDescription>
 					</DialogHeader>
 					{remove.isError ? <FieldError>{errorMessage(remove.error)}</FieldError> : null}
 					<DialogFooter>
@@ -189,16 +217,26 @@ function MemberRow({ member, isSelf, myRole }: { member: TeamMember; isSelf: boo
 	);
 }
 
+/** What the invite form does about email, true for what the product sends: nothing from here; on the hosted service, a hand-off to a teammate is emailed. */
+export const inviteEmailNote = (hosted: boolean): string =>
+	hosted
+		? "This form does not send email: you get a one-time link to pass on, and it expires in 7 days. Handing a domain's setup to a teammate is different: we email them when we can."
+		: 'We do not send email from here: you get a one-time link to pass on. It expires in 7 days.';
+
 function InviteSection({ isOwner }: { isOwner: boolean }) {
+	const hosted = useHosted();
 	const [email, setEmail] = useState('');
 	const [inviteRole, setInviteRole] = useState<'member' | 'admin'>('member');
 	const role = isOwner ? inviteRole : 'member';
 	const [link, setLink] = useState<string | null>(null);
+	/** The address a new link was made for, when it replaced an earlier open one. */
+	const [replacedFor, setReplacedFor] = useState<string | null>(null);
 	const qc = useQueryClient();
 	const invite = useMutation({
-		mutationFn: () => api<{ token: string }>('/api/team/invite', { method: 'POST', body: { email: email.trim(), role } }),
-		onSuccess: ({ token }) => {
+		mutationFn: () => api<{ token: string; replaced?: number }>('/api/team/invite', { method: 'POST', body: { email: email.trim(), role } }),
+		onSuccess: ({ token, replaced }) => {
 			setLink(inviteLink(token));
+			setReplacedFor(replaced ? email.trim() : null);
 			void qc.invalidateQueries({ queryKey: invitesKey });
 			setEmail('');
 		},
@@ -207,11 +245,12 @@ function InviteSection({ isOwner }: { isOwner: boolean }) {
 	function submit(e: FormEvent) {
 		e.preventDefault();
 		setLink(null);
+		setReplacedFor(null);
 		invite.mutate();
 	}
 
 	return (
-		<Section title="Invite a member" description="We do not send email: you get a one-time link to pass on. It expires in 7 days.">
+		<Section title="Invite a member" description={inviteEmailNote(hosted)}>
 			<form onSubmit={submit} className="grid gap-4 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
 				<Field id="invite-email" label="Email">
 					<Input id="invite-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@yourcompany.com" />
@@ -235,6 +274,7 @@ function InviteSection({ isOwner }: { isOwner: boolean }) {
 			{link ? (
 				<div className="space-y-2 rounded-lg border border-line bg-surface-2 p-4" role="status">
 					<p className="text-sm font-medium">Send this link to the person you are inviting. It works once.</p>
+					{replacedFor ? <p className="text-sm text-ink-2">{replacedFor} already had an open invite: its earlier link no longer works.</p> : null}
 					<div className="flex items-center gap-2">
 						<code className="min-w-0 flex-1 break-all rounded-md border border-line bg-surface-1 px-3 py-2 font-mono text-sm" data-testid="invite-link">
 							{link}
@@ -274,7 +314,7 @@ function PendingInvites() {
 			<ul className="divide-y divide-line rounded-lg border border-line bg-surface-1" aria-label="Pending invites">
 				{q.data.map((inv) => (
 					<li key={inv.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-4">
-						<div className="min-w-0 flex-1">
+						<div className="min-w-0 flex-1 basis-56">
 							<p className="truncate font-medium">{inv.email}</p>
 							<p className="text-sm text-ink-2">
 								{inv.invited_by ? `Invited by ${inv.invited_by}. ` : ''}Expires {formatDate(inv.expires_at)}

@@ -26,6 +26,10 @@ export function useWorkspaces(enabled = true) {
 	});
 }
 
+/** Hosted: anyone may start a workspace. Self-host: only the instance owner (owner of the default workspace). */
+export const canCreateWorkspace = (mode: string | undefined, list: readonly Pick<WorkspaceSummary, 'id' | 'role'>[]): boolean =>
+	mode === 'saas' || list.some((w) => w.id === 'ws_default' && w.role === 'owner');
+
 /** Open a workspace: the URL changes, the router remounts, the previous workspace's data is dropped. */
 export function switchToWorkspace(id: string, rest = '/') {
 	workspaceStore.remember(id);

@@ -9,7 +9,11 @@ import { ClaimCard } from './ClaimCard';
 /** A domain this workspace has but can no longer show it controls (a zone proof that lapsed, a parent that left): it is held, not removed. */
 /** The part of a domain row the proven rule reads (so callers type what they pass without naming the column). */
 export type ProofShape = Pick<Domain, 'verified_via'>;
-export const isUnproven = (d: ProofShape): boolean => d.verified_via === 'legacy';
+/** What a caller may pass when it holds the domain row only in part (the verdict reads a row; a bare name has no proof to judge). */
+export type ProofState = Partial<Pick<Domain, 'verified_via' | 'proof_lost_at'>>;
+export const isUnproven = (d: Partial<ProofShape>): boolean => d.verified_via === 'legacy';
+/** Unproven because a proof that was made lapsed (as opposed to one that never was). */
+export const proofLapsed = (d: ProofState): boolean => d.proof_lost_at != null;
 
 /**
  * "Proof lost: prove it is still yours": the way back after a proof lapsed, on the SAME domain. Prove again re-runs the proof (the zone through any current
@@ -20,7 +24,7 @@ export function ProofLost({ domain, canWrite }: { domain: Pick<Domain, 'id' | 'd
 	const qc = useQueryClient();
 	const [error, setError] = useState('');
 	const claim = (useDomainClaims().data ?? []).find((c) => c.domain === domain.domain && c.status === 'pending');
-	const lapsed = domain.proof_lost_at != null;
+	const lapsed = proofLapsed(domain);
 	const prove = useMutation({
 		mutationFn: () => api<{ pending?: boolean }>(`/api/domains/${domain.id}/prove`, { method: 'POST' }),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ['domains'] }), // proven: the block goes; not yet: the claim's TXT record shows in its place
