@@ -73,8 +73,8 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 					<>
 						<StatusDot status="info" label={`Reports arrive through ${s.via_parent.domain}`} className="font-semibold" />
 						<p className="text-sm text-ink-2" data-testid="via-parent">
-							<Mono>{domainName}</Mono> has no connection of its own. Reports that name it as their policy domain (it publishes its own DMARC record naming the report
-							address) are filed here, through the connection of <Link to={`/domains/${s.via_parent.domain_id}`}>{s.via_parent.domain}</Link>. Mail from <Mono>{domainName}</Mono> that a
+							<Mono>{domainName}</Mono> has no connection of its own. Reports that name it as their policy domain (receivers send them when it publishes its own DMARC record naming the
+							report address) are filed here, through the connection of <Link to={`/domains/${s.via_parent.domain_id}`}>{s.via_parent.domain}</Link>. Mail from <Mono>{domainName}</Mono> that a
 							receiver lists inside {s.via_parent.domain}&apos;s own reports stays with {s.via_parent.domain}.
 						</p>
 					</>

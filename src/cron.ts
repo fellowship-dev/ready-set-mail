@@ -6,6 +6,7 @@
 
 import type { BoundEnv } from './index';
 import { loadTenant } from './tenancy/load';
+import { reportsAddressVia } from './hosted/report-address';
 import type { TenantContext } from './tenancy/context';
 import { listCronWorkspaces, type ResolvedWorkspace } from './tenancy/resolver';
 import { checkSubscription, detectRollbackRisk } from './monitor/check';
@@ -132,7 +133,7 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     const found = await snapshotDns(d.domain); // one lookup after the other, so the pool stays at SPF_REFRESH_CONCURRENCY requests
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
-      await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });
+      await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000), reports_address: await reportsAddressVia(tenant, d) });
     } catch (e) {
       console.warn(`[monitor] storing DNS check failed for ${d.domain}:`, e);
     }

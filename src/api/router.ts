@@ -125,6 +125,7 @@ import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
 import { namesSeen } from '../domains/names';
+import { reportsAddressVia, withReportsVia } from '../hosted/report-address';
 import { resolverFor } from '../dns/resolver';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
 import { track } from '../telemetry';
@@ -238,7 +239,7 @@ async function parseBody<T>(request: Request): Promise<T> {
 // ── Route handlers ────────────────────────────────────────────
 
 async function getDomainsHandler(tenant: TenantContext): Promise<Response> {
-  const results = await tenant.scope.domains.list();
+  const results = await withReportsVia(tenant, await tenant.scope.domains.list());
   // `domains` are verified; `pending_claims` are domains this workspace has asked for but not yet proven (SaaS).
   return json({ domains: results, pending_claims: await listClaims(tenant) });
 }
@@ -999,7 +1000,7 @@ async function _handleApi(
         const records = txt.records;
         const found = records.length > 0;
         // An empty address is contained in every string: with none configured, nothing has our rua.
-        const ourRua = domain.rua_address?.trim();
+        const ourRua = domain.rua_address?.trim() || (await reportsAddressVia(tenant, domain)) || '';
         const has_rua = !!ourRua && records.some(r => r.toLowerCase().includes(ourRua.toLowerCase()));
         const current_record = records[0] ?? null;
         // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
@@ -1086,6 +1087,8 @@ async function _handleApi(
       // Live DNS goes through the shared resolver: a DNS *error* is reported as such
       // (`dns_errors`), never as "record not found".
       const dnsResolver = createResolver();
+      // The address this name's DMARC record must list: its own, or its connected parent's when its reports arrive through it.
+      const ourRua = domain.rua_address?.trim() || (await reportsAddressVia(tenant, domain)) || '';
       const dns_errors: string[] = [];
       // What this read resolved, stored below. A key stays unset when its lookup failed (unknown is never stored as absent).
       const resolved: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean } = {};
@@ -1111,7 +1114,7 @@ async function _handleApi(
           resolved.dmarc = lookup ? dmarcFactsFromLookup(lookup) : undefined;
           // The inherited record itself, so the dashboard can say how much mail its policy covers (pct=).
           inheritedRecord = lookup?.inherited ? (lookup.record?.raw ?? null) : null;
-          return { found: t.records.length > 0, has_our_rua: !!domain.rua_address?.trim() && t.records.some(r => r.toLowerCase().includes(domain.rua_address.trim().toLowerCase())), current_record: t.records[0] ?? null };
+          return { found: t.records.length > 0, has_our_rua: !!ourRua && t.records.some(r => r.toLowerCase().includes(ourRua.toLowerCase())), current_record: t.records[0] ?? null };
         }),
 
         // Routing: MX check + destination email verification
@@ -1220,7 +1223,7 @@ async function _handleApi(
 
       // Same store as the daily cron, from lookups this request already made (no extra DNS). A write failure must not fail the read.
       try {
-        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000) });
+        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000), reports_address: await reportsAddressVia(tenant, domain) });
       } catch (e) {
         console.warn(`[onboarding-status] storing DNS check failed for ${domain.domain}:`, e);
       }

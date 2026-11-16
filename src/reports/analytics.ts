@@ -80,7 +80,7 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
     const align: AlignModes = { spf: tags?.get('aspf')?.toLowerCase() === 's' ? 's' : 'r', dkim: tags?.get('adkim')?.toLowerCase() === 's' ? 's' : 'r' };
     const senders = buildSenders(inWindow(allRows, 'messages'), { now, earliest, align });
     const adviceSenders = buildSenders(inWindow(allRows, 'advice_messages'), { now, earliest, align });
-    const fixes = buildFixes({ id, domain: domain.domain, spf_record: domain.spf_record, spf_lookup_count: domain.spf_lookup_count }, adviceSenders);
+    const fixes = buildFixes({ id, domain: domain.domain, spf_record: domain.spf_record, spf_lookup_count: domain.spf_lookup_count, dmarc_policy: domain.dmarc_policy }, adviceSenders);
     const trend = fillTrend(allTrend.filter((r) => r.day >= dayOf(since)), since, now);
     const advice = sum(fillTrend(allTrend.filter((r) => r.day >= dayOf(adviceSince)), adviceSince, now));
 
@@ -113,7 +113,7 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
 
   const perDomain = totals.map((d) => {
     const ds = buildSenders(adviceRows.filter((r) => r.domain_id === d.domain_id), { now, earliest });
-    const fixes = buildFixes({ id: d.domain_id, domain: d.domain, spf_record: d.spf_record, spf_lookup_count: d.spf_lookup_count }, ds);
+    const fixes = buildFixes({ id: d.domain_id, domain: d.domain, spf_record: d.spf_record, spf_lookup_count: d.spf_lookup_count, dmarc_policy: d.dmarc_policy }, ds);
     // No DNS fan-out here: the stored policy and pct (pct 0 = testing mode, as rollout.ts stores it).
     const readiness: Readiness = assessReadiness({
       state: { policy: d.dmarc_policy, pct: d.dmarc_pct }, messages: d.total, passed: d.passed, daysWithReports: d.days_with_reports, windowDays: ADVICE_DAYS,

@@ -197,6 +197,19 @@ describe('buildFixes', () => {
     expect(fixes[0]!.title).toContain('Shady Hosting');
   });
 
+  it('an unrecognised failing sender: never "add it to SPF" (SPF is judged at the return-path domain), and no "until you enforce" for a domain that already enforces', () => {
+    const rows = send([row({ messages: 900 }), row({ source_ip: '203.0.113.9', messages: 100, spf_result: 'fail', dkim_result: 'none', org: 'Shady Hosting' })]);
+    const open = buildFixes({ ...dom, dmarc_policy: 'none' }, rows)[0]!;
+    expect(open.steps.join(' ')).not.toContain('add it to SPF');
+    expect(open.steps[1]).toContain('set up DKIM signing as');
+    expect(open.steps[2]).toContain('until you move to enforcement');
+    expect(open.detail).toContain('enforcing DMARC may block it');
+    const enforcing = buildFixes({ ...dom, dmarc_policy: 'reject' }, rows)[0]!;
+    expect(enforcing.detail).toContain('your DMARC policy (p=reject) already applies to it');
+    expect(enforcing.steps[2]).toContain('Your policy (p=reject) already applies to it.');
+    expect(enforcing.steps.join(' ') + enforcing.detail).not.toMatch(/until you move to enforcement|enforcing DMARC may block/);
+  });
+
   it('ignores noise and healthy senders; lists a new passing sender as low priority', () => {
     expect(buildFixes(dom, send([row({ messages: 5000 }), mailchimp({ messages: 3 })]))).toEqual([]);
     const fixes = buildFixes(dom, send([row({ messages: 900 }), row({ source_ip: '167.89.1.1', reverse_dns: 'o1.sendgrid.net', messages: 100, first_seen: NOW - DAY })]));

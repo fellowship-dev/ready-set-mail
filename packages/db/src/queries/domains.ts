@@ -147,7 +147,11 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * The attempt itself is always recorded: 'failed' when either lookup got no answer, 'nxdomain' when the domain
 		 * does not exist, else 'ok'.
 		 */
-		recordDnsCheck(id: number, r: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean; at: number }) {
+		/**
+		 * `reports_address`: the address this name's reports arrive at when the row has none of its own (they arrive through its connected
+		 * parent, `reportsViaParent` in src/hosted/report-address.ts); the governing record is then compared with it.
+		 */
+		recordDnsCheck(id: number, r: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean; at: number; reports_address?: string | null }) {
 			const complete = r.spf_record !== undefined && r.dmarc !== undefined;
 			const set: Partial<typeof domains.$inferInsert> = {
 				dns_check_attempted_at: r.at,
@@ -165,7 +169,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 					// Only whether the governing record sends reports to this domain's own address is kept, compared in SQL
 					// against the row's rua_address (an empty address never matches).
 					const list = `,${(r.dmarc.rua ?? []).map((a) => a.trim().toLowerCase()).join(',')},`;
-					set.dmarc_rua = sql`CASE WHEN TRIM(COALESCE(${domains.rua_address}, '')) <> '' AND INSTR(${list}, ',' || LOWER(TRIM(${domains.rua_address})) || ',') > 0 THEN 1 ELSE 0 END` as any;
+					const mine = sql`COALESCE(NULLIF(TRIM(COALESCE(${domains.rua_address}, '')), ''), ${(r.reports_address ?? '').trim()})`;
+					set.dmarc_rua = sql`CASE WHEN ${mine} <> '' AND INSTR(${list}, ',' || LOWER(${mine}) || ',') > 0 THEN 1 ELSE 0 END` as any;
 				}
 			}
 			if (complete) {

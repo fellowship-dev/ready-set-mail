@@ -41,6 +41,8 @@ export interface FixDomain {
   spf_record: string | null;
   /** Stored count of DNS lookups the SPF record needs, when known. */
   spf_lookup_count?: number | null;
+  /** The policy in force for this name (the stored effective policy); null or absent: not known. */
+  dmarc_policy?: string | null;
 }
 
 /** Below both of these a problem is noise, not a to-do. */
@@ -168,16 +170,17 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
     }
 
     if (!g.providerId && failShare >= AUTHORIZE_AT && material(g.dmarcFail)) {
+      const enforcing = domain.dmarc_policy === 'quarantine' || domain.dmarc_policy === 'reject';
       const s0 = g.senders[0];
       fixes.push({
         ...base, id: `investigate:${domain.id}:${g.key}`, kind: 'investigate-sender', severity: pct(g.dmarcFail, total) >= 5 ? 'high' : 'medium',
         title: `${fmtPct(share)} of your mail comes from ${g.name}, which we do not recognise`,
-        detail: `Estimated from the reports: ${fmtPct(pct(g.dmarcFail, g.messages))} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and enforcing DMARC may block it.`,
+        detail: `Estimated from the reports: ${fmtPct(pct(g.dmarcFail, g.messages))} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and ${enforcing ? `your DMARC policy (p=${domain.dmarc_policy}) already applies to it` : 'enforcing DMARC may block it'}.`,
         affected_pct: pct(g.dmarcFail, total), affected_messages: g.dmarcFail,
         steps: [
           `Find out what ${s0?.reverse_dns || s0?.source_ip || 'this server'} is${s0?.org ? ` (network owner: ${s0.org})` : ''}.`,
-          'If you send from it: add it to SPF and set up DKIM signing for it, then check again.',
-          'If you do not: nothing to add. Keep it in view until you move to enforcement.',
+          `If you send from it: set up DKIM signing as ${domain.domain} in the service (DKIM aligned with ${domain.domain} is enough for DMARC; SPF counts only when the service's return-path domain is under ${domain.domain}), then check again.`,
+          `If you do not: nothing to add. ${enforcing ? `Your policy (p=${domain.dmarc_policy}) already applies to it.` : 'Keep it in view until you move to enforcement.'}`,
         ],
         records: [], guide_url: null,
       });

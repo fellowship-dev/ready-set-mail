@@ -13,7 +13,7 @@
 // so never a pending or lost claim (those live in domain_claims), never an evicted row, and never a row whose
 // ownership was not proven ('legacy', from before ownership checks).
 
-import { createResolver, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { createResolver, domainAncestry, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
@@ -179,6 +179,45 @@ async function connectedAddress(tenant: TenantContext, domain: DomainRow, intake
   return token && (await hashToken(rcpt.tag)) === token.token_hash ? intakeAddress('rua', rcpt.tag, intakeDomain) : null;
 }
 
+/**
+ * The connected parent this row's reports arrive through, or null. Exactly what the intake decides for a report about this name: who owns it
+ * (`attributeReport`), then whether this row takes it from them (the gate in src/email/dmarc-report.ts prefers a proven row of the subdomain).
+ * Call it only for a row with no connection of its own that is not refused (`refusalOf`) and not hosted.
+ */
+export async function reportsViaParent(tenant: TenantContext, domain: DomainRow, intakeDomain: string): Promise<{ domain_id: number; domain: string } | null> {
+  const target = await attributeReport(tenant.env as BoundEnv & { DB: D1Database }, intakeDomain, domain.domain);
+  if (!target || target.workspace_id !== tenant.workspaceId || target.domain_id === domain.id) return null;
+  const row = await tenant.scope.domains.getById(target.domain_id);
+  return row ? { domain_id: row.id, domain: row.domain } : null;
+}
+
+/** The address a row's reports arrive at when it has none of its own (through its connected parent), else null: what its DNS record is compared with. */
+export async function reportsAddressVia(tenant: TenantContext, domain: DomainRow): Promise<string | null> {
+  const intakeDomain = reportIntakeDomain(tenant.env);
+  if (!intakeDomain || domain.rua_address?.trim() || domainAncestry(domain.domain).length < 2) return null;
+  if (!(await reportConnectFor(tenant, domain))?.can_connect) return null;
+  return (await reportsViaParent(tenant, domain, intakeDomain)) ? fixedReportAddress(intakeDomain) : null;
+}
+
+/**
+ * The domain rows as the dashboard lists them. A row with no connection of its own whose reports arrive through its connected parent
+ * (`reportsViaParent`) carries that connection's address as its `rua_address` and `reports_via`, so every page that asks "do reports reach
+ * this name?" (the verdict, its next step, the DNS records) answers what the intake does, never "not connected" while reports arrive.
+ */
+export async function withReportsVia<R extends DomainRow>(tenant: TenantContext, rows: R[]): Promise<Array<R & { reports_via?: { domain_id: number; domain: string } }>> {
+  const intakeDomain = reportIntakeDomain(tenant.env);
+  const wanted = rows.filter((r) => !r.rua_address?.trim() && domainAncestry(r.domain).length > 1);
+  if (!intakeDomain || wanted.length === 0) return rows;
+  const connectFor = await reportConnectForPage(tenant);
+  const via = new Map<number, { domain_id: number; domain: string }>();
+  for (const r of wanted) {
+    if (!connectFor(r.id)?.can_connect) continue; // refused (unproven, not admitted) or hosted records: nothing arrives here
+    const v = await reportsViaParent(tenant, r, intakeDomain);
+    if (v) via.set(r.id, v);
+  }
+  return rows.map((r) => (via.has(r.id) ? { ...r, rua_address: fixedReportAddress(intakeDomain), reports_via: via.get(r.id)! } : r));
+}
+
 export async function reportAddressStatus(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps = {}): Promise<ReportIntakeStatus> {
   const intakeDomain = reportIntakeDomain(tenant.env);
   if (!intakeDomain) return { available: false };
@@ -202,12 +241,7 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
   }
   let via_parent: ReportAddressView['via_parent'] = null;
   if (!address && !managed_by && !refusal) {
-    // Exactly what the intake decides for a report about this name: who owns it, then whether this row takes it from them.
-    const target = await attributeReport(tenant.env as BoundEnv & { DB: D1Database }, intakeDomain, domain.domain);
-    if (target && target.workspace_id === tenant.workspaceId && target.domain_id !== domain.id) {
-      const row = await tenant.scope.domains.getById(target.domain_id);
-      if (row) via_parent = { domain_id: row.id, domain: row.domain };
-    }
+    via_parent = await reportsViaParent(tenant, domain, intakeDomain);
   }
   let parent: ReportAddressView['parent'] = null;
   if (dns?.plan?.kind === 'inherited') {
