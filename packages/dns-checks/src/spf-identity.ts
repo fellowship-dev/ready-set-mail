@@ -47,4 +47,9 @@ export function noSpfNeededAtName(name: string, e: FromEvidence): string {
 }
 
 /** The short next step for a name with no SPF record (a one-line slot). */
-export const NO_SPF_NEXT_SHORT = 'If a service sends mail with this name as its return-path, publish an SPF record that lists it.';
+export const NO_SPF_NEXT_SHORT = 'Publish SPF only if mail uses this name as its return-path.';
+
+/** The same fact in one line, for the "Why" of a step card (its height decides how far the page below it sits). */
+export function noSpfWhyShort(name: string): string {
+  return `No SPF record at ${name}. SPF is checked at the return-path domain.`;
+}

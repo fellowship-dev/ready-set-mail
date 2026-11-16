@@ -7,7 +7,7 @@ import { recordAlignment } from './dmarc-coverage';
 import { stepLink, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import type { DnsCheck, OnboardingResult } from './domain-queries';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
-import { NO_SPF_NEXT_SHORT, noSpfAtName, spfNotNeededAtName } from '@ready-set-mail/dns-checks/spf-identity';
+import { NO_SPF_NEXT_SHORT, noSpfWhyShort, spfNotNeededAtName } from '@ready-set-mail/dns-checks/spf-identity';
 import { didNotResolve, type HostedLevelInput } from './levels';
 import type { Domain, DomainCheckSummary, FailingSource } from './types';
 import { WHO, dmarcStepsFor, exactRate, totalsFromSummary } from './verdict';
@@ -124,7 +124,7 @@ export function domainActions(input: ActionInput): DomainAction[] {
 		const spf = onboarding.spf;
 		// A missing record at the name is a step only if the reports do not show that no message used it as its SPF domain (spfNotNeededAtName).
 		if (!spf.record) {
-			if (!(summary && spfNotNeededAtName(summary))) out.push({ key: 'spf-missing', status: 'attention', do: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), why: noSpfAtName(name), who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
+			if (!(summary && spfNotNeededAtName(summary))) out.push({ key: 'spf-missing', status: 'attention', do: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), why: noSpfWhyShort(name), who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
 		} else if (spf.lookup_count !== null && spfLookupJudgement(spf.lookup_count).level === 'over') {
 			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true });
 		}
