@@ -370,7 +370,8 @@ note "Not changed: SPF and DKIM", "Also in <account>: N more domains, added and 
 address in the record is main's rule: the hosted address when `HOSTED_CONNECT_REPORTS` admits the workspace (`all`, or `owner` and this is the owner's),
 else the record is written without one and the screen shows the server's own sentence ("Reports are not connected for this workspace. …"). A later
 visit to the dashboard returns to C2 once per tab while Cloudflare is connected, the first domain was proven through it and its DMARC record does not yet
-name our address, until C2 was applied or skipped.
+name our address, until C2 was applied or skipped. Only in the browser that set the domain up (it remembers which domain S4 was given): another browser
+or device does not know which imported domain was "the first", so it opens the dashboard, whose card links to the review.
 
 **D1** replaces "Get to your first answer": one card for that domain, from what the server knows (proof, `report_connect`, the stored `dmarc_rua`, the
 report totals, the domain's age): waiting for proof; waiting for the report address in DMARC (with "Review the change" when Cloudflare is connected);
