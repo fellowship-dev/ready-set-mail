@@ -9,6 +9,9 @@
 // flow needs ONE of these, ADDED by this change (editing an older record does not count):
 //
 //   .flowchad/walks/<date>-<id>.md               the walk record FlowChad's gate writes (/flow-gate <id> --record .flowchad/walks).
+//       It may carry a tag after the id, <date>-<id>.<tag>.md (tag [a-z0-9-]+, for example 2026-11-16-<id>.pr177.md), so two pull
+//       requests that each walk the same flow on the same day do not add the same file name. `not-affected` is never a tag: it is the
+//       next record's own suffix.
 //       It must carry the gate's fields: Flow, Value moment, Walked (a full timestamp), Target, Commit, Kind, Gate and Rules;
 //       Gate PASS or PASS-WITH-OVERRIDES; Rules equal to the vendored gate's RULES_VERSION; walked after the base commit, at a
 //       commit that is not already in the base. A new flow's first record may be its baseline (Kind: baseline).
@@ -46,6 +49,9 @@ export const coversOf = (yml) => {
 };
 /** A `covers:` glob as the shell `case` in changed.sh reads it: `*` matches any characters, slashes included. */
 export const globMatches = (glob, file) => new RegExp(`^${glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(file);
+/** The names a record may have: `<date>-<id>.md`, or `<date>-<id>.<tag>.md` with a tag of [a-z0-9-]+ other than `not-affected`. */
+export const walkRecordName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}(?:\\.(?!not-affected\\.md$)[a-z0-9-]+)?\\.md$`);
+export const notAffectedName = (id) => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
 const realDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 
 /** Problems with a walk record, or [] when it is valid for this change. */
@@ -124,21 +130,21 @@ function main(argv) {
     const flowChanged = changed.includes(flowPath) || changed.includes(mapPath);
     const hits = changed.filter((f) => coversOf(yml).some((g) => globMatches(g, f)));
     const newFlow = !gitOk('cat-file', '-e', `${base}:${flowPath}`);
-    const walkRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.md$`);
-    const naRe = new RegExp(`^${WALKS}/\\d{4}-\\d{2}-\\d{2}-${id}\\.not-affected\\.md$`);
+    const walkRe = walkRecordName(id);
+    const naRe = notAffectedName(id);
     const tried = [];
     let ok = null;
-    for (const file of [...added].filter((f) => walkRe.test(f)).sort().reverse()) {
+    for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && walkRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
       const problems = walkRecordProblems(readFileSync(file, 'utf8'), { id, baseTime, newFlow, commitState });
       if (!problems.length) { ok = `walked (${file})`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
-    if (!ok) for (const file of [...added].filter((f) => naRe.test(f)).sort().reverse()) {
+    if (!ok) for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && naRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
       const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged });
       if (!problems.length) { ok = `not affected (${file}, reviewed)`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
-    const old = readdirSync(WALKS).filter((f) => f.endsWith(`-${id}.md`) || f.endsWith(`-${id}.not-affected.md`)).map((f) => `${WALKS}/${f}`).filter((f) => changed.includes(f) && !added.has(f));
+    const old = readdirSync(WALKS).filter((f) => walkRecordName(id).test(f) || notAffectedName(id).test(f)).map((f) => `${WALKS}/${f}`).filter((f) => changed.includes(f) && !added.has(f));
     if (ok) { console.log(`ok     ${id}: ${ok}`); continue; }
     failures.push([
       `REWALK ${id}: ${reason}`,

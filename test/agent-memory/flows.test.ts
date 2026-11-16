@@ -4,7 +4,7 @@ import { join } from 'node:path';
 // FlowChad's own map reader (vendored skill, .agents/skills/flow-walk), so the test judges maps the way /flow-walk --map does.
 import { mapResults } from '../../.agents/skills/flow-walk/scripts/flowmap.mjs';
 // The CI check's own record rules (scripts/check-flows.mjs), tested here without git.
-import { coversOf as checkCovers, globMatches, notAffectedProblems, walkRecordProblems } from '../../scripts/check-flows.mjs';
+import { coversOf as checkCovers, globMatches, notAffectedName, notAffectedProblems, walkRecordName, walkRecordProblems } from '../../scripts/check-flows.mjs';
 import { RULES_VERSION } from '../../.agents/skills/flow-gate/scripts/gate.mjs';
 
 // Protected value flows (ADR 0012): every flow tagged `protected` has a map whose value moment is declared and reachable with
@@ -62,7 +62,7 @@ describe('protected value flows', () => {
       });
 
       it('has a walk record with the commit it was walked at', () => {
-        const records = readdirSync(WALKS).filter(f => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${flow.id}\\.md$`).test(f));
+        const records = readdirSync(WALKS).filter(f => walkRecordName(flow.id).test(f));
         expect(records.length, `walk record for ${flow.id}`).toBeGreaterThan(0);
         const latest = readFileSync(join(WALKS, records.sort().at(-1)!), 'utf8');
         expect(latest).toMatch(/^- \*\*Commit:\*\* [0-9a-f]{7,40}$/m);
@@ -81,6 +81,23 @@ describe('AGENTS.md lists every protected flow with exactly its covers', () => {
       expect(checkCovers(flow.text).sort()).toEqual(coversOf(flow.text).sort());
     });
   }
+});
+
+describe('scripts/check-flows.mjs: record names', () => {
+  const walk = walkRecordName('buy-fix-one-domain');
+  it('a walk record is <date>-<id>.md, or <date>-<id>.<tag>.md with a tag of [a-z0-9-]+', () => {
+    expect(walk.test('2026-11-16-buy-fix-one-domain.md')).toBe(true);
+    expect(walk.test('2026-11-16-buy-fix-one-domain.pr177.md')).toBe(true);
+    expect(walk.test('2026-11-16-buy-fix-one-domain.round-3.md')).toBe(true);
+  });
+  it('not-affected is never a tag: it keeps its own meaning', () => {
+    expect(walk.test('2026-11-16-buy-fix-one-domain.not-affected.md')).toBe(false);
+    expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.not-affected.md')).toBe(true);
+    expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.pr177.md')).toBe(false);
+  });
+  it('other names, other flows and bad tags do not match', () => {
+    for (const n of ['2026-11-16-buy-fix-one-domain.PR177.md', '2026-11-16-buy-fix-one-domain..md', '2026-11-16-buy-fix-one-domain.a.b.md', '2026-11-16-buy-fix-one-domain.pr177.txt', '2026-11-16-other-flow.pr177.md', '2026-1-16-buy-fix-one-domain.md', 'x2026-11-16-buy-fix-one-domain.md']) expect(walk.test(n), n).toBe(false);
+  });
 });
 
 describe('scripts/check-flows.mjs: which records count', () => {
