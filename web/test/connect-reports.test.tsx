@@ -76,23 +76,21 @@ describe('Connect reports', () => {
 		expect(screen.getByText(/p=none asks receivers for reports and changes nothing/)).toBeInTheDocument();
 	});
 
-	it('two addresses already: no record until the person chooses which to replace, or to add a third knowingly', async () => {
+	it('two addresses already: no record until the person chooses which of the first two to replace; there is no third', async () => {
 		const options = [
 			{ replaces: 'mailto:a@x.test', record: `v=DMARC1; p=reject; rua=mailto:${ADDR},mailto:b@y.test` },
 			{ replaces: 'mailto:b@y.test', record: `v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:${ADDR}` },
-			{ replaces: null, record: `v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:b@y.test,mailto:${ADDR}` },
 		];
 		show({
 			'GET /api/domains/1/report-address': issued({ kind: 'choose', name: '_dmarc.example.com', current: 'v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:b@y.test', existing: ['mailto:a@x.test', 'mailto:b@y.test'], options, created: false }),
 		});
-		expect(await screen.findByText(/already lists 2 report addresses/)).toBeInTheDocument();
+		expect(await screen.findByText(/already lists two report addresses/)).toBeInTheDocument();
 		expect(screen.getByText('Choose an option to see the record to publish.')).toBeInTheDocument();
 		for (const o of options) expect(screen.queryByText(o.record)).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole('radio', { name: /Replace mailto:b@y\.test/ }));
 		expect(screen.getByText(options[1]!.record)).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('radio', { name: /Keep both and add this address third/ }));
-		expect(screen.getByText(options[2]!.record)).toBeInTheDocument();
-		expect(screen.getByText('Some receivers may never send reports to a third address.')).toBeInTheDocument();
+		expect(screen.getAllByRole('radio')).toHaveLength(2);
+		expect(screen.queryByText(/third/)).not.toBeInTheDocument();
 	});
 
 	it('a subdomain that inherits: names the organizational domain and what its own record means', async () => {

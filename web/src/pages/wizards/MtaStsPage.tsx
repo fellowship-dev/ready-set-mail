@@ -6,12 +6,13 @@ import { Link } from 'react-router';
 import { LoadError, PageSkeleton, ReadOnlyNotice, WriteButton } from '../../components/states';
 import { RadioCard } from '../../components/wizard/RadioCard';
 import { StepCard } from '../../components/wizard/StepCard';
+import { ToolOff } from '../../components/wizard/ToolOff';
 import { StepFooter, StepNav } from '../../components/wizard/StepNav';
 import { useRouteDomainId } from '../../components/wizard/useRouteDomainId';
 import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { WizardProgress } from '../../components/wizard/WizardProgress';
 import { ApiError, api, errorMessage } from '../../lib/api';
-import { useHostedInfo } from '../../lib/hosted';
+import { useDnsToolsOff, useHostedInfo } from '../../lib/hosted';
 import type { MtaStsStatus } from '../../lib/types';
 
 type Mode = 'testing' | 'enforce';
@@ -35,8 +36,16 @@ function HostList({ hosts }: { hosts: string[] }) {
 	);
 }
 
+/** Off where the tool is off for this domain (`useDnsToolsOff`): then one line and a way back, and no request to the tool's API. */
 export function MtaStsPage() {
 	const domainId = useRouteDomainId();
+	const { mtaOff, pending } = useDnsToolsOff(domainId);
+	if (pending) return <PageSkeleton label="Loading MTA-STS" />;
+	if (mtaOff) return <ToolOff title="MTA-STS" line="MTA-STS is not available on the hosted service yet." backTo={`/domains/${domainId}`} />;
+	return <MtaStsWizard domainId={domainId} />;
+}
+
+function MtaStsWizard({ domainId }: { domainId: number }) {
 	const qc = useQueryClient();
 	const path = `/api/domains/${domainId}/mta-sts`;
 	const queryKey = ['mta-sts', domainId] as const;
