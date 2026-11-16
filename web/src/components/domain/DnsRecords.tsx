@@ -14,6 +14,7 @@ import { useHosted } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 import { Section, WriteButton } from '../states';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
+import { noSpfAtName } from '@ready-set-mail/dns-checks/spf-identity';
 import { ConfirmDialog } from './ConfirmDialog';
 
 
@@ -217,7 +218,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const { spf } = onboarding.data;
 		if (errors.some((e) => e.startsWith('spf:'))) return <CheckResult status="error" title="SPF record" summary="The DNS lookup did not complete." onRetry={retryOnboarding} />;
 		if (!spf.record) {
-			return <CheckResult status="missing" title="SPF record" summary="No SPF record found. Receivers cannot tell which servers may send for you." />;
+			return <CheckResult status="missing" title="SPF record" summary={noSpfAtName(domain.domain)} />;
 		}
 		const { status, note } = spfStatus(spf.lookup_count);
 		return (

@@ -190,7 +190,7 @@ describe('overview row: checks that are failed, old or missing', () => {
 
 	it('SPF over ten lookups, no SPF, never checked, does not resolve', () => {
 		expect(domainVerdict(domain, summary({ spf_lookup_count: 12 }), reports(99), null, now).next.label).toBe('Bring SPF down to 10 DNS lookups or fewer');
-		expect(domainVerdict(domain, summary({ spf_record: null }), reports(null), null, now).next.label).toBe('Publish an SPF record');
+		expect(domainVerdict(domain, summary({ spf_record: null }), reports(null), null, now).next.label).toBe('If a service sends mail with this name as its return-path, publish an SPF record that lists it');
 		const never = domainVerdict(domain, summary({ dns_checked_at: null, dns_check_attempted_at: null, dns_check_status: null, spf_record: null, dmarc_policy: null }), reports(null), null, now);
 		expect(never).toMatchObject({ status: 'unknown', level: null });
 		expect(never.next.label).toBe('Open the domain to read its records from DNS');

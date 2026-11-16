@@ -49,6 +49,21 @@ describe('ConnectReports visibility', () => {
 	});
 });
 
+describe('B7: a name with no connection of its own whose reports arrive through its connected parent', () => {
+	it('says reports arrive through the parent, not that they are not connected, and still offers the connection', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', via_parent: { domain_id: 7, domain: 'example.com' } }) });
+		expect(await screen.findByText('Reports arrive through example.com')).toBeInTheDocument();
+		expect(screen.queryByText('Reports not connected yet')).toBeNull();
+		expect(screen.getByTestId('via-parent')).toHaveTextContent('are filed here, through the connection of example.com');
+		expect(screen.getByTestId('via-parent')).toHaveTextContent("stays with example.com");
+		expect(screen.getByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
+	});
+	it('without a connected parent it still says not connected', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ via_parent: null }) });
+		expect(await screen.findByText('Reports not connected yet')).toBeInTheDocument();
+	});
+});
+
 describe('Connect reports', () => {
 	it('connects, then shows the live record with it added and the state', async () => {
 		let current: unknown = view();

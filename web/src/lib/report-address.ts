@@ -48,6 +48,8 @@ export interface ReportAddressView {
 	state: ReportAddressState;
 	dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | null } | null;
 	parent?: { domain_id: number; domain: string; connected: boolean } | null;
+	/** No connection of its own, but reports that name this domain as their policy domain are filed here through this connected parent. */
+	via_parent?: { domain_id: number; domain: string } | null;
 }
 
 export type ReportIntakeStatus = { available: false } | ReportAddressView;

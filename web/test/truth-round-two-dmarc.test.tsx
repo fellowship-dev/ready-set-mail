@@ -42,13 +42,15 @@ describe('item 5: failing-mail explanation', () => {
 	});
 	it('a subdomain sender meets sp= when the record has one', () => {
 		const t = explain(src({ header_from: 'news.example.com' }), 'reject', live('none'));
-		expect(t).toContain('news.example.com is a subdomain, so sp=none applies to it instead of p=reject');
-		expect(t).toContain('still deliver it');
+		expect(t).toContain('If it does not, sp=none on example.com\'s record applies to it instead of p=reject');
+		expect(t).toContain('We have not read whether it publishes a DMARC record of its own');
+		expect(t).toContain('leaves it delivered');
 		expect(t).not.toContain('asks receivers to reject it');
 	});
 	it('a subdomain sender inherits p= when there is no sp=, and says so', () => {
 		const t = explain(src({ header_from: 'news.example.com' }), 'quarantine', live(null));
-		expect(t).toContain('news.example.com is a subdomain and your record has no sp= tag, so it inherits p=quarantine');
+		expect(t).toContain('If it does not, p=quarantine on example.com\'s record applies to it');
+		expect(t).not.toContain('inherits');
 		expect(t).toContain('send it to spam');
 	});
 	it('the base domain is not treated as a subdomain, and sp= does not apply to it', () => {
@@ -92,7 +94,7 @@ describe('item 5: pages', () => {
 				},
 			},
 		);
-		expect(await screen.findByText(/news\.example\.com is a subdomain, so sp=quarantine applies to it instead of p=reject/)).toBeInTheDocument();
+		expect(await screen.findByText(/If it does not, sp=quarantine on example\.com's record applies to it instead of p=reject/)).toBeInTheDocument();
 	});
 });
 

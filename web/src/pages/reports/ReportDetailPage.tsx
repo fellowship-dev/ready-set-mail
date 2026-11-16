@@ -8,15 +8,21 @@ import { AuthBadge, BackLink, ProviderName, useRouteDomainId } from '../../compo
 import { LoadError, PageSkeleton, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
-import { useCheckSummary, useDnsCheck } from '../../lib/domain-queries';
+import { useCheckSummary, useDnsCheck, useNames } from '../../lib/domain-queries';
 import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
-import { explain, formatDayWithRelative, isFailing, passRate, type KnownPolicy, type LiveDmarc } from '../../lib/reports';
-import type { DayReport, ReportSource } from '../../lib/types';
+import { explain, formatDayWithRelative, isFailing, passRate, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
+import type { DayReport, NameSeen, ReportSource } from '../../lib/types';
+
+/** The policy the server read for a name that sent mail as a subdomain of this domain (null: not read). */
+const namedPolicy = (names: NameSeen[] | undefined, headerFrom: string | null): NamePolicy | null => {
+	const e = names?.find((n) => n.name === headerFrom?.toLowerCase())?.effective;
+	return e ? { ...e, pct: e.pct ?? undefined } : null;
+};
 
 const sourceKey = (s: ReportSource) => `${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}`;
 
-function FailingCard({ src, policy, live }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc }) {
+function FailingCard({ src, policy, live, named }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc; named?: NamePolicy | null }) {
 	return (
 		<Card className="space-y-3 border-danger/40 p-4">
 			<div className="flex flex-wrap items-start justify-between gap-3">
@@ -29,7 +35,7 @@ function FailingCard({ src, policy, live }: { src: ReportSource; policy: KnownPo
 					<span className="ml-1 text-xs text-ink-2">{src.count === 1 ? 'message' : 'messages'}</span>
 				</p>
 			</div>
-			<p className="text-sm leading-relaxed text-ink-1">{explain(src, policy, live)}</p>
+			<p className="text-sm leading-relaxed text-ink-1">{explain(src, policy, live, named)}</p>
 			<div className="flex flex-wrap items-center gap-2">
 				<AuthBadge protocol="SPF" pass={!!src.spf_pass} />
 				<AuthBadge protocol="DKIM" pass={!!src.dkim_pass} />
@@ -105,6 +111,8 @@ export function ReportDetailPage() {
 
 	// "No reports received" only when none arrived: dropped, not processed or uncounted reports are said as such.
 	const summaryQ = useCheckSummary(id, !Number.isNaN(id));
+	// The policy of each subdomain a source sent as, read by the server: its true source (its own record, or the organizational domain's tag).
+	const names = useNames(id, !Number.isNaN(id));
 	const visibility = summaryQ.data;
 	const lost = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 	const name = q.data?.domain ?? domain?.domain;
@@ -180,7 +188,7 @@ export function ReportDetailPage() {
 						<Section title="Needs attention" description="These sources failed SPF or DKIM for this day.">
 							<div className="space-y-3">
 								{failing.map((s) => (
-									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} />
+									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />
 								))}
 							</div>
 						</Section>

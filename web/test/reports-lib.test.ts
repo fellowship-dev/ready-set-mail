@@ -52,9 +52,11 @@ describe('explain', () => {
 		expect(explain(src())).toContain('has no authorization to send as "example.com"');
 		expect(explain(src())).toContain('this server');
 	});
-	it('names the include to add when only SPF fails', () => {
-		expect(explain(src({ spf_pass: 0, dkim_pass: 1, spf_domain: 'mailchimp.com' }))).toContain('Add include:mailchimp.com to your SPF record.');
-		expect(explain(src({ dkim_pass: 1 }))).toContain('Add this server to your SPF record.');
+	it('says where the SPF fix belongs when only SPF fails: at the return-path domain, never an include at the From name', () => {
+		const t = explain(src({ spf_pass: 0, dkim_pass: 1, spf_domain: 'mailchimp.com' }));
+		expect(t).toContain('the SPF record of mailchimp.com must authorize this server');
+		expect(t).not.toContain('Add include:');
+		expect(explain(src({ dkim_pass: 1 }))).toContain('the SPF record of that domain must authorize this server');
 	});
 	it('asks for DKIM when only DKIM fails', () => {
 		expect(explain(src({ spf_pass: 1, dkim_pass: 0, dkim_domain: 'sendgrid.net' }))).toMatch(/^sendgrid\.net sent mail without a valid DKIM signature/);

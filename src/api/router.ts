@@ -31,6 +31,7 @@
 //   GET    /api/domains/:id/stats             — daily pass/fail stats (days, max 90)
 //   GET    /api/domains/:id/reports?date=     — report sources for a specific date
 //   GET    /api/domains/:id/sources           — top failing sources (days, max 90)
+//   GET    /api/domains/:id/names             — subdomains seen sending as the domain, with the policy that applies to each (days, max 90)
 //   GET    /api/domains/:id/explore           — all sources with pass/fail (days, max 90)
 //   GET    /api/domains/:id/anomalies         — failing sources with Active/Older split
 //   GET    /api/domains/:id/export            — CSV export
@@ -123,6 +124,8 @@ import { planLimitResponse } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
+import { namesSeen } from '../domains/names';
+import { resolverFor } from '../dns/resolver';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
 import { track } from '../telemetry';
 import { loadTenant, refreshTenant } from '../tenancy/load';
@@ -479,6 +482,21 @@ async function getDomainSources(tenant: TenantContext, domainId: string, url: UR
 
   const results = await tenant.scope.reports.topFailingSources(id, since);
   return json({ sources: results });
+}
+
+/** The names seen sending as this domain: its subdomains in the reports, with the policy that applies to each and where it comes from. */
+async function getDomainNames(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {
+  const id = parseInt(domainId, 10);
+  if (isNaN(id)) return err('invalid domain id', 400);
+
+  const domain = await tenant.scope.domains.getById(id);
+  if (!domain) return err('domain not found', 404);
+
+  const days = intParam(url, 'days', 30, 1, 90);
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
+
+  const rows = await tenant.scope.reports.namesSeen(id, domain.domain, since);
+  return json({ days, domain: domain.domain, names: await namesSeen(rows, resolverFor(tenant.env)) });
 }
 
 // ── Main router ───────────────────────────────────────────────
@@ -918,6 +936,11 @@ async function _handleApi(
     const domainSourcesMatch = path.match(/^\/api\/domains\/([^/]+)\/sources$/);
     if (domainSourcesMatch && method === 'GET') {
       return await getDomainSources(tenant, domainSourcesMatch[1], url);
+    }
+    // GET /api/domains/:id/names?days=30
+    const domainNamesMatch = path.match(/^\/api\/domains\/([^/]+)\/names$/);
+    if (domainNamesMatch && method === 'GET') {
+      return await getDomainNames(tenant, domainNamesMatch[1], url);
     }
     // GET /api/domains/:id/explore?days=30
     const exploreMatch = path.match(/^\/api\/domains\/([^/]+)\/explore$/);

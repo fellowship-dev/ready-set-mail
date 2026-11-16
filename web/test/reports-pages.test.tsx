@@ -153,7 +153,7 @@ describe('ReportDetailPage', () => {
 		});
 		expect(await screen.findByText('30 messages analyzed — 10 need attention.')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Needs attention' })).toBeInTheDocument();
-		expect(screen.getByText(/Add include:mailchimp.com to your SPF record/)).toBeInTheDocument();
+		expect(screen.getByText(/the SPF record of mailchimp\.com must authorize this server/)).toBeInTheDocument();
 		const row = screen.getByRole('button', { name: /Fastmail/ });
 		expect(row).toHaveAttribute('aria-expanded', 'false');
 		await user.click(row);

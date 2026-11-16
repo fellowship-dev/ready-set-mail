@@ -61,20 +61,20 @@ describe('review item 7: an sp= that is not a policy is absent, and said to be i
 		expect(weakerSubdomainPolicy('v=DMARC1; p=quarantine; sp=reject')).toBeNull();
 	});
 	const src = { source_ip: '1.1.1.1', header_from: 'news.example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, org: null, base_domain: null } as Parameters<typeof explain>[0];
-	it('the failing-mail explanation says the value is not valid and that the subdomain inherits p=', () => {
+	it('the failing-mail explanation says the value is not valid and that receivers do not apply the record as written (RFC 9989 section 4.10.1)', () => {
 		const t = explain(src, 'reject', { domain: 'example.com', sp: null, invalidSp: 'bogus', pct: 100 });
-		expect(t).toContain('The record\'s sp=bogus is not a valid policy and is ignored, so it inherits p=reject');
+		expect(t).toContain('its sp=bogus is not a valid policy, so receivers do not apply that record as written');
 		expect(t).not.toContain('sp=bogus applies');
 	});
 	it("sp= on a monitored subdomain's own record is not claimed to apply to its children", () => {
 		const t = failingMailFate('reject', { domain: 'mail.example.com', sp: 'none', pct: 100, monitoredSubdomain: true }, 'a.mail.example.com');
-		expect(t).toContain('a.mail.example.com is a subdomain of mail.example.com, which has its own DMARC record.');
+		expect(t).toContain('a.mail.example.com is a subdomain of mail.example.com. We have not read whether it publishes a DMARC record of its own');
 		expect(t).toContain('p= and sp= on mail.example.com do not decide this mail');
-		expect(t).not.toContain('sp=none applies');
+		expect(t).not.toContain('sp=none on mail.example.com');
 		expect(t).not.toContain('asks receivers');
 	});
 	it('on the organizational domain sp= still applies to its subdomains', () => {
-		expect(failingMailFate('reject', { domain: 'example.com', sp: 'none', pct: 100, monitoredSubdomain: false }, 'a.example.com')).toContain('sp=none applies to it instead of p=reject');
+		expect(failingMailFate('reject', { domain: 'example.com', sp: 'none', pct: 100, monitoredSubdomain: false }, 'a.example.com')).toContain('sp=none on example.com\'s record applies to it instead of p=reject');
 	});
 });
 

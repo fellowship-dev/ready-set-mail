@@ -101,6 +101,19 @@ describe('Hosted report intake on the domain page', () => {
 		expect(screen.queryByText('RUA reporting address')).not.toBeInTheDocument();
 		expect(screen.queryByText('Enable hosted records')).not.toBeInTheDocument();
 	});
+	it('B7: a subdomain with no address whose reports arrive through its connected parent is not "Reports not connected yet"', async () => {
+		detail({
+			status: { mode: 'saas' },
+			routes: detailRoutes({
+				'GET /api/domains': { domains: [{ ...domain, rua_address: '' }] },
+				'GET /api/hosted/config': { enabled: true, reports: true, records: false },
+				'GET /api/domains/1/report-address': { ...notConnected, via_parent: { domain_id: 9, domain: 'parent.example' } },
+			}),
+		});
+		expect(await screen.findByText('Reports arrive through parent.example')).toBeInTheDocument();
+		expect(screen.queryByTestId('reports-not-connected')).not.toBeInTheDocument();
+		expect(screen.queryByText('Reports not connected yet')).not.toBeInTheDocument();
+	});
 	it('shows the DMARC reports panel and hides the self-host "RUA reporting address" section', async () => {
 		detail({
 			status: { mode: 'saas' },

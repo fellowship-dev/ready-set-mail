@@ -69,7 +69,16 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	if (!s.address) {
 		return (
 			<div className={bare ? 'space-y-3' : 'space-y-3 rounded-lg border border-line bg-surface-1 p-4'} data-state="not_connected">
-				{bare ? null : (
+				{bare ? null : s.via_parent ? (
+					<>
+						<StatusDot status="info" label={`Reports arrive through ${s.via_parent.domain}`} className="font-semibold" />
+						<p className="text-sm text-ink-2" data-testid="via-parent">
+							<Mono>{domainName}</Mono> has no connection of its own. Reports that name it as their policy domain (it publishes its own DMARC record naming the report
+							address) are filed here, through the connection of <Link to={`/domains/${s.via_parent.domain_id}`}>{s.via_parent.domain}</Link>. Mail from <Mono>{domainName}</Mono> that a
+							receiver lists inside {s.via_parent.domain}&apos;s own reports stays with {s.via_parent.domain}.
+						</p>
+					</>
+				) : (
 					<>
 						<StatusDot status={STATE_DOT.not_connected.status} label={STATE_DOT.not_connected.label} className="font-semibold" />
 						<p className="text-sm text-ink-2">

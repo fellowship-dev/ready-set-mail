@@ -18,7 +18,7 @@ import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
 import { hostedConfig, hostedEnabled } from './config';
-import { fixedReportAddress, isFixedReportAddress, workspaceMayConnectReports } from './fixed-address';
+import { attributeReport, fixedReportAddress, isFixedReportAddress, workspaceMayConnectReports } from './fixed-address';
 import { isDomainProven, provenDomainIds } from '../domains/ownership';
 import type { BoundEnv } from '../index';
 import { hashToken, intakeAddress, isTokenShaped, parseRecipient } from './tokens';
@@ -72,6 +72,14 @@ export interface ReportAddressView {
   dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | InheritedPlan | null } | null;
   /** When the domain follows its organizational domain's record: that domain, if this workspace has it, and whether its reports are connected. */
   parent: { domain_id: number; domain: string; connected: boolean } | null;
+  /**
+   * This name has no connection of its own, yet the intake files reports that name it as their policy domain under THIS row, through
+   * the connection of the nearest connected, proven parent of this workspace (`attributeReport` then the gate in
+   * src/email/dmarc-report.ts, which prefers a proven row of the subdomain). `not_connected` stays the truth about the row's own
+   * address; this says reports about it still arrive. Mail from this name that a receiver lists inside the parent's own report stays
+   * with the parent.
+   */
+  via_parent: { domain_id: number; domain: string } | null;
 }
 
 export type ReportIntakeStatus = { available: false } | ReportAddressView;
@@ -192,6 +200,15 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
     const checked_at = Math.floor((deps.now?.() ?? Date.now()) / 1000);
     dns = { checked_at, error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, address) };
   }
+  let via_parent: ReportAddressView['via_parent'] = null;
+  if (!address && !managed_by && !refusal) {
+    // Exactly what the intake decides for a report about this name: who owns it, then whether this row takes it from them.
+    const target = await attributeReport(tenant.env as BoundEnv & { DB: D1Database }, intakeDomain, domain.domain);
+    if (target && target.workspace_id === tenant.workspaceId && target.domain_id !== domain.id) {
+      const row = await tenant.scope.domains.getById(target.domain_id);
+      if (row) via_parent = { domain_id: row.id, domain: row.domain };
+    }
+  }
   let parent: ReportAddressView['parent'] = null;
   if (dns?.plan?.kind === 'inherited') {
     const row = await tenant.scope.domains.getByName(dns.plan.from);
@@ -209,7 +226,7 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
   return {
     available: true, domain_id: domain.id, domain: domain.domain, managed_by, can_connect: !refusal, refusal, address,
     connected_at, last_report_at: counts.last_counted_since, counted_since_connect: counts.counted_since, reports_since_connect: counts.since,
-    reports_before_connect: counts.before, visibility, state, dns, parent,
+    reports_before_connect: counts.before, visibility, state, dns, parent, via_parent,
   };
 }
 

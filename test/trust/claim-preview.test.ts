@@ -329,6 +329,7 @@ describe('the preview and the overview card cannot disagree', () => {
   async function overviewInput(domain: string, z: Zone) {
     const snap = await snapshotDns(domain, fakeResolver(z));
     return {
+      domain, // the stored summary carries the domain (summarySql), which the SPF sentence names
       spf_record: snap.spf_record ?? null,
       dmarc_policy: snap.dmarc?.policy ?? null,
       dmarc_issue: snap.dmarc?.issue ?? null,

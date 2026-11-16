@@ -14,6 +14,7 @@ import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
 import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
 import { FailingSources } from '../../components/domain/FailingSources';
+import { SubdomainNames } from '../../components/domain/SubdomainNames';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
 import { Rollout } from '../../components/domain/Rollout';
@@ -26,7 +27,7 @@ import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, ty
 import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
 import { recordAlignment } from '../../lib/dmarc-coverage';
 import { spTag, sumStats, wizardProgress } from '../../lib/dmarc';
-import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
+import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useNames, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
 import { listedParentFinder } from '../../lib/listed-parent';
 import { useReportsRefusal } from '../../lib/report-address';
 import type { ReportsRefusal } from '../../lib/dmarc-step';
@@ -277,6 +278,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
+	const names = useNames(domain.id, !reportsOff);
 	const nxdomain = !!onboarding.data?.nxdomain;
 	// Hosted: the self-host reporting-address block never applies (the reports panel shows the address).
 	const hostedMode = useHosted();
@@ -488,6 +490,15 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				{!reportsOff && (failing > 0 || sources.isError) ? (
 					<Disclosure title="Failing senders" summary={sources.isError ? 'Could not be loaded.' : `${plural(failing, 'source')} sent mail that failed DMARC in the last 7 days.`}>
 						<FailingSources domainId={domain.id} q={sources} />
+					</Disclosure>
+				) : null}
+
+				{!reportsOff && (names.isError || (names.data?.length ?? 0) > 0) ? (
+					<Disclosure
+						title="Names seen sending as this domain"
+						summary={names.isError ? 'Could not be loaded.' : `${plural(names.data!.length, 'subdomain')} in the reports of the last 30 days${names.data!.some((n) => n.fix) ? `, ${plural(names.data!.filter((n) => n.fix).length, 'name')} to fix` : ''}. They are part of ${domain.domain}.`}
+					>
+						<SubdomainNames domainId={domain.id} domain={domain.domain} q={names} />
 					</Disclosure>
 				) : null}
 

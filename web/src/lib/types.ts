@@ -72,6 +72,21 @@ export interface FailingSource {
   org: string | null;
 }
 
+/** GET /api/domains/:id/names: a subdomain seen sending as the domain, with the policy that applies to it and where it comes from. */
+export interface NameSeen {
+  name: string;
+  roles: Array<'from' | 'return-path'>;
+  messages: number;
+  passed: number;
+  failed: number;
+  /** The policy of THIS name (packages/dns-checks/src/effective-policy.ts); null: not read (over the limit, or only a return-path). */
+  effective: { status: 'applies' | 'none' | 'multiple' | 'broken' | 'error'; policy: 'none' | 'quarantine' | 'reject' | null; tag: 'p' | 'sp' | 'np' | null; at: string | null; source: 'own' | 'organizational' | null; exists: boolean | null; pct: number | null } | null;
+  /** The policy and where it comes from, in one sentence. */
+  source: string | null;
+  /** The one thing to fix; null: nothing. */
+  fix: string | null;
+}
+
 export interface ReportSource {
   source_ip: string;
   header_from: string | null;
@@ -80,6 +95,14 @@ export interface ReportSource {
   count: number;
   spf_pass: number;
   dkim_pass: number;
+  /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
+  spf_aligned?: number | null;
+  dkim_aligned?: number | null;
+  /** 1 when DMARC failed for some of this source's mail (neither identifier aligned), even if SPF and DKIM passed. */
+  dmarc_fail?: number;
+  /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
+  aspf?: string | null;
+  adkim?: string | null;
   disposition: string;
   reporters: string;
   base_domain: string | null;
@@ -94,6 +117,14 @@ export interface AnomalySource {
   total: number;
   spf_pass: number;
   dkim_pass: number;
+  /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
+  spf_aligned?: number | null;
+  dkim_aligned?: number | null;
+  /** 1 when DMARC failed for some of this source's mail (neither identifier aligned), even if SPF and DKIM passed. */
+  dmarc_fail?: number;
+  /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
+  aspf?: string | null;
+  adkim?: string | null;
   first_seen: string; // YYYY-MM-DD
   last_seen: string;  // YYYY-MM-DD
   base_domain: string | null;
@@ -283,6 +314,9 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   dkim_pass: number;
   spf_total: number;
   spf_pass: number;
+  /** Messages whose DKIM aligned with the From domain (the receiver's own verdict) and the messages that carry that verdict (0017). */
+  dkim_aligned_pass?: number;
+  aligned_total?: number;
   mta_sts_enabled: number; // 0 | 1
   mta_sts_mode: string | null;
   /** SPF DNS lookups at the last refresh; null: not counted. */

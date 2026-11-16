@@ -1,7 +1,7 @@
 import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, cn } from '@ready-set-mail/ui';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { Link } from 'react-router';
-import { failLabel, isActive, isFailing } from '../../lib/reports';
+import { alignmentNote, failLabel, isActive, isFailing } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 import { ProviderName } from './ProviderName';
 
@@ -22,6 +22,7 @@ export function SourceStatus({ src, older }: { src: AnomalySource; older: boolea
 				<XCircle aria-hidden />
 				{failLabel(src)} fail
 			</Badge>
+			{src.dmarc_fail ? <span className="max-w-64 text-xs text-ink-2">{alignmentNote(src)}</span> : null}
 			{older ? <span className="text-xs text-ink-2">Not seen in 2+ days</span> : null}
 		</span>
 	);

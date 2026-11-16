@@ -1,10 +1,13 @@
 import type { CheckStatus } from '@ready-set-mail/ui';
 import { SPF_LOOKUP_LIMIT, spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { alignmentVerdict, explainAlignment, type AlignModes } from '@ready-set-mail/dns-checks/alignment';
+import { effectivePolicySentence, type EffectivePolicy } from '@ready-set-mail/dns-checks/effective-policy';
 import type { AnomalySource, CheckResult, ReportSource } from './types';
 
 /** Pure helpers for the report, source, email-check and audit screens. */
 
-export type AuthSource = Pick<ReportSource, 'source_ip' | 'header_from' | 'spf_domain' | 'dkim_domain' | 'spf_pass' | 'dkim_pass' | 'base_domain' | 'org'>;
+export type AuthSource = Pick<ReportSource, 'source_ip' | 'header_from' | 'spf_domain' | 'dkim_domain' | 'spf_pass' | 'dkim_pass' | 'base_domain' | 'org'> &
+	Partial<Pick<ReportSource, 'spf_aligned' | 'dkim_aligned' | 'dmarc_fail' | 'aspf' | 'adkim'>>;
 
 export const WINDOWS = [7, 30, 90] as const;
 export type WindowDays = (typeof WINDOWS)[number];
@@ -13,7 +16,8 @@ export const DEFAULT_WINDOW: WindowDays = 30;
 /** A source not seen in this many days is probably fixed already. */
 export const STALE_AFTER_DAYS = 2;
 
-export const isFailing = (src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'>): boolean => !src.spf_pass || !src.dkim_pass;
+/** Failing: SPF or DKIM did not pass, or DMARC failed although both passed (neither identifier aligned with the From domain). */
+export const isFailing = (src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'> & Partial<Pick<AuthSource, 'dmarc_fail'>>): boolean => !src.spf_pass || !src.dkim_pass || !!src.dmarc_fail;
 
 /** The sending service, when it differs from the From domain. */
 export function serviceVia(src: Pick<AuthSource, 'spf_domain' | 'dkim_domain' | 'header_from'>): string | null {
@@ -25,10 +29,14 @@ export function serviceVia(src: Pick<AuthSource, 'spf_domain' | 'dkim_domain' | 
 /** "Google" / "mailchimp.com", or null when the IP has no known owner. */
 export const providerName = (src: Pick<AuthSource, 'org' | 'base_domain'>): string | null => src.org || src.base_domain || null;
 
-export function failLabel(src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'>): 'SPF + DKIM' | 'SPF' | 'DKIM' {
+export function failLabel(src: Pick<AuthSource, 'spf_pass' | 'dkim_pass'> & Partial<Pick<AuthSource, 'dmarc_fail'>>): 'SPF + DKIM' | 'SPF' | 'DKIM' | 'Alignment' {
 	if (!src.spf_pass && !src.dkim_pass) return 'SPF + DKIM';
+	if (src.spf_pass && src.dkim_pass) return 'Alignment';
 	return !src.spf_pass ? 'SPF' : 'DKIM';
 }
+
+/** The alignment modes of the policy the receiver applied to this source ('s' when any report said strict; relaxed when not stored). */
+export const alignModesOf = (src: Partial<Pick<AuthSource, 'aspf' | 'adkim'>>): AlignModes => ({ spf: src.aspf === 's' ? 's' : 'r', dkim: src.adkim === 's' ? 's' : 'r' });
 
 /**
  * The domain's DMARC policy as the page knows it: a `p=` value, `'no-record'` when DNS has no DMARC record,
@@ -57,26 +65,40 @@ function asks(policy: string, pct: number): string | null {
 	return pct < 100 ? `${verb} only ${pct}% of it, and the rest is handled one policy level weaker` : verb === 'reject' ? 'reject it' : 'send it to spam';
 }
 
+/** The policy a name was found to be under, from `GET /api/domains/:id/names` (the shared `effectivePolicy`): its true source. */
+export type NamePolicy = Pick<EffectivePolicy, 'policy' | 'tag' | 'at' | 'source' | 'exists' | 'status'> & { pct?: number };
+
 /**
  * What receivers do with mail that fails DMARC, from the policy. Only says what the record actually asks for:
- * `pct=` limits it to a share of mail, and mail from a subdomain meets `sp=` when the record has one, else inherits `p=`.
+ * `pct=` limits it to a share of mail. For mail from a subdomain, `named` (the name's own policy and where it comes from,
+ * read by the server) says the true source; without it the text says that the subdomain's own record, if there is one,
+ * decides, and otherwise `sp=` (or `p=`) on the organizational domain's record (RFC 9989 section 4.10.1).
  */
-export function failingMailFate(policy: KnownPolicy, live?: LiveDmarc, headerFrom?: string | null): string {
+export function failingMailFate(policy: KnownPolicy, live?: LiveDmarc, headerFrom?: string | null, named?: NamePolicy | null): string {
 	const isPolicy = policy === 'none' || policy === 'quarantine' || policy === 'reject';
 	if (live && isPolicy && isSubdomainOf(headerFrom ?? null, live.domain)) {
-		// sp= only counts on the organizational domain's record. On a monitored subdomain's own record it reaches nobody:
-		// receivers look for a record published for the sender's domain, then for the organizational domain's.
-		if (live.monitoredSubdomain) {
-			return `${headerFrom} is a subdomain of ${live.domain}, which has its own DMARC record. Receivers use a record published for ${headerFrom}, or else the one on the organizational domain, so p= and sp= on ${live.domain} do not decide this mail. We have not read those records here.`;
+		if (named && named.status !== 'error') {
+			const how = named.policy ? effectivePolicySentence(headerFrom!, named as EffectivePolicy) : null;
+			if (named.policy && how) {
+				const ask = asks(named.policy, named.pct ?? 100);
+				return `${how} ${ask ? `That asks receivers to ${ask}.` : 'Receivers still deliver it unless their own filters stop it.'}`;
+			}
+			if (named.status === 'none') return `No DMARC record covers ${headerFrom}, so receivers still deliver it unless their own filters stop it.`;
+			return `The DMARC record that applies to ${headerFrom} gives receivers no policy as written, so what they do with it is up to their own filters.`;
 		}
-		const lead = live.sp
-			? `${headerFrom} is a subdomain, so sp=${live.sp} applies to it instead of p=${policy}`
-			: live.invalidSp
-				? `${headerFrom} is a subdomain. The record's sp=${live.invalidSp} is not a valid policy and is ignored, so it inherits p=${policy}`
-				: `${headerFrom} is a subdomain and your record has no sp= tag, so it inherits p=${policy}`;
+		// Not read: say what decides it, never that it "inherits" (the subdomain may publish a record of its own).
+		const lead = `${headerFrom} is a subdomain of ${live.domain}. We have not read whether it publishes a DMARC record of its own: if it does, that record decides what receivers do with this mail.`;
+		// sp= counts only on the organizational domain's record. On a monitored subdomain's own record it reaches nobody: receivers look
+		// for a record of the sender's domain, then for the organizational domain's, never a parent subdomain's (RFC 9989 section 4.7).
+		if (live.monitoredSubdomain) {
+			return `${lead} If it does not, the organizational domain's record applies, not ${live.domain}'s: p= and sp= on ${live.domain} do not decide this mail. We have not read the organizational domain's record here.`;
+		}
+		if (live.invalidSp) {
+			return `${lead} If it does not, ${live.domain}'s record applies, and its sp=${live.invalidSp} is not a valid policy, so receivers do not apply that record as written: they act as if it said p=none when it has a valid rua=, and apply no DMARC otherwise.`;
+		}
 		const effective = live.sp ?? policy;
 		const ask = asks(effective, live.pct);
-		return `${lead}. ${ask ? `That asks receivers to ${ask}.` : 'Receivers still deliver it unless their own filters stop it.'} A DMARC record published on the subdomain itself would override this.`;
+		return `${lead} If it does not, ${live.sp ? `sp=${live.sp}` : `p=${policy}`} on ${live.domain}'s record applies to it${live.sp ? ` instead of p=${policy}` : ''}, which ${ask ? `asks receivers to ${ask}` : 'leaves it delivered unless receivers\' own filters stop it'}.`;
 	}
 	const pct = live?.pct ?? 100;
 	if (policy === 'reject' || policy === 'quarantine') {
@@ -87,23 +109,39 @@ export function failingMailFate(policy: KnownPolicy, live?: LiveDmarc, headerFro
 	return 'What receivers do with it depends on your DMARC policy, which could not be read right now.';
 }
 
-/** Plain-language explanation and fix for a source that failed SPF and/or DKIM. */
-export function explain(src: AuthSource, policy: KnownPolicy = null, live?: LiveDmarc): string {
+/** One line for a source whose SPF and DKIM passed but whose mail failed DMARC: which identifier did not align, and why. Null when there is nothing to say. */
+export function alignmentNote(src: AuthSource): string | null {
+	if (!src.spf_pass && !src.dkim_pass) return null;
+	const v = explainAlignment(src, alignModesOf(src));
+	return v.dmarcFailed && v.lines.length > 0 ? v.lines.map((l) => l.sentence).join(' ') : null;
+}
+
+/** Plain-language explanation and fix for a source that failed SPF, DKIM or DMARC alignment. */
+export function explain(src: AuthSource, policy: KnownPolicy = null, live?: LiveDmarc, named?: NamePolicy | null): string {
 	const from = src.header_from ? `"${src.header_from}"` : 'your domain';
 	const service = serviceVia(src) ?? 'this server';
+	const fate = () => failingMailFate(policy, live, src.header_from, named);
 
 	if (!src.spf_pass && !src.dkim_pass) {
 		return (
 			`${service} has no authorization to send as ${from}. ` +
-			`If you don't recognize it, it's likely spoofed mail. ${failingMailFate(policy, live, src.header_from)} ` +
-			`If it's a service you added recently, you'll need to configure both SPF and DKIM for it.`
+			`If you don't recognize it, it's likely spoofed mail. ${fate()} ` +
+			`If it's a service you added recently, set up DKIM signing as ${src.header_from ?? 'your domain'} for it (and, where the service allows it, a custom return-path domain): DMARC needs SPF or DKIM to pass AND align with that domain.`
 		);
 	}
+	// At least one identifier passed. If DMARC still failed, say which identifier did not align, and why (RFC 9989 section 3.2.10).
+	const v = explainAlignment({ ...src, spf_pass: src.spf_pass, dkim_pass: src.dkim_pass }, alignModesOf(src));
+	if (v.dmarcFailed || src.dmarc_fail) {
+		const lines = v.lines.map((l) => `${l.sentence} ${l.fix}`).join(' ');
+		return `DMARC failed for ${service} sending as ${from}: SPF and DKIM do not align with it. ${lines} ${fate()}`;
+	}
 	if (!src.spf_pass) {
-		const fix = src.spf_domain ? `Add include:${src.spf_domain} to your SPF record.` : 'Add this server to your SPF record.';
+		const where = src.spf_domain ? `the return-path domain ${src.spf_domain}` : 'its return-path (MAIL FROM) domain';
+		const passes = src.dkim_aligned === 1 ? ' DMARC still passes, because DKIM aligns.' : '';
 		return (
-			`${service} isn't listed in your SPF record but is sending as ${from}. ` +
-			`If this is a service you use (e.g. a newsletter tool or CRM), authorize it. ${fix}`
+			`${service} failed SPF for ${where}, the name where SPF is checked for it.${passes} ` +
+			`To fix SPF, the SPF record of ${src.spf_domain ?? 'that domain'} must authorize this server: add it there, or in the sending service's own settings if the service manages that domain. ` +
+			`An SPF record at ${src.header_from ?? 'your domain'} does not apply to this mail.`
 		);
 	}
 	return (
