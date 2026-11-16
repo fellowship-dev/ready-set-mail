@@ -101,25 +101,37 @@ describe('scripts/check-flows.mjs: record names', () => {
 });
 
 describe('scripts/check-flows.mjs: which records count', () => {
-  const baseTime = Date.now() - 3 * 86400_000;
   const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
-  const ctx = { id: 'buy-fix-one-domain', baseTime, newFlow: false, commitState: (sha: string) => (sha.startsWith('aaaa') ? 'in-base' : 'new') };
+  const states: Record<string, string> = { aaaa: 'in-base', cccc: 'not-ancestor', dddd: 'unknown' };
+  const ctx = { id: 'buy-fix-one-domain', newFlow: false, commitState: (sha: string) => states[sha.slice(0, 4)] ?? 'new', coveredChangedSince: (sha: string) => (sha.startsWith('eeee') ? ['src/billing/orders.ts'] : []) };
   const gateRecord = (o: Record<string, string> = {}) => {
     const f = { Flow: 'Hosted owner buys Fix one domain', 'Value moment': 'Fix ordered', Walked: at(3600_000), Target: 'http://127.0.0.1:8787/ (local-copy)', Commit: 'bbbbbbb', Kind: 'screens', Gate: 'PASS', Rules: RULES_VERSION, ...o };
     return `# Walk record: buy-fix-one-domain\n\n${Object.entries(f).map(([k, v]) => `- **${k}:** ${v}`).join('\n')}\n`;
   };
-  it('a record the gate wrote, walked after the base at a new commit, counts', () => {
+  it('a record the gate wrote, at a commit in this change with no covered file changed since, counts', () => {
     expect(walkRecordProblems(gateRecord(), ctx)).toEqual([]);
   });
   it('a hand-written record without the gate fields does not', () => {
     expect(walkRecordProblems('- **Commit:** abc1234\n', ctx).length).toBeGreaterThan(3);
   });
   it('an old walk, a walk at a commit already in the base, a failed gate or another rules version does not', () => {
-    expect(walkRecordProblems(gateRecord({ Walked: at(4 * 86400_000) }), ctx).join()).toMatch(/not after the base/);
+    expect(walkRecordProblems(gateRecord({ Walked: at(-3600_000) }), ctx).join()).toMatch(/in the future/);
     expect(walkRecordProblems(gateRecord({ Commit: 'aaaaaaa' }), ctx).join()).toMatch(/already in the base/);
     expect(walkRecordProblems(gateRecord({ Gate: 'FAIL' }), ctx).join()).toMatch(/Gate is FAIL/);
     expect(walkRecordProblems(gateRecord({ Rules: '0.0.1' }), ctx).join()).toMatch(/Rules/);
     expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Walked: '2026-11-15 (date)' }), ctx).length).toBeGreaterThan(0);
+  });
+  it('a walk older than the base still counts when the base moved only in files the flow does not cover', () => {
+    expect(walkRecordProblems(gateRecord({ Walked: at(30 * 86400_000) }), ctx)).toEqual([]);
+  });
+  it('a covered file changed after the walked commit, a commit outside HEAD or a commit that is not there does not count', () => {
+    expect(walkRecordProblems(gateRecord({ Commit: 'eeeeeee' }), ctx).join()).toMatch(/src\/billing\/orders\.ts changed after the walked commit/);
+    expect(walkRecordProblems(gateRecord({ Commit: 'ccccccc' }), ctx).join()).toMatch(/not an ancestor of HEAD/);
+    expect(walkRecordProblems(gateRecord({ Commit: 'ddddddd' }), ctx).join()).toMatch(/not in this repository/);
+  });
+  it('a thin record (no gate fields, an undeclared value moment, an unknown target) still does not count', () => {
+    expect(walkRecordProblems('# Walk record: buy-fix-one-domain\n\n- **Commit:** bbbbbbb\n- **Gate:** PASS\n', ctx).length).toBeGreaterThan(4);
+    expect(walkRecordProblems(gateRecord({ 'Value moment': 'not declared', Target: 'unknown' }), ctx).length).toBe(2);
   });
   it('a baseline counts only for a flow this change adds', () => {
     expect(walkRecordProblems(gateRecord({ Kind: 'baseline', Walked: '2026-11-15 (date)' }), { ...ctx, newFlow: true })).toEqual([]);
