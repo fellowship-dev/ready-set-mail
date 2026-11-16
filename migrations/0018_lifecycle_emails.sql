@@ -3,6 +3,9 @@
 -- domain_milestones   one row per domain: when its DMARC record was first seen naming the domain's reports address (records_live_at) and who
 --                     saw it first (live_seen_by): 'app' (a person was on the dashboard, so no email) or 'job' (the daily job, which then
 --                     sends "records live"). Written from the same call sites as the analytics event, whether or not PostHog is on.
+--                     policy_seen / policy_seen_at: the DMARC policy last observed for the domain (an opaque key) and when it was first seen
+--                     at that value. dns_read_at: when the job last read this domain's DMARC record in public DNS (it orders the read budget,
+--                     least recently read first). A row may exist only for these (records_live_at and live_seen_by NULL until the records go live).
 -- email_preferences   a person's choice, per workspace, for the 'summary' and 'tips' emails. No row: the default for their role.
 -- lifecycle_sends     every lifecycle email, claimed (INSERT OR IGNORE) before it is sent, so a second run cannot send it twice. domain_id 0: not
 --                     about one domain. state: claimed (being sent), sent, failed (outcome unknown, never retried). A claim that sent nothing
@@ -12,6 +15,9 @@ CREATE TABLE domain_milestones (
   workspace_id TEXT NOT NULL,
   records_live_at INTEGER,
   live_seen_by TEXT,
+  policy_seen TEXT,
+  policy_seen_at INTEGER,
+  dns_read_at INTEGER,
   CONSTRAINT domain_milestones_seen_by_check CHECK (live_seen_by IN ('app', 'job'))
 );
 CREATE INDEX idx_domain_milestones_workspace ON domain_milestones (workspace_id);

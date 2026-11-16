@@ -1,20 +1,20 @@
 /**
- * Lifecycle emails (0017): who may be written to, what was already sent, what the reports of a week say.
+ * Lifecycle emails (0018): who may be written to, what was already sent, what the reports of a week say.
  *
  * Every statement is bound to the workspace. The report reads apply the workspace's counting filter (counting.ts), so the numbers in an email
  * are the numbers on the dashboard. `wk` is the zero-based week of a report's `date_begin` counted from the `from` the caller passed
  * (weeks are 7 x 86400 seconds, so a caller that passes a Monday 00:00 UTC gets ISO weeks).
  */
 import { sql } from 'drizzle-orm';
-import type { Db } from '../client';
+import { getDb, type Db, type DbLike } from '../client';
 import { counted, type CountingMode } from './counting';
 import { changesOf } from './plan-limit';
-import type { EmailPreferenceKind, LifecycleSendState, LiveSeenBy, MembershipRole } from '../schema';
+import { domainMilestones, type EmailPreferenceKind, type LifecycleSendState, type LiveSeenBy, type MembershipRole } from '../schema';
 
 export const WEEK_SECONDS = 7 * 86400;
 
 export interface RecipientRow { user_id: string; email: string; name: string; role: MembershipRole; email_verified: number }
-export interface MilestoneRow { domain_id: number; records_live_at: number | null; live_seen_by: LiveSeenBy | null }
+export interface MilestoneRow { domain_id: number; records_live_at: number | null; live_seen_by: LiveSeenBy | null; policy_seen: string | null; policy_seen_at: number | null; dns_read_at: number | null }
 export interface PreferenceRow { user_id: string; kind: EmailPreferenceKind; enabled: number }
 export interface SendRow { user_id: string; domain_id: number; kind: string; period: string; state: LifecycleSendState; created_at: number }
 export interface SendKey { userId: string; domainId: number; kind: string; period: string }
@@ -45,6 +45,19 @@ export interface ReportRow {
 	pass_count: number;
 	fail_count: number;
 	created_at: number;
+}
+
+/**
+ * The workspaces in the order the lifecycle job should visit them so its DNS reads are fair: the one whose oldest read is the oldest first (never
+ * read, or no milestone row yet, counts as the oldest); ties keep the order given. One query for the whole database, not scoped to a workspace.
+ */
+export async function lifecycleReadOrder(dbLike: DbLike, workspaceIds: readonly string[]): Promise<string[]> {
+	const db = getDb(dbLike);
+	const rows = await db.select({ workspace_id: domainMilestones.workspace_id, oldest: sql<number>`MIN(COALESCE(${domainMilestones.dns_read_at}, 0))` })
+		.from(domainMilestones /* workspace-scope-exempt: the order of the cron's fan-out over every workspace; it returns only a workspace id and the age of its oldest DNS read */)
+		.groupBy(domainMilestones.workspace_id).all();
+	const oldest = new Map(rows.map((r) => [r.workspace_id, r.oldest]));
+	return workspaceIds.map((id, i) => ({ id, i, at: oldest.get(id) ?? 0 })).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.id);
 }
 
 export function lifecycleEmailQueries(db: Db, workspaceId: string, counting: CountingMode) {
@@ -82,16 +95,36 @@ export function lifecycleEmailQueries(db: Db, workspaceId: string, counting: Cou
 		},
 
 		milestones: {
-			/** The first sight of a domain's records live: one INSERT OR IGNORE. True when this call wrote the row (a domain of another workspace writes nothing). */
+			/** The first sight of a domain's records live. True when this call wrote the live fact (a domain of another workspace, or one already live, writes nothing); fills a row that exists only for its policy columns. */
 			async recordLive(domainId: number, seenBy: LiveSeenBy, at: number): Promise<boolean> {
 				const res = await db.run(sql`
-					INSERT OR IGNORE INTO domain_milestones (domain_id, workspace_id, records_live_at, live_seen_by)
+					INSERT INTO domain_milestones (domain_id, workspace_id, records_live_at, live_seen_by)
 					SELECT d.id, ${A}, ${at}, ${seenBy} FROM domains d WHERE d.id = ${domainId} AND d.workspace_id = ${A}
+					ON CONFLICT (domain_id) DO UPDATE SET records_live_at = excluded.records_live_at, live_seen_by = excluded.live_seen_by
+					WHERE domain_milestones.records_live_at IS NULL
 				`);
 				return changesOf(res) > 0;
 			},
+			/** The DMARC policy now seen for a domain (an opaque key). Writes only when the row is new or the key differs; true when it wrote. */
+			async observePolicy(domainId: number, key: string, at: number): Promise<boolean> {
+				const res = await db.run(sql`
+					INSERT INTO domain_milestones (domain_id, workspace_id, policy_seen, policy_seen_at)
+					SELECT d.id, ${A}, ${key}, ${at} FROM domains d WHERE d.id = ${domainId} AND d.workspace_id = ${A}
+					ON CONFLICT (domain_id) DO UPDATE SET policy_seen = excluded.policy_seen, policy_seen_at = excluded.policy_seen_at
+					WHERE domain_milestones.policy_seen IS NOT excluded.policy_seen
+				`);
+				return changesOf(res) > 0;
+			},
+			/** The job has just read this domain's DMARC record in public DNS: the budget's order, least recently read first. */
+			async markRead(domainId: number, at: number): Promise<void> {
+				await db.run(sql`
+					INSERT INTO domain_milestones (domain_id, workspace_id, dns_read_at)
+					SELECT d.id, ${A}, ${at} FROM domains d WHERE d.id = ${domainId} AND d.workspace_id = ${A}
+					ON CONFLICT (domain_id) DO UPDATE SET dns_read_at = excluded.dns_read_at
+				`);
+			},
 			list(): Promise<MilestoneRow[]> {
-				return db.all<MilestoneRow>(sql`SELECT domain_id, records_live_at, live_seen_by FROM domain_milestones WHERE workspace_id = ${A}`);
+				return db.all<MilestoneRow>(sql`SELECT domain_id, records_live_at, live_seen_by, policy_seen, policy_seen_at, dns_read_at FROM domain_milestones WHERE workspace_id = ${A}`);
 			},
 		},
 

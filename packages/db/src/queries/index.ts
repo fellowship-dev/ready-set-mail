@@ -43,7 +43,7 @@ export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_B
 export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimits, type SweepResult, type Tombstone } from './global-lifecycle';
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';
 export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow } from './billing';
-export { lifecycleEmailQueries, WEEK_SECONDS, type RecipientRow, type MilestoneRow, type PreferenceRow, type SendRow, type SendKey, type WeekTotalRow, type WeekSourceRow, type ReportRow as LifecycleReportRow } from './lifecycle-email';
+export { lifecycleEmailQueries, lifecycleReadOrder, WEEK_SECONDS, type RecipientRow, type MilestoneRow, type PreferenceRow, type SendRow, type SendKey, type WeekTotalRow, type WeekSourceRow, type ReportRow as LifecycleReportRow } from './lifecycle-email';
 export { funnelQueries, hashEmail, type LeadRow } from './funnel';
 
 /**

@@ -134,7 +134,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 				db.delete(apiKeys).where(eq(apiKeys.workspace_id, workspaceId)),
 				// Orders are accounting records and stay; the bindings of card sessions hold nothing worth keeping (docs/data-retention.md).
 				db.delete(billingCheckoutSessions).where(eq(billingCheckoutSessions.workspace_id, workspaceId)),
-				// Lifecycle emails (0017): what the workspace's members chose and what was sent to them; milestones go with their domains.
+				// Lifecycle emails (0018): what the workspace's members chose and what was sent to them; milestones go with their domains.
 				db.delete(emailPreferences).where(eq(emailPreferences.workspace_id, workspaceId)),
 				db.delete(lifecycleSends).where(eq(lifecycleSends.workspace_id, workspaceId)),
 				db.delete(domainMilestones).where(eq(domainMilestones.workspace_id, workspaceId)),

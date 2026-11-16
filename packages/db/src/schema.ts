@@ -1123,7 +1123,7 @@ export const billingPriceCache = sqliteTable('billing_price_cache', {
 	fetched_at: integer('fetched_at').notNull(),
 });
 
-// ── Lifecycle emails (0017) ─────────────────────────────────
+// ── Lifecycle emails (0018) ─────────────────────────────────
 
 /** The kinds of email a person can turn off (src/lifecycle/email/preferences.ts). */
 export const EMAIL_PREFERENCE_KINDS = ['summary', 'tips'] as const;
@@ -1144,6 +1144,11 @@ export const domainMilestones = sqliteTable(
 		workspace_id: text('workspace_id').notNull(),
 		records_live_at: integer('records_live_at'),
 		live_seen_by: text('live_seen_by', { enum: LIVE_SEEN_BY }),
+		/** The DMARC policy last observed for the domain (an opaque key) and when it was first seen at that value. */
+		policy_seen: text('policy_seen'),
+		policy_seen_at: integer('policy_seen_at'),
+		/** When the lifecycle job last read the domain's DMARC record in public DNS: the order of its read budget, least recently read first. */
+		dns_read_at: integer('dns_read_at'),
 	},
 	(t) => [
 		index('idx_domain_milestones_workspace').on(t.workspace_id),

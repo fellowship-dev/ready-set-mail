@@ -309,6 +309,9 @@ CREATE TABLE `domain_milestones` (
 	`workspace_id` text NOT NULL,
 	`records_live_at` integer,
 	`live_seen_by` text,
+	`policy_seen` text,
+	`policy_seen_at` integer,
+	`dns_read_at` integer,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "domain_milestones_seen_by_check" CHECK("domain_milestones"."live_seen_by" IN ('app', 'job'))
 );

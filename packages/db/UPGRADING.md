@@ -11,9 +11,9 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
-## Lifecycle emails (0017)
+## Lifecycle emails (0018)
 
-Migration `0017_lifecycle_emails.sql` is additive: three new tables and nothing changed in the existing ones. `domain_milestones` (one row per domain: when its DMARC record was first seen naming the domain's reports address, and whether a person's own read or the daily job saw it first; cascades with the domain), `email_preferences` (a person's choice per workspace for the weekly summary and tips; no row means the default for their role) and `lifecycle_sends` (every lifecycle email, claimed before it is sent so a second run cannot send it twice). Nothing is read or sent unless `MODE=saas`; self-hosters only get the new tables (and a first-report email whose sender and wording changed, see the changelog). No backfill is needed.
+Migration `0018_lifecycle_emails.sql` is additive: three new tables and nothing changed in the existing ones. `domain_milestones` (one row per domain: when its DMARC record was first seen naming the domain's reports address, and whether a person's own read or the daily job saw it first; cascades with the domain), `email_preferences` (a person's choice per workspace for the weekly summary and tips; no row means the default for their role) and `lifecycle_sends` (every lifecycle email, claimed before it is sent so a second run cannot send it twice). Nothing is read or sent unless `MODE=saas`; self-hosters only get the new tables (and a first-report email whose sender and wording changed, see the changelog). No backfill is needed.
 
 ## Billing (0016)
 

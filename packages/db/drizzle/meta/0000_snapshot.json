@@ -2149,6 +2149,27 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "policy_seen": {
+          "name": "policy_seen",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_seen_at": {
+          "name": "policy_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dns_read_at": {
+          "name": "dns_read_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
