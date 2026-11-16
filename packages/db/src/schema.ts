@@ -283,11 +283,28 @@ export const spfFlattenConfig = sqliteTable(
 		flattened_record: text('flattened_record'),
 		ip_count: integer('ip_count'),
 		lookup_count: integer('lookup_count'),
+		/** When the published record last CHANGED (turning flattening on counts). Not bumped by a refresh that found nothing new. */
 		last_flattened_at: integer('last_flattened_at'),
+		/** The one plain sentence about the last problem; null when there is none. */
 		last_error: text('last_error'),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		workspace_id: workspaceId(),
+		/** Version for compare-and-set: +1 on every state change. */
+		revision: integer('revision').notNull().default(0),
+		/** Unix seconds: a run holds the row until then (claim first, then write). */
+		lease_until: integer('lease_until'),
+		/** The flattened record before the last change (one step back). */
+		previous_record: text('previous_record'),
+		/** When a run last looked at the row, whatever came of it (queue order: oldest first). */
+		last_attempt_at: integer('last_attempt_at'),
+		/** When a run last resolved the original successfully, changed or not. */
+		last_refreshed_at: integer('last_refreshed_at'),
+		/** Null, or why the record is not being kept current (src/spf/problems.ts SPF_PROBLEMS). */
+		problem_kind: text('problem_kind'),
+		/** When this kind of problem began (cleared when it recovers). */
+		problem_since: integer('problem_since'),
+		last_error_at: integer('last_error_at'),
 	},
 	(t) => [index('idx_spf_flatten_workspace').on(t.workspace_id)],
 );

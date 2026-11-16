@@ -11,6 +11,10 @@ git pull && npm install && npm run deploy   # builds, runs `npm run migrate`, th
 
 Local dev database: `npm run migrate:local`.
 
+## SPF flattening (0019)
+
+Migration `0019_spf_flattening.sql` is additive: eight nullable or defaulted columns on `spf_flatten_config` (`revision`, `lease_until`, `previous_record`, `last_attempt_at`, `last_refreshed_at`, `problem_kind`, `problem_since`, `last_error_at`). Apply it before serving the new Worker (the schema guard requires it). Existing rows keep their values: the first daily refresh after the upgrade fills the new ones. `last_flattened_at` now means "when the published record last changed". Migrations 0017 and 0018 are taken by other open changes; the numbers are not consecutive on purpose. What the job does and why: [docs/spf-flattening.md](../../docs/spf-flattening.md).
+
 ## Billing (0016)
 
 Migration `0016_billing.sql` is additive: one nullable column on `workspaces` (`stripe_customer_id`, unique: the workspace's Stripe Customer, created on first need) and four new tables, `billing_orders` (one purchase: an accounting record with no foreign key to workspaces or domains, so it survives deleting either; one open order per workspace, domain name and offer, enforced by a partial unique index), `billing_events` (Stripe events already seen, by id), `billing_checkout_sessions` (binds a Stripe Checkout session to the workspace and person that started it) and `billing_price_cache`. Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes, and nothing is used until the hosted service has `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` set; a self-hosted instance never uses them. Setup (price, restricted key, webhook, customer portal): [docs/billing.md](../../docs/billing.md). Retention: [docs/data-retention.md](../../docs/data-retention.md#billing-records).

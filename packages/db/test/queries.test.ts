@@ -71,7 +71,7 @@ describe('a workspace-scoped query cannot see or touch another workspace', () =>
 		await a.reports.insertTls({ domain_id: domA, org_name: 'g', date_begin: 1_000_000, date_end: 1_086_400, total_success: 5, total_failure: 1, failure_details: null, raw_json: null });
 		await a.monitor.insert({ email: 'm@x.test', domain: 'acme.com' });
 		await a.settings.set('brand_color', '#abc');
-		await a.spf.upsert({ domain_id: domA, canonical_record: 'v=spf1 -all', lookup_count: 1, cf_record_id: null });
+		await a.spf.begin({ domain_id: domA, canonical_record: 'v=spf1 -all', lookup_count: 1, cf_record_id: null });
 		await a.mtaSts.insert({ domain_id: domA, mode: 'testing', mx_hosts: '[]', policy_id: 'p', mta_sts_record_id: null, tls_rpt_record_id: null, cname_record_id: null });
 		await a.audit.insert({ action: 'domain.add', resource_type: 'domain', resource_id: String(domA) });
 		await a.team.insertInvite({ token: 'tok', email: 'i@x.test', role: 'member', invited_by: 'u', expires_at: 9_999_999_999 });
@@ -125,9 +125,12 @@ describe('a workspace-scoped query cannot see or touch another workspace', () =>
 		await b.domains.setAlertsEnabled(domA, false);
 		await b.domains.setDnsRecord(domA, 'cf-x', { provisioned: true });
 		await b.domains.setDefault(domA);
-		await b.spf.updateResult(domA, 'x', 1, 'cf');
-		await b.spf.updateError(domA, 'boom');
-		await b.spf.upsert({ domain_id: domA, canonical_record: 'HIJACK', lookup_count: 9, cf_record_id: 'zz' });
+		await b.spf.activate(domA, 'x', 1, 1);
+		await b.spf.claim(domA, 0, 1, 60);
+		await b.spf.finish(domA, 1, { flattened_record: 'x' });
+		await b.spf.deactivate(domA);
+		await b.spf.setProblem(domA, { kind: 'macro', since: 1, error: 'boom', at: 1 });
+		await b.spf.begin({ domain_id: domA, canonical_record: 'HIJACK', lookup_count: 9, cf_record_id: 'zz' });
 		await b.mtaSts.updateMode(domA, 'enforce', 'p2');
 		await b.mtaSts.updateMxHosts(domA, '["x"]', 'p2');
 		await b.mtaSts.updateError(domA, 'boom');

@@ -4,13 +4,36 @@ import { domains, mtaStsConfig, spfFlattenConfig } from '../schema';
 
 export type MtaStsMode = 'testing' | 'enforce';
 
+export type SpfConfigRow = typeof spfFlattenConfig.$inferSelect;
+
+/** What a state change writes. `undefined` leaves a column alone; `null` clears it. */
+export interface SpfPatch {
+	flattened_record?: string | null;
+	previous_record?: string | null;
+	cf_record_id?: string | null;
+	ip_count?: number | null;
+	lookup_count?: number | null;
+	last_flattened_at?: number | null;
+	last_refreshed_at?: number | null;
+	problem_kind?: string | null;
+	problem_since?: number | null;
+	last_error?: string | null;
+	last_error_at?: number | null;
+}
+
+const changed = (res: unknown): boolean => ((res as { meta?: { changes?: number } }).meta?.changes ?? 0) > 0;
+
+/**
+ * The rows behind SPF flattening. Every write that follows a Cloudflare write is a compare-and-set on `revision` (src/spf/refresh.ts):
+ * a run claims the row first, writes DNS, then finishes only if nobody changed the row meanwhile.
+ */
 export function spfFlattenQueries(db: Db, workspaceId: string) {
 	const mine = eq(spfFlattenConfig.workspace_id, workspaceId);
 	const forDomain = (id: number) => and(mine, eq(spfFlattenConfig.domain_id, id));
 	const touch = sql`unixepoch()` as any;
 
 	return {
-		get(domainId: number) {
+		get(domainId: number): Promise<SpfConfigRow | null> {
 			return db.select().from(spfFlattenConfig).where(forDomain(domainId)).get().then((r) => r ?? null);
 		},
 
@@ -18,36 +41,89 @@ export function spfFlattenQueries(db: Db, workspaceId: string) {
 			return db.select().from(spfFlattenConfig).where(and(mine, eq(spfFlattenConfig.enabled, 1))).all();
 		},
 
-		upsert(c: { domain_id: number; canonical_record: string; lookup_count: number | null; cf_record_id: string | null }) {
+		/** Whether this workspace has any row (turned on, or turning off): the dashboard keeps the tool visible for it. */
+		async any(): Promise<boolean> {
+			return !!(await db.select({ d: spfFlattenConfig.domain_id }).from(spfFlattenConfig).where(mine).limit(1).get());
+		},
+
+		/**
+		 * Enabled rows not looked at since `before` (unix seconds), never-looked-at first, then the longest ago. `before` null: all of them
+		 * (a person pressed "Try again").
+		 */
+		due(before: number | null, limit: number) {
 			return db
+				.select()
+				.from(spfFlattenConfig)
+				.where(and(mine, eq(spfFlattenConfig.enabled, 1), before === null ? undefined : sql`(${spfFlattenConfig.last_attempt_at} IS NULL OR ${spfFlattenConfig.last_attempt_at} < ${before})`))
+				.orderBy(sql`${spfFlattenConfig.last_attempt_at} IS NOT NULL`, spfFlattenConfig.last_attempt_at, spfFlattenConfig.domain_id)
+				.limit(limit)
+				.all();
+		},
+
+		/** Turning on, step one: the row exists (enabled, nothing written yet). False when the domain already has a row: nobody else may write. */
+		async begin(c: { domain_id: number; canonical_record: string; lookup_count: number | null; cf_record_id: string | null }): Promise<boolean> {
+			const res = await db
 				.insert(spfFlattenConfig)
 				.values({ workspace_id: workspaceId, domain_id: c.domain_id, enabled: 1, cf_record_id: c.cf_record_id, canonical_record: c.canonical_record, lookup_count: c.lookup_count })
-				.onConflictDoUpdate({
-					target: spfFlattenConfig.domain_id,
-					// An upsert must never move a row to another workspace.
-					setWhere: mine,
-					set: {
-						enabled: 1,
-						cf_record_id: sql`COALESCE(excluded.cf_record_id, ${spfFlattenConfig.cf_record_id})`,
-						canonical_record: sql`excluded.canonical_record`,
-						lookup_count: sql`excluded.lookup_count`,
-						last_error: null,
-						updated_at: touch,
-					},
-				})
+				.onConflictDoNothing()
 				.run();
+			return changed(res);
 		},
 
-		updateResult(domainId: number, flattened_record: string, ip_count: number, cf_record_id: string) {
-			return db
+		/** Turning on, step two, after the record was written. */
+		async activate(domainId: number, flattened_record: string, ip_count: number, at: number): Promise<boolean> {
+			const res = await db
 				.update(spfFlattenConfig)
-				.set({ flattened_record, ip_count, cf_record_id, last_flattened_at: touch, last_error: null, updated_at: touch })
-				.where(forDomain(domainId))
+				.set({ flattened_record, ip_count, last_flattened_at: at, last_refreshed_at: at, last_attempt_at: at, revision: 1, updated_at: touch })
+				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, 0), isNull(spfFlattenConfig.flattened_record)))
 				.run();
+			return changed(res);
 		},
 
-		updateError(domainId: number, error: string) {
-			return db.update(spfFlattenConfig).set({ last_error: error, updated_at: touch }).where(forDomain(domainId)).run();
+		/** Turning on failed before anything was written: no half-enabled row stays behind. */
+		async abandon(domainId: number): Promise<void> {
+			await db.delete(spfFlattenConfig).where(and(forDomain(domainId), eq(spfFlattenConfig.revision, 0), isNull(spfFlattenConfig.flattened_record))).run();
+		},
+
+		/** A run takes the row. It must hold the revision it read; false: another run or a change got there first. Returns the new revision. */
+		async claim(domainId: number, revision: number, at: number, leaseSeconds: number): Promise<number | null> {
+			const res = await db
+				.update(spfFlattenConfig)
+				.set({ revision: revision + 1, lease_until: at + leaseSeconds, last_attempt_at: at, updated_at: touch })
+				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, revision), sql`(${spfFlattenConfig.lease_until} IS NULL OR ${spfFlattenConfig.lease_until} < ${at})`))
+				.run();
+			return changed(res) ? revision + 1 : null;
+		},
+
+		/** Is the claim still ours (enabled, same revision)? Read just before the DNS write. */
+		async holds(domainId: number, revision: number): Promise<boolean> {
+			const r = await db.select({ r: spfFlattenConfig.revision }).from(spfFlattenConfig).where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, revision))).get();
+			return !!r;
+		},
+
+		/** A run ends: write the outcome and let go of the row, only if the claim still holds. */
+		async finish(domainId: number, claimed: number, patch: SpfPatch): Promise<boolean> {
+			const res = await db
+				.update(spfFlattenConfig)
+				.set({ ...patch, revision: claimed + 1, lease_until: null, updated_at: touch })
+				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1), eq(spfFlattenConfig.revision, claimed)))
+				.run();
+			return changed(res);
+		},
+
+		/** Turning off, step one: stops every refresh at once, whatever run is in flight. False: not enabled. */
+		async deactivate(domainId: number): Promise<boolean> {
+			const res = await db
+				.update(spfFlattenConfig)
+				.set({ enabled: 0, revision: sql`${spfFlattenConfig.revision} + 1`, lease_until: null, updated_at: touch })
+				.where(and(forDomain(domainId), eq(spfFlattenConfig.enabled, 1)))
+				.run();
+			return changed(res);
+		},
+
+		/** A row that is not on (turning off could not put the original back, or a review is open): a note without touching the revision rules. */
+		setProblem(domainId: number, p: { kind: string | null; since: number | null; error: string | null; at: number | null }) {
+			return db.update(spfFlattenConfig).set({ problem_kind: p.kind, problem_since: p.since, last_error: p.error, last_error_at: p.at, updated_at: touch }).where(forDomain(domainId)).run();
 		},
 
 		delete(domainId: number) {
