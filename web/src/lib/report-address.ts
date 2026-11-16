@@ -89,6 +89,8 @@ export function useReportAddress(domainId: number, enabled = true) {
 		queryKey: reportAddressKey(domainId),
 		queryFn: () => api<ReportIntakeStatus>(`/api/domains/${domainId}/report-address`),
 		enabled,
+		// The state is live DNS plus stored reports: a screen that mounts shows what is true now, not what a screen before it read.
+		refetchOnMount: 'always',
 	});
 }
 
