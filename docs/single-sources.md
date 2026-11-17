@@ -85,6 +85,8 @@ The record parser (`packages/dns-checks/src/spf-terms.ts`) reads no DNS and buil
 - `src/hosted/pointers.ts`: reads the customer's own SPF record to see whether it carries our include; resolves no include target.
 - `tools/audit-fleet/lib/checker.ts`: an operator tool that audits a list of domains and names the providers; writes no record.
 
+**A known limit of the behaviour guard.** It reads the source text without comments, so a term name built from pieces (`'inc' + 'lude'`, a template that joins the halves) is not seen. The guard is a net for the honest second copy, not a lock against someone who hides one; the pull request review is the check for that, and the review question is the same: does this module resolve includes or build address terms outside the engine?
+
 ## How the guards work
 
 - **What is scanned.** Production code only: `src`, `web/src`, `packages/db/src`, `packages/dns-checks/src`, `packages/report/src`, `packages/ui/src`, `scripts`, `tools` and `plugins`, without comments. Not scanned: test files (`*.test.*`, `*.spec.*`, `*.stories.*`, `*.fixture.*`, `*.d.ts`) and folders named `test`, `tests`, `__tests__`, `__fixtures__`, `fixtures`, `__mocks__` or `e2e`. So a fixture cannot trip a guard, a separate test checks that production code never imports from those folders, and the UI gallery (`packages/ui/gallery`) is a showcase, not product.

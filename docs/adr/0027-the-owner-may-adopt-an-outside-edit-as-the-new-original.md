@@ -13,5 +13,5 @@ When the SPF record in Cloudflare is not the one Ready Set Mail published, someo
 - Basis: the safe default is the one that loses nothing (the owner's rule that the product does not remove what a person put there without saying so, and ADR 0025's rule for providers); the destructive choice is named and listed before it is made.
 
 **Consequences**
-- Adopting clears a waiting removal and the state of the old original (`provider_state`), and the daily check goes on from the new original.
+- Adopting follows the removal rule of [ADR 0025](0025-a-refresh-never-removes-an-address-on-first-sighting.md) (`decideSpfWrite`, the one rule): the new original is flattened against what the published record authorises, so addresses that would leave (a provider that now lists fewer, or an include the edit dropped, unless the edit lists the addresses itself) are held and the removal waits, a removal already waiting is carried with its clock, and additions are written at once. If the held record does not fit the limits nothing is written and the person is told so. A waiting removal that is confirmed (four hours on) is written. The daily check goes on from the new original.
 - `docs/spf-flattening.md` and `CONTEXT.md` ("original record", "adopt") say it; the card and the page use the words above.
