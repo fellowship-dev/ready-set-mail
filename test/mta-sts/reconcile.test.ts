@@ -293,3 +293,57 @@ describe('who runs it, and when', () => {
     expect((await w.api(w.A.token, 'GET', '/api/instance/mta-sts/reconcile')).status).toBe(405);
   });
 });
+
+describe('opening the page fetches the policy again when the last check is old (round 4)', () => {
+  const view = async (w: MtaWorld) => w.json(await w.mta(w.A.token, 'GET', 1));
+  const age = (w: MtaWorld, seconds: number) => w.db.sqlite.prepare('UPDATE mta_sts_config SET fetch_checked_at = ? WHERE domain_id = 1').run(now() - seconds);
+  const count = (w: MtaWorld) => { const n = { fetches: 0 }; const was = w.cf.policyServer; w.cf.policyServer = (u, i) => { n.fetches++; return was!(u, i); }; return n; };
+  const enforceServed = (b: any) => b.enforce.checks.find((k: any) => k.key === 'served');
+
+  it('the policy starts answering 404: the next view says it cannot be reached and the enforce item is missing', async () => {
+    const w = await mtaWorld();
+    await active(w);
+    age(w, 3600);
+    w.cf.policyServer = () => new Response('Not found', { status: 404 });
+    const b = await view(w);
+    expect(b.served).toMatchObject({ ok: false, reason: 'not_found', could_not_check: false });
+    expect(b.served.checked_at).toBeGreaterThan(now() - 60);
+    expect(w.row(1)).toMatchObject({ fetch_ok: 0, fetch_reason: 'not_found' });
+    expect(enforceServed(b)).toMatchObject({ met: false, reasons: ['The policy cannot be reached right now.'] });
+  });
+
+  it('a fetch that times out: "could not check", the last known result and its time, nothing stored', async () => {
+    const w = await mtaWorld();
+    await active(w);
+    age(w, 3600);
+    const before = w.row(1);
+    w.cf.policyServer = () => { throw new DOMException('The operation timed out', 'TimeoutError'); };
+    const b = await view(w);
+    expect(b.served).toMatchObject({ ok: true, could_not_check: true, checked_at: before.fetch_checked_at });
+    expect(w.row(1)).toMatchObject({ fetch_ok: 1, fetch_reason: null, fetch_checked_at: before.fetch_checked_at });
+    expect(enforceServed(b)).toMatchObject({ met: false, reasons: ['The policy could not be checked just now.'] });
+  });
+
+  it('a result under ten minutes old is not fetched again; one over ten minutes is, once per view', async () => {
+    const w = await mtaWorld();
+    await active(w);
+    const n = count(w);
+    age(w, 540);
+    expect((await view(w)).served).toMatchObject({ ok: true, could_not_check: false });
+    expect(n.fetches).toBe(0);
+    age(w, 660);
+    await view(w);
+    expect(n.fetches).toBe(1);
+    await view(w);
+    expect(n.fetches).toBe(1);
+  });
+
+  it('Check now fetches again however recent the last check', async () => {
+    const w = await mtaWorld();
+    await active(w);
+    w.cf.policyServer = () => new Response('Not found', { status: 404 });
+    const n = count(w);
+    expect(await verify(w)).toMatchObject({ served: { ok: false, reason: 'not_found' } });
+    expect(n.fetches).toBe(1);
+  });
+});

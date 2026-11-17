@@ -11,20 +11,11 @@ export const senderNames = (labels: readonly string[] | undefined): string => {
 	return l.length < 2 ? l.join('') : `${l.slice(0, -1).join(', ')} or ${l[l.length - 1]}`;
 };
 
-/**
- * How old the last fetch of the policy may be before the page looks again when it is opened. Basis: a record or a certificate change settles in a few minutes
- * (the page itself says a certificate takes a few minutes), and the daily job is the only other fetch, so a result from a day ago says nothing about now.
- * Bounded: once per page view, never on a re-render.
- */
-export const SERVED_STALE_SECONDS = 600;
-
-export const isStaleServed = (served: { checked_at: number | null } | null | undefined, nowSec: number): boolean =>
-	!served || served.checked_at === null || nowSec - served.checked_at > SERVED_STALE_SECONDS;
-
 /** What a sender may keep an enforce policy for: `MAX_AGE_ENFORCE` in src/mta-sts/config.ts (a week). */
 export const ENFORCE_MAX_AGE = 604800;
 
-const utc = (sec: number): string => `${new Date(sec * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+/** A time, short and the same for everyone: "2026-11-17 14:03 UTC". */
+export const utc = (sec: number): string => `${new Date(sec * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 
 /**
  * How long senders may hold the policy, true for the mode AND for what came before it: after leaving enforce, a sender that fetched the enforce policy may

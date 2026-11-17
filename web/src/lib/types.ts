@@ -216,7 +216,9 @@ export interface MtaStsReport {
 }
 
 /** The last fetch of the policy URL: the only source of "served". `ok` is null until it was fetched once; `reason` and `message` are set when it failed. */
-export interface MtaStsServed { ok: boolean | null; checked_at: number | null; reason: string | null; message: string | null; action: 'check_now' | 'fix_record' | null; url: string }
+export interface MtaStsServed { ok: boolean | null; checked_at: number | null; reason: string | null; message: string | null; action: 'check_now' | 'fix_record' | null; url: string;
+  /** The server tried to fetch the policy for this view and got no answer in time: the rest is the LAST KNOWN result, not a fresh one. */
+  could_not_check?: boolean }
 
 /** A policy being taken down the RFC 8461 section 8.3 way (a lost proof, a removed or an evicted domain). */
 export interface MtaStsRetiring { retiring: true; reason: 'lost_proof' | 'removed' | 'evicted'; enforced: boolean; until: number; message: string }

@@ -171,7 +171,7 @@ describe('MTA-STS page: setting up', () => {
 		expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/mta-sts/verify')).toBe(true);
 	});
 
-	it('once the policy is served and every check is in place, Check now and the time of the last check are gone', async () => {
+	it('once the policy is served and every check is in place, Check now is small and secondary and the last check shows its time', async () => {
 		const ok = (key: string, label: string) => ({ key, label, state: 'ok', detail: null });
 		let checked = false;
 		page(() => (checked ? testing({ config: config({ last_checked_at: NOW }) }) : base({ config: config({ state: 'waiting_certificate', policy_published_at: null }), policy_host_status: cert(false), records: records({ written: true }) })), {
@@ -180,7 +180,7 @@ describe('MTA-STS page: setting up', () => {
 		await userEvent.click(await screen.findByRole('button', { name: 'Check now' }));
 		expect(await screen.findByText(TESTING_SENTENCE)).toBeInTheDocument();
 		expect(screen.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Check now' })).toHaveClass('bg-surface-1');
 		expect(screen.queryByText(/Last checked/)).not.toBeInTheDocument();
 	});
 
@@ -424,48 +424,44 @@ describe('MTA-STS page: every sentence is true for the state it is shown in', ()
 		});
 	});
 
-	describe('"Served" is the last fetch, looked at again when it is old', () => {
-		const stale = { ...SERVED, checked_at: NOW - 3600 };
-		const unreachable = { ok: false, checked_at: NOW, reason: 'not_found', action: 'check_now', message: `The policy at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt cannot be reached: the host answered 404.`, url: 'u' };
+	describe('"Served" is the last fetch, which the server renews when the view is old', () => {
+		const url = `https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`;
+		const when = (sec: number) => `${new Date(sec * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
 
-		it('a recent fetch is shown as served and is not repeated', async () => {
+		it('a served policy says when it was checked, offers a small secondary Check now, and the page itself fetches nothing', async () => {
 			const { calls } = page(testing({ served: { ...SERVED, checked_at: NOW - 540 } }));
-			expect(await screen.findByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
+			expect(await screen.findByText(`Served at ${url}`)).toBeInTheDocument();
+			expect(screen.getByText(`Checked ${when(NOW - 540)}`)).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Check now' })).toHaveClass('bg-surface-1');
 			expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
 		});
 
-		it('an old fetch is looked at again once, when the page is opened, and a host that now answers 404 is "cannot be reached" with the one action', async () => {
-			let verified = false;
-			const { calls } = page(() => testing({ served: verified ? unreachable : stale }), {
-				'POST /api/domains/1/mta-sts/verify': () => { verified = true; return { ok: true, state: 'active', notice: null, last_error: null, served: unreachable, checks: [] }; },
-			});
+		it('a host that answers 404 is "cannot be reached" with its check time and the one action, and enforce stays off', async () => {
+			const unreachable = { ok: false, checked_at: NOW, reason: 'not_found', action: 'check_now', message: `The policy at ${url} cannot be reached: the host answered 404.`, url, could_not_check: false };
+			page(testing({ served: unreachable }));
 			expect(await screen.findByText('The policy cannot be reached')).toBeInTheDocument();
-			expect(screen.getByText(/the host answered 404/)).toBeInTheDocument();
+			expect(screen.getByText(`Checked ${when(NOW)}`)).toBeInTheDocument();
 			expect(screen.queryByText(/^Served at/)).not.toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Switch to enforce' })).toBeDisabled();
-			expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/domains/1/mta-sts/verify']);
 		});
 
-		it('while it looks again the old result is not claimed, and it looks only once however often the page renders', async () => {
-			let release: () => void = () => {};
-			const gate = new Promise<void>((r) => { release = r; });
-			let verified = false;
-			const { calls } = page(() => testing({ served: verified ? { ...SERVED, checked_at: NOW } : stale }), {
-				'POST /api/domains/1/mta-sts/verify': async () => { await gate; verified = true; return { ok: true, state: 'active', notice: null, last_error: null, served: { ...SERVED, checked_at: NOW }, checks: [] }; },
-			});
-			expect(await screen.findByText(/^Checking that https:\/\/mta-sts\.example\.com\/\.well-known\/mta-sts\.txt answers/)).toBeInTheDocument();
-			expect(screen.queryByText(/^Served at/)).not.toBeInTheDocument();
-			release();
-			expect(await screen.findByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeInTheDocument();
-			expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
-		});
-
-		it('a failed re-check does not leave "Served" standing: the old result is not claimed and Check now is offered', async () => {
-			page(testing({ served: stale }), { 'POST /api/domains/1/mta-sts/verify': fail(500, 'boom') });
-			expect(await screen.findByText('Could not check')).toBeInTheDocument();
+		it('a fetch that got no answer says so, with the last known result and its time, and never claims "Served"', async () => {
+			page(testing({ served: { ...SERVED, checked_at: NOW - 3600, could_not_check: true } }));
+			expect(await screen.findByText(`Could not check just now. Last known: served at ${url}, checked ${when(NOW - 3600)}.`)).toBeInTheDocument();
 			expect(screen.queryByText(/^Served at/)).not.toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument();
+		});
+
+		it('Check now fetches and shows the new result', async () => {
+			let verified = false;
+			const gone = { ok: false, checked_at: NOW, reason: 'not_found', action: 'check_now', message: 'gone', url };
+			const { calls } = page(() => testing({ served: verified ? gone : SERVED }), {
+				'POST /api/domains/1/mta-sts/verify': () => { verified = true; return { ok: true, state: 'active', notice: null, last_error: null, served: gone, checks: [] }; },
+			});
+			await userEvent.click(await screen.findByRole('button', { name: 'Check now' }));
+			expect(await screen.findByText('The policy cannot be reached')).toBeInTheDocument();
+			expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/api/domains/1/mta-sts/verify']);
 		});
 	});
 

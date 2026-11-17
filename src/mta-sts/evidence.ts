@@ -49,7 +49,7 @@ const days = (s: number) => Math.round(s / 86400);
  *  - no failure of a blocking type in the counted reports of the last EVIDENCE_WINDOW_SECONDS that ended after that publication;
  *  - every MX host is a hostname (not an address) and matches the policy's mx list (`liveMx` is today's MX list, null when it could not be read).
  */
-export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'> & { fetch_ok?: number | null }, allReports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number, opts: { verifiable?: boolean; reporters?: readonly string[] } = {}): Readiness {
+export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hosts' | 'policy_published_at' | 'mode_changed_at'> & { fetch_ok?: number | null; fetch_unchecked?: boolean }, allReports: readonly EvidenceRow[], liveMx: readonly string[] | null, now: number, opts: { verifiable?: boolean; reporters?: readonly string[] } = {}): Readiness {
   const reports = allReports.filter((r) => r.reporter_tier === 'counted');
   const served: string[] = [], days_: string[] = [], report: string[] = [], failures: string[] = [], mx: string[] = [];
   const checks = (): EnforceCheck[] => [
@@ -61,6 +61,7 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
   ];
   if (cfg.mode === 'enforce') return { ready: false, reasons: ['It is already enforcing.'], checks: checks() };
   if (cfg.state !== 'active') served.push('Setup is not finished.');
+  else if (cfg.fetch_unchecked) served.push('The policy could not be checked just now.');
   else if (cfg.fetch_ok === 0) served.push('The policy cannot be reached right now.');
 
   const inTesting = cfg.mode_changed_at ? now - cfg.mode_changed_at : 0;

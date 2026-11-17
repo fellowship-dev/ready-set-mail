@@ -123,7 +123,8 @@ for (const width of [375, 1440]) {
 		await page.getByRole('button', { name: 'Check now' }).click();
 		await expect(page.getByText('Testing: mail is delivered as before, and senders that send TLS reports tell you about problems.')).toBeVisible();
 		await expect(page.getByText(`Served at https://mta-sts.${DOMAIN}/.well-known/mta-sts.txt`)).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Check now' })).toHaveCount(0); // served: nothing left to check by hand
+		await expect(page.getByText(/^Checked \d{4}-\d\d-\d\d \d\d:\d\d UTC$/)).toBeVisible(); // when it was fetched
+		await expect(page.getByRole('button', { name: 'Check now' })).toHaveCount(1); // served can go stale: Check now stays, small
 		await expect(page.getByText('No signed TLS report yet')).toBeVisible();
 		await expect(page.getByText('Senders usually send one a day after they deliver mail to you.')).toBeVisible();
 		const enforce = page.getByRole('button', { name: 'Switch to enforce' });

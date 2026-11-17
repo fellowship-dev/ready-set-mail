@@ -166,11 +166,33 @@ function recordsFor(domain: string, o: { target: string | null; proxied: boolean
   ];
 }
 
+/**
+ * How old the last fetch of the policy may be before opening the page fetches it again. Basis: a record or a certificate change settles in a few minutes, and the
+ * daily job is the only other fetch; a view costs at most one outbound fetch, so ten minutes bounds that to six an hour per domain however often the page is opened.
+ */
+export const SERVED_FRESH_SECONDS = 600;
+/** The view's own fetch gives up sooner than the job's (FETCH_TIMEOUT_MS): a person is waiting for the page. */
+export const VIEW_FETCH_TIMEOUT_MS = 4000;
+
+/**
+ * An active policy whose last fetch is older than SERVED_FRESH_SECONDS is fetched again BEFORE the page is answered, and the result is stored, so "served" is never an
+ * old claim. A fetch that did not get an answer in time says nothing about the policy: nothing is stored and `couldNotCheck` is set, so the page shows the last result
+ * as last known. Not shared between concurrent views: a promise made in one request cannot be awaited from another on Workers.
+ */
+async function freshenServed(tenant: TenantContext, domain: DomainRow, row: MtaStsRow, now: number): Promise<{ row: MtaStsRow; couldNotCheck: boolean }> {
+  if (row.state !== 'active' || (row.fetch_checked_at !== null && now - row.fetch_checked_at <= SERVED_FRESH_SECONDS)) return { row, couldNotCheck: false };
+  const proof = await fetchPolicyProof(domain.domain, policyText(row), tenant.env, undefined, VIEW_FETCH_TIMEOUT_MS);
+  if (proof.reason === 'timeout') return { row, couldNotCheck: true };
+  const patch = { fetch_checked_at: now, fetch_ok: proof.ok ? 1 : 0, fetch_reason: proof.reason };
+  await tenant.scope.mtaSts.update(domain.id, patch);
+  return { row: { ...row, ...patch }, couldNotCheck: false };
+}
+
 /** The page's "served": null `ok` until the policy was fetched once; else the last fetch, with the one sentence and the one action when it failed. */
-export function servedStatus(r: Pick<MtaStsRow, 'fetch_ok' | 'fetch_checked_at' | 'fetch_reason'>, domain: string) {
+export function servedStatus(r: Pick<MtaStsRow, 'fetch_ok' | 'fetch_checked_at' | 'fetch_reason'>, domain: string, couldNotCheck = false) {
   const reason = (r.fetch_ok === 0 ? r.fetch_reason ?? 'unreachable' : null) as FetchReason | null;
   const say = servedMessage(domain, reason);
-  return { ok: r.fetch_ok === null ? null : r.fetch_ok === 1, checked_at: r.fetch_checked_at, reason, message: say?.message ?? null, action: say?.action ?? null, url: policyUrl(domain) };
+  return { ok: r.fetch_ok === null ? null : r.fetch_ok === 1, checked_at: r.fetch_checked_at, reason, message: say?.message ?? null, action: say?.action ?? null, url: policyUrl(domain), could_not_check: couldNotCheck };
 }
 
 const certificateOf = (r: MtaStsRow) => (r.policy_host === 'saas_hostname' ? { status: r.ch_status, ssl_status: r.ch_ssl_status, active: r.ch_status === 'active' && r.ch_ssl_status === 'active' } : null);
@@ -205,7 +227,8 @@ const reportView = (r: { id: number; org_name: string; date_begin: number; date_
 export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Promise<Result> {
   // A stopped setup is a row that is off, kept only for its one notice; a policy being retired is an entry of its own (src/mta-sts/retire.ts).
   const stored = await tenant.scope.mtaSts.get(domain.id);
-  const row = stored?.enabled ? stored : null;
+  const fresh = stored?.enabled ? await freshenServed(tenant, domain, stored, nowSeconds()) : null;
+  const row = fresh?.row ?? null;
   const stopped = stored && !stored.enabled ? stored : null;
   const retiringEntry = row ? null : await tenant.scope.mtaStsRetiring.get(domain.domain);
   const av = await availability(tenant, domain);
@@ -236,7 +259,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       sts_success: totals?.sts_success ?? 0, sts_failure: totals?.sts_failure ?? 0,
     };
     if (row.mode === 'testing') {
-      const ready = enforceReadiness(row, counted, mx.status === 'ok' ? mx.hosts : null, now, { verifiable, reporters });
+      const ready = enforceReadiness({ ...row, fetch_unchecked: fresh!.couldNotCheck }, counted, mx.status === 'ok' ? mx.hosts : null, now, { verifiable, reporters });
       enforce = { ...ready, allowed: ready.ready };
     }
     disable = disableRule(row, now);
@@ -261,7 +284,7 @@ export async function mtaStsView(tenant: TenantContext, domain: DomainRow): Prom
       retiring: retiringEntry ? retiringView(retiringEntry) : null,
       policy_host_status: row ? { kind: row.policy_host, hostname: policyHostname(domain.domain), certificate: certificateOf(row), route: !!row.route_id } : null,
       // "Served" is the last FETCH of the policy URL (src/mta-sts/reconcile.ts) and nothing else: not the certificate, not the route, not a record.
-      served: row ? servedStatus(row, domain.domain) : null,
+      served: row ? servedStatus(row, domain.domain, fresh!.couldNotCheck) : null,
       summary,
       reports,
       enforce,

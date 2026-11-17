@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, CardContent, StatusDot } from '@ready-set-mail/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Circle, Clock } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ConnectCloudflareLink } from '../../components/ConnectCloudflareLink';
 import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
@@ -14,7 +14,7 @@ import { WizardHeader } from '../../components/wizard/WizardHeader';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useInvalidateDomain } from '../../lib/domain-queries';
 import { formatDate, formatDateTime } from '../../lib/format';
-import { ENFORCE_MAX_AGE, holdSentence, isStaleServed, maxAgeWords, senderNames, mtaStsExplainer, policyUrl, stateSentence } from '../../lib/mta-sts';
+import { ENFORCE_MAX_AGE, holdSentence, maxAgeWords, senderNames, mtaStsExplainer, policyUrl, stateSentence, utc } from '../../lib/mta-sts';
 import { useDomain } from '../../lib/queries';
 import type { MtaStsDisableResult, MtaStsEnforceCheck, MtaStsStatus, MtaStsVerifyResult } from '../../lib/types';
 
@@ -118,18 +118,6 @@ export function MtaStsPage() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [waiting]);
 
-	// "Served" is the last fetch of the policy URL. When the page is opened and that fetch is old, look again once (the same check as the button), so a host that has
-	// stopped answering is not shown as served. Once per page view: a ref, not a render.
-	const refetched = useRef(false);
-	const reviewable = !!q.data?.config && !waiting && q.data.config.state === 'active';
-	const stale = reviewable && isStaleServed(q.data?.served, Math.floor(Date.now() / 1000));
-	useEffect(() => {
-		if (!stale || refetched.current || check.isPending) return;
-		refetched.current = true;
-		check.mutate();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [stale]);
-
 	let body: ReactNode;
 	if (removed) body = <RemovedResult result={removed} domain={name} back={back} via={q.data?.config?.via ?? null} />;
 	else if (q.isPending) body = <PageSkeleton label="Loading MTA-STS" />;
@@ -158,10 +146,11 @@ export function MtaStsPage() {
 			const setup = SETUP_STATES.includes(c.state);
 			const served = s.served ?? null;
 			const unreachable = !setup && served?.ok === false;
-			const fresh = !isStaleServed(served, Math.floor(Date.now() / 1000));
-			const checking = !setup && !fresh && check.isPending; // an old result is being replaced: say so instead of claiming it
-			const isServed = !setup && served?.ok === true && fresh; // served is the last fetch of the policy URL, and only while it is recent
-			const unproved = !setup && !checking && (served?.ok == null || (served.ok && !fresh)); // never fetched, or too old to say, and not being looked at now
+			// The server fetches the policy when this view is older than ten minutes, before it answers: `served` is that result, or, when the fetch got no answer in time, the last known one.
+			const untried = !setup && !!served?.could_not_check;
+			const isServed = !setup && served?.ok === true && !untried;
+			const unproved = !setup && served?.ok == null; // never fetched
+			const checkedAt = served?.checked_at ? `Checked ${utc(served.checked_at)}` : null;
 			const checksAllOk = !!checked && checked.checks.every((k) => k.state === 'ok' || k.state === 'not_applicable');
 			const manualRecords = s.records.filter((r) => r.add_now);
 			const canEnforce = !!s.enforce?.allowed && !unreachable;
@@ -177,9 +166,23 @@ export function MtaStsPage() {
 						}
 					>
 						<p className="text-sm text-ink-1">{stateSentence(c.state, c.mode)}</p>
-						{isServed ? <StatusDot status="ok" label={`Served at ${policyUrl(name ?? '')}`} /> : null}
-						{checking ? <p className="text-sm text-ink-2">Checking that {policyUrl(name ?? '')} answers…</p> : null}
-						{unreachable ? <Alert variant="warning" title="The policy cannot be reached">{served?.message}</Alert> : null}
+						{isServed ? (
+							<div className="flex flex-wrap items-center gap-x-3">
+								<StatusDot status="ok" label={`Served at ${policyUrl(name ?? '')}`} />
+								<span className="text-sm text-ink-2">{checkedAt}</span>
+							</div>
+						) : null}
+						{untried ? (
+							<p className="text-sm text-ink-1">
+								Could not check just now.{served?.ok == null ? '' : ` Last known: ${served.ok ? `served at ${policyUrl(name ?? '')}` : 'the policy cannot be reached'}, checked ${served.checked_at ? utc(served.checked_at) : 'never'}.`}
+							</p>
+						) : null}
+						{unreachable && !untried ? (
+							<Alert variant="warning" title="The policy cannot be reached">
+								<p>{served?.message}</p>
+								<p className="text-ink-2">{checkedAt}</p>
+							</Alert>
+						) : null}
 						{c.last_error ? <Alert variant="warning" title="The last check had a problem">{c.last_error}</Alert> : null}
 						{c.notice ? (
 							<Alert variant="info" title="Something changed">
@@ -199,15 +202,21 @@ export function MtaStsPage() {
 						) : null}
 						{checked && checked.checks.length > 0 && (setup || unreachable || unproved || !checksAllOk) ? <CheckList checks={checked.checks} /> : null}
 						{check.isError ? <Alert variant="danger" title="Could not check">{errorMessage(check.error)}</Alert> : null}
-						{/* Check now and the time of the last check are for a setup that is still waiting and for a policy that cannot be reached; once the fetch passes they go. */}
+						{/* Check now is the one action of a setup that waits and of a policy that cannot be reached; while "served" is claimed it is there too, small, because that claim can go stale. */}
 						{setup || unreachable || unproved ? (
 							<div className="flex flex-wrap items-center gap-3">
 								<WriteButton variant="primary" loading={check.isPending} onClick={() => check.mutate()}>
 									Check now
 								</WriteButton>
-								{c.last_checked_at ? <span className="text-sm text-ink-2">Last checked {formatDateTime(c.last_checked_at)}.</span> : null}
+								{setup && c.last_checked_at ? <span className="text-sm text-ink-2">Last checked {formatDateTime(c.last_checked_at)}.</span> : null}
 							</div>
-						) : null}
+						) : (
+							<div>
+								<WriteButton variant="secondary" size="sm" loading={check.isPending} onClick={() => check.mutate()}>
+									Check now
+								</WriteButton>
+							</div>
+						)}
 					</Section>
 
 					{/* Enforce is not asked of a setup that is still waiting: its reasons would only say "setup is not finished". */}

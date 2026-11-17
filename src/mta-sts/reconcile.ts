@@ -46,9 +46,9 @@ function classify(e: unknown): FetchReason {
 }
 
 /** Fetch the policy URL of `domain` and compare it with `expected` (the exact text we publish). Never throws. */
-export async function fetchPolicyProof(domain: string, expected: string, env?: object, fetcher: typeof fetch = (...a) => fetch(...a)): Promise<PolicyProof> {
+export async function fetchPolicyProof(domain: string, expected: string, env?: object, fetcher: typeof fetch = (...a) => fetch(...a), timeoutMs: number = FETCH_TIMEOUT_MS): Promise<PolicyProof> {
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     const res = await fetcher(policyFetchUrl(domain, env), { method: 'GET', redirect: 'manual', signal: abort.signal, headers: { 'Cache-Control': 'no-cache', Accept: 'text/plain' } });
     const status = res.status;
