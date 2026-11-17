@@ -135,7 +135,7 @@ describe('dmarcSteps: a service that sends as the name without being set up for 
     const s = steps('reject', { failedService: 8, failedServiceNames: ['rua.example.test'] });
     expect(s[0]).toMatchObject({ key: 'service-not-set-up', status: 'improve', who: 'you', do: 'Check the service sending as rua.example.test that is not set up for it' });
     expect(s[0]!.why).toContain(`Every message that failed came from ${SERVICE}`);
-    expect(s[0]!.why).toContain('Until it is set up, p=reject asks receivers to reject its mail.');
+    expect(s[0]!.why).toContain('Until then, p=reject asks receivers to reject that mail.');
     expect(s.map((x) => x.key)).not.toContain('done');
     expect(s.map((x) => x.do).join(' ')).not.toMatch(/Nothing to (fix|do)/);
     expect(s.map((x) => x.why).join(' ')).not.toContain('likely mail pretending');

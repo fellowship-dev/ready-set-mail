@@ -85,7 +85,10 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
     const advice = sum(fillTrend(allTrend.filter((r) => r.day >= dayOf(adviceSince)), adviceSince, now));
 
     // Live record when readable; otherwise the stored policy and pct, and the response says so.
-    const state: PolicyState = live === undefined ? { policy: domain.dmarc_policy, pct: domain.dmarc_pct } : { record: live };
+    // A name with no record of its own (live null) that follows its organizational domain's policy is judged by the policy in force for it, the stored
+    // effective policy, as the overview and the workspace table judge it: never "no DMARC record" beside "inherits p=reject".
+    const inheritsStored = live === null && domain.parent_id !== null && !!domain.dmarc_policy;
+    const state: PolicyState = live === undefined || inheritsStored ? { policy: domain.dmarc_policy, pct: domain.dmarc_pct } : { record: live };
     const readiness = assessReadiness({
       state, messages: advice.messages, passed: advice.passed, daysWithReports: advice.days_with_reports, windowDays: ADVICE_DAYS,
       fixes, newSenders: adviceSenders.filter((s) => s.is_new).length, inherits: domain.parent_id !== null,
@@ -95,7 +98,7 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
     return {
       days, domain: { id, domain: domain.domain }, totals: sum(trend), trend, ...visibility,
       alignment: { spf: align.spf === 's' ? 'strict' : 'relaxed', dkim: align.dkim === 's' ? 'strict' : 'relaxed', basis: tags ? 'dns' : 'assumed', estimated: true },
-      senders: senders.slice(0, MAX_SENDERS), sender_count: senders.length, fixes, readiness: { ...readiness, policy_source: live === undefined ? 'stored' : 'dns' },
+      senders: senders.slice(0, MAX_SENDERS), sender_count: senders.length, fixes, readiness: { ...readiness, policy_source: live === undefined || inheritsStored ? 'stored' : 'dns' },
     };
   }
 

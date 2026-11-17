@@ -11,6 +11,8 @@ import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '.
 import { useCheckSummary, useDnsCheck, useNames } from '../../lib/domain-queries';
 import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
+import { useReachWords } from '../../lib/report-address';
+import { ReachStatement } from '../../components/reports/ReachStatement';
 import { explain, formatDayWithRelative, isFailing, isOneCheck, isUnrecorded, NOT_RECORDED, passRate, verdictLead, verdictLeadSentence, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
 import type { DayReport, NameSeen, ReportSource } from '../../lib/types';
 
@@ -119,6 +121,7 @@ export function ReportDetailPage() {
 	const lost = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 	const name = q.data?.domain ?? domain?.domain;
 	const reportsOff = useReportsNotConnected(domain);
+	const reached = useReachWords(id);
 	const record = dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null;
 	const live: LiveDmarc | undefined = name && record ? { domain: name, sp: parseDmarcSp(record), invalidSp: invalidDmarcSp(record), pct: parseDmarcPct(record), monitoredSubdomain: !!domain?.parent_id } : undefined;
 	const header = (title: string, description?: string) => (
@@ -168,7 +171,7 @@ export function ReportDetailPage() {
 				? `${summary.total.toLocaleString()} messages analyzed. ${verdictLeadSentence(lead)}`
 				: summary.failed === 0
 				? `${summary.total.toLocaleString()} messages analyzed — everything passed.`
-				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} need attention.`;
+				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} failed DMARC.`;
 
 	return (
 		<div className="space-y-8">
@@ -176,6 +179,8 @@ export function ReportDetailPage() {
 
 			{summary.total === 0 && lost ? (
 				<EmptyState title="No counted reports for this date" description={`${lost.replace(/\.?$/, '.')} Pick another day from the reports list.`} />
+			) : summary.total === 0 && reached ? (
+				<ReachStatement words={reached} />
 			) : summary.total === 0 ? (
 				<EmptyState
 					title="No reports received for this date"

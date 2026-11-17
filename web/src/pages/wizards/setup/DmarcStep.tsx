@@ -51,7 +51,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
-	const severity = hostedNoReports
+	// The record that applies to this name (its organizational domain's) already sends reports here: nothing is missing, whatever the name's own lookup shows.
+	const inheritedReports = reach.data?.available === true && reach.data.reach.kind === 'inherited_record' && coverage.kind === 'inherited';
+	const severity = hostedNoReports || inheritedReports
 		? coverage.kind === 'unknown'
 			? 'unknown'
 			: coverage.kind === 'own'

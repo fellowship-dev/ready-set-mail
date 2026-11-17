@@ -27,7 +27,7 @@ const addPlan = (over: Record<string, unknown> = {}) => ({ kind: 'add', name: NA
 const connected = (plan: unknown, over: Record<string, unknown> = {}) =>
 	view({ address: ADDR, state: 'not_published', connected_at: NOW, dns: { checked_at: NOW, error: null, plan }, ...over });
 const written = () => connected({ kind: 'add', name: NAME, current: LIVE, record: AFTER, created: false }, { state: 'written', review: review({ outcome: { kind: 'present', reason: 'Already sends reports to Ready Set Mail.' }, now: AFTER }) });
-const waiting = () => connected({ kind: 'published', name: NAME, record: AFTER }, { state: 'waiting', review: review({ outcome: { kind: 'present', reason: 'Already sends reports to Ready Set Mail.' }, now: AFTER }) });
+const waiting = () => connected({ kind: 'published', name: NAME, record: AFTER }, { state: 'waiting', reach: { ...noReach, kind: 'own' as const }, review: review({ outcome: { kind: 'present', reason: 'Already sends reports to Ready Set Mail.' }, now: AFTER }) });
 const ON = { 'GET /api/hosted/config': { enabled: true, reports: true, records: false }, 'GET /api/domains': { domains: [] }, 'GET /api/cloudflare/connections': { connections: [], accounts: [], oauth: null, token_paste: false } };
 const show = (routes: Record<string, unknown>, role: 'owner' | 'admin' | 'member' = 'owner') => renderApp(<ConnectReports domain={domain} />, { role, routes: { ...ON, ...routes } });
 const writes = (calls: Array<{ method: string; path: string; body: unknown }>) => calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`);

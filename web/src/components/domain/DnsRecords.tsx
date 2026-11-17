@@ -75,7 +75,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const hostedNoReports = useHosted() && !ruaReady;
 	// Hosted and connectable: the way forward is the reports panel (Connect reports), not a record to copy from here.
 	const intakeOn = useReportIntakeEnabled();
-	const reportsAddr = useReportAddress(domain.id, intakeOn && hostedNoReports);
+	const reportsAddr = useReportAddress(domain.id, intakeOn);
+	// The record that applies to this name (its organizational domain's) already lists our address: its reports arrive (`reach`), so nothing is offered to publish.
+	const inheritedReports = reportsAddr.data?.available === true && reportsAddr.data.reach.kind === 'inherited_record';
 	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && reportsAddr.data.reach.kind === 'none' && !reportsAddr.data.managed_by;
 	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
@@ -176,7 +178,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : inherited ? (inheritedEnforcing ? 'pass' : 'warn') : 'missing';
 		const offerBlocked = !found && !floor;
 		// Compared tag by tag: a record that differs only in letter case or spacing needs no change.
-		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended));
+		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended)) || (inherited && inheritedReports);
 		return (
 			<CheckResult
 				status={status}
@@ -188,7 +190,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 						: !found && offerBlocked
 							? `No TXT record at ${dmarcName}, and we could not tell whether a parent domain's policy covers this name, so no record is offered.`
 							: !found && coverage.kind === 'inherited'
-								? `${inheritedSentence(domain.domain, coverage)} To receive reports here, publish the record below: it keeps ${floor ? keptEnforcement(coverage, floor) : ''} and adds Ready Set Mail's report address.`
+								? inheritedReports
+									? `${inheritedSentence(domain.domain, coverage)} That record already sends reports here.`
+									: `${inheritedSentence(domain.domain, coverage)} To receive reports here, publish the record below: it keeps ${floor ? keptEnforcement(coverage, floor) : ''} and adds Ready Set Mail's report address.`
 							: !found
 							? `No TXT record at ${dmarcName}. Add the record below so reports start arriving.`
 							: has_rua

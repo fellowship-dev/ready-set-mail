@@ -31,7 +31,8 @@ const view = (over: Record<string, unknown> = {}) => ({
 	...over,
 });
 const issued = (plan: unknown, over: Record<string, unknown> = {}) =>
-	view({ address: ADDR, state: 'not_published', dns: { checked_at: NOW, error: null, plan }, ...over });
+	// the server's `reach` of a connected name whose record lists the address (waiting / receiving) is `own`, with the last counted report
+	view({ address: ADDR, state: 'not_published', dns: { checked_at: NOW, error: null, plan }, ...(['waiting', 'receiving'].includes(over.state as string) ? { reach: { ...noReach, kind: 'own', last_report_at: (over.last_report_at as number | null) ?? null } } : {}), ...over });
 const ON = { 'GET /api/hosted/config': { enabled: true, reports: true, records: false } };
 
 const show = (routes: Record<string, unknown>, role: 'owner' | 'admin' | 'member' = 'owner') => renderApp(<ConnectReports domain={domain} />, { role, routes: { ...ON, ...routes } });

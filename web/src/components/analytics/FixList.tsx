@@ -11,11 +11,11 @@ const VARIANT = { high: 'danger', medium: 'warning', low: 'outline' } as const;
  * What to fix next, most impactful first: the sender, the share it touches, and the change to make.
  * `messages` is how many reported messages the list was built from: with none, there is no evidence either way.
  */
-export function FixList({ fixes, messages, showDomain, visibility }: { fixes: Fix[]; messages: number; showDomain?: boolean; /** The period's report visibility (emptyReportsState). */ visibility?: ReportVisibilityFields | null }) {
+export function FixList({ fixes, messages, showDomain, visibility, reportsArrive }: { fixes: Fix[]; messages: number; showDomain?: boolean; /** The name's reports arrive elsewhere (the statement above says where): no advice to check its record. */ reportsArrive?: boolean; /** The period's report visibility (emptyReportsState). */ visibility?: ReportVisibilityFields | null }) {
 	const notCounted = fixes.length === 0 && messages === 0 && emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 	if (notCounted) return <EmptyState title="No counted reports for this period" description={`Fixes are ranked from counted DMARC reports. ${notCounted}`} />;
 	if (fixes.length === 0 && messages === 0) {
-		return <EmptyState title="No reports for this period" description="Fixes are ranked from DMARC reports, and none arrived in this window. Check that your DMARC record sends reports here; the domain page shows the record." />;
+		return <EmptyState title="No reports for this period" description={`Fixes are ranked from DMARC reports, and none arrived in this window.${reportsArrive ? '' : ' Check that your DMARC record sends reports here; the domain page shows the record.'}`} />;
 	}
 	if (fixes.length === 0) {
 		return <EmptyState title="No sender fails often enough to rank" description={`Every sender in the ${messages.toLocaleString()} reported messages for this period passes DMARC, or fails on too few messages to act on. New senders appear here as reports arrive.`} />;

@@ -209,7 +209,7 @@ describe('ReportDetailPage', () => {
 				],
 			},
 		});
-		expect(await screen.findByText('30 messages analyzed — 10 need attention.')).toBeInTheDocument();
+		expect(await screen.findByText('30 messages analyzed — 10 failed DMARC.')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Needs attention' })).toBeInTheDocument();
 		expect(screen.getByText(/mailchimp\.com has no authorization to send as "example\.com"/)).toBeInTheDocument();
 		const row = screen.getByRole('button', { name: /Fastmail/ });

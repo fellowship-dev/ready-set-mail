@@ -65,6 +65,7 @@ describe('a connected row with counted reports stored for it is receiving, never
     const c = await w.api('POST', `/api/domains/${appId}/report-address`, {});
     expect(c.body).toMatchObject({ address: FIXED, state: 'receiving', reach: { kind: 'own', reports: 1 } });
     expect(c.body.last_report_at).toEqual(expect.any(Number));
+    expect(reportReachWords('app.readysetmail.com', c.body.reach, () => 'TIME')).toEqual({ headline: 'Reports received', sentences: ['Last counted report received TIME.'], tone: 'ok' });
   });
   it('waiting only when no counted report for this name exists at all', async () => {
     const w = await hostedOwner();
@@ -72,6 +73,7 @@ describe('a connected row with counted reports stored for it is receiving, never
     const id = idOf(w, 'app.readysetmail.com');
     const c = await w.api('POST', `/api/domains/${id}/report-address`, {});
     expect(c.body).toMatchObject({ address: FIXED, state: 'waiting', last_report_at: null, reach: { kind: 'own', reports: 0, last_report_at: null } });
+    expect(reportReachWords('app.readysetmail.com', c.body.reach, () => 'TIME')).toEqual({ headline: 'Published, waiting for the first report', sentences: ['Your DMARC record lists the report address. Receivers send reports about once a day, so the first one can take a day or two.'], tone: 'info' });
   });
 });
 
@@ -102,6 +104,14 @@ describe('state (b): no DMARC record of its own, the record that applies lists o
     expect(agent.reports_reach).toMatchObject({ kind: 'inherited_record', through: { domain: 'readysetmail.com' } });
     expect(agent.reports_reach.summary).toContain("Reports arrive through readysetmail.com's record.");
     expect(JSON.stringify(agent.steps)).not.toContain('Connect reports');
+  });
+  it('its Analytics readiness is judged by the policy in force for it, as the workspace table does, not "no DMARC record" beside "inherits p=reject"', async () => {
+    const { w, cfId } = await cfBounceAdded();
+    await w.api('GET', `/api/domains/${cfId}/onboarding-status`); // stores the policy in force for the name (p=reject from readysetmail.com)
+    const a = (await w.api('GET', `/api/domains/${cfId}/analytics?days=30`)).body;
+    expect(a.readiness).toMatchObject({ status: 'complete', policy_source: 'stored', current: { policy: 'reject' } });
+    const ws = (await w.api('GET', '/api/analytics?days=30')).body;
+    expect(ws.domains.find((d: any) => d.domain_id === cfId).readiness.status).toBe('complete');
   });
   it('a name nothing reaches (no connected ancestor) says none', async () => {
     const w = await hostedOwner();

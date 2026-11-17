@@ -3,12 +3,17 @@
 // "Reports not connected yet" / "No reports reach Ready Set Mail for this name" / offered "Connect reports"; a name that inherits a record that already
 // lists our address was told the record "does not list the report address yet".
 import { screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { DomainDetailPage } from '../src/pages/domains/DomainDetailPage';
+import { DomainAnalyticsPage } from '../src/pages/analytics/AnalyticsPage';
+import { AnomaliesPage } from '../src/pages/reports/AnomaliesPage';
+import { ReportBrowserPage } from '../src/pages/reports/ReportBrowserPage';
+import { ReportDetailPage } from '../src/pages/reports/ReportDetailPage';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
 import { renderApp } from './render';
-import { inheritedReach, viaParentReach } from './reach';
+import { inheritedReach, noReach, viaParentReach } from './reach';
 
 const now = Math.floor(Date.now() / 1000);
 const FIXED = 'rua@rua.example.net';
@@ -106,6 +111,62 @@ describe('state (b): cf-bounce.app. has no DMARC record of its own and the recor
     expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
     expect(text()).toContain(B_SENT);
     expect(text()).not.toContain('does not list the report address');
+    // the DNS records section does not tell it to publish a record that sends reports here either
+    await screen.findByText('DMARC record');
+    expect(text()).not.toContain('To receive reports here, publish the record below');
     expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
+  });
+});
+
+describe('state (b) on the screens that would say "no reports": they say where the reports are', () => {
+  const at = (path: string, el: ReactElement, r: Record<string, unknown>) =>
+    renderApp(<Routes><Route path={path} element={el} /></Routes>, { route: path.replace(':id', '1').replace(':date', '2026-10-01'), status: { mode: 'saas' } as never, routes: r as never });
+  const quiet = routes(B, bReach, false);
+  it('Anomalies is not an all-clear nobody measured', async () => {
+    at('/domains/:id/anomalies', <AnomaliesPage />, { ...quiet, 'GET /api/domains/1/anomalies': { days: 30, domain: B, anomalies: [], unrecorded_reports: 0 } });
+    expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
+    expect(text()).toContain(B_SENT);
+    expect(text()).not.toContain('No source failed DMARC');
+  });
+  it('Analytics says it instead of "Check that your DMARC record sends reports here"', async () => {
+    at('/domains/:id/analytics', <DomainAnalyticsPage />, { ...quiet, 'GET /api/domains/1/analytics': { days: 30, domain: { id: 1, domain: B }, totals: { messages: 0, passed: 0, failed: 0, pass_rate: null, days_with_reports: 0 }, trend: [], senders: [], sender_count: 0, fixes: [], alignment: { spf: 'relaxed', dkim: 'relaxed', basis: 'assumed', estimated: true }, readiness: { status: 'insufficient_data', headline: 'x', current: { policy: null, testing: false, step: 0, label: 'no DMARC record' }, next: null, total_steps: 5, reasons: [], metrics: { messages: 0, pass_rate: null, days_with_reports: 0, window_days: 30 }, policy_source: 'dns' } } });
+    expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
+    expect(text()).not.toContain('Check that your DMARC record sends reports here');
+  });
+  it('the report list and a day\'s report say it too', async () => {
+    at('/domains/:id/reports', <ReportBrowserPage />, { ...quiet, 'GET /api/reports': { reports: [] } });
+    expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
+    expect(text()).not.toContain('No reports for');
+    at('/domains/:id/reports/:date', <ReportDetailPage />, { ...quiet, 'GET /api/domains/1/reports': { date: '2026-10-01', domain: B, summary: { total: 0, passed: 0, failed: 0 }, sources: [] } });
+    expect((await screen.findAllByText(B_HEAD)).length).toBeGreaterThan(0);
+    expect(text()).not.toContain('No reports received for this date');
+  });
+});
+
+describe('own connection: step 4 says what step 5 says', () => {
+  const own = (last: number | null) => {
+    const reach = { ...noReach, kind: 'own' as const, last_report_at: last, reports: last ? 2 : 0, messages: last ? 76 : 0 };
+    const connected = { ...view('example.net', reach), address: FIXED, state: last ? 'receiving' : 'waiting', last_report_at: last, dns: { checked_at: now, error: null, plan: { kind: 'published', name: '_dmarc.example.net', record: REC } } };
+    return { ...routes('example.net', reach, true), 'GET /api/domains/1/report-address': connected };
+  };
+  it('reports received: "Reports received" with the time, never "will start arriving within 24 hours"', async () => {
+    wizard(4, own(now - 3600));
+    expect(await screen.findByText('Reports received')).toBeInTheDocument();
+    expect(text()).toContain('Last counted report received');
+    expect(text()).not.toContain('Reports will start arriving within 24 hours');
+  });
+  it('no counted report at all: waiting, the same words as the panel', async () => {
+    wizard(4, own(null));
+    expect(await screen.findByText('Published, waiting for the first report')).toBeInTheDocument();
+    expect(text()).not.toContain('Reports will start arriving within 24 hours');
+  });
+});
+
+describe('state (b), step 4: nothing is missing, so nothing asks for action', () => {
+  it('no "Skip for now" and no action-required badge', async () => {
+    wizard(4, routes(B, bReach, false));
+    expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Skip for now' })).toBeNull();
+    expect(text()).not.toMatch(/Action required/);
   });
 });

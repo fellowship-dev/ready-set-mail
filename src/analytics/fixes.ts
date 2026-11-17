@@ -193,7 +193,7 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
       }
       if (s0?.source_class === 'service_not_set_up') {
         // A real mail service (it passed SPF and DKIM for its own domain) sending as the owner's domain without alignment: one thing to look at.
-        const sentence = serviceNotSetUpSentence(names);
+        const sentence = serviceNotSetUpSentence(sentAs.length ? sentAs : [domain.domain]);
         fixes.push({
           ...base, id: `investigate:${domain.id}:${g.key}`, kind: 'investigate-sender', severity: 'medium',
           title: `${fmtPct(share)} of your mail comes from ${g.name}, ${sentence.split(':')[0]}`,

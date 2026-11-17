@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifySource, likelyNotYours, serviceNotSetUpSentence } from '../src/sender-providers';
+import { classifySource, likelyNotYours, serviceNotSetUpAction, serviceNotSetUpSentence } from '../src/sender-providers';
 
 const base = { spf_pass: 0, dkim_pass: 0 };
 describe('likelyNotYours', () => {
@@ -40,5 +40,10 @@ describe('classifySource: the one judgement of whose failure a source is', () =>
   });
   it('the one sentence', () => {
     expect(serviceNotSetUpSentence('example.com')).toBe('a service sending as example.com that is not set up for it: if it is yours, set up its custom return-path and DKIM for example.com; if not, nothing to do');
+  });
+  it('says services, not a service, when it sent as more than one name', () => {
+    expect(serviceNotSetUpSentence(['a.example.com', 'b.example.com'])).toBe('services sending as a.example.com and b.example.com that are not set up for them: if they are yours, set up their custom return-path and DKIM for a.example.com and b.example.com; if not, nothing to do');
+    expect(serviceNotSetUpAction(['a.example.com', 'b.example.com'])).toBe('Check the services sending as a.example.com and b.example.com that are not set up for them');
+    expect(serviceNotSetUpAction('a.example.com')).toBe('Check the service sending as a.example.com that is not set up for it');
   });
 });

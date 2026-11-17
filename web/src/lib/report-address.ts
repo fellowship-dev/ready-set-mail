@@ -5,8 +5,8 @@ import { HOSTED_CONFIG_KEY } from './hosted';
 import { reportsRefusalOf, type ReportsRefusal } from './dmarc-step';
 import { useHosted } from './session';
 import { useCheckSummary } from './domain-queries';
-import { reportReachWords, type ReportReach } from '@ready-set-mail/dns-checks/report-reach';
-import { formatDateTime } from './format';
+import { reportReachWords, type ReachWords, type ReportReach } from '@ready-set-mail/dns-checks/report-reach';
+import { formatDateTime, timeAgo } from './format';
 import type { ReportVisibilityFields } from './uncounted';
 
 export type { ReportReach };
@@ -91,8 +91,19 @@ export type ReportIntakeStatus = { available: false } | ReportAddressView;
  * with the real counts and the time of the last one; null when it has a connection of its own or nothing arrives. The only place a component
  * gets these sentences from (`reportReachWords`, packages/dns-checks/src/report-reach.ts, which the agent's report uses too).
  */
-export function reachWords(s: ReportIntakeStatus | null | undefined): { headline: string; sentences: string[] } | null {
-	return s && s.available ? reportReachWords(s.domain, s.reach, formatDateTime) : null;
+export function reachWords(s: ReportIntakeStatus | null | undefined): ReachWords | null {
+	return s && s.available ? reportReachWords(s.domain, s.reach, (t) => `${formatDateTime(t)} (${timeAgo(t)})`) : null;
+}
+
+/**
+ * The words for a name whose reports arrive through its parent or through the record that applies to it, for the screens that would otherwise
+ * say "no reports" (Analytics, Anomalies, the report list and a day's report); null for a name with its own connection or when nothing arrives.
+ */
+export function useReachWords(domainId: number): ReachWords | null {
+	const on = useReportIntakeEnabled();
+	const q = useReportAddress(domainId, on && Number.isInteger(domainId) && domainId > 0);
+	const s = q.data;
+	return s && s.available && (s.reach.kind === 'via_parent' || s.reach.kind === 'inherited_record') ? reachWords(s) : null;
 }
 
 /** Do reports arrive for this name? Own connection, or through its parent, or through the record that applies. undefined: not known (loading, or no hosted intake). */

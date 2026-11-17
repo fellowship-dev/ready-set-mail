@@ -22,17 +22,27 @@ export interface ReportReach {
 
 const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`;
 
+/** What the words say: `ok` once reports were received, `info` for the rest. */
+export interface ReachWords { headline: string; sentences: string[]; tone: 'ok' | 'info' }
+
 /**
- * The headline and the sentences for the two ways reports reach a name without a connection of its own (via_parent, inherited_record); null for
- * `own` and `none`, which the panel says from the connection's own state. `at` writes a unix time ("Nov 16, 2026, 10:16 AM").
+ * The headline and the sentences for every way reports reach a name: through its own connection (`own`: received, or waiting for the first), through its
+ * connected parent (`via_parent`) or through the record that applies to it (`inherited_record`); null for `none`, which the panel says from the
+ * connection's own state. `at` writes a unix time ("Nov 16, 2026, 10:16 AM"). The panel, the setup steps, the domain page and the agent say it with these.
  */
-export function reportReachWords(name: string, r: ReportReach, at: (unix: number) => string): { headline: string; sentences: string[] } | null {
+export function reportReachWords(name: string, r: ReportReach, at: (unix: number) => string): ReachWords | null {
+	if (r.kind === 'own') {
+		return r.last_report_at
+			? { headline: 'Reports received', sentences: [`Last counted report received ${at(r.last_report_at)}.`], tone: 'ok' }
+			: { headline: 'Published, waiting for the first report', sentences: ['Your DMARC record lists the report address. Receivers send reports about once a day, so the first one can take a day or two.'], tone: 'info' };
+	}
 	if (!r.through) return null;
 	const via = r.through.domain;
 	if (r.kind === 'inherited_record') {
 		return {
 			headline: `Reports arrive through ${via}'s record`,
 			sentences: [`${name} has no DMARC record of its own. ${via}'s record applies to it and already sends reports here; mail sent as ${name} is counted in ${via}'s reports.`],
+			tone: 'info',
 		};
 	}
 	if (r.kind !== 'via_parent') return null;
@@ -47,5 +57,6 @@ export function reportReachWords(name: string, r: ReportReach, at: (unix: number
 			`${name} has no connection of its own: ${via} is connected, and reports that name ${name} as their policy domain are filed for ${name}. ${filed}`,
 			`Connecting ${name} would change nothing: it uses the same report address. Mail from ${name} that a receiver lists inside ${via}'s own reports stays with ${via}.`,
 		],
+		tone: r.reports > 0 || r.last_report_at ? 'ok' : 'info',
 	};
 }

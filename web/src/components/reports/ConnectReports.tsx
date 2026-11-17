@@ -20,6 +20,7 @@ import {
 } from '../../lib/report-address';
 import { ruaLimitSentence } from '@ready-set-mail/dns-checks/dmarc-rua';
 import { hostOf, isCloudflareHost, useDnsHost } from '../../lib/dns-host';
+import type { ReachWords } from '@ready-set-mail/dns-checks/report-reach';
 import { ReachStatement } from './ReachStatement';
 import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { CopyField } from '../domain/CopyField';
@@ -320,11 +321,21 @@ function ReviewRecord({ review, changed, pending, onApply, onCancel }: { review:
 	);
 }
 
-function StateLine({ s, words, applying = false, action }: { s: ReportAddressView; /** How reports reach it without its own record (`reachWords`): said instead of the record's state. */ words?: { headline: string; sentences: string[] } | null; /** Apply (below) writes the record: no "publish" instruction. */ applying?: boolean; action?: ReactNode }) {
-	const dot = words ? { status: 'info' as const, label: words.headline } : STATE_DOT[s.state];
+function StateLine({ s, words, applying = false, action }: { s: ReportAddressView; /** How reports reach it without its own record (`reachWords`): said instead of the record's state. */ words?: ReachWords | null; /** Apply (below) writes the record: no "publish" instruction. */ applying?: boolean; action?: ReactNode }) {
+	const dot = words ? { status: words.tone, label: words.headline } : STATE_DOT[s.state];
 	let detail: ReactNode = null;
 	if (words) {
-		detail = <>{words.sentences.join(' ')}</>;
+		detail = (
+			<>
+				{words.sentences.join(' ')}
+				{s.reach.kind === 'own' && s.reach.last_report_at ? (
+					<>
+						{' '}
+						<Link to={`/domains/${s.domain_id}/reports`}>Open the reports</Link>
+					</>
+				) : null}
+			</>
+		);
 	} else if (s.state === 'written') {
 		detail = <>Written to Cloudflare; public DNS can take a few minutes to show it.</>;
 	} else if (s.state === 'not_published') {
@@ -338,14 +349,6 @@ function StateLine({ s, words, applying = false, action }: { s: ReportAddressVie
 						{applying ? 'Review the change below and press Apply.' : 'Publish the record below.'}
 					</>
 				)}
-			</>
-		);
-	} else if (s.state === 'waiting') {
-		detail = <>Your DMARC record lists the report address. Receivers send reports about once a day, so the first one can take a day or two.</>;
-	} else if (s.state === 'receiving' && s.last_report_at) {
-		detail = (
-			<>
-				Last counted report received {formatDateTime(s.last_report_at)} ({timeAgo(s.last_report_at)}). <Link to={`/domains/${s.domain_id}/reports`}>Open the reports</Link>
 			</>
 		);
 	} else if (s.state === 'unknown') {

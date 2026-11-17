@@ -7,6 +7,8 @@ import { BackLink, SourceTable, WindowPills, useRouteDomainId } from '../../comp
 import { ListSkeleton, LoadError, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { useDomain } from '../../lib/queries';
+import { useReachWords } from '../../lib/report-address';
+import { ReachStatement } from '../../components/reports/ReachStatement';
 import { DEFAULT_WINDOW, isFailing, isOneCheck, plural, splitActive, verdictLead, verdictLeadSentence, type WindowDays } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 
@@ -16,6 +18,7 @@ export function AnomaliesPage() {
 	const [days, setDays] = useState<WindowDays>(DEFAULT_WINDOW);
 	// Hosted, before report intake: "no anomalies" would be a pass nobody measured.
 	const reportsOff = useReportsNotConnected(domain);
+	const reached = useReachWords(id);
 
 	const q = useQuery({
 		queryKey: ['anomalies', id, days],
@@ -44,6 +47,9 @@ export function AnomaliesPage() {
 				<ListSkeleton rows={3} label="Loading anomalies" />
 			) : q.isError ? (
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load anomalies" />
+			) : active.length + older.length + oneCheck.length === 0 && !lead && reached ? (
+				// Its reports arrive through its parent or through the record that applies: "no source failed" would be an all-clear nobody measured.
+				<ReachStatement words={reached} />
 			) : active.length + older.length + oneCheck.length === 0 ? (
 				<EmptyState
 					title={lead ? verdictLeadSentence(lead).replace(/\.$/, '') : `No source failed DMARC in the last ${days} days`}

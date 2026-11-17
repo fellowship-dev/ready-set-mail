@@ -121,6 +121,19 @@ export function likelyNotYours(s: SourceFacts, domain: string): boolean {
 	return classifySource(s, domain) === 'not_yours';
 }
 
-/** The one sentence for a `service_not_set_up` source, wherever it is said (next step, names panel, Analytics, agent). */
-export const serviceNotSetUpSentence = (name: string): string =>
-	`a service sending as ${name} that is not set up for it: if it is yours, set up its custom return-path and DKIM for ${name}; if not, nothing to do`;
+const joinNames = (names: readonly string[]): string => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/** The one sentence for a `service_not_set_up` source, wherever it is said (next step, names panel, Analytics, agent). `names`: the names it sent as. */
+export function serviceNotSetUpSentence(names: string | readonly string[]): string {
+	const list = typeof names === 'string' ? [names] : names;
+	const all = joinNames(list);
+	return list.length > 1
+		? `services sending as ${all} that are not set up for them: if they are yours, set up their custom return-path and DKIM for ${all}; if not, nothing to do`
+		: `a service sending as ${all} that is not set up for it: if it is yours, set up its custom return-path and DKIM for ${all}; if not, nothing to do`;
+}
+
+/** What to do about it, as a step's title: "Check the service sending as <name> that is not set up for it". */
+export function serviceNotSetUpAction(names: string | readonly string[]): string {
+	const list = typeof names === 'string' ? [names] : names;
+	return list.length > 1 ? `Check the services sending as ${joinNames(list)} that are not set up for them` : `Check the service sending as ${list[0]} that is not set up for it`;
+}
