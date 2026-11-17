@@ -345,8 +345,10 @@ describe('the send', () => {
     let release!: () => void;
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => { release = () => r(new Response('{}')); })));
     const waitUntil = vi.fn();
+    // Build the database before the clock starts: the test measures capture, not applying every migration (which grows with each one).
+    const DB = createMigratedD1() as unknown as D1Database;
     const t0 = Date.now();
-    capture({ ...ON, DB: createMigratedD1() as unknown as D1Database }, { waitUntil }, { analyticsId: VISITOR_ID }, 'Signed In', { method: 'code' });
+    capture({ ...ON, DB }, { waitUntil }, { analyticsId: VISITOR_ID }, 'Signed In', { method: 'code' });
     expect(Date.now() - t0).toBeLessThan(50);
     expect(waitUntil).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 10));
