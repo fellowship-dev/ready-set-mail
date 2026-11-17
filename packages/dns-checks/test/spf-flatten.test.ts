@@ -338,12 +338,17 @@ describe('what a refresh would take away (previous, removed, held)', () => {
     expect(g.removed).toEqual({ 'a.test': ['ip4:10.0.1.0/24'] }); // half of a /24 does not cover it; 10.0.1.5 is inside the /25
   });
   it('an include that is kept as an include is authorised live: nothing of it is removed', async () => {
-    const before = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'));
-    const f = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'), { previous: { ...before.providers, 'c.test': ['ip4:3.3.3.3'] } });
-    expect(f.removed).toEqual({}); // c.test is not in the source: nothing to take away from it
     const kept = await okFlat('v=spf1 include:a.test -include:b.test -all', zone('v=spf1 ip4:7.7.7.7 -all'), { previous: { 'b.test': ['ip4:2.2.2.2'], 'a.test': ['ip4:1.1.1.1'] } });
     expect(kept.keptIncludes).toEqual(['b.test']);
     expect(kept.removed).toEqual({ 'a.test': ['ip4:1.1.1.1'] }); // a.test is inlined and changed; b.test is kept
+  });
+  it('an include the original no longer names is a removal too (an adopted edit dropped it): its addresses are held at the end', async () => {
+    const before = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'));
+    const f = await okFlat(src, zone('v=spf1 ip4:1.1.1.1 -all'), { previous: { ...before.providers, 'c.test': ['ip4:3.3.3.3'] } });
+    expect(f.removed).toEqual({ 'c.test': ['ip4:3.3.3.3'] });
+    expect(f.record).not.toContain('3.3.3.3');
+    expect(f.held!.record).toBe(`${f.record.replace(' -all', '')} ip4:3.3.3.3 -all`);
+    expect(f.held!.providers['c.test']).toEqual(['ip4:3.3.3.3']);
   });
   it('held says when the combined record does not fit', async () => {
     const old = Array.from({ length: 12 }, (_, i) => `ip4:10.1.${i}.0/24`);

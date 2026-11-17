@@ -60,7 +60,7 @@ export interface SpfFlat {
   providers: SpfProviderEntries;
   /**
    * With `previous` given: what the published record authorises for an include that is inlined now and was before, and the new resolution no longer
-   * does (an old address no new entry covers). Empty: nothing would be taken away. An include kept as an include is authorised live, so it is never here.
+   * does (an old address no new entry covers), or that the original no longer names at all. Empty: nothing would be taken away. An include kept as an include is authorised live, so it is never here.
    */
   removed: SpfProviderEntries;
   /** When something is `removed`: the record that keeps those entries (everything new, nothing taken away), and whether it fits both limits. */
@@ -363,12 +363,15 @@ export function entryCovered(entries: readonly string[], old: string): boolean {
   });
 }
 
-/** Old entries of the includes inlined both before and now that nothing now covers. */
-function removedEntries(previous: SpfProviderEntries, now: SpfProviderEntries): SpfProviderEntries {
+/**
+ * Old entries of the includes inlined before that nothing now covers: an include inlined both times whose addresses shrank, or one the original no longer names at all
+ * (an adopted edit that dropped it, unless the record still lists those addresses). `referenced`: every include the original names now; `written`: the addresses in the new record.
+ */
+function removedEntries(previous: SpfProviderEntries, now: SpfProviderEntries, referenced: ReadonlySet<string>, written: readonly string[]): SpfProviderEntries {
   const out: SpfProviderEntries = {};
   for (const [target, old] of Object.entries(previous)) {
-    const current = now[target];
-    if (!current) continue; // kept as an include now (authorised live) or no longer inlined: we remove nothing
+    const current = now[target] ?? (referenced.has(target) ? null : written); // a dropped include's addresses stay if the record lists them anyway
+    if (!current) continue; // kept as an include now (authorised live): we remove nothing
     const gone = old.filter(e => !entryCovered(current, e));
     if (gone.length) out[target] = gone;
   }
@@ -401,6 +404,11 @@ function render(items: RootItem[], inlined: ReadonlySet<number>, all: string | n
       add(it.text, false, 0);
     }
   });
+  const named = new Set(items.flatMap(it => (it.t === 'inc' ? [it.target] : [])));
+  for (const [target, es] of Object.entries(hold)) {
+    if (named.has(target)) continue; // an include the original no longer names: its addresses are held at the end
+    for (const e of es) add(e, /^ip[46]:/i.test(e), /^ip[46]:/i.test(e) ? 0 : 1);
+  }
   if (all) out.push(all);
   if (exp) out.push(exp);
   const record = out.join(' ');
@@ -452,12 +460,12 @@ export async function flattenFromSource(domain: string, source: string, resolver
     items.forEach((it, i) => {
       if (it.t === 'inc' && chosen.has(i)) providers[it.target] = [...new Set([...(providers[it.target] ?? []), ...it.node.ips, ...it.node.kept])];
     });
-    const removed = opts.previous ? removedEntries(opts.previous, providers) : {};
+    const removed = opts.previous ? removedEntries(opts.previous, providers, new Set(incs.map(x => x.target)), r.record.split(' ').filter(t => /^ip[46]:/i.test(t))) : {};
     let held: SpfFlat['held'] = null;
     if (Object.keys(removed).length) {
       const h = render(items, chosen, out.all, out.exp, removed);
       const withHeld: SpfProviderEntries = {};
-      for (const [t, es] of Object.entries(providers)) withHeld[t] = [...new Set([...es, ...(removed[t] ?? [])])];
+      for (const t of new Set([...Object.keys(providers), ...Object.keys(removed)])) withHeld[t] = [...new Set([...(providers[t] ?? []), ...(removed[t] ?? [])])];
       held = { record: h.record, bytes: h.bytes, ipCount: h.ipCount, lookups: h.lookups, fits: h.lookups <= maxLookups && h.bytes <= maxBytes, providers: withHeld };
     }
     if (r.mechanisms === 0 && items.some(it => it.t === 'inc')) {

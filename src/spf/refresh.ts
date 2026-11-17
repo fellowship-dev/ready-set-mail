@@ -313,6 +313,19 @@ export function spfStateJson(providers: SpfProviderEntries, pending: SpfWriteDec
   return JSON.stringify({ provider_state: providers, pending_removed: pending?.removed ?? null, pending_since: pending?.since ?? null, pending_additions: pending ? (pending.additions ? 1 : 0) : null });
 }
 
+/** The audit entries of a removal that starts, is replaced or clears (ADR 0025): the one place they are written, for the daily refresh and for adopting an edit. */
+function auditPending(
+  tenant: TenantContext, deps: SpfDeps, domain: { id: number; domain: string }, how: SpfWriteHow, pending: SpfWriteDecision['pending'], waiting: SpfProviderEntries,
+  row: Pick<SpfConfigRow, 'pending_since'>, at: number, by: Record<string, unknown>,
+): void {
+  if (how === 'first' || how === 'replaced') {
+    audit(tenant, deps, 'spf_flatten.pending', domain, how === 'replaced' ? { removed: waiting, since: row.pending_since } : undefined,
+      { removed: pending!.removed, additions_written: pending!.additions, confirm_after: at + SPF_PENDING_CONFIRM_SECONDS }, { ...by, ...(how === 'replaced' ? { replaced: true } : {}) });
+  } else if (how === 'cleared') {
+    audit(tenant, deps, 'spf_flatten.pending_cleared', domain, { removed: waiting, since: row.pending_since }, undefined, { ...by, waited_seconds: at - row.pending_since! });
+  }
+}
+
 // ── The refresh ─────────────────────────────────────────────
 
 /** `pending`: nothing was written and a removal is waiting for its second look (ADR 0025). A write that kept a removal waiting is `changed`. */
@@ -380,14 +393,7 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
     ...(plan ? { ip_count: plan.ipCount, lookups_after: plan.lookups, provider_state: entriesJson(plan.providers) } : {}),
   } satisfies SpfPatch;
   const by = { by: deps.manual ? 'try_again' : 'job' };
-  const pendingAudits = () => {
-    if (how === 'first' || how === 'replaced') {
-      audit(tenant, deps, 'spf_flatten.pending', domain, how === 'replaced' ? { removed: waiting, since: row.pending_since } : undefined,
-        { removed: pending!.removed, additions_written: pending!.additions, confirm_after: at + SPF_PENDING_CONFIRM_SECONDS }, { ...by, ...(how === 'replaced' ? { replaced: true } : {}) });
-    } else if (how === 'cleared') {
-      audit(tenant, deps, 'spf_flatten.pending_cleared', domain, { removed: waiting, since: row.pending_since }, undefined, { ...by, waited_seconds: at - row.pending_since! });
-    }
-  };
+  const pendingAudits = () => auditPending(tenant, deps, domain, how, pending, waiting, row, at, by);
 
   // 4. Nothing new to publish (or nothing that may be published): touch nothing in DNS, log nothing but the pending state.
   if (!plan || (!edited && sameSpfRecord(plan.record, row.flattened_record))) {
@@ -571,16 +577,19 @@ export async function adoptSpf(tenant: TenantContext, domain: { id: number; doma
   if ('multiple' in live) { await release(); return { ok: false, refused: { kind: 'edited_outside', message: `${domain.domain} has more than one SPF record in Cloudflare. Remove the extra one first.` } }; }
   if (!live.found) { await release(); return { ok: false, refused: { kind: 'record_missing', message: problemSentence({ kind: 'record_missing', domain: domain.domain }) } }; }
   const original = live.content;
-  const res = await flattenFromSource(domain.domain, original, deps.resolver ?? resolverFor(tenant.env), { inline: row.inline_mode === 'most' ? 'most' : 'fewest' });
+  // What the published record authorises is what an adopted edit may not take away at once either (ADR 0025): the same rule, decideSpfWrite.
+  const res = await flattenFromSource(domain.domain, original, deps.resolver ?? resolverFor(tenant.env), { inline: row.inline_mode === 'most' ? 'most' : 'fewest', previous: parseEntries(row.provider_state) });
   if (!res.ok) { await release(); return { ok: false, refused: refusal(res.problems[0]!) }; }
   const flat = res.flat;
-  const same = sameSpfRecord(live.content, flat.record);
+  const { plan, pending, how } = decideSpfWrite(row, flat, at);
+  if (!plan) { await release(); return { ok: false, refused: { kind: 'too_large', message: `The addresses this edit would take away are kept for four hours before they are removed, and with them the record is over the limits.${UNCHANGED}` } }; }
+  const same = sameSpfRecord(live.content, plan.record);
   try {
     if (!same) {
       if (!(await q.holds(domain.id, claimed))) return { ok: false, conflict: 'running' };
-      await target.write(live.id, flat.record);
+      await target.write(live.id, plan.record);
       const back = await target.read();
-      if (!('found' in back && back.found) || !sameSpfRecord(back.content, flat.record)) throw new NotKept();
+      if (!('found' in back && back.found) || !sameSpfRecord(back.content, plan.record)) throw new NotKept();
     }
   } catch (e) {
     await putBack(target, live.id, live.content);
@@ -589,13 +598,14 @@ export async function adoptSpf(tenant: TenantContext, domain: { id: number; doma
     return connectionRefused(e);
   }
   const done = await q.finish(domain.id, claimed, {
-    canonical_record: original, lookup_count: flat.lookupsBefore, flattened_record: flat.record, previous_record: live.content, ip_count: flat.ipCount, lookups_after: flat.lookupsAfter,
-    provider_state: entriesJson(flat.providers), pending_removed: null, pending_since: null, pending_additions: null,
+    canonical_record: original, lookup_count: flat.lookupsBefore, flattened_record: plan.record, previous_record: live.content, ip_count: plan.ipCount, lookups_after: plan.lookups,
+    provider_state: entriesJson(plan.providers), pending_removed: pending ? entriesJson(pending.removed) : null, pending_since: pending ? pending.since : null, pending_additions: pending ? (pending.additions ? 1 : 0) : null,
     problem_kind: null, problem_since: null, last_error: null, last_error_at: null, last_refreshed_at: at, last_flattened_at: at,
   });
   if (!done) { await undoLostClaim(tenant, row, target, live); return { ok: false, conflict: 'running' }; }
-  audit(tenant, deps, 'spf_flatten.adopt', domain, { original_record: row.canonical_record, flattened_record: row.flattened_record }, { original_record: original, flattened_record: flat.record, ip_count: flat.ipCount, lookups: flat.lookupsAfter }, { by: 'user' });
-  if (!same) audit(tenant, deps, 'dns.update', domain, { content: live.content }, { content: flat.record }, undefined, { type: 'dns_record', id: live.id, name: `TXT ${domain.domain}` });
+  audit(tenant, deps, 'spf_flatten.adopt', domain, { original_record: row.canonical_record, flattened_record: row.flattened_record }, { original_record: original, flattened_record: plan.record, ip_count: plan.ipCount, lookups: plan.lookups }, { by: 'user', ...(how === 'confirmed' ? { confirmed_after_seconds: at - row.pending_since! } : {}), ...(pending ? { removal_pending: true } : {}) });
+  auditPending(tenant, deps, domain, how, pending, parseEntries(row.pending_removed), row, at, { by: 'user' });
+  if (!same) audit(tenant, deps, 'dns.update', domain, { content: live.content }, { content: plan.record }, undefined, { type: 'dns_record', id: live.id, name: `TXT ${domain.domain}` });
   return { ok: true, config: (await q.get(domain.id))!, outcome: same ? 'unchanged' : 'written' };
 }
 
