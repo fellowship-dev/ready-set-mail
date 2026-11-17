@@ -1,8 +1,15 @@
 // Adding a report address to a domain's live DMARC record (RFC 7489 §6.2, §6.3): what to publish, and where.
 //
 // Built on the one tag parser (dmarc-tags.ts). The record that comes out keeps the policy and every other tag exactly as
-// published; only the rua= list changes. Receivers need only honour two rua= addresses (§6.2: "MUST support … at least
-// two"), so a record that already lists two never gets a third, or loses one, without the person choosing.
+// published; only the rua= list changes.
+//
+// The one address-count rule (docs/adr/0020-one-function-writes-the-report-address.md). RFC 7489 §6.2: "Receivers MAY impose a limit
+// on the number of URIs to which they will send reports but MUST support the ability to send to at least two." RFC 9989 §4.6/§4.8 and
+// RFC 9990 §3.5 (which obsolete 7489) set no number: delivery is "up to the Receiver's limits on supported URIs", evaluated "in the
+// order given". So only the first two addresses were ever honoured by every receiver, and a third may get nothing. Our address is
+// therefore written only as the first or the second address, never third, and no other address is reordered: a record with fewer than
+// two addresses gets ours after them; a record with two or more means the person picks which one of the FIRST TWO ours replaces, or
+// leaves the record as it is.
 
 import { parseDmarcTags, readDmarcTag } from './dmarc-tags';
 /**
@@ -19,6 +26,13 @@ export interface DmarcLookupLike {
   rawRecords?: string[];
   error?: string;
 }
+
+/** How many report addresses a record lists in the positions every receiver honours (RFC 7489 §6.2). Ours is never written after them. */
+export const RUA_ADDRESS_LIMIT = 2;
+
+/** What to tell a person whose record already lists `count` addresses (two or more): the one wording of the rule, for every screen and plan ("two" is RUA_ADDRESS_LIMIT). */
+export const ruaLimitSentence = (count: number): string =>
+  `The record already lists ${count === 2 ? 'two' : count} report addresses. Receivers are only required to send reports to the first two, so ours is never added after them. Choose which of the first two it replaces, or leave the record as it is.`;
 
 /** The address part of one rua= entry: no `mailto:`, no `!size` limit, lower-cased (compared case-insensitively). */
 export function ruaEntryAddress(entry: string): string {
@@ -93,8 +107,8 @@ export function ownRecordFromInherited(parentRecord: string, effectivePolicy: st
 
 /** One record to publish at `name`. */
 export interface RecordOption {
-  /** The existing rua= entry this option replaces, as published; null when nothing is replaced. */
-  replaces: string | null;
+  /** The existing rua= entry (one of the first RUA_ADDRESS_LIMIT) this option replaces, as published. */
+  replaces: string;
   record: string;
 }
 
@@ -103,7 +117,7 @@ export type ReportAddressPlan =
   | { kind: 'published'; name: string; record: string }
   /** Publish `record` at `name` (TXT). `current` is what is there now (null: no DMARC record). */
   | { kind: 'add'; name: string; current: string | null; record: string; created: boolean }
-  /** The record already lists two or more addresses: the person chooses what to replace (or to add a third anyway). */
+  /** The record already lists two or more addresses: the person chooses which of the first two ours replaces. Never a third. */
   | { kind: 'choose'; name: string; current: string | null; existing: string[]; options: RecordOption[]; created: boolean }
   /** Several DMARC records at one name: receivers ignore them all (§6.6.3), so nothing can be added until one remains. */
   | { kind: 'multiple'; name: string; records: string[] }
@@ -127,14 +141,13 @@ export interface InheritedPlan {
 
 export type OwnPlan = Extract<ReportAddressPlan, { kind: 'published' | 'add' | 'choose' }>;
 
-/** Ours added to `current` (or a fresh record), keeping the two-address rule: two or more entries mean a choice. */
+/** Ours added to `current` (or a fresh record), by the address-count rule above: two or more entries mean a choice among the first two. */
 function addTo(name: string, current: string, address: string, created: boolean): OwnPlan {
   if (recordHasAddress(current, address)) return created ? { kind: 'add', name, current: null, record: current, created } : { kind: 'published', name, record: current };
   const existing = ruaEntries(current);
   const shownCurrent = created ? null : current;
-  if (existing.length < 2) return { kind: 'add', name, current: shownCurrent, record: withReportAddress(current, address), created };
-  const options: RecordOption[] = existing.map((e) => ({ replaces: e, record: withReportAddress(current, address, e) }));
-  options.push({ replaces: null, record: withReportAddress(current, address) });
+  if (existing.length < RUA_ADDRESS_LIMIT) return { kind: 'add', name, current: shownCurrent, record: withReportAddress(current, address), created };
+  const options: RecordOption[] = existing.slice(0, RUA_ADDRESS_LIMIT).map((e) => ({ replaces: e, record: withReportAddress(current, address, e) }));
   return { kind: 'choose', name, current: shownCurrent, existing, options, created };
 }
 

@@ -7,6 +7,9 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 type Row = Record<string, unknown>;
 
+/** D1 refuses a statement that binds more than 100 values ("D1_ERROR: too many SQL variables"); node:sqlite allows 32,766, so tests would pass what production rejects. */
+export const D1_MAX_BOUND_PARAMETERS = 100;
+
 class Statement {
 	constructor(
 		private readonly db: DatabaseSync,
@@ -24,6 +27,9 @@ class Statement {
 		return s;
 	}
 	private args() {
+		if (this.params.length > D1_MAX_BOUND_PARAMETERS) {
+			throw new Error(`D1_ERROR: too many SQL variables (${this.params.length} bound, D1 allows ${D1_MAX_BOUND_PARAMETERS})`);
+		}
 		return this.params.map((p) => (p === undefined ? null : p)) as SQLInputValue[];
 	}
 

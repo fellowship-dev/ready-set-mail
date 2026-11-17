@@ -1,9 +1,11 @@
 import { DnsHostLine } from './DnsHostLine';
 import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { Button, CheckResult, CheckResultList, RecordBlock, Skeleton, toast, type CheckStatus } from '@ready-set-mail/ui';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
-import { api, errorMessage } from '../../lib/api';
+import { errorMessage } from '../../lib/api';
+import { useApplyDmarc } from '../../lib/apply-dmarc';
+import { useReportAddress, useReportIntakeEnabled } from '../../lib/report-address';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { isRevokedDkimKey } from '../../lib/dkim';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
@@ -70,6 +72,11 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const ruaReady = hasReportAddress(domain.rua_address);
 	// Hosted, before report intake: no report address exists, but a missing record still gets a plain p=none to publish.
 	const hostedNoReports = useHosted() && !ruaReady;
+	// Hosted and connectable: the way forward is the reports panel (Connect reports), not a record to copy from here.
+	const intakeOn = useReportIntakeEnabled();
+	const reportsAddr = useReportAddress(domain.id, intakeOn && hostedNoReports);
+	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && !reportsAddr.data.managed_by;
+	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
 	// enforces, and nothing is offered while the policy that applies is unknown. Never weaker than the effective policy.
 	const coverage = dmarcCoverage(onboarding.data ?? null, onboarding.isError || (onboarding.data?.dns_errors ?? []).some((e) => e.startsWith('dmarc:')));
@@ -79,14 +86,14 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const dmarcName = `_dmarc.${domain.domain}`;
 	const cfAvailable = !!(dns.data?.cf_managed || onboarding.data?.cf_available);
 
-	const apply = useMutation({
-		mutationFn: () => api(`/api/domains/${domain.id}/apply-dmarc`, { method: 'POST', body: { record: recommended } }),
-		onSuccess: async () => {
-			toast({ title: 'DMARC record applied', description: `${dmarcName} was updated. DNS can take a few minutes to propagate.`, variant: 'success' });
-			setConfirmOpen(false);
-			await Promise.all([qc.invalidateQueries({ queryKey: domainKeys.dnsCheck(domain.id) }), qc.invalidateQueries({ queryKey: domainKeys.onboarding(domain.id) }), invalidateDomain(qc, domain.id)]);
-		},
-	});
+	const apply = useApplyDmarc(domain.id);
+	const confirmApply = () =>
+		apply.mutate(recommended, {
+			onSuccess: () => {
+				toast({ title: 'DMARC record applied', description: `${dmarcName} was updated. DNS can take a few minutes to propagate.`, variant: 'success' });
+				setConfirmOpen(false);
+			},
+		});
 
 	/**
 	 * Hosted, before report intake: no report address, so the row judges what DNS shows. A p=none record is offered only
@@ -103,8 +110,8 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 					title="DMARC record"
 					summary={
 						enforcing
-							? 'Published, read from public DNS. Reports are not connected yet, so it sends no reports to Ready Set Mail.'
-							: `Published, read from public DNS. p=none only monitors: mail that fails SPF and DKIM is still delivered. Reports are not connected yet, so it sends no reports to Ready Set Mail.`
+							? `Published, read from public DNS. Reports are not connected yet, so it sends no reports to Ready Set Mail.${connectPointer}`
+							: `Published, read from public DNS. p=none only monitors: mail that fails SPF and DKIM is still delivered. Reports are not connected yet, so it sends no reports to Ready Set Mail.${connectPointer}`
 					}
 				>
 					<RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} />
@@ -190,7 +197,10 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			>
 				<div className="space-y-3">
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
-					{!upToDate ? (
+					{!upToDate && cfAvailable && intakeOn && ruaReady ? (
+						// Hosted with report intake, connected: our address is written only by Connect reports (ADR 0020), which reads the record as it is now.
+						<p className="text-ink-2">The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.</p>
+					) : !upToDate ? (
 						<>
 							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
 							{cfAvailable ? (
@@ -303,7 +313,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 				busyLabel="Applying…"
 				busy={apply.isPending}
 				error={apply.isError ? errorMessage(apply.error) : null}
-				onConfirm={() => apply.mutate()}
+				onConfirm={confirmApply}
 			>
 				<RecordBlock record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
 			</ConfirmDialog>

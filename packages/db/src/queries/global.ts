@@ -3,14 +3,19 @@
  * in schema.ts): credentials lookups, anonymous free-check results, the shared
  * IP cache. Anything here must not return or modify tenant data.
  */
-import { and, eq, gt, inArray, isNull, like, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, like, lt, sql } from 'drizzle-orm';
 import { batchStatements, getDb, type DbLike } from '../client';
+import { inChunks } from './in-list';
 import { chunkJson, JSON_PARAM_MAX_BYTES } from './report-store';
-import { workspaces, authAccounts, authRateLimits, sessions, canaryTokens, checkResults, hostedZones, ipInfo, users, verifications } from '../schema';
+import { workspaces, authAccounts, authRateLimits, sessions, canaryTokens, checkResults, hostedZones, ipInfo, refreshRotations, users, verifications } from '../schema';
 
 export interface IpInfoRow { ip: string; reverse_dns: string | null; base_domain: string | null; country_code: string | null; org: string | null; asn: string | null; fetched_at: number }
 
 type NewCheckResult = Omit<typeof checkResults.$inferInsert, 'id' | 'created_at'>;
+
+const AGENT_CLIENT_PREFIX = 'agent-client:';
+// ';' is the character after ':', so this is every key that starts with the prefix, as a range on the unique index.
+const agentClientRange = and(gte(authRateLimits.key, AGENT_CLIENT_PREFIX), lt(authRateLimits.key, 'agent-client;'));
 
 export function globalQueries(dbLike: DbLike) {
 	const db = getDb(dbLike);
@@ -109,6 +114,51 @@ export function globalQueries(dbLike: DbLike) {
 			/** Delete expired windows whose key starts with `prefix` (opportunistic cleanup; the rows carry no other data). */
 			prune: (prefix: string, olderThanMs: number) =>
 				db.delete(authRateLimits).where(and(like(authRateLimits.key, `${prefix}%`), lt(authRateLimits.lastRequest, olderThanMs))).run(),
+		},
+
+		/**
+		 * Apps that registered themselves and that nobody has approved yet (src/mcp/registration.ts), one row each in the rate-limit table
+		 * under `agent-client:<client id>`, with the registration time as `last_request`. A row leaves when the app is approved or deleted, so
+		 * what is here is exactly what may be expired or evicted. The key range uses the unique index on `key`.
+		 */
+		agentClients: {
+			/** `nameWithheld` is kept in `count` (2 instead of 1): the app gave a name that was not stored, and the approval page says so while it waits. */
+			add: (clientId: string, nowMs: number, nameWithheld = false) =>
+				db.insert(authRateLimits).values({ id: crypto.randomUUID(), key: `${AGENT_CLIENT_PREFIX}${clientId}`, count: nameWithheld ? 2 : 1, lastRequest: nowMs }).onConflictDoNothing().run(),
+			/** Whether the waiting app gave a name that was withheld (a well-known one). False for an app that gave none, and for one no longer waiting. */
+			nameWithheld: (clientId: string) =>
+				db.select({ n: authRateLimits.count }).from(authRateLimits).where(eq(authRateLimits.key, `${AGENT_CLIENT_PREFIX}${clientId}`)).get().then((r) => (r?.n ?? 1) > 1),
+			/** The app was approved (or deleted): it is no longer a candidate for expiry. */
+			remove: async (clientIds: string[]) => {
+				for (const part of inChunks(clientIds)) await db.delete(authRateLimits).where(inArray(authRateLimits.key, part.map((c) => `${AGENT_CLIENT_PREFIX}${c}`))).run();
+			},
+			/** How many are waiting: those registered after `sinceMs` when given (an app past its time is not counted), otherwise all of them. */
+			count: (sinceMs?: number) => db.select({ n: sql<number>`COUNT(*)` }).from(authRateLimits).where(sinceMs === undefined ? agentClientRange : and(agentClientRange, gt(authRateLimits.lastRequest, sinceMs))).get().then((r) => r?.n ?? 0),
+			/** Oldest first: those registered before `beforeMs` (all of them when omitted), at most `limit`. */
+			oldest: async (limit: number, beforeMs?: number): Promise<Array<{ clientId: string; registeredAt: number }>> =>
+				(await db.select({ key: authRateLimits.key, at: authRateLimits.lastRequest }).from(authRateLimits).where(beforeMs === undefined ? agentClientRange : and(agentClientRange, lt(authRateLimits.lastRequest, beforeMs))).orderBy(asc(authRateLimits.lastRequest)).limit(limit).all())
+					.map((r) => ({ clientId: r.key.slice(AGENT_CLIENT_PREFIX.length), registeredAt: r.at })),
+		},
+
+		/**
+		 * Agent refresh tokens that were used to get a new one (src/mcp/refresh-replay.ts), by the SHA-256 of the token. Inserting the row is the claim of the
+		 * rotation: one request wins it, the others read the winner's answer. Times are milliseconds.
+		 */
+		refreshRotations: {
+			/** Claim the rotation of this token. True for the one request that inserted the row. */
+			claim: (tokenHash: string, grantKey: string, nowMs: number) =>
+				db.insert(refreshRotations).values({ token_hash: tokenHash, grant_key: grantKey, first_used_at: nowMs, state: 'pending', response: null }).onConflictDoNothing().returning({ h: refreshRotations.token_hash }).all().then((r) => r.length === 1),
+			/** Take over a claim that was never finished (its request died): true when this request now holds it. */
+			takeOver: (tokenHash: string, nowMs: number, staleBeforeMs: number) =>
+				db.update(refreshRotations).set({ first_used_at: nowMs }).where(and(eq(refreshRotations.token_hash, tokenHash), eq(refreshRotations.state, 'pending'), lt(refreshRotations.first_used_at, staleBeforeMs))).returning({ h: refreshRotations.token_hash }).all().then((r) => r.length === 1),
+			get: (tokenHash: string) => db.select().from(refreshRotations).where(eq(refreshRotations.token_hash, tokenHash)).get().then((r) => r ?? null),
+			/** The rotation finished: keep its answer (already encrypted). */
+			finish: (tokenHash: string, response: string) => db.update(refreshRotations).set({ state: 'done', response }).where(eq(refreshRotations.token_hash, tokenHash)).run(),
+			/** The rotation failed: the claim is dropped so the same token can try again. */
+			release: (tokenHash: string) => db.delete(refreshRotations).where(and(eq(refreshRotations.token_hash, tokenHash), eq(refreshRotations.state, 'pending'))).run(),
+			/** Daily clean-up: delete up to `limit` rows first used before `cutoffMs`; returns how many went. */
+			purgeBefore: (cutoffMs: number, limit: number) =>
+				db.all<{ n: number }>(sql`DELETE FROM refresh_rotations WHERE token_hash IN (SELECT token_hash FROM refresh_rotations WHERE first_used_at < ${cutoffMs} LIMIT ${limit}) RETURNING 1 AS n`).then((r) => r.length),
 		},
 
 		checkResults: {

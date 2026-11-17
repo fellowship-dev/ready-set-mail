@@ -38,6 +38,39 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  {
+    concept: 'Assistants a person may connect (names and connect steps)',
+    // the steps' own words, and the list's name: a second list of assistants would drift from the one the Agents page and the instance status read
+    signature: /Add custom connector|MCP: Add Server|\bAGENT_CLIENTS\s*(?::|=)/,
+    owners: ['web/src/lib/agent-clients.ts'],
+  },
+  {
+    concept: 'Names a self-registered app may not claim',
+    // the list's name and the names it exists for; the pages never keep their own copy (src/mcp/client-names.ts)
+    signature: /\bRESERVED_APP_NAMES\b|['"]Visual Studio Code['"]|['"]Anthropic['"]/,
+    owners: ['src/mcp/client-names.ts'],
+  },
+  {
+    concept: 'Refresh token reuse (the 30-second grace window and the revocation of a leaked token)',
+    // the library's record of the previous token, and the table that holds the first use: a second check would end connections the first one keeps (ADR 0022)
+    signature: /\bpreviousRefreshTokenId\b|\brefreshRotations\b|\brefresh_rotations\b/,
+    owners: ['src/mcp/refresh-replay.ts', 'packages/db/src/queries/global.ts', 'packages/db/src/schema.ts'],
+  },
+  {
+    concept: 'How many apps a person or workspace may keep connected, and how long an ended connection is kept',
+    // the numbers and the check live in one module; the approval page only asks it (ADR 0022)
+    signature: /\bAPPROVAL_LIMITS\b|\bapprovalLimitReached\b|\bCONNECTION_RETENTION_DAYS\b/,
+    owners: ['src/mcp/connection-limits.ts', 'src/mcp/connections.ts'],
+  },
+  {
+    concept: 'Writing our report address into a DMARC record (hosted)',
+    // the splice that puts an address into a rua= list, and the review and apply that carry it (ADR 0020): a new caller is a second way to write it
+    signature: /\b(?:withReportAddress|reviewReportRecord|applyReportRecord)\(/,
+    owners: [
+      'src/hosted/report-address.ts', 'src/hosted/report-address-routes.ts', 'src/onboarding/dmarc-plan.ts', 'src/onboarding/plan.ts', 'src/onboarding/routes.ts',
+      'packages/dns-checks/src/dmarc-rua.ts',
+    ],
+  },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
 ];

@@ -132,6 +132,8 @@ export function domainVerdict(
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
 	const rate = reportsNotConnected(domain) ? null : exactRate(reports);
+	// Hosted: no SPF flattening to send the person to (the page says it is not available there).
+	if (opts.hostedMode && core.next?.to?.endsWith('/spf-flatten')) core.next = { ...core.next, to: undefined };
 	return { ...core, reportsConfirmed: rate !== null && rate >= READY, reportsNotConnected: reportsNotConnected(domain), help };
 }
 

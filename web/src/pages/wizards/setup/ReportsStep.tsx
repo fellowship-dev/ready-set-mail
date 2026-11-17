@@ -1,5 +1,6 @@
 import { Badge } from '@ready-set-mail/ui';
 import { CircleDashed } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { ReportsNotConnected } from '../../../components/ReportsNotConnected';
 import { ConnectReports } from '../../../components/reports/ConnectReports';
 import { useReportIntakeEnabled } from '../../../lib/report-address';
@@ -14,11 +15,13 @@ import type { StepProps } from './SpfStep';
  */
 export function ReportsStep({ status, onNext }: StepProps) {
 	const intake = useReportIntakeEnabled();
+	const navigate = useNavigate();
+	const back = () => navigate(`/domains/${status.domain_id}/setup/4`);
 	if (intake) {
 		return (
 			<StepCard title="DMARC reports">
 				<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} headless />
-				<StepNav onNext={onNext} nextLabel="Go to dashboard" showSkip={false} />
+				<StepNav onNext={onNext} onBack={back} nextLabel="Go to dashboard" showSkip={false} />
 			</StepCard>
 		);
 	}
@@ -33,7 +36,7 @@ export function ReportsStep({ status, onNext }: StepProps) {
 			}
 		>
 			<ReportsNotConnected domain={status.domain} refusalId={status.domain_id} />
-			<StepNav onNext={onNext} nextLabel="Go to dashboard" showSkip={false} />
+			<StepNav onNext={onNext} onBack={back} nextLabel="Go to dashboard" showSkip={false} />
 		</StepCard>
 	);
 }

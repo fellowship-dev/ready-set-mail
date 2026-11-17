@@ -50,7 +50,7 @@ export async function preflightWorkspace(deps: WorkspaceDeps, tenant: TenantCont
 /**
  * Delete a workspace and everything in it: its domains one at a time through the normal delete (DNS and hosted
  * records first; each is final), then the Cloudflare access (OAuth grants are revoked remotely; a failed revoke is
- * tombstoned and retried by the cron, never blocking the delete), then the data. Its members keep their accounts (ADR 0019): their
+ * tombstoned and retried by the cron, never blocking the delete), then the data. Its members keep their accounts (ADR 0024): their
  * memberships, keys and agent approvals for it go with it, and they land on "No workspace yet" when it was their only one. The caller has checked who may do this, and run preflightWorkspace.
  */
 export async function eraseWorkspace(

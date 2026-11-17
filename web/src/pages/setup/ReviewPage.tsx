@@ -1,7 +1,8 @@
 import { Alert, Button, Skeleton, toast } from '@ready-set-mail/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Fragment, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
+import { Change } from '../../components/domain/RecordChange';
 import { LoadError } from '../../components/states';
 import { errorMessage } from '../../lib/api';
 import { clearProgress, fetchZones, useCfConnections } from '../../lib/cloudflare';
@@ -13,56 +14,10 @@ import { handoffPath } from '../../lib/handoff';
 import { useSession } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 
-/** The sentence under the records. Said once, the same everywhere SPF and DKIM come up. */
-export const NOT_CHANGED = 'Not changed: SPF and DKIM, until reports show who sends.';
-
-/** A DMARC value with its report address picked out, so what is added is the thing the eye finds. */
-function WithRua({ value, mark }: { value: string; mark: boolean }): ReactNode {
-	const parts = value.split(/(rua=[^;\s]+)/i);
-	return (
-		<>
-			{parts.map((p, i) =>
-				/^rua=/i.test(p) && mark ? (
-					<mark key={i} className="rounded-sm bg-surface-3 px-0.5 font-semibold text-ink-1">
-						{p}
-					</mark>
-				) : (
-					<Fragment key={i}>{p}</Fragment>
-				),
-			)}
-		</>
-	);
-}
-
-const hasRua = (v: string | null | undefined) => !!v && /(^|;)\s*rua\s*=/i.test(v);
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** One record to be written: what it is, what is there now, what it will be after Apply, and why. No Copy: nothing here is for pasting. */
-function Change({ w }: { w: PlanWrite }) {
-	const kind = w.action === 'update' ? 'Update' : w.action === 'create' ? 'New' : w.action === 'delete' ? 'Remove' : 'Already in place';
-	const label = w.name.startsWith('_dmarc.') ? `DMARC · ${w.type} _dmarc` : `${w.type} ${w.name}`;
-	// Only a rua that this change adds is highlighted.
-	const added = !hasRua(w.before) && hasRua(w.content);
-	return (
-		<li className="space-y-2 rounded-lg border border-line bg-surface-1 p-4" data-testid={`change-${w.id}`}>
-			<p className="text-sm font-semibold text-ink-1">
-				{label} · {kind}
-			</p>
-			{w.action === 'update' && w.before ? (
-				<p className="text-sm text-ink-2">
-					<span className="font-medium text-ink-1">Now:</span> <code className="font-mono text-xs [overflow-wrap:anywhere]">{w.before}</code>
-				</p>
-			) : null}
-			<p className="text-sm text-ink-2">
-				<span className="font-medium text-ink-1">{w.action === 'update' ? 'After Apply:' : 'Will be:'}</span>{' '}
-				<code className="font-mono text-xs [overflow-wrap:anywhere]">
-					<WithRua value={w.content} mark={added} />
-				</code>
-			</p>
-			<p className="max-w-prose text-sm text-ink-2">{w.reason}</p>
-		</li>
-	);
-}
+/** The sentence under the records. Said once, the same everywhere SPF and DKIM come up. */
+export const NOT_CHANGED = 'Not changed: SPF and DKIM, until reports show who sends.';
 
 /**
  * C2, review and Apply: after Cloudflare returns (or "Continue with <account>"), what is there now, what will be written, one

@@ -4,6 +4,19 @@ import { useId } from 'react';
 import { Link } from 'react-router';
 import type { DomainAction } from '../../lib/actions';
 
+/** The reports panel on this page (ConnectReports): press its action for the person (it opens the review, or connects) and bring it into view. */
+function focusConnectReports() {
+	const panel = document.querySelector<HTMLElement>('[data-testid="connect-reports"]');
+	// Only the panel's own "Connect reports" is pressed: never an Apply or a Disconnect that may be showing.
+	const button = [...(panel?.querySelectorAll<HTMLElement>('button') ?? [])].find((b) => b.textContent?.trim() === 'Connect reports');
+	button?.click();
+	// After the panel has taken its place (it comes first once there is a review to Apply).
+	window.setTimeout(() => {
+		(document.querySelector<HTMLElement>('[data-testid="connect-reports"]') ?? panel)?.scrollIntoView({ block: 'start' });
+		document.querySelector<HTMLElement>('[data-testid="connect-reports"] button')?.focus();
+	}, 60);
+}
+
 /**
  * The top of a domain page: one to three actions, each as Do this / Why, with who acts and where. `stale`: the stored
  * check could not be reloaded after this page's live read, so the steps come from the last one and may be out of date.
@@ -85,6 +98,10 @@ export function DoThisNext({ actions, pending, canWrite, onRetry, stale = false,
 											<RefreshCw aria-hidden />
 											Check again
 										</Button>
+									) : a.connectReports && canWrite ? (
+										<button type="button" onClick={focusConnectReports} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
+											{a.cta ?? 'Connect reports'}
+										</button>
 									) : a.to && (canWrite || !a.writes) ? (
 										<Link to={a.to} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
 											{a.cta ?? 'Open'}

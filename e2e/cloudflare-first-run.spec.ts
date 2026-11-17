@@ -176,7 +176,11 @@ test('hosted, the owner\'s state before this release (a claim from sign-up, then
 		expect(inst.d1('SELECT settled_at IS NOT NULL AS settled FROM domain_claims')).toEqual([{ settled: 1 }]);
 
 		const id = inst.d1("SELECT id FROM domains WHERE domain = 'harbor-lane.org'")[0]!.id;
-		const applied = await page.evaluate(async (domainId) => (await fetch(`/api/domains/${domainId}/apply-dmarc`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ record: 'v=DMARC1; p=reject;' }) })).status, id);
+		// The one function that writes our address (POST report-address/apply): it reads the record in the zone, keeps p=reject and adds the address.
+		const applied = await page.evaluate(async (domainId) => {
+			const status = (await (await fetch(`/api/domains/${domainId}/report-address`)).json()) as { review: { hash: string } };
+			return (await fetch(`/api/domains/${domainId}/report-address/apply`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewed: status.review.hash, choice: { kind: 'add' } }) })).status;
+		}, id);
 		expect(applied).toBe(200);
 		const written = Object.values((await state()).records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content);
 		expect(written).toHaveLength(1);
@@ -187,7 +191,7 @@ test('hosted, the owner\'s state before this release (a claim from sign-up, then
 	}
 });
 
-test('hosted with report intake: Apply writes the DMARC record with the report address, connects reports, and says "live" only after public DNS shows it', async ({ page }) => {
+test('hosted with report intake: step 4 writes only the policy record; Connect reports adds the report address, connects reports and the panel waits for the first report', async ({ page }) => {
 	const intake = 'rua.intake.example.net'; // configuration, not a product constant
 	const inst = await startInstance({ mode: 'hosted', port: 8818, tokenKey: true, dohNs: CF_NS, vars: { INTAKE_DOMAIN: intake, HOSTED_CONNECT_REPORTS: 'all' } });
 	try {
@@ -202,17 +206,20 @@ test('hosted with report intake: Apply writes the DMARC record with the report a
 		await publicDnsHasNoDmarc(page);
 		await page.goto(`${inst.url}/#/domains/${id}/setup/4`);
 		await expect(page.getByText('The record Ready Set Mail will write')).toBeVisible({ timeout: 30_000 });
-		await expect(page.getByText(`rua=mailto:rua@${intake}`).first()).toBeVisible();
+		await expect(page.getByText(`rua=mailto:rua@${intake}`)).toHaveCount(0); // our address is written by Connect reports only
 		await expect(page.getByRole('button', { name: /^Copy/ })).toHaveCount(0); // Apply writes it: nothing to paste
-		await page.getByRole('button', { name: 'Apply via Cloudflare' }).click();
 
-		await expect(page.getByText('Reports are connected: nothing is left to set up.', { exact: false })).toBeVisible({ timeout: 30_000 });
+		// Connect reports: review the record in the zone now and after, then one Apply connects the domain and writes it.
+		await page.getByRole('button', { name: 'Connect reports' }).click();
+		await expect(page.getByTestId('change-dmarc')).toContainText(`rua=mailto:rua@${intake}`);
+		await page.getByRole('button', { name: 'Apply', exact: true }).click();
+		await expect(page.getByText(/Published, waiting for the first report|Written to Cloudflare, not in public DNS yet/)).toBeVisible({ timeout: 30_000 }); // the step re-reads its status, so the panel that is shown now is the connected one
 		const records = ((await (await fetch(`${inst.fake.url}/__state`)).json()) as FakeState).records;
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual([`v=DMARC1; p=none; rua=mailto:rua@${intake}`]);
 		expect(inst.d1(`SELECT rua_address, reports_connected_at IS NOT NULL AS connected FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: `rua@${intake}`, connected: 1 }]);
-		// "Live" only once public DNS (the fake's DNS-over-HTTPS) shows it: until the re-read it was written and waiting.
-		await expect(page.getByText('Live in public DNS.')).toBeVisible({ timeout: 60_000 });
 	} finally {
+		// The handler of publicDnsHasNoDmarc may still be fetching from the Worker: remove the route and wait for it before the Worker is stopped.
+		await page.unrouteAll({ behavior: 'wait' });
 		await inst.stop();
 	}
 });
@@ -236,6 +243,8 @@ test('hosted where reports are not admitted (HOSTED_CONNECT_REPORTS=owner): the 
 		expect(Object.values(records).flat().filter((r) => r.name === '_dmarc.harbor-lane.org').map((r) => r.content)).toEqual(['v=DMARC1; p=none']);
 		expect(inst.d1(`SELECT rua_address FROM domains WHERE id = ${id}`)).toEqual([{ rua_address: '' }]);
 	} finally {
+		// The handler of publicDnsHasNoDmarc may still be fetching from the Worker: remove the route and wait for it before the Worker is stopped.
+		await page.unrouteAll({ behavior: 'wait' });
 		await inst.stop();
 	}
 });

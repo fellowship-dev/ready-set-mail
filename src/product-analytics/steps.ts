@@ -85,7 +85,7 @@ export function applyClicked(tenant: TenantContext, ctx: Ctx, step: 'dmarc' | 'r
 /**
  * Apply finished. `domainIds` were written to: their "last applied" time is kept so Records Live can say how long public DNS took.
  */
-export function applyDone(tenant: TenantContext, ctx: Ctx, p: { step: 'dmarc' | 'reports_mailbox' | 'dmarc_record'; changes: number; failed: number; reports: 'connected' | 'refused' | 'limit' | 'unavailable' | 'none'; domainIds: number[] }): void {
+export function applyDone(tenant: TenantContext, ctx: Ctx, p: { step: 'dmarc' | 'reports_mailbox' | 'dmarc_record'; changes: number; failed: number; reports: 'connected' | 'refused' | 'none'; domainIds: number[] }): void {
   captureLater(tenant.env, ctx, async () => {
     if (p.changes - p.failed > 0) for (const id of new Set(p.domainIds)) await setMarker(tenant.db, tenant.workspaceId, `applied:${id}`);
     const result = p.changes === 0 ? 'nothing_to_do' : p.failed === 0 ? 'applied' : p.failed < p.changes ? 'partial' : 'failed';

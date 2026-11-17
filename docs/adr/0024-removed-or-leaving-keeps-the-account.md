@@ -7,7 +7,7 @@ decided-by: owner
 
 Removing a member, a member leaving, or the workspace being deleted ends their membership of that workspace and nothing else: the login, its sessions and its other workspaces stay. A person with no workspace left lands on "No workspace yet", whose Create workspace leads into the normal first-run setup. Owner decision, 2026-11-16, asked whether a person removed from their only workspace keeps their login: "A person removed from their only workspace: yes keep the login. Just empty with a create org and it takes you to the flow, right?"
 
-Numbered 0019 because main has 0014, PR 186 adds 0018 and 0015 to 0017 are reserved for #180 (#184 and #181 also add 0015), so 0015 to 0018 are listed as reserved in the index until those pull requests land.
+Numbered 0024 because main has up to 0022 and 0023 belongs to another open pull request that merges first; 0019 to 0021 were reserved or taken by other pull requests.
 
 **Consequences**
 - `teamQueries.removeMembership` replaces the earlier remove-and-delete: it no longer deletes the user row. `teamQueries.revokeAccessOf` ends their API keys and agent approvals (human access principals, with their grants and credentials) for that workspace, on removal and on leaving; no data of the workspace goes with them.

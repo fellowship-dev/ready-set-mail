@@ -30,6 +30,9 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
 | Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
 | Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
+| Apps that registered themselves and were never approved | **24 hours** (`MCP_DCR_UNUSED_HOURS`) | `MCP_DCR_UNUSED_HOURS` | Deleted by the next registrations and the daily job. See [agent operations](agent-operations.md#letting-apps-register-themselves). |
+| Agent connections that ended (revoked, or past their end date) | **7 days** after they ended, then the record, its principal and grants, and the registered app when no record of it remains | | Daily job. The audit log keeps who approved, revoked and what was removed for its own 12 months. |
+| Used agent refresh tokens (`refresh_rotations`: the hash of the token, the time, the answer sealed under the token) | **30 days** after first use (a refresh token's life) | | Daily job. Only the 30 seconds after first use are ever read. |
 | Failed Cloudflare revocations of deleted workspaces | retried daily until they succeed, at most **30 days** | | See below. The sealed token is deleted with the row; giving up is logged and written to the audit log. |
 
 Backups: deleted data can remain in Cloudflare D1 Time Travel restore points until they roll off. Check the retention of your D1 plan; we state
@@ -110,7 +113,7 @@ When the hosted service has PostHog configured ([analytics.md](analytics.md)), e
    so the daily job can retry; the tombstone is written *before* the connection is deleted, and if it cannot be written (or the connections cannot be listed) the deletion stops with `502 revoke_failed` and nothing more is removed.
    The tombstone is deleted on success, and given up after 30 days (logged and recorded in the audit log under the deleted workspace's id).
    **Pasted API tokens cannot be revoked from here**: the response says how many there were (`cloudflare.pasted_tokens`) and the owner must revoke them in the Cloudflare dashboard.
-4. All workspace data is deleted, including its memberships, API keys and agent approvals. The people who belonged to it keep their accounts (ADR 0019); anyone with no other workspace lands on "No workspace yet". **Billing orders are not**: they stay as accounting records ([Billing records](#billing-records)), and the Stripe Customer is left alone.
+4. All workspace data is deleted, including its memberships, API keys and agent approvals. The people who belonged to it keep their accounts (ADR 0024); anyone with no other workspace lands on "No workspace yet". **Billing orders are not**: they stay as accounting records ([Billing records](#billing-records)), and the Stripe Customer is left alone.
 
 ## Deleting an account
 
