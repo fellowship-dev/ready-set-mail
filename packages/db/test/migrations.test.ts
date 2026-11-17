@@ -180,3 +180,26 @@ describe('0015 cloudflare_import', () => {
 		expect((d.sqlite.prepare('SELECT removed_at FROM removed_domains').get() as any).removed_at).toBeGreaterThan(0);
 	});
 });
+
+describe('0021 refresh_rotations', () => {
+	const MINE = '0021_refresh_rotations.sql';
+	it('is additive: one new table, nothing existing changes, and it is empty', () => {
+		const before = createTestD1();
+		applyMigrations(before.sqlite, { through: '0016_billing.sql' });
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: '0016_billing.sql' });
+		expect(applyMigrations(d.sqlite, { through: MINE })).toEqual([MINE]);
+		const tables = (db: typeof d) => (db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name);
+		expect(tables(d).filter((t) => !tables(before).includes(t))).toEqual(['refresh_rotations']);
+		expect(d.sqlite.prepare('SELECT COUNT(*) AS n FROM refresh_rotations').get()).toEqual({ n: 0 });
+	});
+
+	it('holds one row per token hash and only the two states', () => {
+		const d = createTestD1();
+		applyMigrations(d.sqlite, { through: MINE });
+		const insert = d.sqlite.prepare("INSERT INTO refresh_rotations (token_hash, grant_key, first_used_at, state) VALUES (?, 'grant:u:g', 1, ?)");
+		insert.run('h1', 'pending');
+		expect(() => insert.run('h1', 'pending')).toThrow();
+		expect(() => insert.run('h2', 'other')).toThrow();
+	});
+});

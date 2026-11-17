@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "64c91fc5-953b-44c8-8e2b-eb31c5952a2a",
+  "id": "e16c1100-9385-4e29-953f-61508a8ec3ca",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "access_credentials": {
@@ -4371,6 +4371,64 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "refresh_rotations": {
+      "name": "refresh_rotations",
+      "columns": {
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "grant_key": {
+          "name": "grant_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_used_at": {
+          "name": "first_used_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "response": {
+          "name": "response",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_refresh_rotations_first_used": {
+          "name": "idx_refresh_rotations_first_used",
+          "columns": [
+            "first_used_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "refresh_rotations_state_check": {
+          "name": "refresh_rotations_state_check",
+          "value": "\"refresh_rotations\".\"state\" IN ('pending', 'done')"
+        }
+      }
     },
     "removed_domains": {
       "name": "removed_domains",

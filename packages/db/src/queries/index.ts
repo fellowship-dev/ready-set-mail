@@ -1,6 +1,7 @@
 import { metricQueries } from './metrics';
 import { accessQueries } from './access-grants';
 export * from './access-grants';
+export * from './in-list';
 import { getDb, type DbLike } from '../client';
 import { IMPLICIT_WORKSPACE_ID } from '../schema';
 import { apiKeyQueries } from './api-keys';

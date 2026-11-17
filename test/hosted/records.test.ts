@@ -266,7 +266,7 @@ describe('hosted records for a domain', () => {
     expect(await refreshHostedSpf(w.env, { resolver })).toEqual({ updated: 0, failed: 0 }); // unchanged: no write
     expect(cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
 
-    // A range moves: the new address is written at once, the old one stays until a second look at least four hours later sees the same (ADR 0024).
+    // A range moves: the new address is written at once, the old one stays until a second look at least four hours later sees the same (ADR 0025).
     const moved = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 -all'] } });
     const t0 = Date.now();
     expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 })).toEqual({ updated: 1, failed: 0 });

@@ -36,7 +36,7 @@ export const SPF_REFRESH_CONCURRENCY = 5;
 /** The dashboard says "the daily check has not run" when the last successful check is older than this. */
 export const SPF_STALE_SECONDS = 2 * 86400;
 /**
- * A removal is confirmed by a later check at least this long after the first sighting (docs/adr/0024). Basis: provider TTLs measured from their
+ * A removal is confirmed by a later check at least this long after the first sighting (docs/adr/0025). Basis: provider TTLs measured from their
  * authoritative servers on 2026-11-16 (dig TXT): _spf.google.com 300 s, spf.brevo.com 300 s, _spf.mlsend.com 300 s, spf.protection.outlook.com 600 s,
  * servers.mcsv.net 600 s, mailgun.org 900 s, amazonses.com 900 s, sendgrid.net 1,800 s, _spf.salesforce.com 3,600 s, mail.zendesk.com 3,600 s,
  * spf.mandrillapp.com 14,400 s (the longest). Four hours is at least the longest, so the second look is a fresh answer from the provider, not a cached copy of the first.
@@ -95,7 +95,7 @@ export interface SpfView {
   last_changed_at: number | null;
   last_refreshed_at: number | null;
   problem: { kind: SpfProblemKind; message: string | null; since: number | null } | null;
-  /** A removal that is waiting for a second look (ADR 0024); null when none is. */
+  /** A removal that is waiting for a second look (ADR 0025); null when none is. */
   pending: SpfPendingView | null;
 }
 
@@ -269,7 +269,7 @@ async function putBack(target: SpfTarget, id: string, content: string): Promise<
   } catch { return false; }
 }
 
-// ── The rule: what may be published (ADR 0024) ──────────────
+// ── The rule: what may be published (ADR 0025) ──────────────
 
 export interface SpfPlan { record: string; ipCount: number; lookups: number; providers: SpfProviderEntries }
 export type SpfWriteHow = 'none' | 'first' | 'replaced' | 'waiting' | 'confirmed' | 'cleared';
@@ -282,7 +282,7 @@ export interface SpfWriteDecision {
 }
 
 /**
- * A refresh never removes an authorised address on its first sighting (docs/adr/0024). Additions are always safe. A removal waits: the record gets the new
+ * A refresh never removes an authorised address on its first sighting (docs/adr/0025). Additions are always safe. A removal waits: the record gets the new
  * addresses AND the ones that left, and the removal is written only when a later check, at least SPF_PENDING_CONFIRM_SECONDS after the first, sees the same removal.
  * `state` is what the last run stored (the customer's refresh in spf_flatten_config, a hosted record's in hosted_domains.spf_state); `flat` was made with `previous`.
  */
@@ -315,7 +315,7 @@ export function spfStateJson(providers: SpfProviderEntries, pending: SpfWriteDec
 
 // ── The refresh ─────────────────────────────────────────────
 
-/** `pending`: nothing was written and a removal is waiting for its second look (ADR 0024). A write that kept a removal waiting is `changed`. */
+/** `pending`: nothing was written and a removal is waiting for its second look (ADR 0025). A write that kept a removal waiting is `changed`. */
 export type RefreshOutcome = 'unchanged' | 'changed' | 'pending' | 'problem' | 'skipped';
 
 /**
@@ -368,7 +368,7 @@ export async function refreshSpf(tenant: TenantContext, row: SpfConfigRow, deps:
   if (!res.ok) return { ...(await fail(res.problems[0]!.kind, problemSentence({ kind: res.problems[0]!.kind, domain: res.problems[0]!.domain, message: res.problems[0]!.message }))), fetches };
   const flat = res.flat;
 
-  // 3. What may be published (ADR 0024): the one rule, decideSpfWrite.
+  // 3. What may be published (ADR 0025): the one rule, decideSpfWrite.
   const { plan, pending, how } = decideSpfWrite(row, flat, at);
   const waiting = parseEntries(row.pending_removed);
   if (edited && !plan) return { ...(await fail('edited_outside', problemSentence({ kind: 'edited_outside' }))), fetches }; // Replace needs a record that fits

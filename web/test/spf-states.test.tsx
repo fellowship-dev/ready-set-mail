@@ -30,7 +30,7 @@ const wizardUi = (<Routes><Route path="/domains/:id/spf-flatten" element={<SpfFl
 const card = (spf: unknown, extra: Record<string, unknown | Handler> = {}) => renderApp(<DnsTools domainId={3} />, { route: '/domains/3', routes: { 'GET /api/domains/3/spf-flatten': spf, 'GET /api/domains/3/mta-sts': { available: false, config: null, summary: null }, ...extra } });
 const page = (spf: unknown, extra: Record<string, unknown | Handler> = {}, route = '/domains/3/spf-flatten') => renderApp(wizardUi, { route, routes: { 'GET /api/domains/3/spf-flatten': spf, 'GET /api/domains/3/spf-flatten/preview': preview(), ...extra } });
 
-describe('a removal that waits (docs/adr/0024)', () => {
+describe('a removal that waits (docs/adr/0025)', () => {
   const sentence = 'Waiting to confirm a change: _spf.foxtrot-help.net no longer lists 2 addresses. We kept them in your record and will take them out only if the next check, after 15:20 UTC on 16 Nov, sees the same. Anything new from your providers is already in your record.';
   it('the words: provider, how many held, when, and whether the additions were written', () => {
     expect(heldCount(['ip4:1.1.1.1', 'ip6:2001:db8::/32', 'a:v.test'])).toBe('2 addresses and 1 other term');

@@ -5,7 +5,7 @@
  */
 
 /** The newest migration this build of the code depends on. Bump with every new migration. */
-export const REQUIRED_MIGRATION = '0021_spf_flattening.sql';
+export const REQUIRED_MIGRATION = '0022_spf_flattening.sql';
 
 export class SchemaNotReadyError extends Error {
 	constructor(detail: string) {

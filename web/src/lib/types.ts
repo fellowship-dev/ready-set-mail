@@ -158,7 +158,7 @@ export interface SpfFlatConfig {
   last_changed_at: number | null;
   last_refreshed_at: number | null;
   problem: { kind: SpfProblemKind; message: string | null; since: number | null } | null;
-  /** A removal waiting for its second look (docs/adr/0024); absent or null when none is. */
+  /** A removal waiting for its second look (docs/adr/0025); absent or null when none is. */
   pending?: SpfPending | null;
 }
 
@@ -428,6 +428,10 @@ export interface ApiKey {
 export interface AgentStatus {
   available: boolean;
   server_url: string | null;
+  /** Apps can register themselves (the owner turned it on): Cursor and older assistants need this. */
+  dynamic_registration: boolean;
+  /** Apps that publish a client ID metadata document can connect: Claude, ChatGPT, VS Code. */
+  metadata_documents: boolean;
 }
 
 /** GET /api/instance/preflight (instance owner only): configuration problems by setting name, never a value. */

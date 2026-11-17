@@ -1,6 +1,6 @@
 import { Button, EmptyState, Toaster } from '@ready-set-mail/ui';
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams, useSearchParams } from 'react-router';
 import { FocusLayout } from './components/FocusLayout';
 import { Shell } from './components/Shell';
@@ -8,6 +8,7 @@ import { WorkspaceRouter } from './components/WorkspaceRouter';
 import { PageSkeleton } from './components/states';
 import { ClaimLinkProvider, useClaimLink } from './lib/claim-link';
 import { SessionProvider, useSession } from './lib/session';
+import { captureResume, takeResume } from './lib/resume';
 import { setupSeenKey } from './lib/workspace';
 import { readFocusDomain, REVIEW_PATH, reviewDone } from './lib/first-run';
 import { useCfConnections } from './lib/cloudflare';
@@ -26,6 +27,16 @@ import { WelcomePage } from './pages/auth/WelcomePage';
 /** Waits for the session, then shows the app, the sign-in screen (deep link preserved) or a "server unreachable" state. */
 export function Gate({ children, initialMode }: { children: ReactNode; initialMode?: 'signup' }) {
 	const { state, retry, me, status } = useSession();
+	// An app's approval page asked the person to sign in first: once they have a workspace, go back to that request (src/lib/resume.ts).
+	const [resuming, setResuming] = useState(false);
+	useEffect(() => captureResume(), []);
+	const hasWorkspace = state === 'authed' && me?.workspace_id != null;
+	useEffect(() => {
+		const back = hasWorkspace ? takeResume() : null;
+		if (!back) return;
+		setResuming(true);
+		window.location.replace(back);
+	}, [hasWorkspace]);
 	const claim = useClaimLink();
 	const [params, setParams] = useSearchParams();
 	const proof = params.get('t');
@@ -53,6 +64,7 @@ export function Gate({ children, initialMode }: { children: ReactNode; initialMo
 	}
 	if (state === 'anon') return status && !status.configured && status.mode !== 'saas' ? <OwnerSetupPage /> : <AuthPage initialMode={initialMode} />;
 	if (me && me.workspace_id == null) return <NoWorkspacePage />;
+	if (resuming) return <div className="mx-auto max-w-2xl p-8"><PageSkeleton label="Returning to the app that asked for access" /></div>;
 	return <>{children}</>;
 }
 

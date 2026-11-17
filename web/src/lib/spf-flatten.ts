@@ -76,9 +76,9 @@ export function offSentence(count: number | null): string {
 
 export const NOT_ALLOWED_ON_SENTENCE = 'Flattening is not switched on for this workspace any more, so the record is no longer refreshed. It still lists the addresses from the last check.';
 
-// ── A removal that waits (docs/adr/0024) ────────────────────
+// ── A removal that waits (docs/adr/0025) ────────────────────
 
-/** Why the wait is what it is: the longest provider record we measured lives 4 hours in a cache (ADR 0024). */
+/** Why the wait is what it is: the longest provider record we measured lives 4 hours in a cache (ADR 0025). */
 export const PENDING_WHY = 'We wait at least 4 hours so the second look is a fresh answer from the provider, not a copy of the first.';
 export const CHECK_AGAIN_NOW = 'Check again now';
 
