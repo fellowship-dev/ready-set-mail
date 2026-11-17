@@ -1,0 +1,113 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.mts:2:69). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.6 [39m[90m/workspace/ready-set-mail/review-prop[39m
+
+[90mstdout[2m | dag.test.ts[2m > [22m[2mdiamond lattice depth 10 (20 names)
+[22m[39m{"depth":10,"ms":6,"heapMB":0,"ok":true,"fetches":19,"problem":null}
+
+[90mstdout[2m | dag.test.ts[2m > [22m[2mdiamond lattice depth 14 (28 names)
+[22m[39m{"depth":14,"ms":3,"heapMB":0,"ok":true,"fetches":27,"problem":null}
+
+[90mstdout[2m | dag.test.ts[2m > [22m[2mdiamond lattice depth 16 (32 names)
+[22m[39m{"depth":16,"ms":1,"heapMB":0,"ok":true,"fetches":31,"problem":null}
+
+[90mstdout[2m | dag.test.ts[2m > [22m[2mdiamond lattice depth 18 (36 names)
+[22m[39m{"depth":18,"ms":6,"heapMB":-2,"ok":true,"fetches":35,"problem":null}
+
+[90mstdout[2m | dag.test.ts[2m > [22m[2mdiamond lattice depth 20 (40 names)
+[22m[39m{"depth":20,"ms":1,"heapMB":0,"ok":true,"fetches":39,"problem":null}
+
+ [32m✓[39m dag.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+[90mstdout[2m | prop.test.ts[2m > [22m[2mPR 189 flattening property test (reviewer)[2m > [22m[2mflattened record evaluates like the original for random senders
+[22m[39m{
+ "stats": {
+  "cases": 50000,
+  "ok": 37768,
+  "refused": 12232,
+  "evals": 5615864,
+  "wider": 0,
+  "narrower": 0,
+  "other": 0,
+  "overLimit": 193,
+  "overBytes": 0,
+  "overVoid": 225946,
+  "origErr": 0
+ },
+ "refusedKinds": {
+  "too_large": 7268,
+  "not_hostable": 3828,
+  "macro": 884,
+  "no_addresses": 63,
+  "include_unresolved": 189
+ },
+ "firstFailures": [
+  {
+   "seed": 463,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.3.46/24 include:p0.prov.test +ip4:10.0.0.143/32 include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 555,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 588,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 613,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test +a include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 654,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  }
+ ]
+}
+
+ [31m❯[39m prop.test.ts [2m([22m[2m1 test[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 126119[2mms[22m[39m
+[31m     [31m×[31m flattened record evaluates like the original for random senders[39m[33m 126118[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m prop.test.ts[2m > [22mPR 189 flattening property test (reviewer)[2m > [22mflattened record evaluates like the original for random senders
+[31m[1mAssertionError[22m: expected 193 to be +0 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 0[39m
+[31m+ 193[39m
+
+[36m [2m❯[22m prop.test.ts:[2m286:29[22m[39m
+    [90m284|[39m     writeFileSync(process.env.PROP_OUT ?? 'prop-result.json', JSON.str…
+    [90m285|[39m     console.log(JSON.stringify({ stats, refusedKinds, firstFailures: f…
+    [90m286|[39m     [34mexpect[39m(failures[33m.[39mlength)[33m.[39m[34mtoBe[39m([34m0[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m287|[39m   }[33m,[39m [34m1_800_000[39m)[33m;[39m
+    [90m288|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m5 passed[39m[22m[90m (6)[39m
+[2m   Start at [22m 00:56:50
+[2m   Duration [22m 126.49s[2m (transform 311ms, setup 0ms, import 421ms, tests 126.14s, environment 0ms)[22m
+

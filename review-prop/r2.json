@@ -1,0 +1,1375 @@
+{
+ "stats": {
+  "cases": 50000,
+  "ok": 37768,
+  "refused": 12232,
+  "evals": 5615864,
+  "wider": 0,
+  "narrower": 0,
+  "other": 0,
+  "overLimit": 193,
+  "overBytes": 0,
+  "overVoid": 225946,
+  "origErr": 0
+ },
+ "refusedKinds": {
+  "too_large": 7268,
+  "not_hostable": 3828,
+  "macro": 884,
+  "no_addresses": 63,
+  "include_unresolved": 189
+ },
+ "failures": [
+  {
+   "seed": 463,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.3.46/24 include:p0.prov.test +ip4:10.0.0.143/32 include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 555,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 588,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 613,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test +a include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 654,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 700,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 748,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.229 include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 895,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.17/32 include:p0.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 959,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ip4:10.0.0.237/32 +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 1104,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 1396,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 1406,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.3.179/32 +mx include:p0.prov.test ~all foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 1422,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 1589,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 1643,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 1671,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test ?all exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 1738,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 2064,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.0.9/32 include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 2076,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.57 include:p0.prov.test ip4:10.0.3.96/28 ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 2307,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test include:p2.prov.test ~all foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2330,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 2353,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 2488,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test ip4:10.0.1.102 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2501,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p0.prov.test +ip4:10.0.3.206 include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 2544,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.1.215/32 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2566,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test +ip4:10.0.3.80 include:p2.prov.test ip4:10.0.3.248/32 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 2632,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p0.prov.test include:p1.prov.test ~all foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2644,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.70/24 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2733,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test mx include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 2764,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.3.238/30 include:p1.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2781,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 a include:p0.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2849,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.218 include:p1.prov.test ip6:2001:db8:77::/48 include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 2863,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test +ip4:10.0.1.234/30 include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 2906,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 2954,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test ip4:10.0.3.38 ip4:10.0.3.248/30 include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 2997,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test ip4:10.0.0.90/30 include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 3026,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test include:p1.prov.test +a:h0.prov.test/24 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 3126,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip6:2001:db8:39::/48 include:p2.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 3155,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 3210,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p0.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 3322,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test -all exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 3333,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test +ip4:10.0.0.196 include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 3393,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 3666,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test +ip4:10.0.1.187 ip6:2001:db8:64::/48 include:p1.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 3719,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test include:p0.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 3754,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test +ip4:10.0.3.47/30 include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 3780,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 3816,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test ip4:10.0.0.76/24 include:p0.prov.test include:p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 3967,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 3993,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test +ip4:10.0.2.62 ip4:10.0.3.48/32 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4000,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p0.prov.test foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 4034,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test +ip4:10.0.2.251 +ip4:10.0.0.163/32 include:p1.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4104,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.2.6/28 include:p2.prov.test include:p1.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4149,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4158,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.0.145 include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4168,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 4222,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 4440,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test ip4:10.0.0.102 include:p2.prov.test +ip4:10.0.1.154 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4481,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 a:h3.prov.test +ip4:10.0.3.165/28 include:p0.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4683,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test ip4:10.0.0.159/24 include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 4690,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ip4:10.0.1.72/32 ip6:2001:db8:8::/48 ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 4710,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 4716,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p3.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4728,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ip4:10.0.3.154 include:p1.prov.test include:p2.prov.test ip4:10.0.1.182 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4732,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.0.109/30 include:p0.prov.test include:p2.prov.test include:p1.prov.test include:p3.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 4733,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test a/30 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 4741,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p2.prov.test include:p0.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 4777,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test include:p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 4907,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.0.233/28 +ip4:10.0.3.222 include:p0.prov.test include:p2.prov.test include:p3.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 4939,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.2.229/24 include:p2.prov.test include:p0.prov.test include:p3.prov.test +ip4:10.0.0.27/32 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5120,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.0.222 +ip4:10.0.3.157/24 include:p2.prov.test include:p1.prov.test include:p3.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 5135,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p2.prov.test include:p3.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 5238,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p2.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5312,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 5331,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p3.prov.test +a/24 include:p1.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 5336,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p3.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 5347,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5491,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.246/28 +ip4:10.0.0.56 include:p0.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 5492,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 mx include:p3.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 5498,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p0.prov.test",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5525,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test +ip4:10.0.2.250/24 include:p1.prov.test include:p0.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 5563,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test include:p2.prov.test ip4:10.0.2.219/30 include:p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 5591,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.2.148 include:p0.prov.test mx:customer.test/24 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5594,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test ip4:10.0.3.217 ip4:10.0.3.31 include:p1.prov.test include:p2.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5596,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 5728,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p2.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 5914,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test include:p3.prov.test ip4:10.0.2.175/28 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 5944,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p3.prov.test include:p2.prov.test include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 6047,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6092,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.3.185 include:p1.prov.test ip6:2001:db8:68::/48 include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 6218,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test include:p3.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6272,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test include:p1.prov.test ip4:10.0.1.1 include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 6288,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.1.84 include:p1.prov.test include:p3.prov.test include:p0.prov.test include:p2.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 6293,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.1.60/24 include:p3.prov.test include:p2.prov.test include:p0.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 6425,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p2.prov.test include:p0.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 6490,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test +ip4:10.0.3.145 include:p1.prov.test foo=bar",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 6567,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test +ip4:10.0.3.64 ip4:10.0.1.122/32 include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6659,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test +ip4:10.0.3.224 include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 6723,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6761,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p3.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 6909,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 6919,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test +ip4:10.0.2.71 include:p0.prov.test ip4:10.0.2.156/32 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6957,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test include:p1.prov.test ip4:10.0.0.75 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 6974,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test include:p4.prov.test include:p2.prov.test include:p3.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 6976,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test ip4:10.0.0.32/28 include:p2.prov.test include:p0.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7061,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.0.10 include:p3.prov.test include:p1.prov.test ip4:10.0.3.131/28 include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 7086,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test +ip4:10.0.3.27/32 include:p4.prov.test ~all exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7194,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p3.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 7216,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7236,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip6:2001:db8:45::/48 include:p0.prov.test include:p1.prov.test include:p4.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7264,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test ip4:10.0.3.0 +a:h3.prov.test/30 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7275,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test ~all foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7284,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.239 include:p0.prov.test include:p4.prov.test include:p3.prov.test include:p1.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7300,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p4.prov.test include:p1.prov.test include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 7405,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p3.prov.test include:p2.prov.test include:p0.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7442,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p4.prov.test include:p3.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 7466,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.138/28 include:p0.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7533,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test include:p4.prov.test include:p0.prov.test include:p3.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 7582,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test include:p1.prov.test include:p2.prov.test include:p4.prov.test ~all foo=bar",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7658,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7659,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test ip4:10.0.3.76/32 ip4:10.0.0.59 include:p0.prov.test include:p4.prov.test include:p2.prov.test include:p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 7664,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test -all exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7668,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 a include:p0.prov.test include:p1.prov.test +ip4:10.0.3.224/28 include:p4.prov.test include:p2.prov.test include:p3.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7679,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p4.prov.test include:p3.prov.test include:p1.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7695,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p3.prov.test include:p0.prov.test include:p2.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 7703,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p1.prov.test include:p0.prov.test include:p2.prov.test include:p3.prov.test mx/24 +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 7714,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p3.prov.test +ip4:10.0.3.199 ip4:10.0.1.211 include:p0.prov.test include:p2.prov.test include:p1.prov.test ?all exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 7726,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test redirect=p2.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 7743,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7791,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p1.prov.test include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7846,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.1.83 include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 7849,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p4.prov.test include:p0.prov.test include:p3.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 7954,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.3.195/32 include:p3.prov.test include:p1.prov.test include:p4.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8041,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ip4:10.0.1.249/28 include:p2.prov.test include:p3.prov.test include:p4.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8208,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p4.prov.test",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8293,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.57 include:p1.prov.test include:p0.prov.test include:p4.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8297,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p2.prov.test include:p3.prov.test include:p4.prov.test include:p1.prov.test ip6:2001:db8:80::/48 ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 8360,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test ip4:10.0.2.78/24 include:p3.prov.test include:p1.prov.test include:p0.prov.test ip4:10.0.3.32/24 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 8369,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p4.prov.test include:p0.prov.test ip4:10.0.1.165 include:p2.prov.test mx:customer.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8425,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p3.prov.test include:p2.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 8437,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p4.prov.test include:p2.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 8477,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test redirect=p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 8512,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test ip4:10.0.1.54/30 include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8528,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test include:p0.prov.test include:p4.prov.test include:p1.prov.test +ip4:10.0.2.12 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8529,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p1.prov.test include:p4.prov.test mx:customer.test/24 -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8634,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p3.prov.test include:p2.prov.test include:p4.prov.test include:p1.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8656,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.2.219/24 include:p4.prov.test include:p3.prov.test include:p0.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8664,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p1.prov.test include:p0.prov.test ip4:10.0.3.146 include:p3.prov.test +ip4:10.0.3.212 include:p4.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 8711,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test mx:customer.test include:p1.prov.test include:p3.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 8717,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test redirect=p3.prov.test exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8740,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.2.54/30 include:p3.prov.test include:p1.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 8794,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p1.prov.test include:p2.prov.test include:p4.prov.test include:p0.prov.test foo=bar",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 8809,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p4.prov.test include:p1.prov.test include:p3.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8846,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p3.prov.test include:p2.prov.test include:p1.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 8848,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p3.prov.test include:p4.prov.test include:p2.prov.test a:customer.test/24 include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 8866,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test ip4:10.0.0.88",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 8867,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.2.83/28 include:p2.prov.test include:p3.prov.test include:p1.prov.test include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 8948,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test ip4:10.0.1.91/28 include:p1.prov.test include:p0.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 8967,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ip4:10.0.2.67 include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9008,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test +ip6:2001:db8:24::/48 include:p3.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9016,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p2.prov.test ip4:10.0.2.149/32 ip4:10.0.2.3/24 include:p1.prov.test include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9037,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p3.prov.test include:p1.prov.test include:p0.prov.test ip4:10.0.3.2 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9044,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p3.prov.test include:p2.prov.test ip4:10.0.1.32 include:p4.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9047,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test include:p0.prov.test include:p1.prov.test include:p2.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9086,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test +ip4:10.0.1.87/32 include:p2.prov.test include:p0.prov.test include:p4.prov.test include:p3.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9113,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9174,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test ip4:10.0.2.216/24 include:p0.prov.test include:p3.prov.test include:p1.prov.test include:p4.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9213,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ip4:10.0.3.54/32 include:p3.prov.test ?all foo=bar",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 9232,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 ip4:10.0.1.140 include:p4.prov.test include:p1.prov.test exp=explain.customer.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9282,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p5.prov.test include:p4.prov.test include:p3.prov.test include:p0.prov.test include:p1.prov.test include:p2.prov.test ip4:10.0.2.22/24 +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9396,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test include:p1.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9403,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test +ip6:2001:db8:46::/48 include:p4.prov.test include:p2.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 9411,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p1.prov.test include:p0.prov.test +ip4:10.0.1.18 foo=bar",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9445,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +a include:p2.prov.test include:p1.prov.test include:p5.prov.test +ip4:10.0.0.18 include:p4.prov.test include:p0.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9460,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p5.prov.test a:customer.test include:p3.prov.test include:p1.prov.test include:p0.prov.test include:p4.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9500,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test include:p4.prov.test ip4:10.0.0.105 include:p3.prov.test include:p1.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9528,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test redirect=p2.prov.test",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9532,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +a:customer.test/30 include:p1.prov.test include:p0.prov.test include:p3.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 9551,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p4.prov.test ip4:10.0.3.143 include:p3.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9557,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p4.prov.test ip4:10.0.0.14/28 include:p1.prov.test include:p3.prov.test include:p2.prov.test include:p0.prov.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9596,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p2.prov.test include:p4.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9626,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p5.prov.test include:p0.prov.test include:p3.prov.test ip4:10.0.3.12 +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9691,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.3.21/32 ip4:10.0.1.160 include:p0.prov.test include:p1.prov.test include:p2.prov.test include:p5.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9695,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p0.prov.test ip4:10.0.1.50 include:p3.prov.test include:p1.prov.test include:p4.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9757,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p3.prov.test include:p4.prov.test include:p5.prov.test +a:customer.test",
+   "flat": "v=spf1 include:hosted.test"
+  },
+  {
+   "seed": 9762,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 +ip4:10.0.3.223 include:p3.prov.test include:p2.prov.test include:p4.prov.test include:p5.prov.test ip4:10.0.1.58 ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9781,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p0.prov.test include:p4.prov.test include:p1.prov.test include:p3.prov.test ?all",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 9805,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p2.prov.test include:p4.prov.test +mx:customer.test include:p5.prov.test ~all",
+   "flat": "v=spf1 include:hosted.test ~all"
+  },
+  {
+   "seed": 9822,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p5.prov.test +ip4:10.0.2.107/32 include:p3.prov.test include:p2.prov.test ?all foo=bar",
+   "flat": "v=spf1 include:hosted.test ?all"
+  },
+  {
+   "seed": 9865,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  },
+  {
+   "seed": 9932,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test include:p0.prov.test include:p5.prov.test include:p1.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9958,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p5.prov.test include:p1.prov.test include:p3.prov.test include:p4.prov.test include:p2.prov.test -all",
+   "flat": "v=spf1 include:hosted.test -all"
+  },
+  {
+   "seed": 9988,
+   "mode": "include",
+   "why": "lookups 10 (engine said 9)",
+   "root": "v=spf1 include:p3.prov.test ip4:10.0.3.11 include:p5.prov.test include:p2.prov.test include:p4.prov.test +all",
+   "flat": "v=spf1 include:hosted.test all"
+  }
+ ]
+}
