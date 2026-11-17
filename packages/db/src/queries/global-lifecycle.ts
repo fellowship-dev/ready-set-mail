@@ -174,7 +174,7 @@ export function lifecycleQueries(dbLike: DbLike) {
 		},
 
 		/**
-		 * Backfill of rows stored before 0017 (spf_aligned/dkim_aligned NULL). A report with pass_count = 0 and mail in it had no record
+		 * Backfill of rows stored before 0022 (spf_aligned/dkim_aligned NULL). A report with pass_count = 0 and mail in it had no record
 		 * with an SPF or DKIM pass in policy_evaluated, so every one of its records has both 0. Bounded: `limits.batch` reports per statement,
 		 * statements from the shared budget; idempotent (only NULL rows). Returns records set.
 		 */

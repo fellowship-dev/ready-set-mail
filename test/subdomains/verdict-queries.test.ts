@@ -26,7 +26,7 @@ const MIX: Rec[] = [
   { ip: '1.1.1.1', n: 8, spf: 'fail', dkim: 'fail', spfAligned: 0, dkimAligned: 0 }, // failed, nobody's: nothing authenticated
   { ip: '2.2.2.2', n: 5, spfDomain: 'bounces.esp.example', dkimDomain: 'esp.example', spfAligned: 0, dkimAligned: 0 }, // failed although both passed raw
   { ip: '3.3.3.3', n: 20, spf: 'fail', spfAligned: 0, dkimAligned: 1, dkimDomain: 'example.com' }, // passed on DKIM alone
-  { ip: '4.4.4.4', n: 6, spf: 'fail', dkim: 'fail', spfAligned: null, dkimAligned: null }, // stored before 0017: raw failures, no verdict
+  { ip: '4.4.4.4', n: 6, spf: 'fail', dkim: 'fail', spfAligned: null, dkimAligned: null }, // stored before 0022: raw failures, no verdict
   { ip: '5.5.5.5', n: 3, spfAligned: -1, dkimAligned: -1 }, // not recoverable
   { ip: '6.6.6.6', n: 40, spfDomain: 'example.com', dkimDomain: 'example.com', spfAligned: 1, dkimAligned: 1 }, // passed
 ];

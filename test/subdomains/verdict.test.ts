@@ -1,5 +1,5 @@
 // One DMARC verdict per stored record: the SQL (`verdictSql`) and its TS twin (`dmarcVerdict`) give the same answer for every combination
-// of {1 aligned, 0 not, NULL stored before 0017, -1 not recoverable by the backfill} on both identifiers.
+// of {1 aligned, 0 not, NULL stored before 0022, -1 not recoverable by the backfill} on both identifiers.
 import { describe, expect, it } from 'vitest';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { verdictSql } from '@ready-set-mail/db';

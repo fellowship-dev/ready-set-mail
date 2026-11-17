@@ -1,4 +1,4 @@
-// Daily backfill of the receiver's alignment verdict (report_records.spf_aligned / dkim_aligned) for rows stored before migration 0017.
+// Daily backfill of the receiver's alignment verdict (report_records.spf_aligned / dkim_aligned) for rows stored before migration 0022.
 // Runs before retention (which clears raw XML). Bounded (a few reports per run, newest first) and idempotent: only NULL rows are written,
 // and a report that cannot be read back exactly gets -1/-1 ("verdict not recorded") and is never retried.
 // The verdict itself is computed by toTuple (src/dmarc/store-report.ts), the same expressions intake uses.

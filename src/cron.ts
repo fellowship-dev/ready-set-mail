@@ -19,6 +19,7 @@ import { snapshotDns } from './email/dns-snapshot';
 import { backfillVerdicts } from './lifecycle/verdict-backfill';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
+import { sweepAgentClients } from './auth/mcp-issuer';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
 import { discoverMxHosts, generatePolicyId, updateMtaStsTxtRecord } from './email/mta-sts';
 
@@ -68,6 +69,8 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
   // Before retention: it reads raw XML, which retention clears.
   try { await backfillVerdicts(env); } catch (e) { console.error('[lifecycle] verdict backfill failed:', e); }
   try { await runRetention(env); } catch (e) { console.error('[retention] failed:', e); }
+  // Agent storage: apps that registered and were never approved, connections that ended, used refresh tokens (src/auth/mcp-issuer.ts); a no-op without agent storage.
+  try { const swept = await sweepAgentClients(env); if (swept && (swept.deleted || swept.truncated || swept.ended.removed || swept.ended.truncated || swept.rotationsPurged)) console.log(JSON.stringify({ job: 'agent_client_sweep', ...swept })); } catch (e) { console.error('[lifecycle] agent client sweep failed:', e); }
 }
 
 /** One cron tick for one workspace. */

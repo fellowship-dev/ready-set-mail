@@ -6,7 +6,7 @@
 --     verified, not whether they align with the From domain, so a message whose raw results both pass can still fail DMARC
 --     (RFC 9989 section 3.2.10; RFC 9990 section 3.1.1.10-13). Only the receiver knows its verdict (local policy, a second
 --     signature, the record's alignment mode), so it is kept as reported instead of being recomputed.
---     NULL = stored before 0017. -1 = not recoverable by the daily backfill (src/lifecycle/verdict-backfill.ts; both columns).
+--     NULL = stored before 0022. -1 = not recoverable by the daily backfill (src/lifecycle/verdict-backfill.ts; both columns).
 --     A verdict where either column is 1 is aligned, both 0 is failed, anything else is "verdict not recorded".
 -- aggregate_reports.aspf / adkim
 --     The alignment modes of the policy the receiver applied (policy_published: 'r' relaxed, 's' strict). NULL: not stored.

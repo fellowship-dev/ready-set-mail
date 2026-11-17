@@ -4,6 +4,8 @@ value_moment: The agent receives its first useful report (get_email_report)
 covers:
   - src/llms-txt.ts
   - web/src/pages/agent/AgentSetupPage.tsx
+  - web/src/lib/agent-clients.ts
+  - web/src/pages/settings/AgentConnectionsSection.tsx
   - web/src/pages/auth/*
   # Server files that implement the steps: discovery, OAuth and consent, the grants, the tools.
   - src/mcp/*
@@ -21,7 +23,7 @@ steps:
     expect: Plain text naming the MCP endpoint
   - action: navigate
     url: /mcp
-    expect: 401 with OAuth metadata; the client registers
+    expect: 401 naming the OAuth metadata; the client finds the authorization server, then sends its client document or registers
   - action: click
     selector: "button[type=submit]"
     effect: write

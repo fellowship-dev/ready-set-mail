@@ -8,7 +8,7 @@ export type { DmarcVerdict };
  * (packages/dns-checks/src/alignment.ts), and a test runs both over every combination.
  *
  * `spf_aligned` / `dkim_aligned` are the receiver's policy_evaluated results (RFC 9990 section 3.1.1.9): 1 aligned, 0 not aligned.
- * NULL: the record was stored before migration 0017. -1: the daily backfill could not recover it (both columns). RFC 9989 section 5.3.5:
+ * NULL: the record was stored before migration 0022. -1: the daily backfill could not recover it (both columns). RFC 9989 section 5.3.5:
  * a message passes DMARC when SPF or DKIM passes and aligns, so one aligned identifier is enough.
  *   failed        both 0
  *   passed        both 1

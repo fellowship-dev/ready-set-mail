@@ -28,7 +28,7 @@ export const isOneCheck = (src: VerdictInput): boolean => verdictOf(src) === 'pa
 /** Stored before the receiver's verdict was kept (or not recoverable): whether it passed is not recorded. */
 export const isUnrecorded = (src: VerdictInput): boolean => verdictOf(src) === 'not-recorded';
 
-/** The sentence for mail whose verdict is not recorded (stored before migration 0017 kept it). */
+/** The sentence for mail whose verdict is not recorded (stored before migration 0022 kept it). */
 export const NOT_RECORDED = "This report was stored before Ready Set Mail kept each receiver's DMARC verdict, so whether this mail passed DMARC is not recorded.";
 
 /** The sending service, when it differs from the From domain. */

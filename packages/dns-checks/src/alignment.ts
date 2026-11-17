@@ -75,7 +75,7 @@ export interface AlignmentInput {
  *   failed        neither aligned
  *   passed        both aligned
  *   passed-one    exactly one aligned (DMARC passed, but with no backup)
- *   not-recorded  stored before 0017 kept the verdict (NULL), or not recoverable by the backfill (-1), or only one of the two known
+ *   not-recorded  stored before 0022 kept the verdict (NULL), or not recoverable by the backfill (-1), or only one of the two known
  * ONE rule: the SQL twin is `verdictSql` (packages/db/src/queries/verdict.ts), tested against this function for every combination.
  */
 export type DmarcVerdict = 'failed' | 'passed' | 'passed-one' | 'not-recorded';

@@ -152,7 +152,9 @@ describe('real Workers OAuth contract',()=>{
   expect(html).not.toMatch(/<script/i);
  });
  it('consent shows workspace names, escapes a hostile client name, and refusing returns access_denied without creating anything',async()=>{
-  const hostile='<img src=x onerror=alert(1)>Evil "client"';
+  // Markup in a name is refused at registration (src/mcp/registration.ts); quotes are allowed, and the page still escapes whatever it shows.
+  expect((await fetch('/oauth/register', body({ client_name:'<img src=x onerror=alert(1)>Evil', redirect_uris:['https://client.example/callback'], token_endpoint_auth_method:'none' }))).status).toBe(400);
+  const hostile='Evil "client" \'quoted\'';
   const reg=await fetch('/oauth/register', body({ client_name:hostile, redirect_uris:['https://client.example/callback'], grant_types:['authorization_code','refresh_token'], response_types:['code'],token_endpoint_auth_method:'none' }));
   expect(reg.status).toBe(201);
   const hostileId=(await reg.json() as any).client_id;
@@ -164,7 +166,7 @@ describe('real Workers OAuth contract',()=>{
   expect(page.status,html).toBe(200);
   expect(page.headers.get('content-security-policy')).toContain("default-src 'none'");
   expect(html).not.toMatch(/<img|<script|onerror=alert\(1\)>/i);
-  expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;Evil &quot;client&quot;');
+  expect(html).toContain('Evil &quot;client&quot; &#39;quoted&#39;');
   const visible=html.replace(/<style>[\s\S]*?<\/style>/,'').replace(/<[^>]*>/g,' ');
   expect(visible).toContain('Default');
   expect(visible).toContain('acme-consent.example');

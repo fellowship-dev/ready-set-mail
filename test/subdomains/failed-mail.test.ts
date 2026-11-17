@@ -59,7 +59,7 @@ describe('B1: failed mail whose raw SPF and DKIM pass is listed, with the identi
     expect(an.body.anomalies).toEqual([]);
   });
 
-  it('the receiver\'s verdict and modes are kept per record and per report (migration 0017)', async () => {
+  it('the receiver\'s verdict and modes are kept per record and per report (migration 0022)', async () => {
     const w = await hostedOwner();
     await w.send(reportXml('readysetmail.com', 'r-kept', [{ from: 'readysetmail.com', spf: 'readysetmail.com', dkim: 'esp.example', spfAligned: true, dkimAligned: false, n: 3 }], { aspf: 's', adkim: 'r' }));
     expect(w.rows('SELECT spf_aligned, dkim_aligned FROM report_records')).toEqual([{ spf_aligned: 1, dkim_aligned: 0 }]);

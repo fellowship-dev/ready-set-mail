@@ -338,7 +338,7 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   dkim_pass: number;
   spf_total: number;
   spf_pass: number;
-  /** What the reports say about the mail sent AS this domain (0017): messages, DKIM-aligned, SPF domain equal to the name, and unjudged. */
+  /** What the reports say about the mail sent AS this domain (0022): messages, DKIM-aligned, SPF domain equal to the name, and unjudged. */
   from_messages?: number;
   from_dkim_aligned?: number;
   from_spf_at_name?: number;
@@ -454,6 +454,10 @@ export interface ApiKey {
 export interface AgentStatus {
   available: boolean;
   server_url: string | null;
+  /** Apps can register themselves (the owner turned it on): Cursor and older assistants need this. */
+  dynamic_registration: boolean;
+  /** Apps that publish a client ID metadata document can connect: Claude, ChatGPT, VS Code. */
+  metadata_documents: boolean;
 }
 
 /** GET /api/instance/preflight (instance owner only): configuration problems by setting name, never a value. */

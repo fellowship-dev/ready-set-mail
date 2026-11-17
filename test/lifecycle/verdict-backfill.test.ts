@@ -1,4 +1,4 @@
-// The daily backfill of alignment verdicts for rows stored before 0017: bounded, idempotent, exact or -1.
+// The daily backfill of alignment verdicts for rows stored before 0022: bounded, idempotent, exact or -1.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { backfillVerdicts } from '../../src/lifecycle/verdict-backfill';

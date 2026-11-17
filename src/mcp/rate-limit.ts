@@ -43,6 +43,21 @@ export function tooManyRequests(retryAfterSeconds: number, description: string):
 
 const clientIp = (request: Request) => request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
 
+/**
+ * The address a daily budget is kept under. An IPv6 address is cut to its /64 (the block one network hands to one customer), so rotating through the
+ * addresses of one block does not buy a fresh budget each time.
+ */
+export function addressKey(request: Request): string {
+ const ip = clientIp(request).split(',')[0]!.trim().toLowerCase();
+ const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+ if (mapped) return mapped[1]!;
+ if (!ip.includes(':')) return ip;
+ const [head = '', tail = ''] = ip.split('::');
+ const first = head.split(':').filter(Boolean), last = tail.split(':').filter(Boolean);
+ const groups = ip.includes('::') ? [...first, ...Array(Math.max(0, 8 - first.length - last.length)).fill('0'), ...last] : first;
+ return `${groups.slice(0, 4).map(g => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
 /** Null when the request may proceed; a 429 with Retry-After when the connection or one of its workspaces is over its limit. */
 export async function limitMcpRequest(env: LimitEnv, subject: AccessSubject): Promise<Response | null> {
  if (!env.MCP_LIMITER || !env.API_LIMITER) {

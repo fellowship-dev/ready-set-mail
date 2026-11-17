@@ -47,7 +47,7 @@ export interface AnomalySource {
 	total: number;
 	spf_pass: number; // 1 if any record had spf pass in window
 	dkim_pass: number; // 1 if any record had dkim pass in window
-	/** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: stored before 0017. */
+	/** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: stored before 0022. */
 	spf_aligned: number | null;
 	dkim_aligned: number | null;
 	/** The receiver's DMARC verdict of these records (`verdictSql`); each row is one verdict. */
@@ -141,7 +141,7 @@ export interface DomainCheckSummary {
 	spf_total: number;
 	spf_pass: number;
 	/**
-	 * What the reports say about the mail sent AS this name (header_from equal to the domain), from the receiver's own verdict (0017):
+	 * What the reports say about the mail sent AS this name (header_from equal to the domain), from the receiver's own verdict (0022):
 	 * the messages, those whose DKIM aligned, those whose SPF domain (the return-path) was this name itself, and those stored before the
 	 * verdict was kept. Evidence for whether a missing SPF record at the name matters (`spfNotNeededAtName`).
 	 */
@@ -151,7 +151,7 @@ export interface DomainCheckSummary {
 	from_unjudged?: number;
 	/** Messages in the window whose verdict is 'failed' from sources that are likely not the domain's own (`likelyNotYours`): the evidence for "nothing to fix". */
 	failed_not_yours?: number;
-	/** Failed messages (report totals) of the window's counted reports whose records have no recorded verdict (stored before 0017 kept it, or not recoverable): whose they are is not recorded. */
+	/** Failed messages (report totals) of the window's counted reports whose records have no recorded verdict (stored before 0022 kept it, or not recoverable): whose they are is not recorded. */
 	failed_unrecorded?: number;
 	mta_sts_enabled: number; // 0 or 1
 	mta_sts_mode: string | null;
