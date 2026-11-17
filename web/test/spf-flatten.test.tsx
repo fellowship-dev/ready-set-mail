@@ -132,6 +132,23 @@ describe('SPF flatten wizard', () => {
 		expect(calls.some((c) => c.path.endsWith('/refresh'))).toBe(false);
 	});
 
+	it('review: the choice and its button come before the two records (the decision first, the evidence below)', async () => {
+		renderApp(ui, { route: '/domains/3/spf-flatten?review=1', routes: reviewRoutes({}) });
+		const records = await screen.findByText('In Cloudflare now');
+		const before = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+		const adopt = screen.getByRole('radio', { name: /Use my edit as the new original/ });
+		const button = screen.getByRole('button', { name: 'Use my edit' });
+		expect(before(adopt, records)).toBe(true);
+		expect(before(button, records)).toBe(true);
+		expect(before(button, screen.getByText('Flattened from your original'))).toBe(true);
+		expect(before(adopt, button)).toBe(true);
+		// what discarding drops is read next to its option, before the records too
+		const discard = screen.getByRole('radio', { name: /Discard my edit/ });
+		expect(before(screen.getByText(/These will be dropped: include:newprovider\.example\./), records)).toBe(true);
+		expect(before(discard, screen.getByText(/These will be dropped/))).toBe(true);
+		expect(adopt).toBeChecked();
+	});
+
 	it('discarding the edit says exactly which terms will be dropped, asks first, and posts replace', async () => {
 		const { calls } = renderApp(ui, { route: '/domains/3/spf-flatten?review=1', routes: reviewRoutes({ 'POST /api/domains/3/spf-flatten/refresh': { ok: true, outcome: 'changed', config: config() } }) });
 		await userEvent.click(await screen.findByRole('radio', { name: /Discard my edit/ }));

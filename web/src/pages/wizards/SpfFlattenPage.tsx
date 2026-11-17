@@ -170,10 +170,6 @@ function SpfFlattenWizard() {
 									? 'There is no SPF record in Cloudflare now. Ready Set Mail does not add one by itself.'
 									: 'The SPF record in Cloudflare is not the one Ready Set Mail published, so someone changed it there. We have left it as it is.'}
 							</p>
-							<RecordPair>
-								{preview?.live ? <TxtRecord title="In Cloudflare now" value={preview.live} copyable={false} /> : <TxtRecord title="In Cloudflare now" value="(no SPF record)" copyable={false} />}
-								{preview?.flat ? <TxtRecord title="Flattened from your original" value={preview.flat.record} copyable={false} /> : <TxtRecord title="Your original record" value={c.original_record} copyable={false} />}
-							</RecordPair>
 							{preview?.problem ? <Alert variant="warning">{preview.problem.message}</Alert> : null}
 							{preview?.live && preview.flat ? (
 								<fieldset className="space-y-2">
@@ -204,6 +200,10 @@ function SpfFlattenWizard() {
 									</WriteButton>
 								}
 							/>
+							<RecordPair>
+								{preview?.live ? <TxtRecord title="In Cloudflare now" value={preview.live} copyable={false} /> : <TxtRecord title="In Cloudflare now" value="(no SPF record)" copyable={false} />}
+								{preview?.flat ? <TxtRecord title="Flattened from your original" value={preview.flat.record} copyable={false} /> : <TxtRecord title="Your original record" value={c.original_record} copyable={false} />}
+							</RecordPair>
 						</StepCard>
 					) : (
 						<StepCard title={state.kind === 'turning_off_failed' ? 'Turning off did not finish' : state.kind === 'stopped' ? 'SPF flattening has stopped' : 'SPF flattening is on'}>
