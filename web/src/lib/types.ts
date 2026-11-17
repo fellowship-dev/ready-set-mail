@@ -76,7 +76,9 @@ export interface FailingSource {
   reverse_dns: string | null;
   base_domain: string | null;
   org: string | null;
-  /** Not a known sending service, and neither SPF nor DKIM passed for a name of the domain's organization. */
+  /** Whose failure it is (packages/dns-checks/src/sender-providers.ts `classifySource`). */
+  source_class: 'yours' | 'service_not_set_up' | 'not_yours';
+  /** `source_class === 'not_yours'`. */
   likely_not_yours: boolean;
 }
 
@@ -97,12 +99,16 @@ export interface NameSeen {
   messages: number;
   passed: number;
   failed: number;
+  failed_service: number;
+  failed_not_yours: number;
   /** The policy of THIS name (packages/dns-checks/src/effective-policy.ts); null: not read (over the limit, or only a return-path). */
   effective: { status: 'applies' | 'none' | 'multiple' | 'broken' | 'error'; policy: 'none' | 'quarantine' | 'reject' | null; tag: 'p' | 'sp' | 'np' | null; at: string | null; source: 'own' | 'organizational' | null; exists: boolean | null; pct: number | null } | null;
   /** The policy and where it comes from, in one sentence. */
   source: string | null;
   /** The one thing to fix; null: nothing. */
   fix: string | null;
+  /** A service sending as this name that is not set up for it: one thing to look at; null: none. */
+  look: string | null;
 }
 
 export interface ReportSource {
@@ -256,6 +262,8 @@ export interface DayReport {
   domain: string;
   summary: { total: number; passed: number; failed: number };
   sources: ReportSource[];
+  /** Reports of the day holding a record whose verdict is not recorded (the count the Anomalies page uses too). */
+  unrecorded_reports?: number;
 }
 
 
@@ -331,6 +339,9 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   pass_messages: number;
   /** Of the failing messages, those from servers that are not a known sending service and passed SPF or DKIM for no name of this domain (likelyNotYours). */
   failed_not_yours?: number;
+  /** Of the failing messages, those from a service sending as the domain without being set up for it (`classifySource`), and the From names they sent as. */
+  failed_service?: number;
+  failed_service_names?: string[];
   /** Of the failing messages, those in reports stored before the receiver's verdict was kept: whose they are is not recorded. */
   failed_unrecorded?: number;
   fail_messages: number;

@@ -9,7 +9,7 @@ import type { NameSeen } from '../src/lib/types';
 import { renderApp } from './render';
 
 const name = (over: Partial<NameSeen> = {}): NameSeen => ({
-	name: 'app.example.com', roles: ['from'], messages: 40, passed: 40, failed: 0, fix: null,
+	name: 'app.example.com', roles: ['from'], messages: 40, passed: 40, failed: 0, failed_service: 0, failed_not_yours: 0, fix: null, look: null,
 	effective: { status: 'applies', policy: 'reject', tag: 'p', at: 'app.example.com', source: 'own', exists: true, pct: 100 },
 	source: 'app.example.com publishes its own DMARC record, which sets p=reject.', ...over,
 });

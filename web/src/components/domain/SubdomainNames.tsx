@@ -17,6 +17,16 @@ export function policyWords(n: NameSeen): string {
 	return `${e.policy} (${e.status === 'broken' ? 'record not valid as written, ' : ''}${where})`;
 }
 
+const plural = (n: number, one: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`;
+
+/** The Disclosure's summary: names to fix are only the owner's (`fix`); a service not set up for its name is "to look at" (`look`). */
+export function namesSummary(names: NameSeen[], domain: string): string {
+	const fix = names.filter((n) => n.fix).length;
+	const look = names.filter((n) => !n.fix && n.look).length;
+	const parts = [fix > 0 ? `${plural(fix, 'name')} to fix` : null, look > 0 ? `${look} to look at` : null].filter(Boolean);
+	return `${plural(names.length, 'subdomain')} in the reports of the last 30 days${parts.length ? `, ${parts.join(', ')}` : ''}. They are part of ${domain}.`;
+}
+
 /**
  * The names seen sending as this domain: its subdomains in the reports, inside the domain (not rows of their own), each with its mail, the policy that
  * applies to the name and where that comes from, and the one thing to fix. Hidden when the reports name no subdomain.
@@ -56,7 +66,11 @@ export function SubdomainNames({ domainId, domain, q }: { domainId: number; doma
 								<span className="block">{policyWords(n)}</span>
 								{n.source ? <span className="block text-xs text-ink-2">{n.source}</span> : null}
 							</TableCell>
-							<TableCell className="text-sm">{n.fix ?? 'Nothing to fix'}</TableCell>
+							<TableCell className="text-sm">
+								{n.fix ? <span className="block">{n.fix}</span> : null}
+								{n.look ? <span className="block">{n.look}</span> : null}
+								{n.fix || n.look ? null : 'Nothing to fix'}
+							</TableCell>
 						</TableRow>
 					))}
 				</TableBody>

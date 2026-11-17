@@ -76,7 +76,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	// Hosted and connectable: the way forward is the reports panel (Connect reports), not a record to copy from here.
 	const intakeOn = useReportIntakeEnabled();
 	const reportsAddr = useReportAddress(domain.id, intakeOn && hostedNoReports);
-	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && !reportsAddr.data.managed_by;
+	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && reportsAddr.data.reach.kind === 'none' && !reportsAddr.data.managed_by;
 	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
 	// enforces, and nothing is offered while the policy that applies is unknown. Never weaker than the effective policy.

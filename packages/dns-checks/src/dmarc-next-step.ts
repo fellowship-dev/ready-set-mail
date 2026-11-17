@@ -9,6 +9,7 @@
 // policy (`sp=` at _dmarc.<parent> when the parent has or needs one), says what else that change affects, mentions pct= while
 // it is below 100, and offers the alternative of the name's own record, which affects only this name.
 
+import { serviceNotSetUpSentence } from './sender-providers';
 import { dmarcBreakFix, dmarcBreakSentence, storedDmarcBreak, type DmarcIssue } from './dmarc-problem';
 
 export type Policy = 'none' | 'quarantine' | 'reject';
@@ -178,6 +179,12 @@ export interface DmarcEvidence {
    */
   failedNotYours?: number | null;
   /**
+   * Of the window's failing messages, how many came from a service sending as this name without being set up for it
+   * (`classifySource` 'service_not_set_up'), and the From names they sent as. Not "nothing to fix": one thing to look at.
+   */
+  failedService?: number | null;
+  failedServiceNames?: string[] | null;
+  /**
    * Of the window's failing messages, how many are in reports stored before the receiver's verdict was kept (no source is recorded
    * for them, so they can be neither yours nor not yours). Absent or null: none.
    */
@@ -345,24 +352,38 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     };
   };
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
-  // Every failing message came from servers that are not a known sending service and authenticated as no name of this domain.
+  // Whose the failures are (`classifySource`, the one judgement): not_yours (nothing to fix), service_not_set_up (one thing to look at), the rest yours.
   const failed = reports ? reports.total - reports.passed : 0;
   const notYours = ev.failedNotYours ?? 0;
+  const service = ev.failedService ?? 0;
   const unrec = ev.failedUnrecorded ?? 0;
-  // Nothing recorded as not-yours: unchanged. Otherwise the failures are the recorded not-yours ones plus those with no recorded verdict.
-  const onlyOthers = failed > 0 && notYours > 0 && notYours + unrec >= failed;
-  /** The failures with no recorded source: what is left of `failed` once the not-yours ones are taken out (at most `unrec`). */
-  const unrecorded = onlyOthers ? failed - notYours : 0;
+  const others = notYours + service;
+  // Nothing recorded as yours: unchanged. Otherwise the failures are the recorded not-yours and service ones plus those with no recorded verdict.
+  const onlyOthers = failed > 0 && others > 0 && others + unrec >= failed;
+  /** The failures with no recorded source: what is left of `failed` once the not-yours and service ones are taken out (at most `unrec`). */
+  const unrecorded = onlyOthers ? failed - others : 0;
+  const svcName = ev.failedServiceNames?.length ? ev.failedServiceNames.join(', ') : name;
+  const serviceWords = serviceNotSetUpSentence(svcName);
   const likelySpoofed = `servers that are not a known sending service and passed SPF or DKIM for no name of ${name}: likely mail pretending to be ${name}`;
-  const othersWhy = unrecorded > 0 ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}` : `Every message that failed came from ${likelySpoofed}`;
+  const othersWhy = service > 0
+    ? notYours > 0
+      ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}, which needs no fix, and ${service} from ${serviceWords}`
+      : unrecorded > 0 ? `Of the ${failed} messages that failed, ${service} came from ${serviceWords}` : `Every message that failed came from ${serviceWords}`
+    : unrecorded > 0 ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}` : `Every message that failed came from ${likelySpoofed}`;
   const unrecordedWhy = unrecorded > 0 ? ` The other ${unrecorded} are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.` : '';
+  const serviceDo = `Check the service sending as ${svcName} that is not set up for it`;
   const sendersStep = (status: StepStatus, why: string, threshold?: { next: string; pct: number }): DmarcStep => onlyOthers && threshold
-    ? { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} If none of the failing senders is a service you use, there is nothing to fix for them; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
+    ? service > 0
+      ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} ${cap(threshold.next)} still waits until ${threshold.pct}% of reported messages pass.` }
+      : { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} If none of the failing senders is a service you use, there is nothing to fix for them; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
     : { key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' };
-  const notYoursStep = (): DmarcStep => ({
-    key: 'not-yours', status: 'note', do: unrecorded > 0 ? 'Nothing to fix in the mail with a recorded verdict' : 'Nothing to fix', who: 'nobody', where: 'senders',
-    why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}.${unrecordedWhy} If one of the failing senders is a service you use, open the failing senders.`,
-  });
+  const notYoursStep = (): DmarcStep => service > 0
+    ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders',
+        why: `${shown}. ${othersWhy}.${unrecordedWhy}${f.policy === 'none' ? '' : ` Until it is set up, p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'} its mail.`}` }
+    : {
+        key: 'not-yours', status: 'note', do: unrecorded > 0 ? 'Nothing to fix in the mail with a recorded verdict' : 'Nothing to fix', who: 'nobody', where: 'senders',
+        why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}.${unrecordedWhy} If one of the failing senders is a service you use, open the failing senders.`,
+      };
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
   const gate = (next: string, threshold: number, where: StepWhere = inh ? 'parent' : 'dmarc-wizard'): DmarcStep | 'ready' | 'loading' => {

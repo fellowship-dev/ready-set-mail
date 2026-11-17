@@ -109,7 +109,7 @@ describe('SenderInventory', () => {
 		expect(screen.getByText(/Checked with strict SPF and relaxed DKIM alignment, from your published DMARC record/)).toBeInTheDocument();
 	});
 	it('names the domains the mail was sent as, never the monitored domain', async () => {
-		await renderReady(<SenderInventory showDomains senders={[sender({ domains: ['readysetmail.com'], from_domains: ['app.readysetmail.com', 'rua.readysetmail.com'] })]} />);
+		await renderReady(<SenderInventory senders={[sender({ domains: ['readysetmail.com'], from_domains: ['app.readysetmail.com', 'rua.readysetmail.com'] })]} />);
 		expect(screen.getByText('as app.readysetmail.com, rua.readysetmail.com')).toBeInTheDocument();
 		expect(screen.queryByText(/as readysetmail\.com/)).not.toBeInTheDocument();
 	});

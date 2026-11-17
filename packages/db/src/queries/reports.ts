@@ -5,7 +5,7 @@ import { counted, type CountingMode } from './counting';
 import { batchStatements } from '../client';
 import { storeStatements, type StoreReportInput } from './report-store';
 import { verdictSql, type DmarcVerdict } from './verdict';
-import { likelyNotYours } from '@ready-set-mail/dns-checks/sender-providers';
+import { classifySource, strongestClass, type SourceClass } from '@ready-set-mail/dns-checks/sender-providers';
 
 export interface DomainWeeklyStat {
 	domain_id: number;
@@ -32,7 +32,9 @@ export interface FailingSource {
 	reverse_dns: string | null;
 	base_domain?: string | null;
 	org?: string | null;
-	/** Not a known sending service, and neither SPF nor DKIM passed for a name of the domain's organization, in every group (`likelyNotYours`). */
+	/** Whose failure it is (`classifySource`, the one judgement): the strongest class among the source's groups. */
+	source_class: SourceClass;
+	/** `source_class === 'not_yours'`: nothing to fix. */
 	likely_not_yours: boolean;
 }
 
@@ -71,6 +73,9 @@ export interface NameSeenRow {
 	/** Messages the receiver passed (SPF or DKIM aligned) and failed (neither); the rest have no recorded verdict. */
 	passed: number;
 	failed: number;
+	/** Of `failed` (From role only), the messages from sources that are `service_not_set_up` and `not_yours` (`classifySource`); the rest are `yours`. */
+	failed_service: number;
+	failed_not_yours: number;
 }
 
 export interface DailyDomainStat {
@@ -149,8 +154,11 @@ export interface DomainCheckSummary {
 	from_dkim_aligned?: number;
 	from_spf_at_name?: number;
 	from_unjudged?: number;
-	/** Messages in the window whose verdict is 'failed' from sources that are likely not the domain's own (`likelyNotYours`): the evidence for "nothing to fix". */
+	/** Messages in the window whose verdict is 'failed', by whose failure it is (`classifySource`): from sources that are `not_yours` (nothing to fix)... */
 	failed_not_yours?: number;
+	/** ...and from `service_not_set_up` sources (a real service sending as the domain without being set up for it), with the From names they sent as (at most 5). */
+	failed_service?: number;
+	failed_service_names?: string[];
 	/** Failed messages (report totals) of the window's counted reports whose records have no recorded verdict (stored before 0022 kept it, or not recoverable): whose they are is not recorded. */
 	failed_unrecorded?: number;
 	mta_sts_enabled: number; // 0 or 1
@@ -289,19 +297,32 @@ interface FailedGroup {
 	org: string | null;
 }
 
+/** A failed group with the class of its source: decided per (domain, source IP) over all the source's groups (`strongestClass`). */
+type ClassifiedGroup = FailedGroup & { source_class: SourceClass };
+
+function classifyGroups(groups: readonly FailedGroup[]): ClassifiedGroup[] {
+	const byDomainSource = new Map<string, SourceClass>();
+	const key = (g: FailedGroup) => `${g.domain_id}|${g.source_ip}`;
+	for (const g of groups) {
+		const c = classifySource({ ...g }, g.domain);
+		const seen = byDomainSource.get(key(g));
+		byDomainSource.set(key(g), seen ? strongestClass(seen, c) : c);
+	}
+	return groups.map((g) => ({ ...g, source_class: byDomainSource.get(key(g))! }));
+}
+
 /** One domain's failed groups (largest first) rolled up per source IP, largest source first. */
 function rollUpFailing(groups: readonly FailedGroup[]): FailingSource[] {
 	const bySource = new Map<string, FailingSource>();
-	for (const g of groups) {
-		const own = likelyNotYours({ ...g }, g.domain);
+	for (const g of classifyGroups(groups)) {
 		const seen = bySource.get(g.source_ip);
 		if (seen) {
 			seen.total += Number(g.total);
-			seen.likely_not_yours &&= own;
 		} else {
 			bySource.set(g.source_ip, {
 				source_ip: g.source_ip, total: Number(g.total), header_from: g.header_from, spf_domain: g.spf_domain, dkim_domain: g.dkim_domain,
-				spf_pass: Number(g.spf_pass), dkim_pass: Number(g.dkim_pass), reverse_dns: g.reverse_dns, base_domain: g.base_domain, org: g.org, likely_not_yours: own,
+				spf_pass: Number(g.spf_pass), dkim_pass: Number(g.dkim_pass), reverse_dns: g.reverse_dns, base_domain: g.base_domain, org: g.org,
+				source_class: g.source_class, likely_not_yours: g.source_class === 'not_yours',
 			});
 		}
 	}
@@ -391,14 +412,27 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			ORDER BY total DESC
 			LIMIT ${limit}
 		`);
-	/** `failed_not_yours` per domain id in the range: failed messages from sources every group of which is `likelyNotYours`. One statement. */
-	const failedNotYoursByDomain = async (range: { fromId: number; toId: number }, since: number): Promise<Map<number, number>> => {
-		const rows = await failedGroups(sql`AND ar.domain_id BETWEEN ${range.fromId} AND ${range.toId}`, since, 2000);
-		const out = new Map<number, number>();
-		const byDomain = new Map<number, FailedGroup[]>();
-		for (const r of rows) byDomain.set(r.domain_id, [...(byDomain.get(r.domain_id) ?? []), r]);
-		for (const [domainId, group] of byDomain) out.set(domainId, rollUpFailing(group).filter((x) => x.likely_not_yours).reduce((n, x) => n + x.total, 0));
+	/** The failed messages per domain id in the range, by whose failure it is (`classifySource`): one statement. */
+	const failedByClassByDomain = async (range: { fromId: number; toId: number }, since: number): Promise<Map<number, { not_yours: number; service: number; service_names: string[] }>> => {
+		const rows = classifyGroups(await failedGroups(sql`AND ar.domain_id BETWEEN ${range.fromId} AND ${range.toId}`, since, 2000));
+		const out = new Map<number, { not_yours: number; service: number; service_names: string[] }>();
+		for (const g of rows) {
+			const e = out.get(g.domain_id) ?? { not_yours: 0, service: 0, service_names: [] };
+			if (g.source_class === 'not_yours') e.not_yours += Number(g.total);
+			if (g.source_class === 'service_not_set_up') {
+				e.service += Number(g.total);
+				const name = (g.header_from || g.domain).toLowerCase();
+				if (!e.service_names.includes(name) && e.service_names.length < 5) e.service_names.push(name);
+			}
+			out.set(g.domain_id, e);
+		}
+		for (const e of out.values()) e.service_names.sort();
 		return out;
+	};
+	const noClasses = { not_yours: 0, service: 0, service_names: [] as string[] };
+	const classFields = (c: { not_yours: number; service: number; service_names: string[] } | undefined) => {
+		const e = c ?? noClasses;
+		return { failed_not_yours: e.not_yours, failed_service: e.service, failed_service_names: e.service_names };
 	};
 
 	return {
@@ -564,6 +598,32 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			return rollUpFailing(rows).slice(0, limit);
 		},
 
+		/**
+		 * How many counted reports hold a record whose verdict is not recorded (stored before 0022 kept it, or not recoverable), in the window
+		 * (`since`) or on one day (`date`): the one count the Anomalies page and the day's report page lead with, so they cannot differ.
+		 */
+		async unrecordedReports(domainId: number, win: { since: number } | { date: string }): Promise<number> {
+			const when = 'date' in win ? sql`date(datetime(ar.date_begin, 'unixepoch')) = ${win.date}` : sql`ar.date_begin >= ${win.since}`;
+			const rows = await db.all<{ n: number }>(sql`
+				SELECT COUNT(DISTINCT ar.id) AS n FROM report_records rr JOIN aggregate_reports ar ON ar.id = rr.report_id
+				WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ar.domain_id = ${domainId} AND ${when} AND ${verdictSql('rr')} = 'not-recorded'`);
+			return Number(rows[0]?.n ?? 0);
+		},
+
+		/**
+		 * The COUNTED reports filed under this domain: how many and how many messages since `since` (by the period they cover, as the page's totals),
+		 * and when the newest one ever was stored. What the report-address view says of how reports reach a name (`reach`).
+		 */
+		async reachCounts(domainId: number, since: number): Promise<{ reports: number; messages: number; last_report_at: number | null }> {
+			const rows = await db.all<{ reports: number; messages: number; last_at: number | null }>(sql`
+				SELECT COALESCE(SUM(CASE WHEN aggregate_reports.date_begin >= ${since} THEN 1 ELSE 0 END), 0) AS reports,
+					COALESCE(SUM(CASE WHEN aggregate_reports.date_begin >= ${since} THEN aggregate_reports.total_count ELSE 0 END), 0) AS messages,
+					MAX(aggregate_reports.created_at) AS last_at
+				FROM aggregate_reports WHERE aggregate_reports.workspace_id = ${A} AND aggregate_reports.domain_id = ${domainId} AND ${C('aggregate_reports')}`);
+			const r = rows[0];
+			return { reports: Number(r?.reports ?? 0), messages: Number(r?.messages ?? 0), last_report_at: r?.last_at ?? null };
+		},
+
 		/** Per verdict, how many sources and messages the domain's counted reports hold since `since`: what the failing-sources list leaves out. */
 		async verdictTally(domainId: number, since: number): Promise<Record<DmarcVerdict, VerdictCount>> {
 			const rows = await db.all<{ verdict: DmarcVerdict; sources: number; messages: number }>(sql`
@@ -645,9 +705,9 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		 * (the return-path, what the report calls the envelope), with its volume and the receiver's pass / fail. The domain itself is not a
 		 * subdomain and is left out. One row per name and role.
 		 */
-		namesSeen(domainId: number, domain: string, since: number) {
+		async namesSeen(domainId: number, domain: string, since: number): Promise<NameSeenRow[]> {
 			const suffix = `.${domain}`;
-			return db.all<NameSeenRow>(sql`
+			const rows = await db.all<Omit<NameSeenRow, 'failed_service' | 'failed_not_yours'>>(sql`
 				SELECT n.name AS name, n.role AS role, SUM(n.count) AS messages,
 				       SUM(CASE WHEN n.verdict IN ('passed', 'passed-one') THEN n.count ELSE 0 END) AS passed,
 				       SUM(CASE WHEN n.verdict = 'failed' THEN n.count ELSE 0 END) AS failed
@@ -664,6 +724,18 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				GROUP BY n.name, n.role
 				ORDER BY messages DESC, n.name
 			`);
+			// Whose failure each name's failed mail is: the same classes as the domain's own totals (`failedByClassByDomain`).
+			const byName = new Map<string, { service: number; notYours: number }>();
+			if (rows.some((r) => r.role === 'from' && r.failed > 0)) {
+				for (const g of classifyGroups(await failedGroups(sql`AND ar.domain_id = ${domainId}`, since, 2000))) {
+					const name = (g.header_from ?? '').toLowerCase();
+					const e = byName.get(name) ?? { service: 0, notYours: 0 };
+					if (g.source_class === 'service_not_set_up') e.service += Number(g.total);
+					if (g.source_class === 'not_yours') e.notYours += Number(g.total);
+					byName.set(name, e);
+				}
+			}
+			return rows.map((r) => ({ ...r, failed_service: r.role === 'from' ? byName.get(r.name)?.service ?? 0 : 0, failed_not_yours: r.role === 'from' ? byName.get(r.name)?.notYours ?? 0 : 0 }));
 		},
 
 		dailyStats(domainId: number, since: number) {
@@ -750,7 +822,7 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 			const rows = await db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.id = ${domainId}`, sql``));
 			const row = rows[0];
 			if (!row) return null;
-			return { ...row, failed_not_yours: (await failedNotYoursByDomain({ fromId: domainId, toId: domainId }, since)).get(domainId) ?? 0 };
+			return { ...row, ...classFields((await failedByClassByDomain({ fromId: domainId, toId: domainId }, since)).get(domainId)) };
 		},
 
 		/**
@@ -760,8 +832,8 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 		async checkSummaries(since: number, page: { afterId?: number; limit: number }): Promise<DomainCheckSummary[]> {
 			const rows = await db.all<DomainCheckSummary>(summarySql(A, C, since, sql`AND d.evicted_at IS NULL AND d.id > ${page.afterId ?? 0}`, sql`ORDER BY d.id LIMIT ${page.limit}`));
 			if (rows.length === 0) return rows;
-			const notYours = await failedNotYoursByDomain({ fromId: rows[0].domain_id, toId: rows[rows.length - 1].domain_id }, since);
-			return rows.map((r) => ({ ...r, failed_not_yours: notYours.get(r.domain_id) ?? 0 }));
+			const classes = await failedByClassByDomain({ fromId: rows[0].domain_id, toId: rows[rows.length - 1].domain_id }, since);
+			return rows.map((r) => ({ ...r, ...classFields(classes.get(r.domain_id)) }));
 		},
 
 		// ── TLS-RPT ───────────────────────────────────────────────

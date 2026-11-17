@@ -14,7 +14,7 @@ import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
 import { ProofLost, isUnproven } from '../../components/domain/ProofLost';
 import { FailingSources, notRecordedLine, oneCheckLine } from '../../components/domain/FailingSources';
-import { SubdomainNames } from '../../components/domain/SubdomainNames';
+import { SubdomainNames, namesSummary } from '../../components/domain/SubdomainNames';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
 import { Rollout } from '../../components/domain/Rollout';
@@ -316,7 +316,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// action fit the first screen, and stay there for this visit: the panel that is acted on never moves under the person.
 	const needsAction = (() => {
 		const a = reportAddr.data;
-		return !!a && a.available && !a.managed_by && a.can_connect && (a.state === 'not_connected' || a.state === 'not_published');
+		// Reports that already arrive through the parent or its record (`reach`) have nothing to connect.
+		return !!a && a.available && !a.managed_by && a.can_connect && a.reach.kind === 'none' && (a.state === 'not_connected' || a.state === 'not_published');
 	})();
 	const reportsFirst = useRef<number | null>(null);
 	if (needsAction) reportsFirst.current = domain.id;
@@ -529,7 +530,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				{!reportsOff && (names.isError || (names.data?.length ?? 0) > 0) ? (
 					<Disclosure
 						title="Names seen sending as this domain"
-						summary={names.isError ? 'Could not be loaded.' : `${plural(names.data!.length, 'subdomain')} in the reports of the last 30 days${names.data!.some((n) => n.fix) ? `, ${plural(names.data!.filter((n) => n.fix).length, 'name')} to fix` : ''}. They are part of ${domain.domain}.`}
+						summary={names.isError ? 'Could not be loaded.' : namesSummary(names.data!, domain.domain)}
 					>
 						<SubdomainNames domainId={domain.id} domain={domain.domain} q={names} />
 					</Disclosure>

@@ -271,7 +271,7 @@ export function dmarcStepsFor(
 ): DmarcStep[] {
 	const sum = hosted ? applyHostedInputs(s, hosted).summary : s;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy: sum.dmarc_policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsRefusal, nameExists: didNotResolve(s) === 'now' ? false : null, failedNotYours: s.failed_not_yours, failedUnrecorded: s.failed_unrecorded }));
+	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsRefusal, nameExists: didNotResolve(s) === 'now' ? false : null, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded }));
 }
 
 /**
@@ -290,7 +290,7 @@ export function nextPolicyGate(
 	const own: DomainCheckSummary = { ...s, dmarc_policy: policy, dmarc_p: policy, dmarc_inherited_from: null, dmarc_issue: null };
 	const sum = hosted ? { ...applyHostedInputs(own, hosted).summary, dmarc_policy: policy } : own;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsRefusal, failedNotYours: s.failed_not_yours, failedUnrecorded: s.failed_unrecorded }));
+	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsRefusal, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded }));
 	if (steps.length === 0) return undefined;
 	if (steps.some((x) => x.key === 'tighten' && x.status === 'approval')) return { ready: true };
 	return { ready: false, step: steps[0]! };

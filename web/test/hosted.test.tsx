@@ -8,6 +8,7 @@ import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { DomainSettingsPage } from '../src/pages/domains/DomainSettingsPage';
 import { MtaStsPage } from '../src/pages/wizards/MtaStsPage';
 import { fail, renderApp } from './render';
+import { noReach, viaParentReach } from './reach';
 
 const domain = { id: 1, domain: 'example.com', dmarc_policy: 'reject', rua_address: 'r@reports.test', parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0 };
 const addresses = { rua: 'rua+SECRETTOKEN@intake.test', tls_rpt: 'tls+SECRETTOKEN@intake.test' };
@@ -86,7 +87,7 @@ describe('Hosted records need a records zone', () => {
 });
 
 describe('Hosted report intake on the domain page', () => {
-	const notConnected = { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, reports_since_connect: 0, reports_before_connect: 0, state: 'not_connected', dns: null, parent: null };
+	const notConnected = { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, reports_since_connect: 0, reports_before_connect: 0, state: 'not_connected', dns: null, parent: null };
 	it('hosted, no address: the reports panel states it and carries the Connect reports action; no RUA section', async () => {
 		detail({
 			status: { mode: 'saas' },
@@ -109,7 +110,7 @@ describe('Hosted report intake on the domain page', () => {
 			routes: detailRoutes({
 				'GET /api/domains': { domains: [{ ...domain, rua_address: '' }] },
 				'GET /api/hosted/config': { enabled: true, reports: true, records: false },
-				'GET /api/domains/1/report-address': { ...notConnected, via_parent: { domain_id: 9, domain: 'parent.example' } },
+				'GET /api/domains/1/report-address': { ...notConnected, via_parent: { domain_id: 9, domain: 'parent.example' }, reach: viaParentReach({ domain_id: 9, domain: 'parent.example' }) },
 			}),
 		});
 		expect(await screen.findByText('Reports arrive through parent.example')).toBeInTheDocument();
@@ -121,7 +122,7 @@ describe('Hosted report intake on the domain page', () => {
 			status: { mode: 'saas' },
 			routes: detailRoutes({
 				'GET /api/hosted/config': { enabled: true, reports: true, records: false },
-				'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, reports_since_connect: 0, reports_before_connect: 0, state: 'not_connected', dns: null, parent: null },
+				'GET /api/domains/1/report-address': { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, reports_since_connect: 0, reports_before_connect: 0, state: 'not_connected', dns: null, parent: null },
 			}),
 		});
 		expect(await screen.findByText('Reports not connected yet')).toBeInTheDocument();
@@ -388,7 +389,7 @@ describe('MTA-STS wizard on a hosted domain', () => {
 			{
 				route: '/domains/3/mta-sts',
 				routes: {
-					'GET /api/domains/3/mta-sts': { available: true, config: null, summary: null },
+					'GET /api/domains/3/mta-sts': { available: true, reach: noReach, config: null, summary: null },
 					'POST /api/domains/3/mta-sts': fail(409, 'MTA-STS is hosted for this domain'),
 				},
 			},

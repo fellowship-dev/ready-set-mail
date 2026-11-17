@@ -32,7 +32,7 @@ describe('reports.checkSummary', () => {
       dkim_total: 1000, dkim_pass: 950, spf_total: 1000, spf_pass: 950,
       mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: null, dmarc_pct: null, dmarc_p: null, dmarc_sp: null, dmarc_rua: null,
       from_messages: 1000, from_dkim_aligned: 0, from_spf_at_name: 0, from_unjudged: 1000, // these records were stored without the receiver's alignment verdict
-      failed_not_yours: 0, failed_unrecorded: 20,
+      failed_not_yours: 0, failed_service: 0, failed_service_names: [], failed_unrecorded: 20,
     });
   });
 

@@ -5,7 +5,11 @@ import { HOSTED_CONFIG_KEY } from './hosted';
 import { reportsRefusalOf, type ReportsRefusal } from './dmarc-step';
 import { useHosted } from './session';
 import { useCheckSummary } from './domain-queries';
+import { reportReachWords, type ReportReach } from '@ready-set-mail/dns-checks/report-reach';
+import { formatDateTime } from './format';
 import type { ReportVisibilityFields } from './uncounted';
+
+export type { ReportReach };
 
 /**
  * Connecting a domain's DMARC reports on the hosted service (GET/POST/DELETE /api/domains/:id/report-address): one
@@ -76,9 +80,25 @@ export interface ReportAddressView {
 	parent?: { domain_id: number; domain: string; connected: boolean } | null;
 	/** No connection of its own, but reports that name this domain as their policy domain are filed here through this connected parent. */
 	via_parent?: { domain_id: number; domain: string } | null;
+	/** How reports reach this name (src/hosted/report-address.ts `reportReachOf`): the one answer every component's words come from (`reachWords`, `reportsArrive`). */
+	reach: ReportReach;
 }
 
 export type ReportIntakeStatus = { available: false } | ReportAddressView;
+
+/**
+ * The words for a name whose reports arrive without a connection of its own (through its connected parent, or through the record that applies to it),
+ * with the real counts and the time of the last one; null when it has a connection of its own or nothing arrives. The only place a component
+ * gets these sentences from (`reportReachWords`, packages/dns-checks/src/report-reach.ts, which the agent's report uses too).
+ */
+export function reachWords(s: ReportIntakeStatus | null | undefined): { headline: string; sentences: string[] } | null {
+	return s && s.available ? reportReachWords(s.domain, s.reach, formatDateTime) : null;
+}
+
+/** Do reports arrive for this name? Own connection, or through its parent, or through the record that applies. undefined: not known (loading, or no hosted intake). */
+export function reportsArrive(s: ReportIntakeStatus | null | undefined): boolean | undefined {
+	return s && s.available ? !!s.address || s.reach.kind !== 'none' : undefined;
+}
 
 export const reportAddressKey = (id: number) => [...domainKeys.all(id), 'report-address'] as const;
 

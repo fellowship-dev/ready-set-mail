@@ -11,7 +11,7 @@ import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '.
 import { useCheckSummary, useDnsCheck, useNames } from '../../lib/domain-queries';
 import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
-import { explain, formatDayWithRelative, isFailing, isOneCheck, isUnrecorded, NOT_RECORDED, passRate, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
+import { explain, formatDayWithRelative, isFailing, isOneCheck, isUnrecorded, NOT_RECORDED, passRate, verdictLead, verdictLeadSentence, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
 import type { DayReport, NameSeen, ReportSource } from '../../lib/types';
 
 /** The policy the server read for a name that sent mail as a subdomain of this domain (null: not read). */
@@ -157,10 +157,16 @@ export function ReportDetailPage() {
 	const passing = sources.filter((s) => !isFailing(s) && !isOneCheck(s) && !isUnrecorded(s));
 	const rate = passRate(summary.passed, summary.total);
 
+	// Some of the day's mail has no recorded verdict: this page and the Anomalies page lead with the same count (`verdictLead`), and the failed figure
+	// is the one among the records that have a verdict, never the reports' own total that includes the rest.
+	const lead = verdictLead(sources, q.data.unrecorded_reports);
+	const failedShown = lead ? lead.failedMessages : summary.failed;
 	const hero =
 		summary.total === 0
 			? null
-			: summary.failed === 0
+			: lead
+				? `${summary.total.toLocaleString()} messages analyzed. ${verdictLeadSentence(lead)}`
+				: summary.failed === 0
 				? `${summary.total.toLocaleString()} messages analyzed — everything passed.`
 				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} need attention.`;
 
@@ -177,15 +183,15 @@ export function ReportDetailPage() {
 				/>
 			) : (
 				<>
-					<p className={cn('flex items-center gap-2 text-base font-medium', summary.failed > 0 ? 'text-danger' : 'text-success')}>
-						{summary.failed > 0 ? <XCircle aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
+					<p className={cn('flex items-center gap-2 text-base font-medium', failedShown > 0 ? 'text-danger' : lead ? 'text-ink-1' : 'text-success')}>
+						{failedShown > 0 ? <XCircle aria-hidden className="size-5" /> : lead ? <CircleHelp aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
 						{hero}
 					</p>
 					<StatGroup className={'sm:grid-cols-4'}>
 						<Stat label="Pass rate" value={`${rate}%`} />
 						<Stat label="Total" value={summary.total.toLocaleString()} />
 						<Stat label="Passed" value={summary.passed.toLocaleString()} />
-						{summary.failed > 0 ? <Stat label="Failed" value={summary.failed.toLocaleString()} /> : null}
+						{failedShown > 0 ? <Stat label={lead ? 'Failed (recorded verdicts)' : 'Failed'} value={failedShown.toLocaleString()} /> : null}
 					</StatGroup>
 
 					{failing.length > 0 ? (

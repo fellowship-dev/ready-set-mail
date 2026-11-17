@@ -7,7 +7,7 @@ import { BackLink, SourceTable, WindowPills, useRouteDomainId } from '../../comp
 import { ListSkeleton, LoadError, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { useDomain } from '../../lib/queries';
-import { DEFAULT_WINDOW, isFailing, isOneCheck, isUnrecorded, plural, splitActive, type WindowDays } from '../../lib/reports';
+import { DEFAULT_WINDOW, isFailing, isOneCheck, plural, splitActive, verdictLead, verdictLeadSentence, type WindowDays } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 
 export function AnomaliesPage() {
@@ -19,16 +19,15 @@ export function AnomaliesPage() {
 
 	const q = useQuery({
 		queryKey: ['anomalies', id, days],
-		queryFn: () => api<{ days: number; domain: string; anomalies: AnomalySource[] }>(`/api/domains/${id}/anomalies?days=${days}`),
+		queryFn: () => api<{ days: number; domain: string; anomalies: AnomalySource[]; unrecorded_reports?: number }>(`/api/domains/${id}/anomalies?days=${days}`),
 		enabled: !Number.isNaN(id),
 	});
 	const name = domain?.domain ?? q.data?.domain;
 	const rows = q.data?.anomalies ?? [];
 	const { active, older } = splitActive(rows.filter(isFailing));
 	const oneCheck = rows.filter(isOneCheck);
-	const unrecorded = rows.filter(isUnrecorded);
-	const unrecordedSources = new Set(unrecorded.map((s) => s.source_ip)).size;
-	const unrecordedMessages = unrecorded.reduce((n, s) => n + s.total, 0);
+	// Some mail has no recorded verdict: the page says so first, from the function the day's report page uses too.
+	const lead = verdictLead(rows, q.data?.unrecorded_reports);
 
 	return (
 		<div className="space-y-6">
@@ -47,8 +46,8 @@ export function AnomaliesPage() {
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load anomalies" />
 			) : active.length + older.length + oneCheck.length === 0 ? (
 				<EmptyState
-					title={`No source failed DMARC in the last ${days} days`}
-					description="No source in the reports received for this window failed DMARC. If no reports arrived, there is nothing to judge yet, so check what was received."
+					title={lead ? verdictLeadSentence(lead).replace(/\.$/, '') : `No source failed DMARC in the last ${days} days`}
+					description={lead ? `Reports stored before Ready Set Mail kept each receiver's DMARC verdict stay without one when the original report is not kept. Among the reports that have a verdict, no source failed in the last ${days} days.` : 'No source in the reports received for this window failed DMARC. If no reports arrived, there is nothing to judge yet, so check what was received.'}
 					action={
 						<Button asChild variant="secondary">
 							<Link to={`/domains/${id}/reports`}>See received reports</Link>
@@ -57,6 +56,7 @@ export function AnomaliesPage() {
 				/>
 			) : (
 				<>
+					{lead ? <p className="text-base font-medium text-ink-1">{verdictLeadSentence(lead)}</p> : null}
 					{active.length > 0 ? (
 						<Section title={`Active: ${plural(active.length, 'source')}`} description="Failing within the last 2 days.">
 							<SourceTable sources={active} domainId={id} label="Active anomalies" />
@@ -74,11 +74,6 @@ export function AnomaliesPage() {
 					) : null}
 				</>
 			)}
-			{!reportsOff && q.isSuccess && unrecorded.length > 0 ? (
-				<p className="text-sm text-ink-2">
-					{plural(unrecordedSources, 'source')} ({unrecordedMessages.toLocaleString()} messages) are in reports stored before Ready Set Mail kept each receiver's DMARC verdict: verdict not recorded.
-				</p>
-			) : null}
 		</div>
 	);
 }

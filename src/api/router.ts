@@ -541,12 +541,13 @@ async function getDomainReportByDate(tenant: TenantContext, domainId: string, ur
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
 
-  const [summary, sources] = await Promise.all([
+  const [summary, sources, unrecordedReports] = await Promise.all([
     tenant.scope.reports.daySummary(id, date),
     tenant.scope.reports.sourcesByDate(id, date),
+    tenant.scope.reports.unrecordedReports(id, { date }),
   ]);
 
-  return json({ date, domain: domain.domain, summary: summary ?? { total: 0, passed: 0, failed: 0 }, sources });
+  return json({ date, domain: domain.domain, summary: summary ?? { total: 0, passed: 0, failed: 0 }, sources, unrecorded_reports: unrecordedReports });
 }
 
 async function getDomainSources(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {
@@ -1055,8 +1056,8 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
       const days = intParam(url, 'days', 30, 1, 90);
       const since = Math.floor(Date.now() / 1000) - days * 86400;
-      const results = await tenant.scope.reports.anomalySources(id, since);
-      return json({ days, domain: domain.domain, anomalies: results });
+      const [results, unrecordedReports] = await Promise.all([tenant.scope.reports.anomalySources(id, since), tenant.scope.reports.unrecordedReports(id, { since })]);
+      return json({ days, domain: domain.domain, anomalies: results, unrecorded_reports: unrecordedReports });
     }
     // GET /api/domains/:id/export — CSV download (requires normal session/API key auth)
     const exportMatch = path.match(/^\/api\/domains\/([^/]+)\/export$/);
@@ -1311,9 +1312,11 @@ async function _handleApi(
         })(),
       ]);
 
+      // The address reports reach this name at when it has none of its own: through its connected parent (`reportReachOf`), as the domain list says.
+      const reportsVia = await reportsAddressVia(tenant, domain);
       // Same store as the daily cron, from lookups this request already made (no extra DNS). A write failure must not fail the read.
       try {
-        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000), reports_address: await reportsAddressVia(tenant, domain) });
+        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000), reports_address: reportsVia });
         dnsChecked(tenant, ctx, domain, resolved.dmarc, 'setup');
       } catch (e) {
         console.warn(`[onboarding-status] storing DNS check failed for ${domain.domain}:`, e);
@@ -1323,7 +1326,7 @@ async function _handleApi(
       return json({
         domain_id: domain.id,
         domain: domain.domain,
-        rua_address: domain.rua_address,
+        rua_address: domain.rua_address?.trim() ? domain.rua_address : reportsVia ?? domain.rua_address,
         cf_available: tenant.hasCloudflare(),
         // `effective`: the policy that applies (RFC 7489), own or inherited from the organizational domain; null when DNS
         // could not say. The dashboard never offers a record weaker than this.

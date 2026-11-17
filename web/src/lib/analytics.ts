@@ -31,7 +31,7 @@ export interface Sender {
 	is_new: boolean;
 }
 
-export type FixKind = 'authorize-sender' | 'fix-dkim-alignment' | 'investigate-sender' | 'review-new-sender';
+export type FixKind = 'authorize-sender' | 'fix-dkim-alignment' | 'investigate-sender' | 'outside-mail' | 'review-new-sender';
 
 export interface Fix {
 	id: string;
@@ -136,6 +136,8 @@ export const READINESS_LABEL: Record<ReadinessStatus, string> = {
 	no_policy: 'No policy',
 };
 
+/** The badge of a fix: outside mail (`classifySource` not_yours) is not an impact to the owner, so it says what it is. */
+export const fixBadgeLabel = (f: Pick<Fix, 'kind' | 'severity'>): string => (f.kind === 'outside-mail' ? 'Outside mail' : SEVERITY_LABEL[f.severity]);
 export const SEVERITY_LABEL: Record<Fix['severity'], string> = { high: 'High impact', medium: 'Medium impact', low: 'Low impact' };
 
 /** Whole percents from 10 up, one decimal below: `12.6` -> "13%", `4.25` -> "4.3%". Matches the API's own titles. */

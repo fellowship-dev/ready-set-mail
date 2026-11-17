@@ -141,7 +141,7 @@ describe('what is neither failed nor passed on both checks', () => {
 	it('the anomalies page lists failed rows in Active/Older, the one-check rows in a quieter section, and counts the unrecorded in one line', async () => {
 		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
 			'GET /api/domains/1/anomalies': {
-				days: 30, domain: 'example.com',
+				days: 30, domain: 'example.com', unrecorded_reports: 2,
 				anomalies: [
 					source({ org: 'Bad Co' }),
 					source({ source_ip: '3.3.3.3', org: 'Half Co', spf_pass: 1, dkim_pass: 1, verdict: 'passed-one', spf_aligned: 1, dkim_aligned: 0 }),
@@ -154,8 +154,16 @@ describe('what is neither failed nor passed on both checks', () => {
 		expect(screen.getByRole('heading', { name: 'Passed, but one check failed' })).toBeInTheDocument();
 		expect(screen.getByText('Passed on one check')).toBeInTheDocument();
 		expect(screen.getByText('DMARC passed on SPF alone')).toBeInTheDocument();
-		expect(screen.getByText("1 source (12 messages) are in reports stored before Ready Set Mail kept each receiver's DMARC verdict: verdict not recorded.")).toBeInTheDocument();
+		// the page leads with how much has no recorded verdict, and what failed among the rest (the day's report page says the same, from the same function)
+		expect(screen.getByText(/^2 reports have no recorded verdict \(1 source, 12 messages\); among the rest, 1 source failed \(/)).toBeInTheDocument();
 		expect(screen.queryByText('Verdict not recorded')).toBeNull();
+	});
+	it('the anomalies page with unrecorded rows and nothing failing in the rest says exactly that, never "No source failed DMARC"', async () => {
+		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
+			'GET /api/domains/1/anomalies': { days: 30, domain: 'example.com', unrecorded_reports: 3, anomalies: [source({ source_ip: '4.4.4.4', total: 9, verdict: 'not-recorded' })] },
+		});
+		expect(await screen.findByText('3 reports have no recorded verdict (1 source, 9 messages); among the rest, no source failed')).toBeInTheDocument();
+		expect(screen.queryByText(/^No source failed DMARC/)).toBeNull();
 	});
 	it('the anomalies page with only a one-check row is not an all-clear of failures, and has no empty state', async () => {
 		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
@@ -175,7 +183,9 @@ describe('what is neither failed nor passed on both checks', () => {
 				],
 			},
 		});
-		expect(await screen.findByText('30 messages analyzed — everything passed.')).toBeInTheDocument();
+		// "everything passed" would be untrue: 10 of the messages have no recorded verdict
+		expect(await screen.findByText('30 messages analyzed. 1 report has no recorded verdict (1 source, 10 messages); among the rest, no source failed.')).toBeInTheDocument();
+		expect(screen.queryByText(/everything passed/)).toBeNull();
 		expect(screen.getByRole('heading', { name: 'Passed, but one check failed' })).toBeInTheDocument();
 		expect(screen.getByText(/passed DMARC as "example\.com" on DKIM alone/)).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Verdict not recorded' })).toBeInTheDocument();

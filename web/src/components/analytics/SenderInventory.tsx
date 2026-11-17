@@ -22,7 +22,7 @@ function Rate({ pct, label }: { pct: number; label: string }) {
 }
 
 /** Every source that sent as this domain: who it is, how much, whether SPF and DKIM line up, and when it appeared. */
-export function SenderInventory({ senders, showDomains, alignment }: { senders: Sender[]; showDomains?: boolean; alignment?: Alignment }) {
+export function SenderInventory({ senders, alignment }: { senders: Sender[]; alignment?: Alignment }) {
 	if (senders.length === 0) {
 		return <EmptyState title="No senders in this window" description="Senders appear once receivers report mail sent as your domain." />;
 	}
@@ -62,7 +62,7 @@ export function SenderInventory({ senders, showDomains, alignment }: { senders: 
 									<code className="font-mono text-xs text-ink-2">{s.source_ip}</code>
 									{s.provider ? null : s.reverse_dns || s.org ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
 									{s.provider && (s.reverse_dns || s.org) ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
-									{showDomains ? <span className="text-xs text-ink-2">as {s.from_domains.join(', ')}</span> : null}
+									<span className="text-xs text-ink-2">as {s.from_domains.join(', ')}</span>
 								</span>
 							</TableCell>
 							<TableCell className="text-right tabular-nums">

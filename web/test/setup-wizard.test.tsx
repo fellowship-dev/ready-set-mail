@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { OnboardingStatus, WizardState } from '../src/lib/types';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
 import { fail, renderApp, type Handler } from './render';
+import { noReach } from './reach';
 
 function Where() {
 	return <p data-testid="where">{useLocation().pathname}</p>;
@@ -30,7 +31,7 @@ const status = (over: Partial<OnboardingStatus> = {}): OnboardingStatus => ({
 	domain_id: 7,
 	domain: 'example.com',
 	rua_address: 'r@reports.example.com',
-	cf_available: true,
+	cf_available: true, reach: noReach,
 	dmarc: { found: true, has_our_rua: true, current_record: 'v=DMARC1; p=none; rua=mailto:r@reports.example.com' },
 	spf: { record: 'v=spf1 include:_spf.google.com ~all', lookup_count: 2, flattening_active: false },
 	dkim: { selectors: [], source: 'doh' },
@@ -192,7 +193,7 @@ describe('DNS lookup failures are not missing records', () => {
 
 	it('DMARC (hosted): connecting reports in the step refreshes it, so it stops saying "Reports not connected yet"', async () => {
 		let connected = false;
-		const view = (over: Record<string, unknown>) => ({ available: true, domain_id: 7, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null, via_parent: null, ...over });
+		const view = (over: Record<string, unknown>) => ({ available: true, reach: noReach, domain_id: 7, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null, via_parent: null, ...over });
 		const none = { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } };
 		renderApp(<Wizard />, {
 			route: '/domains/7/setup/4',

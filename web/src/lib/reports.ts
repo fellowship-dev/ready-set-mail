@@ -31,6 +31,33 @@ export const isUnrecorded = (src: VerdictInput): boolean => verdictOf(src) === '
 /** The sentence for mail whose verdict is not recorded (stored before migration 0022 kept it). */
 export const NOT_RECORDED = "This report was stored before Ready Set Mail kept each receiver's DMARC verdict, so whether this mail passed DMARC is not recorded.";
 
+/**
+ * What the Anomalies page and a day's report page both lead with when some of the mail has no recorded verdict (hosted keeps no raw XML, so such rows can stay
+ * for good): the one function that counts them, so the two pages cannot say different things. Null when every record has a verdict.
+ * `rows`: the sources of the window or the day (`total` or `count` is the messages); `unrecordedReports`: the server's count of reports holding such a record.
+ */
+export interface VerdictLead { unrecordedReports: number; unrecordedSources: number; unrecordedMessages: number; failedSources: number; failedMessages: number }
+export function verdictLead(rows: ReadonlyArray<VerdictInput & { source_ip: string; total?: number; count?: number }>, unrecordedReports: number | undefined): VerdictLead | null {
+	const messages = (r: { total?: number; count?: number }) => r.total ?? r.count ?? 0;
+	const unrecorded = rows.filter(isUnrecorded);
+	if (unrecorded.length === 0) return null;
+	const failing = rows.filter(isFailing);
+	return {
+		unrecordedReports: Math.max(unrecordedReports ?? 0, 1),
+		unrecordedSources: new Set(unrecorded.map((r) => r.source_ip)).size,
+		unrecordedMessages: unrecorded.reduce((n, r) => n + messages(r), 0),
+		failedSources: new Set(failing.map((r) => r.source_ip)).size,
+		failedMessages: failing.reduce((n, r) => n + messages(r), 0),
+	};
+}
+
+/** "2 reports have no recorded verdict (3 sources, 27 messages); among the rest, no source failed." */
+export function verdictLeadSentence(l: VerdictLead): string {
+	const reports = `${plural(l.unrecordedReports, 'report')} ${l.unrecordedReports === 1 ? 'has' : 'have'} no recorded verdict (${plural(l.unrecordedSources, 'source')}, ${plural(l.unrecordedMessages, 'message')})`;
+	const rest = l.failedSources === 0 ? 'no source failed' : `${plural(l.failedSources, 'source')} failed (${plural(l.failedMessages, 'message')})`;
+	return `${reports}; among the rest, ${rest}.`;
+}
+
 /** The sending service, when it differs from the From domain. */
 export function serviceVia(src: Pick<AuthSource, 'spf_domain' | 'dkim_domain' | 'header_from'>): string | null {
 	const auth = src.spf_domain || src.dkim_domain;

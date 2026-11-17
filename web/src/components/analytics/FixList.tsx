@@ -1,7 +1,7 @@
 import { Badge, Card, CardContent, EmptyState, RecordBlock } from '@ready-set-mail/ui';
 import { ExternalLink } from 'lucide-react';
 import { Link } from 'react-router';
-import { fmtPct, SEVERITY_LABEL, type Fix } from '../../lib/analytics';
+import { fixBadgeLabel, fmtPct, type Fix } from '../../lib/analytics';
 import { formatNumber } from '../../lib/format';
 import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from '../../lib/uncounted';
 
@@ -31,7 +31,7 @@ export function FixList({ fixes, messages, showDomain, visibility }: { fixes: Fi
 									<span className="mr-2 text-ink-2">{i + 1}.</span>
 									{f.title}
 								</h3>
-								<Badge variant={VARIANT[f.severity]}>{SEVERITY_LABEL[f.severity]}</Badge>
+								<Badge variant={VARIANT[f.severity]}>{fixBadgeLabel(f)}</Badge>
 							</div>
 							<p className="text-sm text-ink-2">
 								{showDomain ? (

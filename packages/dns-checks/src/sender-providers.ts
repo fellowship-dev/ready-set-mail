@@ -91,15 +91,36 @@ function toProvider(sig: Signature, evidence: string): SenderProvider {
 	return { id: sig.id, name: sig.name, registry, evidence };
 }
 
+/** Whose failure a failing source is: see `classifySource`. */
+export type SourceClass = 'yours' | 'service_not_set_up' | 'not_yours';
+
+export type SourceFacts = SenderSignals & { spf_pass: number | boolean; dkim_pass: number | boolean };
+
 /**
- * A source that is probably not the domain's own mail: we do not recognise it as a sending service (`identifySender` is
- * null) and it passed neither SPF nor DKIM for a name in `domain`'s organizational domain. The same notion as
- * src/analytics/fixes.ts, "which we do not recognise ... likely spoofing". A failure from such a source is nothing to fix.
+ * The ONE judgement of "is this failing source the owner's to fix", read by the next step, the names panel, Analytics and the agent report.
+ *   yours: SPF or DKIM passed for a name in `domain`'s organizational domain, so the owner's own authentication is what failed to align.
+ *   service_not_set_up: otherwise, a known sending service (`identifySender`), or a source whose SPF AND DKIM both passed for its own
+ *     (non-owner) domain: a real mail service sending as the owner's domain without being set up for it (custom return-path and DKIM).
+ *   not_yours: everything else: not a known service, nothing aligned, not both checks passing for its own domain. Nothing to fix.
  */
-export function likelyNotYours(s: SenderSignals & { spf_pass: number | boolean; dkim_pass: number | boolean }, domain: string): boolean {
-	if (identifySender(s)) return false;
+export function classifySource(s: SourceFacts, domain: string): SourceClass {
 	const own = (name: string | null | undefined) => !!name && sameOrganizationalDomain(norm(name), domain);
-	if (s.spf_pass && own(s.spf_domain)) return false;
-	if (s.dkim_pass && own(s.dkim_domain)) return false;
-	return true;
+	if ((s.spf_pass && own(s.spf_domain)) || (s.dkim_pass && own(s.dkim_domain))) return 'yours';
+	if (identifySender(s)) return 'service_not_set_up';
+	if (s.spf_pass && s.dkim_pass && norm(s.spf_domain) && norm(s.dkim_domain)) return 'service_not_set_up';
+	return 'not_yours';
 }
+
+const CLASS_RANK: Record<SourceClass, number> = { not_yours: 0, service_not_set_up: 1, yours: 2 };
+
+/** One source's class from the classes of its groups: the one that asks the most of the owner. */
+export const strongestClass = (a: SourceClass, b: SourceClass): SourceClass => (CLASS_RANK[a] >= CLASS_RANK[b] ? a : b);
+
+/** `classifySource(...) === 'not_yours'`: a failure from such a source is nothing to fix. */
+export function likelyNotYours(s: SourceFacts, domain: string): boolean {
+	return classifySource(s, domain) === 'not_yours';
+}
+
+/** The one sentence for a `service_not_set_up` source, wherever it is said (next step, names panel, Analytics, agent). */
+export const serviceNotSetUpSentence = (name: string): string =>
+	`a service sending as ${name} that is not set up for it: if it is yours, set up its custom return-path and DKIM for ${name}; if not, nothing to do`;

@@ -10,6 +10,7 @@ import {
 	useCheckReportsAgain,
 	useReportAddressMutations,
 	useReportIntakeEnabled,
+	reachWords,
 	type OwnPlan,
 	type ReportAddressPlan,
 	type ReportAddressState,
@@ -19,6 +20,7 @@ import {
 } from '../../lib/report-address';
 import { ruaLimitSentence } from '@ready-set-mail/dns-checks/dmarc-rua';
 import { hostOf, isCloudflareHost, useDnsHost } from '../../lib/dns-host';
+import { ReachStatement } from './ReachStatement';
 import { ConnectCloudflareLink } from '../ConnectCloudflareLink';
 import { CopyField } from '../domain/CopyField';
 import { Change } from '../domain/RecordChange';
@@ -88,6 +90,8 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	if (q.isError) return <LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load the report address" />;
 	const s = q.data;
 	if (!s.available) return null;
+	// Reports arrive for this name without a connection of its own: said once, from the one decision (`reachWords`), with nothing to connect.
+	const words = reachWords(s);
 
 	if (s.managed_by === 'hosted_records') {
 		return <p className="text-sm text-ink-2">Reports for {domainName} come through its hosted records.</p>;
@@ -117,15 +121,8 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 		}
 		return (
 			<div className={bare ? 'space-y-3' : 'space-y-3 rounded-lg border border-line bg-surface-1 p-4'} data-state="not_connected">
-				{bare ? null : s.via_parent ? (
-					<>
-						<StatusDot status="info" label={`Reports arrive through ${s.via_parent.domain}`} className="font-semibold" />
-						<p className="text-sm text-ink-2" data-testid="via-parent">
-							<Mono>{domainName}</Mono> has no connection of its own. Reports that name it as their policy domain (receivers send them when it publishes its own DMARC record naming the
-							report address) are filed here, through the connection of <Link to={`/domains/${s.via_parent.domain_id}`}>{s.via_parent.domain}</Link>. Mail from <Mono>{domainName}</Mono> that a
-							receiver lists inside {s.via_parent.domain}&apos;s own reports stays with {s.via_parent.domain}.
-						</p>
-					</>
+				{bare ? null : words ? (
+					<ReachStatement words={words} />
 				) : (
 					<>
 						<StatusDot status={STATE_DOT.not_connected.status} label={STATE_DOT.not_connected.label} className="font-semibold" />
@@ -136,14 +133,14 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 						<ReportsMore />
 					</>
 				)}
-				{s.can_connect ? (
+				{words ? null : s.can_connect ? (
 					<WriteButton onClick={() => (open ? setReviewing(true) : m.connect.mutate())} disabled={m.connect.isPending} reasonVisible>
 						{m.connect.isPending ? 'Connecting…' : 'Connect reports'}
 					</WriteButton>
 				) : (
 					<p className="text-sm text-ink-2">{s.refusal}</p>
 				)}
-				{s.can_connect && s.apply_via_cloudflare && s.review?.outcome.kind === 'blocked' ? <p className="text-sm text-ink-2">{s.review.outcome.reason}</p> : null}
+				{!words && s.can_connect && s.apply_via_cloudflare && s.review?.outcome.kind === 'blocked' ? <p className="text-sm text-ink-2">{s.review.outcome.reason}</p> : null}
 				{m.connect.isError ? (
 					<Alert variant="danger" title="Could not connect reports">
 						{errorMessage(m.connect.error)}
@@ -163,6 +160,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 			{m.apply.isSuccess && m.apply.data.wrote ? <p className="text-sm font-medium text-ink-1">Report address added.</p> : null}
 			<StateLine
 				s={s}
+				words={words}
 				applying={canApply}
 				// Next to the status it refreshes, so it is in the first screen at 375 wide (the record to publish is long).
 				action={
@@ -178,7 +176,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 			) : s.dns?.plan && s.state !== 'written' ? (
 				<>
 					{s.state === 'not_published' && livePlan && (livePlan.kind === 'add' || livePlan.kind === 'choose') ? <PublishElsewhere domain={domainName} /> : null}
-					<PlanView plan={s.dns.plan} domain={domainName} parent={s.parent ?? null} address={s.address} />
+					<PlanView plan={s.dns.plan} domain={domainName} parent={s.parent ?? null} address={s.address} reach={s.reach.kind} />
 				</>
 			) : null}
 			<div className="flex flex-wrap gap-2">
@@ -322,16 +320,24 @@ function ReviewRecord({ review, changed, pending, onApply, onCancel }: { review:
 	);
 }
 
-function StateLine({ s, applying = false, action }: { s: ReportAddressView; /** Apply (below) writes the record: no "publish" instruction. */ applying?: boolean; action?: ReactNode }) {
-	const dot = STATE_DOT[s.state];
+function StateLine({ s, words, applying = false, action }: { s: ReportAddressView; /** How reports reach it without its own record (`reachWords`): said instead of the record's state. */ words?: { headline: string; sentences: string[] } | null; /** Apply (below) writes the record: no "publish" instruction. */ applying?: boolean; action?: ReactNode }) {
+	const dot = words ? { status: 'info' as const, label: words.headline } : STATE_DOT[s.state];
 	let detail: ReactNode = null;
-	if (s.state === 'written') {
+	if (words) {
+		detail = <>{words.sentences.join(' ')}</>;
+	} else if (s.state === 'written') {
 		detail = <>Written to Cloudflare; public DNS can take a few minutes to show it.</>;
 	} else if (s.state === 'not_published') {
 		detail = (
 			<>
-				Checked in live DNS {s.dns ? timeAgo(s.dns.checked_at) : 'just now'}: the DMARC record does not list the report address yet.{' '}
-				{applying ? 'Review the change below and press Apply.' : 'Publish the record below.'}
+				{s.dns?.plan?.kind === 'inherited' && s.dns.plan.parent_has_address ? (
+					<>Checked in live DNS {timeAgo(s.dns.checked_at)}: {s.domain} has no DMARC record of its own, and the record that applies to it, {s.dns.plan.from}&apos;s, already lists the report address.</>
+				) : (
+					<>
+						Checked in live DNS {s.dns ? timeAgo(s.dns.checked_at) : 'just now'}: the DMARC record does not list the report address yet.{' '}
+						{applying ? 'Review the change below and press Apply.' : 'Publish the record below.'}
+					</>
+				)}
 			</>
 		);
 	} else if (s.state === 'waiting') {
@@ -376,7 +382,7 @@ function StateLine({ s, applying = false, action }: { s: ReportAddressView; /** 
 
 const Mono = ({ children }: { children: ReactNode }) => <code className="font-mono text-sm text-ink-1 [overflow-wrap:anywhere]">{children}</code>;
 
-function PlanView({ plan, domain, parent, address }: { plan: ReportAddressPlan; domain: string; parent: ReportAddressView['parent']; address: string }) {
+function PlanView({ plan, domain, parent, address, reach }: { plan: ReportAddressPlan; domain: string; parent: ReportAddressView['parent']; address: string; reach: ReportAddressView['reach']['kind'] }) {
 	if (plan.kind === 'published') return null;
 	if (plan.kind === 'multiple') {
 		return (
@@ -405,6 +411,8 @@ function PlanView({ plan, domain, parent, address }: { plan: ReportAddressPlan; 
 		);
 	}
 	if (plan.kind === 'inherited') {
+		// The reach statement above already says which record applies and that it sends reports here: only the optional record of its own follows.
+		if (reach === 'inherited_record') return <InheritedOwnRecord plan={plan} domain={domain} address={address} />;
 		const parentLink = parent ? <Link to={`/domains/${parent.domain_id}`}>{plan.from}</Link> : <>{plan.from}</>;
 		return (
 			<div className="space-y-3">

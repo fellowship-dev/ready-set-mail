@@ -1,8 +1,8 @@
 import { forWorkspace } from '@ready-set-mail/db';
-import { checkDomain, createResolver, DOH_ENDPOINTS } from '@ready-set-mail/dns-checks';
+import { checkDomain, createResolver, DOH_ENDPOINTS, reportReachWords, type ReportReach } from '@ready-set-mail/dns-checks';
 import { dmarcSteps, policyInForce, publicSuffixParent } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { dmarcEvidenceFor, type ReportConnectFacts, type VisibilityFacts } from '@ready-set-mail/dns-checks/dmarc-evidence';
-import { reportConnectFor, reportsAddressVia } from '../../hosted/report-address';
+import { reportConnectFor, reportReachFor, reportsAddressVia } from '../../hosted/report-address';
 import { reportVisibility } from '../../reports/visibility';
 import type { TenantContext } from '../../tenancy/context';
 import { buildReport } from '@ready-set-mail/report';
@@ -66,7 +66,7 @@ export async function dmarcNextStep(
  tenant: { scope: { reports: { checkSummary(id: number, since: number): Promise<any> }; domains: { getById(id: number): Promise<any> } } },
  domain: { id: number; domain: string; rua_address: string | null; parent_id?: number | null },
  now = Date.now() / 1000,
- deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; reportsVia?: () => Promise<string | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
+ deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; reportsVia?: () => Promise<string | null>; reach?: () => Promise<ReportReach | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
 ) {
  const since = Math.floor(now) - 30 * 86400;
  const s = await tenant.scope.reports.checkSummary(domain.id, since);
@@ -80,9 +80,12 @@ export async function dmarcNextStep(
  // Where nothing was counted, why (dropped, limited, not counted), as the dashboard's summaries carry it.
  const visibility = s.total_messages === 0 ? (deps.visibility ? await deps.visibility(since) : real ? await reportVisibility(real, domain.id, since) : null) : null;
  const ruaAddress = domain.rua_address?.trim() ? domain.rua_address : deps.reportsVia ? await deps.reportsVia() : real ? await reportsAddressVia(real, domain as any) : null;
- const evidence = dmarcEvidenceFor({ ruaAddress, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect, failedNotYours: s.failed_not_yours, failedUnrecorded: s.failed_unrecorded });
+ const evidence = dmarcEvidenceFor({ ruaAddress, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded });
  const steps = dmarcSteps(domain.domain, policy_in_force, evidence);
- return { policy_in_force, next_step: steps[0] ?? null, steps };
+ // How reports reach this name, from the one decision (`reportReachOf`) and the one wording the dashboard uses: a name whose reports arrive through its parent says so.
+ const reach = deps.reach ? await deps.reach() : real ? await reportReachFor(real, domain as any) : null;
+ const words = reach ? reportReachWords(domain.domain, reach, (t) => new Date(t * 1000).toISOString()) : null;
+ return { policy_in_force, next_step: steps[0] ?? null, steps, reports_reach: reach ? { ...reach, ...(words ? { summary: [`${words.headline}.`, ...words.sentences].join(' ') } : {}) } : null };
 }
 async function report(context: ToolContext, input: DomainInput, action: 'reports:read' | 'metrics:read' | 'remediation:plan' | 'resources:read', withDmarc = false) {
  const resolved = await resourceContext(context, input, action);

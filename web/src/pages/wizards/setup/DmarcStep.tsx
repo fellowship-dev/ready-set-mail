@@ -15,7 +15,8 @@ import { errorMessage } from '../../../lib/api';
 import { useApplyDmarc, type ApplyDmarcResponse } from '../../../lib/apply-dmarc';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
-import { useReportIntakeEnabled } from '../../../lib/report-address';
+import { reachWords, reportsArrive, useReportAddress, useReportIntakeEnabled } from '../../../lib/report-address';
+import { ReachStatement } from '../../../components/reports/ReachStatement';
 import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
@@ -42,7 +43,11 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
 	const hostedMode = useHosted();
-	const hostedNoReports = hostedMode && !rua;
+	// Whether reports reach this name, and how, is the server's one answer (`reach`: its own connection, through its parent, or through the record that
+	// applies): this step says what the panel says. Before that is known (or without hosted intake) only the stored address is left.
+	const reach = useReportAddress(status.domain_id, hostedMode && reportsPanel);
+	const reachSaid = reachWords(reach.data);
+	const hostedNoReports = hostedMode && !(reportsArrive(reach.data) ?? !!rua);
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
@@ -127,6 +132,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							No DMARC record found for <strong className="text-ink-1">_dmarc.{status.domain}</strong>.
 						</p>
 					)}
+					{reachSaid ? <ReachStatement words={reachSaid} /> : null}
 					{hostedNoReports ? (
 						<>
 							<div className="space-y-1">
@@ -217,7 +223,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							<PublicDnsLive domain={status.domain} record={written.record} />
 							<p className="mt-2">Reports are not connected for this name.</p>
 						</Alert>
-					) : (severity === 'info' && !hostedNoReports && !recordProblem) ? (
+					) : (severity === 'info' && !hostedNoReports && !recordProblem && !reachSaid) ? (
 						<Alert variant="info" title="Reports are configured">
 							Reports will start arriving within 24 hours. Once there is data, the dashboard guides you from <code className="font-mono">p=none</code> to{' '}
 							<code className="font-mono">p=reject</code> safely.

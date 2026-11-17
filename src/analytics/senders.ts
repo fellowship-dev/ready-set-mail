@@ -11,7 +11,7 @@
 // totals (trend, pass rate) are exact, and only those may block a rollout step.
 
 import { aligned, RELAXED, type AlignMode, type AlignModes } from '@ready-set-mail/dns-checks/alignment';
-import { identifySender, type SenderProvider } from '@ready-set-mail/dns-checks/sender-providers';
+import { classifySource, identifySender, strongestClass, type SenderProvider, type SourceClass } from '@ready-set-mail/dns-checks/sender-providers';
 import type { SenderRow } from '@ready-set-mail/db';
 
 /** A sender whose first report is newer than this is flagged "new" (when older history exists to compare with). */
@@ -24,6 +24,8 @@ export interface Sender {
   org: string | null;
   country_code: string | null;
   provider: { id: string; name: string; evidence: string } | null;
+  /** Whose failure its mail is (`classifySource`, the one judgement), from the records that did not align; null when none failed (estimated). */
+  source_class: SourceClass | null;
   domains: string[];
   /** The From domains its mail was sent as (a subdomain of the monitored domain, or the domain itself), lower-cased. */
   from_domains: string[];
@@ -81,6 +83,7 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
     spf: number;
     dkim: number;
     pass: number;
+    failClass: SourceClass | null;
     first: number;
     last: number;
     spfBy: Map<string, number>;
@@ -88,13 +91,17 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
   }
   const byIp = new Map<string, Acc>();
   for (const r of rows) {
-    const a: Acc = byIp.get(r.source_ip) ?? { rows: [], messages: 0, spf: 0, dkim: 0, pass: 0, first: r.first_seen, last: r.last_seen, spfBy: new Map(), dkimBy: new Map() };
+    const a: Acc = byIp.get(r.source_ip) ?? { rows: [], messages: 0, spf: 0, dkim: 0, pass: 0, failClass: null, first: r.first_seen, last: r.last_seen, spfBy: new Map(), dkimBy: new Map() };
     const al = recordAlignment(r, align);
     a.rows.push(r);
     a.messages += r.messages;
     if (al.spf) a.spf += r.messages;
     if (al.dkim) a.dkim += r.messages;
     if (al.spf || al.dkim) a.pass += r.messages;
+    else if (r.messages > 0) {
+      const c = classifySource({ ...r, spf_pass: r.spf_result === 'pass', dkim_pass: r.dkim_result === 'pass' }, r.domain);
+      a.failClass = a.failClass ? strongestClass(a.failClass, c) : c;
+    }
     a.first = Math.min(a.first, r.first_seen);
     a.last = Math.max(a.last, r.last_seen);
     if (r.spf_domain) a.spfBy.set(r.spf_domain, (a.spfBy.get(r.spf_domain) ?? 0) + r.messages);
@@ -120,6 +127,7 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
         org,
         country_code: first(a, 'country_code') ?? null,
         provider: p ? { id: p.id, name: p.name, evidence: p.evidence } : null,
+        source_class: a.failClass,
         domains: [...new Set(a.rows.map((r) => r.domain))].sort(),
         from_domains: [...new Set(a.rows.map((r) => (r.header_from || r.domain).toLowerCase()))].sort(),
         messages: a.messages,

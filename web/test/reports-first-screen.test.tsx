@@ -11,12 +11,13 @@ import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { ReportsStep } from '../src/pages/wizards/setup/ReportsStep';
 import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const ADDR = 'rua@rua.example.net';
 const NOW = Math.floor(Date.now() / 1000);
 const domain = { id: 1, domain: 'example.com', dmarc_policy: 'reject', rua_address: '', parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0 };
 const addr = (over: Record<string, unknown> = {}) => ({
-	available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null,
+	available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null,
 	counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, apply_via_cloudflare: false, preview: null, parent: null, ...over,
 });
 const HOSTED = { status: { mode: 'saas' } } as const;
@@ -190,7 +191,7 @@ describe('the setup wizard\'s reports step', () => {
 
 describe('SPF flattening is not offered on the hosted service', () => {
 	it('no entry point under DNS tools, no request for it, and the page says it is not available', async () => {
-		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, config: null, lookup_count: 1 } }));
+		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, reach: noReach, config: null, lookup_count: 1 } }));
 		await screen.findByRole('heading', { name: 'Do this next' });
 		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
 		expect(screen.queryByText('SPF flattening')).not.toBeInTheDocument();
@@ -206,7 +207,7 @@ describe('SPF flattening is not offered on the hosted service', () => {
 	});
 
 	it('self-host keeps the tool and says only what the daily run does', async () => {
-		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, ip_count: 7 }, lookup_count: 1 } }), { status: {} });
+		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, reach: noReach, config: { enabled: true, ip_count: 7 }, lookup_count: 1 } }), { status: {} });
 		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
 		expect(await screen.findByText('7 IPs, as resolved when it ran. Not updated when your providers change theirs.')).toBeInTheDocument();
 		expect(screen.queryByText(/re-resolved daily/)).not.toBeInTheDocument();

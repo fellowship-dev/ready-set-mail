@@ -9,6 +9,7 @@ import { ExplorePage } from '../src/pages/reports/ExplorePage';
 import { ReportBrowserPage } from '../src/pages/reports/ReportBrowserPage';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const now = Math.floor(Date.now() / 1000);
 const RUA = 'r@reports.test';
@@ -20,7 +21,7 @@ const SUM = (o: Record<string, unknown> = {}) =>
 	}) as never;
 const dom = (o: Record<string, unknown> = {}) => ({ id: 1, domain: 'example.com', dmarc_policy: 'none', rua_address: RUA, parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0, ...o });
 const ONB = (dmarc: Record<string, unknown>, spf: Record<string, unknown> = { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false }, rua = RUA) => ({
-	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, dmarc, spf, dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
+	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, reach: noReach, dmarc, spf, dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
 	routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 });
 const base = (o: Record<string, unknown> = {}) => ({
@@ -150,7 +151,7 @@ describe('5. report pages for a hosted customer whose reports cannot come here',
 					'GET /api/domains': { domains: [dom({ rua_address: '' })] },
 					'GET /api/domains/1/check-summary': SUM({ report_connect: { can_connect: true, refusal: null, refusal_kind: null } }),
 					'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] },
-					'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
+					'GET /api/domains/1/report-address': { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
 				}) as never,
 				status: HOSTED as never,
 			},

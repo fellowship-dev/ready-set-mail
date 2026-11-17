@@ -7,12 +7,13 @@ import { fail, renderApp } from './render';
 import { uncountedReporters } from '../src/lib/uncounted';
 import { ownRecordFromInherited } from '@ready-set-mail/dns-checks/dmarc-rua';
 import { inheritedCoverage, offerEnforcement, recordFor } from '../src/lib/dmarc-coverage';
+import { inheritedReach, noReach, viaParentReach } from './reach';
 
 const ADDR = 'rua@rua.example.net';
 const domain = { id: 1, domain: 'example.com' };
 const NOW = Math.floor(Date.now() / 1000);
 const view = (over: Record<string, unknown> = {}) => ({
-	available: true,
+	available: true, reach: noReach,
 	domain_id: 1,
 	domain: 'example.com',
 	managed_by: null,
@@ -50,13 +51,34 @@ describe('ConnectReports visibility', () => {
 });
 
 describe('B7: a name with no connection of its own whose reports arrive through its connected parent', () => {
-	it('says reports arrive through the parent, not that they are not connected, and still offers the connection', async () => {
-		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', via_parent: { domain_id: 7, domain: 'example.com' } }) });
+	it('says reports arrive through the parent, with the real count and the last report, and offers nothing to connect (connecting would change nothing)', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', via_parent: { domain_id: 7, domain: 'example.com' }, reach: viaParentReach({ domain_id: 7, domain: 'example.com' }, { reports: 2, messages: 49, last_report_at: NOW - 3600 }) }) });
 		expect(await screen.findByText('Reports arrive through example.com')).toBeInTheDocument();
 		expect(screen.queryByText('Reports not connected yet')).toBeNull();
-		expect(screen.getByTestId('via-parent')).toHaveTextContent('are filed here, through the connection of example.com');
-		expect(screen.getByTestId('via-parent')).toHaveTextContent("stays with example.com");
-		expect(screen.getByRole('button', { name: 'Connect reports' })).toBeInTheDocument();
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent('2 reports (49 messages) filed for app.example.com in the last 30 days; the last arrived');
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent('Connecting app.example.com would change nothing: it uses the same report address.');
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent("stays with example.com");
+		expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
+	});
+	it('through its parent with no report yet: says none has arrived, never a count it does not have', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', reach: viaParentReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByTestId('reports-reach')).toHaveTextContent("None has arrived yet: receivers send them about once a day once app.example.com's DMARC record lists the report address.");
+	});
+	it('no DMARC record of its own, and the record that applies already sends reports here: says which record, and never that the record does not list the address', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'cf-bounce.app.example.com', reach: inheritedReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByText("Reports arrive through example.com's record")).toBeInTheDocument();
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent("cf-bounce.app.example.com has no DMARC record of its own. example.com's record applies to it and already sends reports here; mail sent as cf-bounce.app.example.com is counted in example.com's reports.");
+		expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
+		expect(screen.queryByText(/does not list the report address/)).toBeNull();
+	});
+	it('connected, the record that applies is the parent\'s and lists the address: the same words, not "does not list the report address yet", with the optional record of its own below', async () => {
+		show({ 'GET /api/domains/1/report-address': issued(
+			{ kind: 'inherited', from: 'example.com', parent_record: 'v=DMARC1; p=reject; rua=mailto:rua@rua.example.net', policy: 'reject', policy_tag: 'p', parent_has_address: true, own: { kind: 'add', name: '_dmarc.cf-bounce.app.example.com', current: null, record: 'v=DMARC1; p=reject; rua=mailto:rua@rua.example.net', created: true } },
+			{ domain: 'cf-bounce.app.example.com', state: 'waiting', reach: inheritedReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByText("Reports arrive through example.com's record")).toBeInTheDocument();
+		expect(screen.queryByText(/does not list the report address/)).toBeNull();
+		expect(screen.queryByText(/Published, waiting for the first report/)).toBeNull();
+		expect(screen.getByTestId('connect-reports')).toHaveTextContent('Or give example.com a record of its own');
 	});
 	it('without a connected parent it still says not connected', async () => {
 		show({ 'GET /api/domains/1/report-address': view({ via_parent: null }) });

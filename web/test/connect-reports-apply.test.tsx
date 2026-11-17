@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ConnectReports } from '../src/components/reports/ConnectReports';
 import { READ_ONLY_REASON } from '../src/lib/session';
 import { fail, renderApp } from './render';
+import { noReach } from './reach';
 
 const ADDR = 'rua@rua.example.net';
 const domain = { id: 1, domain: 'example.com' };
@@ -18,7 +19,7 @@ const review = (over: Record<string, unknown> = {}) => ({
 	outcome: { kind: 'write', action: 'update', after: AFTER, reason: 'Adds the Ready Set Mail report address. Every other tag stays as it is.' }, ...over,
 });
 const view = (over: Record<string, unknown> = {}) => ({
-	available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null,
+	available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null,
 	last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected',
 	dns: null, apply_via_cloudflare: true, review: review(), ...over,
 });
