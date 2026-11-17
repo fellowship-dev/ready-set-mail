@@ -6,7 +6,7 @@
 import { expect, test } from '@playwright/test';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { enterDomain, mailedCodes, signUp, type HostedInstance } from './support/signup';
+import { enterDomain, mailedCodes, s4Heading, shots, signUp, type HostedInstance } from './support/signup';
 
 interface Instance extends HostedInstance { stop(): Promise<void>; d1(sql: string): Array<Record<string, unknown>> }
 const nativeImport = new Function('u', 'return import(u)') as (u: string) => Promise<{ startInstance(o: Record<string, unknown>): Promise<Instance> }>;
@@ -65,6 +65,37 @@ test('hand setup to a teammate: invitation, I1 to that domain\'s S4, and the own
 		await expect(owner.getByText('sam@harbor-lane.org joined')).toBeVisible();
 		await expect(owner.getByRole('button', { name: 'Resend invitation' })).toHaveCount(0);
 		await expect(owner.getByRole('link', { name: 'Finish it myself' })).toBeVisible();
+
+		// Removed from their only workspace: Sam keeps the account, signs in, lands on "No workspace yet", and Create workspace leads into setup.
+		await owner.goto(`${inst.url}/#/members`);
+		await owner.getByRole('button', { name: 'Remove sam@harbor-lane.org' }).click();
+		const dialog = owner.getByRole('dialog');
+		await expect(dialog.getByText(/They lose access to this workspace immediately, and any agents they connected to it stop working\. They keep their account\./)).toBeVisible();
+		await shots(owner, 'remove-dialog-hosted');
+		await dialog.getByRole('button', { name: 'Remove member' }).click();
+		await expect(owner.getByRole('button', { name: 'Remove sam@harbor-lane.org' })).toHaveCount(0);
+		expect(inst.d1("SELECT email FROM users WHERE email = 'sam@harbor-lane.org'")).toEqual([{ email: 'sam@harbor-lane.org' }]);
+		expect(inst.d1("SELECT COUNT(*) AS n FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = 'sam@harbor-lane.org'")).toEqual([{ n: 0 }]);
+
+		const sam2Ctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
+		const sam2 = await sam2Ctx.newPage();
+		try {
+			await sam2.goto(`${inst.url}/`);
+			const before = mailedCodes(inst).length;
+			await sam2.getByLabel('Email', { exact: true }).fill('sam@harbor-lane.org');
+			await sam2.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
+			await sam2.getByRole('button', { name: 'Sign in' }).click();
+			await expect.poll(() => mailedCodes(inst).length, { timeout: 30_000 }).toBeGreaterThan(before);
+			await sam2.getByLabel('6-digit code').pressSequentially(mailedCodes(inst).at(-1)!);
+			await expect(sam2.getByRole('heading', { name: 'No workspace yet' })).toBeVisible({ timeout: 30_000 });
+			await expect(sam2.getByText('Ask the person who invited you for a new link, or create a workspace of your own below.')).toBeVisible();
+			await shots(sam2, 'no-workspace-hosted');
+			await sam2.getByRole('button', { name: 'Create workspace' }).click();
+			await expect(s4Heading(sam2)).toBeVisible({ timeout: 30_000 });
+			await shots(sam2, 'setup-after-create-hosted');
+		} finally {
+			await sam2Ctx.close();
+		}
 	} finally {
 		await ownerCtx.close();
 		await inst.stop();

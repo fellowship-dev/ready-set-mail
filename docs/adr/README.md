@@ -22,9 +22,11 @@ Short records of decisions already made, with who made them. A change that contr
 | 0016 | reserved: open pull request #180 | reserved |
 | 0017 | reserved: open pull request #180 | reserved |
 | 0018 | reserved: open pull requests #180, #184 and #189 | reserved |
-| 0019 | reserved: open pull requests #187 and #189 | reserved |
+| 0019 | reserved: open pull request #189 | reserved |
 | 0020 | [One function writes our report address into a DMARC record](0020-one-function-writes-the-report-address.md) | accepted |
 | 0021 | reserved: open pull request #188 | reserved |
 | 0022 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0022-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted |
+| 0023 | reserved: open pull request #181 | reserved |
+| 0024 | [A person removed from, leaving, or left by a deleted workspace keeps their account](0024-removed-or-leaving-keeps-the-account.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

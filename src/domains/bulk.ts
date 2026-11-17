@@ -6,10 +6,10 @@ import type { TenantContext } from '../tenancy/context';
 import { provisionDomain } from '../dns/provision';
 import { logAudit } from '../audit/log';
 import { PlanLimitError } from '@ready-set-mail/db';
-import { planLimitBody } from '../hosted/plan-limits';
 import { normalizeDomainName } from '@ready-set-mail/dns-checks';
 import { domainCap, domainRefusal } from './service';
-import { admitDomain, claimView, freeingFor, proofColumns, settleClaims, type ClaimView } from './ownership';
+import { admitDomain, claimLimitBody, claimView, domainUse, freeingFor, proofColumns, refusedInsertBody, roomRefusal, settleClaims, type ClaimView } from './ownership';
+import type { DomainUse } from '../hosted/plan-limits';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { recordFirstDnsCheck } from './first-check';
 import { ownershipVerified } from '../product-analytics/steps';
@@ -45,9 +45,8 @@ export interface BulkImportResult {
   dns_checked?: boolean;
 }
 
-function atCapRow(tenant: TenantContext, domain: string, max: number): BulkImportResult {
-  const { error, help_url } = planLimitBody(tenant.env, 'domains_per_workspace', max);
-  return { domain, status: 'error', error, code: 'plan_limit', help_url };
+function atCapRow(domain: string, body: { error: string; help_url: string | null }): BulkImportResult {
+  return { domain, status: 'error', error: body.error, code: 'plan_limit', help_url: body.help_url };
 }
 
 export function validateDomain(domain: string): boolean {
@@ -93,10 +92,9 @@ export async function bulkInsertDomains(
   const batch = domains.slice(0, BATCH_LIMIT);
   const results: BulkImportResult[] = [];
   const cap = domainCap(tenant);
-  let atCap = false;
-  // One count up front, then a local tally. It is advisory: the capped INSERT below is what enforces the cap, so a stale tally
-  // can only send a row to that insert, never past the cap.
-  let held = cap === undefined ? 0 : (await tenant.scope.domains.list()).length;
+  // One read up front, then a local tally (the places this import takes). It is advisory: the capped INSERT below is what enforces the cap,
+  // so a stale tally can only send a row to that insert, never past the cap.
+  const use: DomainUse = cap === undefined ? { domains: [], waiting: [] } : await domainUse(tenant);
   const toCheck: { id: number; domain: string; row: BulkImportResult }[] = [];
 
   for (const typed of batch) {
@@ -115,20 +113,21 @@ export async function bulkInsertDomains(
     }
 
     // Advisory (see service.ts): a domain that can never be added gets no claim. The INSERT below is what enforces the cap.
-    if (cap !== undefined && (atCap || held >= cap)) { atCap = true; results.push(atCapRow(tenant, domain, cap)); continue; }
+    const refusal = cap === undefined ? null : await roomRefusal(tenant, domain, use);
+    if (refusal) { results.push(atCapRow(domain, refusal)); continue; }
 
     const admission = await admitDomain(tenant, domain);
     if (admission.kind === 'taken') { results.push({ domain, status: 'duplicate', error: 'already registered in another workspace' }); continue; }
-    if (admission.kind === 'limit') { results.push({ domain, status: 'error', error: 'too many unverified domains — verify or remove some first' }); continue; }
-    if (admission.kind === 'pending') { results.push({ domain, status: 'pending', claim: claimView(admission.claim) }); continue; }
+    if (admission.kind === 'limit') { const { error, help_url } = claimLimitBody(tenant, admission); results.push({ domain, status: 'error', error, code: 'plan_limit', help_url }); continue; }
+    if (admission.kind === 'pending') { use.waiting.push(domain); results.push({ domain, status: 'pending', claim: claimView(admission.claim) }); continue; }
 
     let domainId: number;
     try {
       const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via) }, undefined, { maxDomains: cap, freeing: freeingFor(tenant, domain) });
       domainId = result.meta.last_row_id as number;
-      held++;
+      use.domains.push(domain);
     } catch (e: unknown) {
-      if (e instanceof PlanLimitError) { atCap = true; results.push(atCapRow(tenant, domain, e.max)); continue; }
+      if (e instanceof PlanLimitError) { results.push(atCapRow(domain, await refusedInsertBody(tenant, e.max))); continue; }
       const msg = e instanceof Error ? e.message : String(e);
       // Race condition: another request inserted the domain between our check and insert
       if (msg.includes('UNIQUE')) {

@@ -11,8 +11,8 @@ const domain = (id: number, name: string, extra = {}) => ({ id, domain: name, dm
 const summary = (id: number, name: string, extra = {}) => ({ domain_id: id, domain: name, dmarc_policy: 'reject', spf_record: 'v=spf1 -all', total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, ...extra });
 const wizard = (done: number) => ({ domain: done > 0 ? 'complete' : 'not_started', spf: done > 1 ? 'complete' : 'not_started', dkim: 'not_started', dmarc: 'not_started', routing: 'not_started' });
 
-const FELLOWSHIP = { id: 'ws_default', name: 'Fellowship', role: 'owner' as Role, member_count: 2, created_at: 1 };
-const LEXGO = { id: 'ws_lexgo', name: 'Lexgo', role: 'owner' as Role, member_count: 3, created_at: 2 };
+const FELLOWSHIP = { id: 'ws_default', name: 'Fellowship', role: 'owner' as Role, member_count: 2, owner_count: 2, created_at: 1 };
+const LEXGO = { id: 'ws_lexgo', name: 'Lexgo', role: 'owner' as Role, member_count: 3, owner_count: 1, created_at: 2 };
 
 const meFor = (w: { id: string; role: Role }): Me => ({ user: { id: 'u1', email: 'max@example.com', name: 'Max' }, role: w.role, workspace_id: w.id, kind: 'session' });
 
@@ -53,6 +53,27 @@ beforeEach(() => {
 	sessionStorage.clear();
 	window.location.hash = '';
 	workspaceStore.reload();
+});
+
+describe('accepting an invite from "No workspace yet"', () => {
+	it('invited back into the workspace they were removed from, the same tab moves in: the session is fetched again, no reload', async () => {
+		const state = { accepted: false };
+		const info = { email: 'max@example.com', invited_by: 'o@example.com', role: 'member', workspace_id: 'ws_lexgo', workspace_name: 'Lexgo', user_exists: true, signed_in_as: 'max@example.com' };
+		server([LEXGO], {
+			// Removed from it earlier: the old URL is refused, and the fallback answer (no workspace) is what the tab cached under that URL.
+			'GET /api/me': ({ headers }: { headers: Record<string, string> }) => (state.accepted ? meFor({ id: 'ws_lexgo', role: 'member' }) : headers['x-workspace-id'] ? fail(403, 'not a member of that workspace') : { user: { id: 'u1', email: 'max@example.com', name: 'Max' }, role: null, workspace_id: null, kind: 'session', pending_invites: [] }),
+			'GET /api/workspaces': () => ({ workspaces: state.accepted ? [{ ...LEXGO, role: 'member' as Role }] : [] }),
+			'GET /api/invites/tok9': info,
+			'POST /api/invites/tok9': () => { state.accepted = true; return { ok: true, workspace_id: 'ws_lexgo', workspace_name: 'Lexgo' }; },
+		});
+		boot('#/w/ws_lexgo/');
+		expect(await screen.findByRole('heading', { name: 'No workspace yet' })).toBeInTheDocument();
+		window.location.hash = '#/invite/tok9';
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: 'Accept invite' }));
+		expect(await screen.findByText('lexgo-one.example.com')).toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'No workspace yet' })).not.toBeInTheDocument();
+	});
 });
 
 describe('workspace URLs', () => {
@@ -158,7 +179,7 @@ describe('workspace switcher', () => {
 	});
 
 	it('creates a workspace and opens it at its empty state, not at the setup wizard', async () => {
-		const created = { id: 'ws_new', name: 'Acme', role: 'owner' as Role, member_count: 1, created_at: 3 };
+		const created = { id: 'ws_new', name: 'Acme', role: 'owner' as Role, member_count: 1, owner_count: 1, created_at: 3 };
 		let list = [FELLOWSHIP, LEXGO];
 		const api = server(undefined, {
 			'GET /api/workspaces': () => ({ workspaces: list }),
@@ -230,11 +251,59 @@ describe('workspace settings (roles in the UI)', () => {
 		expect(screen.queryByRole('button', { name: 'Delete workspace' })).not.toBeInTheDocument();
 	});
 
-	it('your only workspace cannot be left or deleted, and the page says why', async () => {
-		await settings('owner', [FELLOWSHIP]);
-		expect(await screen.findByText(/only workspace, so it cannot be left or deleted/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Leave workspace' })).not.toBeInTheDocument();
+	it('your only workspace can be left (an admin), and the page says where that leads', async () => {
+		await settings('admin', [{ ...FELLOWSHIP, role: 'admin' }]);
+		expect(await screen.findByText(/This is your only workspace\. If you leave it: you keep your account/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Leave workspace' })).toBeEnabled();
 		expect(screen.queryByRole('button', { name: 'Delete workspace' })).not.toBeInTheDocument();
+	});
+
+	it('the only owner sees the true state before any click: Leave is disabled with the reason, and Delete is the way out, even for their only workspace', async () => {
+		await settings('owner', [{ ...FELLOWSHIP, owner_count: 1 }, LEXGO]);
+		const leave = await screen.findByRole('button', { name: 'Leave workspace' });
+		expect(leave).toBeDisabled();
+		expect(screen.getByText('You are the only owner. Make another member an owner first (Members), or delete the workspace.')).toBeInTheDocument();
+		expect(leave).toHaveAccessibleDescription(/only owner/);
+		expect(screen.getByRole('button', { name: 'Delete workspace' })).toBeEnabled();
+	});
+
+	it('an owner alone in their only workspace: Leave says to delete it, Delete works, and the dialog says everyone keeps their account', async () => {
+		const state = { gone: false };
+		server([{ ...FELLOWSHIP, member_count: 1, owner_count: 1 }], {
+			'GET /api/me': () => (state.gone ? { user: { id: 'u1', email: 'max@example.com', name: 'Max' }, role: null, workspace_id: null, kind: 'session', pending_invites: [] } : meFor({ id: 'ws_default', role: 'owner' })),
+			'GET /api/workspaces': () => ({ workspaces: state.gone ? [] : [{ ...FELLOWSHIP, member_count: 1, owner_count: 1 }] }),
+			'GET /api/auth/status': { ...STATUS, mode: 'saas' },
+			'GET /api/domains': { domains: [] },
+			'DELETE /api/workspaces/ws_default': () => { state.gone = true; return { ok: true }; },
+		});
+		boot('#/settings');
+		expect(await screen.findByText('You are the only owner and the only member. Delete the workspace instead, or invite someone and make them an owner first.')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Leave workspace' })).toBeDisabled();
+		const user = userEvent.setup();
+		await user.click(screen.getByRole('button', { name: 'Delete workspace' }));
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/Everyone in it keeps their account: whoever has no other workspace lands on a page where they can start one of their own\. You keep your account and land on a page where you can start a workspace of your own\./)).toBeInTheDocument();
+		await user.click(within(dialog).getByRole('button', { name: 'Delete workspace' }));
+		expect(await screen.findByRole('heading', { name: 'No workspace yet' })).toBeInTheDocument();
+	});
+
+	it('leaving your only workspace lands on "No workspace yet", from where Create workspace leads into setup', async () => {
+		const state = { left: false, created: false };
+		server([FELLOWSHIP], {
+			'GET /api/auth/status': { ...STATUS, mode: 'saas', has_domain: false },
+			'GET /api/me': () => (state.created ? { ...meFor({ id: 'ws_new', role: 'owner' }), pending_invites: [] } : state.left ? { user: { id: 'u1', email: 'max@example.com', name: 'Max' }, role: null, workspace_id: null, kind: 'session', pending_invites: [] } : { ...meFor({ id: 'ws_default', role: 'admin' }) }),
+			'GET /api/workspaces': () => ({ workspaces: state.created ? [{ ...FELLOWSHIP, id: 'ws_new', role: 'owner' }] : state.left ? [] : [{ ...FELLOWSHIP, role: 'admin' }] }),
+			'POST /api/workspaces/ws_default/leave': () => { state.left = true; return { ok: true }; },
+			'POST /api/workspaces': () => { state.created = true; return { id: 'ws_new', name: 'My workspace', role: 'owner', member_count: 1 }; },
+		});
+		boot('#/settings');
+		const user = userEvent.setup();
+		await user.click(await screen.findByRole('button', { name: 'Leave workspace' }));
+		await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Leave workspace' }));
+		expect(await screen.findByRole('heading', { name: 'No workspace yet' })).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Create workspace' }));
+		await waitFor(() => expect(screen.queryByRole('heading', { name: 'No workspace yet' })).not.toBeInTheDocument());
+		await waitFor(() => expect(window.location.hash).toMatch(/setup/));
 	});
 
 	it('deleting a workspace with domains needs its name typed, and sends it as confirm', async () => {

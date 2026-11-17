@@ -123,3 +123,40 @@ describe('OWNER_EMAIL reserves first ownership', () => {
     expect((await call(env, 'POST', `/api/invites/${token}`, { body: { name: 'F', password: 'password-123' } })).status).toBe(201);
   });
 });
+
+describe('sign-in and change-password refusals say something a person can act on', () => {
+  it('a wrong password at sign-in and an unknown address answer with the same sentence and code', async () => {
+    const env = makeEnv();
+    await setupOwner(env, 'owner@example.com', 'old-password-123');
+    const wrong = await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'not-the-password' } });
+    const unknown = await call(env, 'POST', '/api/auth/login', { body: { email: 'nobody@example.com', password: 'not-the-password' } });
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual(await unknown.json());
+    expect(await (await call(env, 'POST', '/api/auth/login', { body: { email: 'owner@example.com', password: 'x' } })).json()).toMatchObject({ error: 'That email and password do not match. Check both, or reset your password.', code: 'invalid_credentials' });
+  });
+
+  it('a wrong current password at change-password says so in `error`', async () => {
+    const env = makeEnv();
+    const s1 = await setupOwner(env, 'owner@example.com', 'old-password-123');
+    const res = await call(env, 'POST', '/api/auth/change-password', { key: s1, body: { currentPassword: 'wrong-password-1', newPassword: 'new-password-456' } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Your current password is not right. Check it and try again.', code: 'wrong_current_password' });
+  });
+
+  it('every other refusal has its own plain sentence, or a generic true one, and never the library\'s text', async () => {
+    const env = makeEnv();
+    const s1 = await setupOwner(env, 'owner@example.com', 'old-password-123');
+    const change = async (body: unknown) => { const res = await call(env, 'POST', '/api/auth/change-password', { key: s1, body }); return { status: res.status, body: await res.json() as any }; };
+    expect(await change({ currentPassword: 'old-password-123', newPassword: 'short' })).toMatchObject({ status: 400, body: { error: 'The new password is too short. Use at least 8 characters.', code: 'password_too_short' } });
+    expect(await change({ currentPassword: 'old-password-123', newPassword: 'x'.repeat(129) })).toMatchObject({ status: 400, body: { error: 'The new password is too long. Use at most 128 characters.', code: 'password_too_long' } });
+    // a malformed request (a missing or non-string field): the generic sentence, not "[body.newPassword] Invalid input: expected string…"
+    for (const bad of [{ currentPassword: 'old-password-123' }, { currentPassword: 12345, newPassword: 'new-password-456' }, {}]) {
+      const r = await change(bad);
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ error: 'The password could not be changed. Check the current and the new password, then try again.', code: 'password_not_changed' });
+      expect(JSON.stringify(r.body)).not.toMatch(/\[body|Invalid input|expected string/);
+    }
+    // and none of them was taken for "wrong current password"
+    expect((await change({ currentPassword: 'old-password-123', newPassword: 'short' })).body.code).not.toBe('wrong_current_password');
+  });
+});

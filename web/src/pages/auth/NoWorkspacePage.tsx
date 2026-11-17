@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, errorMessage } from '../../lib/api';
 import { useSession } from '../../lib/session';
+import { canCreateWorkspace } from '../../lib/workspaces';
 import { workspaceStore } from '../../lib/workspace';
 import { TalkToMax } from '../../components/TalkToMax';
 import { AuthLayout } from './AuthLayout';
@@ -13,7 +14,9 @@ import { AuthLayout } from './AuthLayout';
  * of their own; the invitations addressed to their verified email are offered here.
  */
 export function NoWorkspacePage() {
-	const { me, signedIn, signOut } = useSession();
+	const { me, status, signedIn, signOut } = useSession();
+	// Nobody here belongs to a workspace, so on self-host (where only the instance owner creates them) nobody here can create one.
+	const canCreate = canCreateWorkspace(status?.mode, []);
 	const invites = me?.pending_invites ?? [];
 	const accept = useMutation({
 		mutationFn: (token: string) => api(`/api/invites/${token}`, { method: 'POST', body: {} }),
@@ -34,7 +37,7 @@ export function NoWorkspacePage() {
 		<AuthLayout title={invites.length ? 'You have been invited' : 'No workspace yet'}>
 			{invites.length === 0 ? (
 				<Alert variant="warning" title="There is no invitation waiting for this address">
-					Ask the person who invited you for a new link, or create a workspace of your own below.
+					{canCreate ? 'Ask the person who invited you for a new link, or create a workspace of your own below.' : 'Ask the owner of this instance to invite you again: only they can create workspaces.'}
 				</Alert>
 			) : (
 				<ul className="space-y-3">
@@ -53,21 +56,23 @@ export function NoWorkspacePage() {
 					))}
 				</ul>
 			)}
-			<form
-				className="space-y-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					create.mutate();
-				}}
-			>
-				<label htmlFor="workspace-name" className="text-sm font-medium">
-					Or start a workspace of your own
-				</label>
-				<Input id="workspace-name" placeholder="My workspace" value={name} onChange={(e) => setName(e.target.value)} />
-				<Button type="submit" variant="secondary" className="w-full" loading={create.isPending}>
-					Create workspace
-				</Button>
-			</form>
+			{canCreate ? (
+				<form
+					className="space-y-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						create.mutate();
+					}}
+				>
+					<label htmlFor="workspace-name" className="text-sm font-medium">
+						Or start a workspace of your own
+					</label>
+					<Input id="workspace-name" placeholder="My workspace" value={name} onChange={(e) => setName(e.target.value)} />
+					<Button type="submit" variant="secondary" className="w-full" loading={create.isPending}>
+						Create workspace
+					</Button>
+				</form>
+			) : null}
 			{create.isError ? <Alert variant="danger">{errorMessage(create.error)}</Alert> : null}
 			{accept.isError ? <Alert variant="danger">{errorMessage(accept.error)}</Alert> : null}
 			<Button variant="secondary" className="w-full" onClick={() => void signOut()}>

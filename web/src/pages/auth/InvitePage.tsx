@@ -178,13 +178,13 @@ export function InvitePage() {
 
 /** The invited email already has a login: sign in as it (if not already) and accept with one click. */
 function ExistingUser({ info, token, description, signOut }: { info: InviteInfo; token: string; description: ReactNode; signOut: () => Promise<void> }) {
-	const qc = useQueryClient();
+	const { signedIn } = useSession();
 	const navigate = useNavigate();
 	const [error, setError] = useState('');
 	const accept = useMutation({
 		mutationFn: () => api<{ workspace_id: string; handoff_domain?: string }>(`/api/invites/${token}`, { method: 'POST', body: {} }),
 		onSuccess: async (res) => {
-			await qc.invalidateQueries({ queryKey: ['workspaces'] });
+			await signedIn(); // who they are and what they belong to changed: a tab on "No workspace yet" must not stay there
 			workspaceStore.remember(res.workspace_id);
 			const to = hashFor(res.workspace_id, res.handoff_domain ? setupPathFor(res.handoff_domain) : '/');
 			window.location.hash = to;

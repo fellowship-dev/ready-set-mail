@@ -45,6 +45,35 @@ export function planLimitBody(env: Partial<LimitEnv>, kind: PlanLimitKind, max: 
   };
 }
 
+/** What a workspace has used of its places: the names of its live domains, and of the domains still waiting for proof (open claims). */
+export interface DomainUse { domains: string[]; waiting: string[] }
+
+export type DomainRoom = { ok: true } | { ok: false; cap: number; held: number; waiting: string[] };
+
+/**
+ * THE room rule, for every way of adding a domain (typed, claim, Cloudflare import, parent proof, bulk import, certificate-log import, "prove again"):
+ * a workspace has `cap` places and a domain AND a domain waiting for proof each take one, so room = cap − (domains + waiting claims).
+ * A name the workspace already holds needs no room, and a claim that becomes its own domain needs none either (it already has its place).
+ * Returns ok, or what is in the way. Its SQL twin, for the insert that must be atomic, is `slotsUsed` in packages/db/src/queries/plan-limit.ts.
+ */
+export function domainRoom(cap: number, use: DomainUse, name: string): DomainRoom {
+  const held = new Set(use.domains);
+  if (held.has(name)) return { ok: true };
+  const waiting = use.waiting.filter(n => !held.has(n));
+  const after = new Set([...held, ...waiting, name]);
+  return after.size <= cap ? { ok: true } : { ok: false, cap, held: held.size, waiting: waiting.filter(n => n !== name) };
+}
+
+/** The same cap, reached by domains plus domains still waiting for proof: nobody publishes a TXT record for a domain that could never be added. Names the waiting claims and where to remove them. */
+export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, held: number, waiting: string[]) {
+  const body = planLimitBody(env, 'domains_per_workspace', max);
+  if (waiting.length === 0) return body;
+  const slots = `${max} ${max === 1 ? 'domain' : 'domains'}`;
+  const names = waiting.length <= 3 ? waiting.join(', ') : `${waiting.slice(0, 3).join(', ')} and ${waiting.length - 3} more`;
+  const state = held === 0 ? `${slots}, and ${waiting.length === 1 ? 'one is' : `${waiting.length} are`} waiting for proof` : `${slots}: it has ${held}, and ${waiting.length} more ${waiting.length === 1 ? 'is' : 'are'} waiting for proof`;
+  return { ...body, error: `This workspace can hold ${state} (${names}). Use Remove on ${waiting.length === 1 ? 'its' : 'their'} card to free ${waiting.length === 1 ? 'the place' : 'the places'}.`, waiting };
+}
+
 /** HTTP 403 for a cap that is reached. */
 export function planLimitResponse(env: Partial<LimitEnv>, kind: PlanLimitKind, max: number): Response {
   return Response.json(planLimitBody(env, kind, max), { status: 403 });
