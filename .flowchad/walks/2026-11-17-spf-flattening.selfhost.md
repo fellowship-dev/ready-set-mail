@@ -2,9 +2,9 @@
 
 - **Flow:** Owner of a domain with too many SPF lookups turns on flattening and it stays correct
 - **Value moment:** Flattening is on - the record lists the sender addresses directly, within 10 lookups and 450 bytes, and the daily check keeps it current or says why it could not
-- **Walked:** 2026-11-16T23:03:51.011Z
+- **Walked:** 2026-11-17T00:32:28.476Z
 - **Target:** http://127.0.0.1:8901 (local-copy)
-- **Commit:** e40e048bc8c19860532ad889ccb1d095e1a299f6
+- **Commit:** 7f47f43
 - **Kind:** screens
 - **Gate:** PASS
 - **Rules:** 0.5.0
@@ -30,10 +30,10 @@ Ready to hand to a human tester. Known rough edges are listed below; tell the te
 | `max_scroll_before_primary_vh` | — | 375: 0 · 1440: 0 |  |
 | `non_task_elements_to_value` | — | 1 |  |
 | `waits` | — | 0 |  |
-| `longest_wait_ms` | — | 933 |  |
+| `longest_wait_ms` | — | 868 |  |
 | `dead_ends` | — | 0 |  |
 | `loops` | — | 0 |  |
-| `time_to_value_ms` | — | 7818 |  |
+| `time_to_value_ms` | — | 7718 |  |
 
 ### Notes
 
