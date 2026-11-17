@@ -195,7 +195,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 						// Every mode says which policy is in force for this name before anything is offered.
 						<p className="text-sm text-ink-2">
 							{inheritedSentence(status.domain, coverage)}
-							{rua && floor ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
+							{rua && floor && !reachSaid ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
 						</p>
 					) : null}
 					{rua && !applied && coverage.kind === 'unknown' && !dmarc.found ? (

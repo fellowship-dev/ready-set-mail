@@ -10,7 +10,7 @@
 // ship DKIM record values here, because providers issue them per account (their guide is linked instead).
 
 import { SPF_PROVIDERS, type EmailProvider } from './email-service-providers';
-import { sameOrganizationalDomain } from './org-domain';
+import { aligned } from './alignment';
 
 export interface SenderSignals {
 	reverse_dns?: string | null;
@@ -104,7 +104,7 @@ export type SourceFacts = SenderSignals & { spf_pass: number | boolean; dkim_pas
  *   not_yours: everything else: not a known service, nothing aligned, not both checks passing for its own domain. Nothing to fix.
  */
 export function classifySource(s: SourceFacts, domain: string): SourceClass {
-	const own = (name: string | null | undefined) => !!name && sameOrganizationalDomain(norm(name), domain);
+	const own = (name: string | null | undefined) => aligned(name, domain, 'r');
 	if ((s.spf_pass && own(s.spf_domain)) || (s.dkim_pass && own(s.dkim_domain))) return 'yours';
 	if (identifySender(s)) return 'service_not_set_up';
 	if (s.spf_pass && s.dkim_pass && norm(s.spf_domain) && norm(s.dkim_domain)) return 'service_not_set_up';

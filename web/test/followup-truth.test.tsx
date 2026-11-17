@@ -21,7 +21,7 @@ const SUM = (o: Record<string, unknown> = {}) =>
 	}) as never;
 const dom = (o: Record<string, unknown> = {}) => ({ id: 1, domain: 'example.com', dmarc_policy: 'none', rua_address: RUA, parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0, ...o });
 const ONB = (dmarc: Record<string, unknown>, spf: Record<string, unknown> = { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false }, rua = RUA) => ({
-	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, reach: noReach, dmarc, spf, dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
+	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, dmarc, spf, dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
 	routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 });
 const base = (o: Record<string, unknown> = {}) => ({

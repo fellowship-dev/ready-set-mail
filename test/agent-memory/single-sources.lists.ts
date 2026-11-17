@@ -22,6 +22,12 @@ export const LIST_FILE = 'test/agent-memory/single-sources.lists.ts';
 /** Single today: only these files or folders may contain the signature. */
 export const SINGLE: Single[] = [
   {
+    concept: 'Alignment rule (relaxed: the same organizational domain)',
+    // the rule copied: `sameOrganizationalDomain(` called, or two organizational domains compared by hand. Callers use `aligned` (alignment.ts).
+    signature: /\bsameOrganizationalDomain\s*\(|\borganizationalDomain\([^)\n]*\)\s*[!=]==?\s*organizationalDomain\(/,
+    owners: ['packages/dns-checks/src/alignment.ts', 'packages/dns-checks/src/org-domain.ts'],
+  },
+  {
     concept: 'Stripe API calls',
     // the API host, the SDKs, the client and its constants, the secret key and Stripe.js: not only a URL literal
     signature: /api\.stripe\.com|\bSTRIPE_API(?:_VERSION)?\b|\bstripeApiBase\b|new StripeClient\(|['"]Stripe-Version['"]|\.STRIPE_SECRET_KEY\b|from ['"](?:stripe|@stripe\/[^'"]+)['"]|require\(['"](?:stripe|@stripe\/)|js\.stripe\.com/,
@@ -106,9 +112,10 @@ export const MUST_NOT_GROW: Duplicate[] = [
   {
     concept: 'Effective DMARC policy rule (own p=, else sp=/np=, else p=)',
     // reading sp= or np= as a policy tag, or falling back from sp to p
-    signature: /tag:\s*['"](?:sp|np)['"]|\bsp\s*\?\?\s*[\w.]*\b(?:p|policy)\b/,
+    // ... in any spelling: `sp ?? p`, `t['sp'] ?? t['p']`, `tags.get('sp') || tags.get('p')`, `sp ? sp : p`
+    signature: /tag:\s*['"](?:sp|np)['"]|(?:\bsp|['"]sp['"]\]?\)?)\s*(?:\?\?|\|\|)\s*[\w.]*\[?\(?['"]?(?:p|policy)\b|\bsp\s*\?\s*[\w.'"\[\]]+\s*:\s*[\w.'"\[\]]*\b(?:p|policy)\b/,
     authoritative: 'packages/dns-checks/src/effective-policy.ts',
-    sites: ['packages/dns-checks/src/dmarc-rua.ts', 'packages/dns-checks/src/effective-policy.ts', 'src/dmarc/rollout.ts', 'web/src/lib/report-address.ts', 'web/src/lib/reports.ts'],
+    sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'packages/dns-checks/src/dmarc-rua.ts', 'packages/dns-checks/src/effective-policy.ts', 'packages/report/src/bimi-readiness.ts', 'packages/report/src/findings.ts', 'src/dmarc/parse-aggregate.ts', 'src/dmarc/rollout.ts', 'web/src/lib/report-address.ts', 'web/src/lib/reports.ts'],
   },
   {
     concept: 'DMARC record validation',

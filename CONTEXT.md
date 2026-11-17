@@ -72,8 +72,17 @@ Home: `effectivePolicy` in `packages/dns-checks/src/effective-policy.ts`, reache
 _Avoid_: inherited policy (say which tag and which record), "the policy" without a name
 
 **Alignment**:
-Whether the domain SPF or DKIM authenticated is the same as the From domain: relaxed means the same organizational domain, strict the identical domain (RFC 9989 sections 3.2.10.1 and 3.2.10.2). The SPF identifier is the return-path (MAIL FROM) domain, never the From domain, and the DKIM identifier is the signature's `d=`. A message fails DMARC when neither identifier aligns, even if both passed. The receiver's own verdict is stored per record (`spf_aligned`, `dkim_aligned`, and the report's `aspf` and `adkim`, migration 0017); the sentence for the identifier that did not align, and the fix at the right place, is one function.
+Whether the domain SPF or DKIM authenticated is the same as the From domain: relaxed means the same organizational domain, strict the identical domain (RFC 9989 sections 3.2.10.1 and 3.2.10.2). The SPF identifier is the return-path (MAIL FROM) domain, never the From domain, and the DKIM identifier is the signature's `d=`. A message fails DMARC when neither identifier aligns, even if both passed. The receiver's own verdict is stored per record (`spf_aligned`, `dkim_aligned`, and the report's `aspf` and `adkim`, migration 0022); the sentence for the identifier that did not align, and the fix at the right place, is one function.
 Home: `aligned`, `alignmentVerdict`, `explainAlignment` in `packages/dns-checks/src/alignment.ts`; what a missing SPF record at a name means: `packages/dns-checks/src/spf-identity.ts`.
+
+**Failing source (whose failure it is)**:
+Every source whose mail failed DMARC is one of three, by one function: `yours` (SPF or DKIM passed for a name of the owner's organizational domain: the owner's to fix), `service_not_set_up` (a known sending service, or a source whose SPF and DKIM both passed for its own domains: a real service sending as the owner's domain without being set up for it; one thing to look at, never called spoofing) and `not_yours` (everything else: nothing to fix, outside mail). The next step, the names panel, Analytics and the agent report read the same class.
+Home: `classifySource`, `serviceNotSetUpSentence` in `packages/dns-checks/src/sender-providers.ts` (`likelyNotYours` is a reading of it); the counts: `failed_not_yours`, `failed_service` in `packages/db/src/queries/reports.ts`.
+_Avoid_: "likely mail pretending to be…" for a service that passed SPF and DKIM for its own domains
+
+**Reports reach a name**:
+How reports reach a name, as one answer (`reach` on the report-address view): `own` (connected, its own record lists our address), `via_parent` (no connection of its own; the intake files the reports that name it under its row through a connected parent), `inherited_record` (no DMARC record of its own, and the record that applies to it, its organizational domain's, already sends reports here: its mail is counted in that domain's reports) or `none`. Every surface says it in the same words with the real counts (`reportReachWords`), and none offers "Connect reports" for a name whose reports already arrive. A connected name with a counted report stored for it, before or since it was connected, is receiving, never "waiting for the first report".
+Home: `reportReachOf` in `src/hosted/report-address.ts`; words in `packages/dns-checks/src/report-reach.ts`; the web reads `reachWords` and `reportsArrive` in `web/src/lib/report-address.ts`.
 
 **Verdict**:
 The one-line judgement of a domain shown to a person (verified, needs attention, unknown…) with its reason.

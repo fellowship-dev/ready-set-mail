@@ -134,6 +134,21 @@ describe('the signatures catch every spelling', () => {
   });
 });
 
+describe('the effective-policy and alignment signatures catch every spelling', () => {
+  const eff = MUST_NOT_GROW.find(x => x.concept.startsWith('Effective DMARC policy rule'))!.signature;
+  for (const code of ["t['sp'] ?? t['p']", "const policy = sp ?? p;", "tags.get('sp') || tags.get('p')", "(d.sp || policy).toLowerCase()", "const x = sp ? sp : p;", "pol['sp'] ?? pol['p']"]) {
+    it(`sp then p: ${code}`, () => expect(eff.test(code)).toBe(true));
+  }
+  it('sp= read on its own is not the fallback', () => {
+    for (const code of ["set.dmarc_sp = r.dmarc.sp ?? null;", "sp?: string | null", "broken.sp ?? ''"]) expect(eff.test(code), code).toBe(false);
+  });
+  const align = SINGLE.find(x => x.concept.startsWith('Alignment rule'))!.signature;
+  for (const code of ['sameOrganizationalDomain(a, b)', 'organizationalDomain(a) === organizationalDomain(b)', 'organizationalDomain(x) !== organizationalDomain(y)']) {
+    it(`copied alignment: ${code}`, () => expect(align.test(code)).toBe(true));
+  }
+  it('aligned() is the way', () => expect(align.test("aligned(a, b, 'r')")).toBe(false));
+});
+
 describe('the escape hatch (ALLOW)', () => {
   const concepts = new Map([...SINGLE.map(s => [s.concept, s.signature] as const), ...MUST_NOT_GROW.map(d => [d.concept, d.signature] as const)]);
   const today = new Date().toISOString().slice(0, 10);

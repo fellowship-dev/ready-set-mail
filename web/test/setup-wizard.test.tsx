@@ -31,7 +31,7 @@ const status = (over: Partial<OnboardingStatus> = {}): OnboardingStatus => ({
 	domain_id: 7,
 	domain: 'example.com',
 	rua_address: 'r@reports.example.com',
-	cf_available: true, reach: noReach,
+	cf_available: true,
 	dmarc: { found: true, has_our_rua: true, current_record: 'v=DMARC1; p=none; rua=mailto:r@reports.example.com' },
 	spf: { record: 'v=spf1 include:_spf.google.com ~all', lookup_count: 2, flattening_active: false },
 	dkim: { selectors: [], source: 'doh' },

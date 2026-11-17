@@ -64,7 +64,7 @@ const MODES = [
 const text = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 const dom = (rua: string) => ({ id: 1, domain: 'example.com', dmarc_policy: null, rua_address: rua, parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0 });
 const ONB = (record: string, rua: string) => ({
-	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, reach: noReach, dmarc: { found: true, has_our_rua: record.includes(RUA), current_record: record },
+	domain_id: 1, domain: 'example.com', rua_address: rua, cf_available: true, dmarc: { found: true, has_our_rua: record.includes(RUA), current_record: record },
 	spf: { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false }, dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
 	routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 });
