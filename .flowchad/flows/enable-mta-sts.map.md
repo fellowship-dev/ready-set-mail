@@ -21,7 +21,7 @@ flowchart TD
 
 ## Measures of the map
 
-Shortest path from the page to the value moment: four screens counted by state (page, setup, live, reports; one by address), no decisions, three waits that only time can shorten (the records, the certificate, the sender's report). The old wizard path had a card and four steps, one decision and no value moment. Nothing on the way is asked twice: the MX hosts are shown once, before the action, and the records only behind "Show records". Round 2 added no step: "served" is the result of a fetch of the policy address (Check now does that fetch, and goes once it passes), and Switch to enforce is the filled action from the moment the policy is served, so it is on the first screen at 375.
+Shortest path from the page to the value moment: four screens counted by state (page, setup, live, reports; one by address), no decisions, three waits that only time can shorten (the records, the certificate, the sender's report). The old wizard path had a card and four steps, one decision and no value moment. Nothing on the way is asked twice: the MX hosts are shown once, before the action, and the records only behind "Show records". Round 2 added no step: "served" is the result of a fetch of the policy address (Check now does that fetch; the server also repeats it when the page is opened and the last one is over 10 minutes old, and the page says when it was checked; Check now stays, small, while "served" is claimed), and Switch to enforce is the filled action from the moment the policy is served, so it is on the first screen at 375.
 
 ## Branches that are not the shortest path
 
