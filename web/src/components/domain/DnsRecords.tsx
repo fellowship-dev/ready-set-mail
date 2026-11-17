@@ -77,7 +77,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const intakeOn = useReportIntakeEnabled();
 	const reportsAddr = useReportAddress(domain.id, intakeOn);
 	// The record that applies to this name (its organizational domain's) already lists our address: its reports arrive (`reach`), so nothing is offered to publish.
-	const inheritedReports = reportsAddr.data?.available === true && reportsAddr.data.reach.kind === 'inherited_record';
+	const reachKind = reportsAddr.data?.available === true ? reportsAddr.data.reach.kind : null;
+	const inheritedReports = reachKind === 'inherited_record' || reachKind === 'via_parent';
+	const reportsLoading = intakeOn && reportsAddr.isLoading;
 	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && reportsAddr.data.reach.kind === 'none' && !reportsAddr.data.managed_by;
 	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
@@ -179,6 +181,8 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const offerBlocked = !found && !floor;
 		// Compared tag by tag: a record that differs only in letter case or spacing needs no change.
 		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended)) || (inherited && inheritedReports);
+		// Offered only while nothing says the reports already arrive, and (hosted) once the reach is known.
+		const holdOffer = !upToDate && reportsLoading;
 		return (
 			<CheckResult
 				status={status}
@@ -202,9 +206,15 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			>
 				<div className="space-y-3">
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
-					{!upToDate && cfAvailable && intakeOn && ruaReady ? (
-						// Hosted with report intake, connected: our address is written only by Connect reports (ADR 0020), which reads the record as it is now.
-						<p className="text-ink-2">The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.</p>
+					{holdOffer ? null : !upToDate && cfAvailable && intakeOn && ruaReady ? (
+						// Hosted with report intake: our address is written only by the Connect reports panel (ADR 0020), which reads the record as it is now. Said only where that panel's action is on the page.
+						<p className="text-ink-2">
+							{canConnect
+								? 'The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.'
+								: reportsAddr.data?.available && reportsAddr.data.address
+									? 'The record does not list the report address yet. Review the change in the DMARC reports panel on this page and press Apply.'
+									: null}
+						</p>
 					) : !upToDate ? (
 						<>
 							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />

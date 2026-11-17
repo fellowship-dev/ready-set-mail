@@ -377,7 +377,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
       ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} ${cap(threshold.next)} still waits until ${threshold.pct}% of reported messages pass.` }
       : { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} If none of the failing senders is a service you use, there is nothing to fix for them; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
     : { key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' };
-  const notYoursStep = (): DmarcStep => service > 0
+  const othersStep = (): DmarcStep => service > 0
     ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders',
         why: `${shown}. ${othersWhy}.${unrecordedWhy}${f.policy === 'none' ? '' : ` Until then, p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'} that mail.`}` }
     : {
@@ -431,7 +431,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     }
     else if (f.reportsHere === false) steps.push(ruaStep(`Protection is in place either way; without it, nobody sees which services send as ${name} and whether they pass.`, 'note'));
     else if (reports === null) steps.push(reloadStep('They could not be loaded, so whether every sender passes is unknown.'));
-    else if (rate !== null && rate < READY) steps.push(onlyOthers ? notYoursStep() : sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
+    else if (rate !== null && rate < READY) steps.push(onlyOthers ? othersStep() : sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
   }
 
   // An own record whose subdomain policy is weaker than its own: the subdomains climb the same ladder, one rung at a

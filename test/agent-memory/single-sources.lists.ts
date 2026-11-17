@@ -22,6 +22,18 @@ export const LIST_FILE = 'test/agent-memory/single-sources.lists.ts';
 /** Single today: only these files or folders may contain the signature. */
 export const SINGLE: Single[] = [
   {
+    concept: 'How reports reach a name (the reach decision)',
+    // deciding it a second time: the intake's own rule (`reportsViaParent(`), or "no record of its own whose applicable record lists our address" (`kind === 'inherited'` with `parent_has_address`)
+    signature: /\breportsViaParent\s*\(|kind\s*===\s*['"]inherited['"][^\n]*parent_has_address|parent_has_address[^\n]*kind\s*===\s*['"]inherited['"]/,
+    owners: ['src/hosted/report-address.ts'],
+  },
+  {
+    concept: 'Whose failure a failing source is (the "is it yours" judgement)',
+    // a second copy: a sender identified (`identifySender(`) next to SPF / DKIM pass flags, or a function that names a "not yours" test
+    signature: /identifySender\s*\([\s\S]{0,300}?\b(?:spf_pass|dkim_pass)\b|\b(?:spf_pass|dkim_pass)\b[\s\S]{0,300}?identifySender\s*\(|(?:function\s+\w*[Nn]ot[Yy]ours\w*\s*\(|const\s+\w*[Nn]ot[Yy]ours\w*\s*=\s*(?:async\s*)?\()/,
+    owners: ['packages/dns-checks/src/sender-providers.ts'],
+  },
+  {
     concept: 'Alignment rule (relaxed: the same organizational domain)',
     // the rule copied: `sameOrganizationalDomain(` called, or two organizational domains compared by hand. Callers use `aligned` (alignment.ts).
     signature: /\bsameOrganizationalDomain\s*\(|\borganizationalDomain\([^)\n]*\)\s*[!=]==?\s*organizationalDomain\(/,
@@ -217,4 +229,12 @@ export const MUST_NOT_GROW: Duplicate[] = [
  * Reviewed exceptions. Each entry: the concept (exactly as above), the file, a reason of at least 20 characters and four words,
  * who agreed (the reviewer), and the date (YYYY-MM-DD, not in the future). Empty today.
  */
-export const ALLOW: Allow[] = [];
+export const ALLOW: Allow[] = [
+  {
+    concept: 'How reports reach a name (the reach decision)',
+    file: 'web/src/components/reports/ConnectReports.tsx',
+    reason: 'Says why a connected name whose parent record lists our address is not "published" (the parent is not connected here); reach is none in that state, so it decides nothing.',
+    by: 'Claude Fable 5.2 for Max F. Findel (to confirm in review of PR 181)',
+    date: '2026-11-17',
+  },
+];

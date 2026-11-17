@@ -173,3 +173,40 @@ describe('state (b), step 4: nothing is missing, so nothing asks for action', ()
     expect(text()).not.toMatch(/Action required/);
   });
 });
+
+describe('what the DMARC step and the DNS records offer follows the one reach decision', () => {
+  const withCf = (r: Record<string, unknown>, own: boolean) => ({ ...r, 'GET /api/domains/1/onboarding-status': { ...onboarding(B, own), cf_available: true }, 'GET /api/domains/1/dns-check': { found: own, has_rua: true, current_record: own ? REC : null, cf_managed: true } });
+  const publish = 'To receive reports here, publish the record below';
+  const useConnect = 'Use Connect reports on this page';
+  const listed = [['inherited record lists our address', bReach], ['reports arrive through the parent', viaParentReach(PARENT, { reports: 1, messages: 3, last_report_at: now })]] as const;
+  for (const [what, reach] of listed) for (const cf of [false, true]) {
+    it(`${what}, Cloudflare ${cf ? 'linked' : 'not linked'}: step 4 and the DNS records never ask to publish or to use Connect reports`, async () => {
+      const r = cf ? withCf(routes(B, reach, false), false) : routes(B, reach, false);
+      const s4 = wizard(4, r);
+      await screen.findByText(/Reports arrive through/);
+      await screen.findByText('DMARC policy');
+      expect(text()).not.toContain(publish);
+      expect(text()).not.toContain('does not list the report address');
+      s4.unmount();
+      page(r);
+      await screen.findByText(/Reports arrive through/);
+      await screen.findByText('DMARC record');
+      expect(text()).not.toContain(publish);
+      expect(text()).not.toContain(useConnect);
+      expect(text()).not.toContain('does not list the report address');
+    });
+  }
+  it('Cloudflare linked, connected, record not listing the address: no "Use Connect reports" (no such button), the panel\'s Apply is named', async () => {
+    const plan = { kind: 'add', name: '_dmarc.example.net', current: null, record: REC, created: true };
+    const connected = { ...view(B, noReach), address: FIXED, state: 'not_published', dns: { checked_at: now, error: null, plan }, apply_via_cloudflare: true, review: null };
+    page({ ...withCf(routes(B, noReach, false), false), 'GET /api/domains/1/report-address': connected, 'GET /api/domains/1/onboarding-status': { ...onboarding(B, false), cf_available: true, dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } } } });
+    await screen.findByText('DMARC record');
+    expect(text()).not.toContain(useConnect);
+  });
+  it('plain not connected (self-host, a record to publish): the sentence still shows', async () => {
+    const r = { ...routes(B, noReach, false), 'GET /api/hosted/config': { enabled: false } };
+    renderApp(<Routes><Route path="/domains/:id" element={<DomainDetailPage />} /></Routes>, { route: '/domains/1', status: { mode: 'self-host' } as never, routes: r as never });
+    await screen.findByText('DMARC record');
+    expect(text()).toContain(publish);
+  });
+});
