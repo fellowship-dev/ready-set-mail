@@ -173,15 +173,16 @@ export interface SpfLookupJudgement {
 
 /**
  * The one judgement of an SPF lookup count, for every screen and the email check: 10 is within the limit (SPF still
- * works), 11 or more is a permanent error that makes SPF fail for all mail.
+ * works), 11 or more is a permanent error that makes SPF fail for all mail. `flatten: false` where the person is not offered SPF flattening: the sentence names
+ * the by-hand way only.
  */
-export function spfLookupJudgement(count: number): SpfLookupJudgement {
+export function spfLookupJudgement(count: number, opts: { flatten?: boolean } = {}): SpfLookupJudgement {
 	if (count > SPF_LOOKUP_LIMIT) {
 		return {
 			level: 'over',
 			status: 'fail',
 			label: 'Over the lookup limit',
-			detail: `Receivers stop at ${SPF_LOOKUP_LIMIT} lookups and treat the record as a permanent error, so SPF fails for all your mail. Remove includes you no longer use, or flatten the record.`,
+			detail: `Receivers stop at ${SPF_LOOKUP_LIMIT} lookups and treat the record as a permanent error, so SPF fails for all your mail. Remove includes you no longer use${opts.flatten === false ? '' : ', or flatten the record'}.`,
 		};
 	}
 	if (count === SPF_LOOKUP_LIMIT) {

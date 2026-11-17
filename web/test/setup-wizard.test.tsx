@@ -4,7 +4,7 @@ import { Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { OnboardingStatus, WizardState } from '../src/lib/types';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
-import { fail, renderApp, type Handler } from './render';
+import { fail, me, renderApp, type Handler } from './render';
 
 function Where() {
 	return <p data-testid="where">{useLocation().pathname}</p>;
@@ -385,5 +385,32 @@ describe('domain step', () => {
 		expect(await heading('SPF record')).toBeInTheDocument();
 		expect(where()).toBe('/domains/7/setup/2');
 		expect(calls.find((c) => c.path === '/api/settings/base-domain')?.body).toEqual({ domain: 'example.com' });
+	});
+});
+
+describe('SPF step over the lookup limit: flattening is named only where it is offered', () => {
+	const over = routes({ status: status({ spf: { record: 'v=spf1 include:_spf.google.com ~all', lookup_count: 12, flattening_active: false } }) });
+	const hosted = (spf: boolean) => ({ status: { mode: 'saas' as const }, routes: { ...over, 'GET /api/me': { ...me('owner'), add_ons: { spf_flattening: spf } } } });
+
+	it('hosted, add-on not admitted: the by-hand action only, no flattening mention or link', async () => {
+		renderApp(<Wizard />, { route: '/domains/7/setup/2', ...hosted(false) });
+		expect(await screen.findByText(/Over the 10-lookup limit/)).toBeInTheDocument();
+		expect(await screen.findByText(/Remove includes you no longer use\./)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'See where the lookups go' })).toHaveAttribute('href', '/domains/7/spf-lookups');
+		expect(document.body.textContent).not.toMatch(/flatten/i);
+		expect(screen.queryByRole('link', { name: /flatten/i })).toBeNull();
+	});
+
+	it('hosted, add-on admitted: it says flattening and links to it', async () => {
+		renderApp(<Wizard />, { route: '/domains/7/setup/2', ...hosted(true) });
+		expect(await screen.findByText(/Remove includes you no longer use, or flatten the record\./)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Open SPF flattening' })).toHaveAttribute('href', '/domains/7/spf-flatten');
+		expect(screen.queryByRole('link', { name: 'See where the lookups go' })).toBeNull();
+	});
+
+	it('self-host: it says flattening and links to it (the add-on is always there)', async () => {
+		renderApp(<Wizard />, { route: '/domains/7/setup/2', routes: over });
+		expect(await screen.findByText(/Remove includes you no longer use, or flatten the record\./)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Open SPF flattening' })).toHaveAttribute('href', '/domains/7/spf-flatten');
 	});
 });
