@@ -141,6 +141,10 @@ To enable it for one customer's workspace: find the id (`SELECT id FROM workspac
 
 The refresh keeps `previous_record` (the flattened record before the last change); the domain page shows it after a change. There is no rollback button (a rollback would be undone by the next refresh, which makes its own choice from the original). To put the previous record back by hand: copy it from "What changed" (or from the audit entry's `before` value), paste it into the SPF TXT record in Cloudflare, and **turn flattening off** so the daily check does not write the current choice again. `rollbackSpf` (`src/spf/refresh.ts`) does the same write for an operator or support script: it puts `previous_record` back when the record in Cloudflare is still the current one, and refuses when someone edited it.
 
+## Walking the flow
+
+`e2e/support/spf-flattening-walk.mjs` walks `.flowchad/flows/spf-flattening.yml` against a local Worker with the repo's fake Cloudflare and fake DNS: `WALK_OUT=<dir> node e2e/support/spf-flattening-walk.mjs <selfhost|hosted-admitted|hosted-open>` (one mode at a time, after `npm run build:dashboard`). Its header says what each mode does; every measure in `results.json` comes from it, and `node .agents/skills/flow-gate/scripts/gate.mjs <dir>/results.json --target <url> --record .flowchad/walks` turns it into the record. The walk includes the review screen after an outside edit and the delete dialog that stops ("Delete anyway").
+
 ## What must be true before it is sold
 
 - The price (O-13, [OPEN.md](adr/OPEN.md)) and its basis; then #180's plan engine attaches a subscription item per domain to `capability` (a reason `subscription`), and decides what a lapse does: keep the last good record and stop refreshing (what this change does when the setting goes away), restore the original, or keep refreshing for a grace period. Left open on purpose.
