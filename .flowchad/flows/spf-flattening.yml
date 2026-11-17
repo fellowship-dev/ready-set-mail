@@ -38,6 +38,14 @@ steps:
     effect: write
     expect: SPF flattening is on - the published record, last checked, checked again every day around 11:00 UTC
     first_value: true
+  # Branch: someone edited the record in Cloudflare (the daily check left it as it is). The screen is walked too: the decision comes first, the evidence below it.
+  - action: navigate
+    url: /#/domains/1/spf-flatten?review=1
+    expect: Review the record - the choice "Use my edit as the new original" (selected) and "Discard my edit" (with the terms it drops) and the action "Use my edit" come first, with the action in the first screen at 375 and 1440; the two records are below
+  - action: click
+    selector: "text=Use my edit"
+    effect: write
+    expect: SPF flattening is on - the edit is the new original, the include it added stays, addresses that would leave a provider are held for a second look
   - action: click
     selector: "text=Turn off"
     effect: write

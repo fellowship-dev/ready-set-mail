@@ -173,9 +173,9 @@ function SpfFlattenWizard() {
 							{preview?.problem ? <Alert variant="warning">{preview.problem.message}</Alert> : null}
 							{preview?.live && preview.flat ? (
 								<fieldset className="space-y-2">
-									<legend className="text-sm font-medium text-ink-1">What should Ready Set Mail do with your edit?</legend>
+									<legend className="sr-only">What should Ready Set Mail do with your edit?</legend>
 									<RadioCard name="spf-edit" value="adopt" checked={choice === 'adopt'} onChange={() => setChoice('adopt')} title="Use my edit as the new original">
-										It becomes your original record, and the flattened record is made from it, so what you added stays. Addresses it already lists stay as written and no longer follow a provider.
+										It becomes your original record, and the flattened record is made from it, so what you added stays. Addresses it lists stay as written and no longer follow a provider.
 									</RadioCard>
 									<RadioCard name="spf-edit" value="discard" checked={choice === 'discard'} onChange={() => setChoice('discard')} title="Discard my edit">
 										The flattened record from your original is written. {dropSentence(preview.live, preview.flat.record)}
