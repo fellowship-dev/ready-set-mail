@@ -478,6 +478,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 								<p className="text-sm text-ink-1">
 									{dns.data.error
 										? 'We could not check your DNS record just now. See DNS records above.'
+										: reportAddr.data?.available && reportAddr.data.reach.kind === 'inherited_record'
+											? `No report is filed for ${domain.domain} itself: it has no record of its own, and the record that applies to it already sends reports here (see DMARC reports above).`
 										: dns.data.found && dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`, summary.data?.dmarc_inherited_from ? null : summary.data?.dmarc_issue)
 											? 'The DMARC record is not applied as published, so reports may not arrive. See DNS records above.'
 										: dns.data.found && dns.data.has_rua

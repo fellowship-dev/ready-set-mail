@@ -114,6 +114,9 @@ describe('state (b): cf-bounce.app. has no DMARC record of its own and the recor
     // the DNS records section does not tell it to publish a record that sends reports here either
     await screen.findByText('DMARC record');
     expect(text()).not.toContain('To receive reports here, publish the record below');
+    // and the empty chart does not say the record was not found, as if the person had to add one
+    expect(text()).not.toContain('DNS record not found yet');
+    expect(text()).toContain('No report is filed for cf-bounce.app.example.net itself: it has no record of its own, and the record that applies to it already sends reports here');
     expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
   });
 });
