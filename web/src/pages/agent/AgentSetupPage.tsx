@@ -1,9 +1,11 @@
-import { Alert, Button, Card, CardContent, PageHeader, Skeleton, toast } from '@ready-set-mail/ui';
+import { Alert, Badge, Button, Card, CardContent, PageHeader, Skeleton, toast } from '@ready-set-mail/ui';
 import { Check, Copy, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { LoadError, Section } from '../../components/states';
+import { Disclosure, LoadError, Section } from '../../components/states';
+import { AGENT_CLIENTS, canConnect, type AgentClient } from '../../lib/agent-clients';
 import { FIRST_PROMPT, useAgentStatus, usePreflight } from '../../lib/instance';
+import type { AgentStatus } from '../../lib/types';
 
 async function copy(value: string, what: string) {
 	try {
@@ -42,7 +44,7 @@ export function AgentSetupPage() {
 			) : status.isError ? (
 				<LoadError error={status.error} onRetry={() => void status.refetch()} title="Could not check whether agents can connect" />
 			) : status.data.available && status.data.server_url ? (
-				<Ready serverUrl={status.data.server_url} />
+				<Ready serverUrl={status.data.server_url} status={status.data} />
 			) : (
 				<NotReady />
 			)}
@@ -83,30 +85,14 @@ function NotReady() {
 	);
 }
 
-function Ready({ serverUrl }: { serverUrl: string }) {
+function Ready({ serverUrl, status }: { serverUrl: string; status: AgentStatus }) {
 	return (
 		<>
-			<Section title="What an agent can do here">
-				<Card>
-					<CardContent className="p-5 sm:p-6">
-						<ul className="space-y-2 text-sm">
-							{CAN.map((line) => (
-								<li key={line} className="flex gap-2">
-									<Check aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
-									<span>{line}</span>
-								</li>
-							))}
-						</ul>
-						<p className="mt-4 text-sm text-ink-2">Only for the domains and permissions you approve, and only until the date you pick (1 to 30 days).</p>
-					</CardContent>
-				</Card>
-			</Section>
-
 			<Section title="Connect your assistant">
 				<Card>
 					<CardContent className="space-y-6 p-5 sm:p-6">
-						<Step n={1} title="Add this server URL to your assistant">
-							<p className="text-sm text-ink-2">In Claude or ChatGPT, add a custom connector (it may be called an MCP server) and paste this address.</p>
+						<Step n={1} title="Copy this server URL">
+							<p className="text-sm text-ink-2">Your assistant asks for it when you add Ready Set Mail as a custom connector (it may be called an MCP server or an app). The steps for each assistant are below.</p>
 							<div className="flex flex-wrap items-center gap-2">
 								<code className="w-full min-w-0 break-all rounded-md sm:w-auto sm:flex-1 border border-line bg-surface-2 px-3 py-2 font-mono text-sm">{serverUrl}</code>
 								<Button variant="secondary" onClick={() => void copy(serverUrl, 'Server URL')}>
@@ -130,6 +116,24 @@ function Ready({ serverUrl }: { serverUrl: string }) {
 								Copy prompt
 							</Button>
 						</Step>
+					</CardContent>
+				</Card>
+			</Section>
+
+			<Clients serverUrl={serverUrl} status={status} />
+
+			<Section title="What an agent can do here">
+				<Card>
+					<CardContent className="p-5 sm:p-6">
+						<ul className="space-y-2 text-sm">
+							{CAN.map((line) => (
+								<li key={line} className="flex gap-2">
+									<Check aria-hidden className="mt-0.5 size-4 shrink-0 text-success" />
+									<span>{line}</span>
+								</li>
+							))}
+						</ul>
+						<p className="mt-4 text-sm text-ink-2">Only for the domains and permissions you approve, and only until the date you pick (1 to 30 days).</p>
 					</CardContent>
 				</Card>
 			</Section>
@@ -162,6 +166,74 @@ function Ready({ serverUrl }: { serverUrl: string }) {
 					</CardContent>
 				</Card>
 			</Section>
+		</>
+	);
+}
+
+/** What this instance supports, in words, and the steps for each assistant (src/lib/agent-clients.ts). Which assistants work comes from the server. */
+function Clients({ serverUrl, status }: { serverUrl: string; status: AgentStatus }) {
+	const { owner } = usePreflight();
+	const works = AGENT_CLIENTS.filter((c) => canConnect(c, status));
+	const blocked = AGENT_CLIENTS.filter((c) => !canConnect(c, status));
+	const names = (list: readonly AgentClient[]) => list.map((c) => c.client).join(', ');
+	return (
+		<section aria-labelledby="clients-heading" className="space-y-3">
+			<h2 id="clients-heading" className="text-lg font-semibold tracking-tight">
+				Steps for your assistant
+			</h2>
+			{!works.length ? (
+				<Alert variant="warning" title="No assistant can connect to this instance yet">
+					{owner ? <p>Set MCP_DCR_ENABLED to 1 where this Worker is deployed, so assistants can register themselves. {OPERATOR_GUIDE}</p> : <p>The person who runs this instance has to change a setting first. Ask them.</p>}
+				</Alert>
+			) : blocked.length ? (
+				<Alert variant="info" title={`${names(works)} can connect here. ${names(blocked)} can't yet.`}>
+					{owner ? (
+						<p>
+							{names(blocked)} {blocked.length === 1 ? 'needs' : 'need'} to register themselves first. To allow that, set MCP_DCR_ENABLED to 1 where this Worker is deployed. {OPERATOR_GUIDE}
+						</p>
+					) : (
+						<p>{names(blocked)} {blocked.length === 1 ? 'needs' : 'need'} the person who runs this instance to allow apps to register themselves. Ask them if you use {blocked.length === 1 ? 'it' : 'one of them'}.</p>
+					)}
+				</Alert>
+			) : (
+				<p className="text-sm text-ink-2">Every assistant below can connect to this instance.</p>
+			)}
+			<div className="space-y-3">
+				{AGENT_CLIENTS.map((c) => {
+					const ok = canConnect(c, status);
+					return (
+						<Disclosure key={c.client} title={c.client} summary={ok ? <Badge variant="success">Can connect here</Badge> : <Badge variant="neutral">Not yet: needs app registration</Badge>}>
+							{ok ? (
+								<ol className="list-decimal space-y-2 pl-5 text-sm">
+									{c.steps.map((step) => (
+										<li key={step}>{withUrl(step, serverUrl)}</li>
+									))}
+								</ol>
+							) : (
+								<p className="text-sm text-ink-2">{c.client} cannot connect to this instance until the person who runs it allows apps to register themselves.</p>
+							)}
+						</Disclosure>
+					);
+				})}
+			</div>
+		</section>
+	);
+}
+
+const OPERATOR_GUIDE = (
+	<a href="https://github.com/fellowship-dev/ready-set-mail/blob/main/docs/agent-operations.md#letting-apps-register-themselves" target="_blank" rel="noreferrer">
+		The operator guide has the steps and the limits that protect it.
+	</a>
+);
+
+/** A step with `{url}` replaced by the server URL, shown as code. */
+function withUrl(step: string, url: string): ReactNode {
+	const [before, after] = step.split('{url}');
+	return after === undefined ? step : (
+		<>
+			{before}
+			<code className="break-all rounded bg-surface-2 px-1 font-mono text-[0.8125rem]">{url}</code>
+			{after}
 		</>
 	);
 }

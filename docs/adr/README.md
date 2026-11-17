@@ -21,11 +21,11 @@ Short records of decisions already made, with who made them. A change that contr
 | 0015 | reserved: open pull requests #180 and #184 each hold a 0015 of their own; they renumber when they merge | reserved |
 | 0016 | reserved: open pull request #180 | reserved |
 | 0017 | reserved: open pull request #180 | reserved |
-| 0018 | reserved: no open pull request holds it now; the next ADR may take it | reserved |
-| 0019 | reserved: open pull request #187 | reserved |
+| 0018 | reserved: open pull requests #180, #184 and #189 | reserved |
+| 0019 | reserved: open pull requests #187 and #189 | reserved |
 | 0020 | [One function writes our report address into a DMARC record](0020-one-function-writes-the-report-address.md) | accepted |
 | 0021 | reserved: open pull request #181 | reserved |
-| 0022 | reserved: open pull requests #186 and #189 each hold a 0022 of their own; they renumber when they merge | reserved |
+| 0022 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0022-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted |
 | 0023 | reserved: open pull request #189 | reserved |
 | 0024 | reserved: open pull request #189 | reserved |
 | 0025 | reserved: open pull request #189 | reserved |

@@ -664,6 +664,16 @@ CREATE TABLE `public_reports` (
 --> statement-breakpoint
 CREATE INDEX `idx_public_reports_created` ON `public_reports` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_public_reports_dedupe` ON `public_reports` (`dedupe_key`);--> statement-breakpoint
+CREATE TABLE `refresh_rotations` (
+	`token_hash` text PRIMARY KEY NOT NULL,
+	`grant_key` text NOT NULL,
+	`first_used_at` integer NOT NULL,
+	`state` text NOT NULL,
+	`response` text,
+	CONSTRAINT "refresh_rotations_state_check" CHECK("refresh_rotations"."state" IN ('pending', 'done'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_refresh_rotations_first_used` ON `refresh_rotations` (`first_used_at`);--> statement-breakpoint
 CREATE TABLE `removed_domains` (
 	`workspace_id` text NOT NULL,
 	`domain` text NOT NULL,

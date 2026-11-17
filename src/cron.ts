@@ -17,6 +17,7 @@ import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
+import { sweepAgentClients } from './auth/mcp-issuer';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
 import { refreshMtaStsForTenant } from './mta-sts/refresh';
 
@@ -64,6 +65,8 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
   // Revocations first: they are few, and leaving a grant live matters more than a late sweep.
   try { await retryRevocations(env); } catch (e) { console.error('[lifecycle] revocation retry failed:', e); }
   try { await runRetention(env); } catch (e) { console.error('[retention] failed:', e); }
+  // Agent storage: apps that registered and were never approved, connections that ended, used refresh tokens (src/auth/mcp-issuer.ts); a no-op without agent storage.
+  try { const swept = await sweepAgentClients(env); if (swept && (swept.deleted || swept.truncated || swept.ended.removed || swept.ended.truncated || swept.rotationsPurged)) console.log(JSON.stringify({ job: 'agent_client_sweep', ...swept })); } catch (e) { console.error('[lifecycle] agent client sweep failed:', e); }
 }
 
 /** One cron tick for one workspace. */

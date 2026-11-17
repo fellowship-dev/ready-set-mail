@@ -21,7 +21,7 @@ describe('connection secrets stay in their lane', () => {
   });
 
   it('provider tokens are minted only in their OAuth clients', () => {
-    expect(using(/grant_type|token_type_hint/)).toEqual(['connections/oauth.ts', 'metrics/google-postmaster/client.ts']);
+    expect(using(/grant_type|token_type_hint/)).toEqual(['connections/oauth.ts', 'mcp/refresh-replay.ts', 'mcp/registration.ts', 'metrics/google-postmaster/client.ts']); // mcp/registration.ts only checks the grant types an app asks for (RFC 7591) and mcp/refresh-replay.ts only reads which grant a request uses; neither mints anything
   });
 
   it('nothing outside the connection layer builds a CfClient from a stored connection', () => {
