@@ -82,6 +82,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 			? offeredDmarcRecord(null, coverage, null)
 			: null;
 
+	// Whether the Connect reports panel is on this step (the block below that offers the record through it).
+	const panelShown = (severity === 'error' || severity === 'warning') && !!recommended && !applied && reportsPanel && !!rua;
+
 	const patch = (fn: (s: OnboardingStatus) => OnboardingStatus) => qc.setQueryData<OnboardingStatus>(setupKeys.status(status.domain_id), (s) => (s ? fn(s) : s));
 
 	const apply = useApplyDmarc(status.domain_id);
@@ -134,7 +137,8 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							No DMARC record found for <strong className="text-ink-1">_dmarc.{status.domain}</strong>.
 						</p>
 					)}
-					{reachSaid ? <ReachStatement words={reachSaid} /> : null}
+					{/* The Connect reports panel below says the state of a connected name itself (its state line): said once, never twice. */}
+					{reachSaid && !(panelShown && reach.data?.available === true && !!reach.data.address) ? <ReachStatement words={reachSaid} /> : null}
 					{hostedNoReports ? (
 						<>
 							<div className="space-y-1">

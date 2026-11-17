@@ -210,3 +210,29 @@ describe('what the DMARC step and the DNS records offer follows the one reach de
     expect(text()).toContain(publish);
   });
 });
+
+describe('the reports state is said once where the Connect reports panel is on the page', () => {
+  const connectedWaiting = () => {
+    const reach = { ...noReach, kind: 'own' as const, last_report_at: null };
+    const connected = { ...view('example.net', reach), address: FIXED, state: 'waiting', dns: { checked_at: now, error: null, plan: { kind: 'published', name: '_dmarc.example.net', record: REC } } };
+    // public DNS has not caught up: the step's own read still finds no record, so the panel is the one that says where it stands
+    return { ...routes('example.net', reach, false), 'GET /api/domains/1/report-address': connected, 'GET /api/domains/1/onboarding-status': { ...onboarding('example.net', false), dmarc: { found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } } } };
+  };
+  const times = (t: string) => (document.body.textContent ?? '').split(t).length - 1;
+  it('step 4 after connect: "Published, waiting for the first report" appears exactly once', async () => {
+    wizard(4, connectedWaiting());
+    await screen.findByText('Published, waiting for the first report');
+    await screen.findByText('DMARC policy');
+    expect(times('Published, waiting for the first report')).toBe(1);
+    expect(screen.queryByTestId('reports-reach')).toBeNull();
+  });
+  it('step 5 and the domain page: once', async () => {
+    const s5 = wizard(5, connectedWaiting());
+    await screen.findByText('Published, waiting for the first report');
+    expect(times('Published, waiting for the first report')).toBe(1);
+    s5.unmount();
+    page(connectedWaiting());
+    await screen.findByText('Published, waiting for the first report');
+    expect(times('Published, waiting for the first report')).toBe(1);
+  });
+});
