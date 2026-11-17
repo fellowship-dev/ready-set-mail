@@ -174,6 +174,15 @@ describe('deleting a domain that has a flattened record', () => {
     expect(stop).toHaveTextContent('If you delete anyway, the flattened record stays in Cloudflare and nothing will refresh it again.');
     expect(within(stop).getByText(ORIGINAL)).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    // the order a phone reads it in: the reason, the original with its copy button, what stays in DNS, and only then "Delete anyway"; the generic description is not repeated
+    const after = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const original = within(stop).getByText(ORIGINAL);
+    const stays = within(stop).getByText(/If you delete anyway, the flattened record stays in Cloudflare/);
+    const anyway = within(stop).getByRole('button', { name: 'Delete anyway' });
+    expect(within(stop).getByRole('button', { name: /^Copy your original spf record/i })).toBeInTheDocument();
+    expect(after(original, stays)).toBe(true);
+    expect(after(stays, anyway)).toBe(true);
+    expect(within(dialog).queryByText(/All reports and statistics for this domain are deleted/)).toBeNull();
     expect(leave).toBe(false);
     await userEvent.click(within(stop).getByRole('button', { name: 'Delete anyway' }));
     await waitFor(() => expect(leave).toBe(true));

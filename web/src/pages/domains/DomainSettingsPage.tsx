@@ -14,7 +14,6 @@ import { ApiError, api, errorMessage } from '../../lib/api';
 import { dmarcRecordProblem, hasReportAddress } from '../../lib/dmarc-record';
 import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
 import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useOnboardingStatus, useSpfFlatten, type MonitorSub } from '../../lib/domain-queries';
-import { TxtRecord } from '../../components/wizard/RecordPair';
 import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
@@ -213,7 +212,7 @@ function DangerZone({ domain }: { domain: Domain }) {
 					if (!o) remove.reset();
 				}}
 				title={`Remove ${domain.domain}?`}
-				description="All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone."
+				description={stop ? null : 'All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.'}
 				confirmLabel={cleanupFailed ? 'Retry' : stop ? 'Try again' : 'Yes, remove'}
 				busyLabel="Removing…"
 				variant="danger"
@@ -224,13 +223,13 @@ function DangerZone({ domain }: { domain: Domain }) {
 				{flattened && !stop ? (
 					<div className="space-y-2 text-sm" data-testid="spf-delete-note">
 						<p className="text-ink-1">SPF flattening is on for this domain. Before anything is deleted, this original SPF record is put back in Cloudflare. If it cannot be put back, nothing is deleted.</p>
-						<TxtRecord title="Your original SPF record" value={flattened.original_record} copyable={false} />
+						<CopyField label="Your original SPF record" value={flattened.original_record} />
 					</div>
 				) : null}
 				{stop ? (
 					<div className="space-y-3 text-sm" data-testid="spf-delete-stop">
-						<p className="text-ink-1">Nothing was deleted: the flattened SPF record could not be put back. {stop.reason}</p>
-						<TxtRecord title="Your original SPF record (copy it into Cloudflare, then try again)" value={stop.original} />
+						<p className="text-ink-1">Nothing was deleted: the flattened SPF record could not be put back. {stop.reason} Copy the original below into Cloudflare, then try again.</p>
+						<CopyField label="Your original SPF record" value={stop.original} />
 						<p className="text-ink-2">If you delete anyway, the flattened record stays in Cloudflare and nothing will refresh it again.</p>
 						<Button variant="danger" loading={remove.isPending} onClick={() => remove.mutate(true)}>
 							Delete anyway
