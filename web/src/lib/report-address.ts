@@ -111,6 +111,18 @@ export function reportsArrive(s: ReportIntakeStatus | null | undefined): boolean
 	return s && s.available ? !!s.address || s.reach.kind !== 'none' : undefined;
 }
 
+/** What Apply can still do for a review: write or only connect, or a choice among the first two addresses. Never a blocked review. */
+export const applyable = (review: ReportRecordReview | null | undefined): review is ReportRecordReview => !!review && review.outcome.kind !== 'blocked';
+
+/**
+ * Does the Connect reports panel show an Apply for a connected name? Cloudflare reaches this zone, the review can still be applied, and the record in the
+ * zone does not list the address yet (once written, only public DNS is being waited for). The panel and every sentence that points at its Apply use this.
+ * `review`: the one on screen (a 409's fresh review), else the status's own.
+ */
+export function applyOffered(s: ReportAddressView, review: ReportRecordReview | null | undefined = s.review): boolean {
+	return s.apply_via_cloudflare === true && applyable(review) && s.state !== 'written' && s.state !== 'waiting' && s.state !== 'receiving';
+}
+
 export const reportAddressKey = (id: number) => [...domainKeys.all(id), 'report-address'] as const;
 
 /** Can this deployment issue report addresses? Shares the hosted-config query; any failure counts as "no". */
