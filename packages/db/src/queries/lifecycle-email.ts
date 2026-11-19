@@ -196,13 +196,16 @@ export function lifecycleEmailQueries(db: Db, workspaceId: string, counting: Cou
 				`);
 				return { counted: !!rows[0]?.counted, uncounted: !!rows[0]?.uncounted };
 			},
-			/** Domains whose FIRST counted report was stored at or after `since`, with that report's id. Starts from the recent reports, so a daily run does not read a workspace's whole history. */
-			firstCountedSince(since: number): Promise<Array<{ domain_id: number; report_id: number; created_at: number }>> {
+			/**
+			 * Domains whose FIRST counted report was stored before `until` and that have no `first_report` claim (of any person): the one rule of the daily
+			 * catch-up, with the id of that first report. No lower bound: a claim is what ends it. "Stored" is `created_at`, not the report's own dates.
+			 */
+			firstCountedBefore(until: number): Promise<Array<{ domain_id: number; report_id: number; created_at: number }>> {
 				return db.all(sql`
 					SELECT ar.domain_id, MIN(ar.id) AS report_id, MIN(ar.created_at) AS created_at
 					FROM aggregate_reports ar JOIN domains d ON d.id = ar.domain_id AND d.workspace_id = ${A}
-					WHERE ar.workspace_id = ${A} AND ar.created_at >= ${since} AND ${C('ar')}
-					  AND NOT EXISTS (SELECT 1 FROM aggregate_reports o WHERE o.workspace_id = ${A} AND o.domain_id = ar.domain_id AND o.created_at < ${since} AND ${C('o')})
+					WHERE ar.workspace_id = ${A} AND ar.created_at < ${until} AND ${C('ar')}
+					  AND NOT EXISTS (SELECT 1 FROM lifecycle_sends s WHERE s.workspace_id = ${A} AND s.domain_id = ar.domain_id AND s.kind = 'first_report')
 					GROUP BY ar.domain_id
 				`);
 			},

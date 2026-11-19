@@ -68,12 +68,10 @@ export const MAX_LIVE_READS_PER_RUN = 50;
 export const LIVE_WATCH_SECONDS = 30 * 86400;
 /** "Records live" is only worth sending while it is news. */
 export const LIVE_EMAIL_MAX_AGE_SECONDS = 7 * 86400;
-/** The first-report catch-up (the job's net under the real-time send) covers a first counted report this young. */
-export const FIRST_REPORT_CATCHUP_SECONDS = 3 * 86400;
 /**
  * The instant PR 182 (the first-report email sent when the report is stored, with no claim) went live on the hosted service: 2026-11-16 09:06 in
  * Chile. A domain whose first counted report was stored at or after it already got that email, and no claim records it, so the catch-up must not
- * send a second one; before it, no first-report email could have been sent. Self-host is unaffected: the catch-up runs on hosted only.
+ * send a second one; before it, no first-report email could have been sent, so the daily catch-up sends it once (no upper time window: the claim ends it). Self-host is unaffected: the catch-up runs on hosted only.
  */
 export const FIRST_REPORT_EMAIL_LEGACY_UNTIL = Date.UTC(2026, 10, 16, 12, 6, 0) / 1000;
 /** A tip names a source only when it sent at least this many messages that did not pass. */

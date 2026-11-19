@@ -34,7 +34,7 @@ import {
 import * as copy from './copy';
 import type { Mail, Footer, Who } from './copy';
 import {
-  FIRST_REPORT_CATCHUP_SECONDS, FIRST_REPORT_EMAIL_LEGACY_UNTIL, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
+  FIRST_REPORT_EMAIL_LEGACY_UNTIL, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
   MAX_LIVE_READS_PER_WORKSPACE, MAX_PER_RECIPIENT_PER_RUN, NO_REPORT_AFTER_SECONDS, stopped, switchOf, TIP_INTERVAL_SECONDS, tipsEnabled, type LifecycleKind,
 } from './kinds';
 import { markRecordsLive } from './milestones';
@@ -256,8 +256,10 @@ async function firstReportData(w: W, d: DomainRow, reportId: number): Promise<co
 }
 
 async function sendFirstReports(w: W, only?: { domainId: number; reportId: number }): Promise<void> {
-  // The catch-up is only for a first report stored before PR 182's real-time email existed on this service: one stored later already got that email (and no claim says so).
-  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : (await w.q.reports.firstCountedSince(w.now - FIRST_REPORT_CATCHUP_SECONDS)).filter((f) => f.created_at < FIRST_REPORT_EMAIL_LEGACY_UNTIL);
+  // The catch-up: a domain whose first counted report was stored before PR 182's real-time email went live (it could not be mailed, and no claim says
+  // it was) and that has no first_report claim. No upper window: the claim ends it. A first report stored later was mailed by the real-time path,
+  // which claims at store time (`only`), so the daily run never looks at it.
+  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : await w.q.reports.firstCountedBefore(FIRST_REPORT_EMAIL_LEGACY_UNTIL);
   const items: Item<copy.FirstReportData>[] = [];
   for (const f of found) {
     const d = w.domains.find((x) => x.id === f.domain_id);

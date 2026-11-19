@@ -1,9 +1,10 @@
 // The first-report catch-up, for the owner whose first counted report was stored by code that could not send the email (no lifecycle_sends row).
-// Window: the daily job (`0 11 * * *`) sends it for a first counted report whose `aggregate_reports.created_at` (when it was STORED, not the report's
-// date_end) is at most FIRST_REPORT_CATCHUP_SECONDS (3 days) before the run: created_at >= run - 3 days. After that, never.
+// The rule: on the daily `0 11 * * *` run, send the first-report email ONCE for a domain that (i) has a first COUNTED report whose storage time
+// (`aggregate_reports.created_at`, not the report's date_end) is before FIRST_REPORT_EMAIL_LEGACY_UNTIL (when the real-time email went live) and
+// (ii) has no first_report claim. No upper time window; the claim is what makes it once. A first counted report stored later is the real-time path's.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { storeReport } from '../../../src/dmarc/store-report';
-import { FIRST_REPORT_CATCHUP_SECONDS, FIRST_REPORT_EMAIL_LEGACY_UNTIL } from '../../../src/lifecycle/email/kinds';
+import { FIRST_REPORT_EMAIL_LEGACY_UNTIL } from '../../../src/lifecycle/email/kinds';
 import { DAY, MON_16_NOV, lifecycleWorld, recordNamingUs, BASE, WS, type World } from './world';
 
 const D = 'brightwave-mail.com';
@@ -89,67 +90,83 @@ describe.each(['seen-by-app', 'seen-by-job', 'none'] as const)('first-report cat
   });
 });
 
-describe('(d) the window: created_at >= run time - 3 days (when the report was STORED, not its date_end)', () => {
-  const run = async (storedAgo: number, dayAgo = 0) => {
-    const w = await lifecycleWorld();
-    setNow(w, MON_16_NOV);
-    w.addDomain({ domain: D });
-    w.addReport({ domain: D, day: MON_16_NOV - dayAgo - DAY, storedAt: MON_16_NOV - storedAgo, records: [google] });
-    await w.run();
-    return firstReports(w).length;
-  };
-  it('is 3 days', () => expect(FIRST_REPORT_CATCHUP_SECONDS).toBe(3 * DAY));
-  it('stored exactly 3 days before the run (and one second inside it): sent', async () => {
-    expect(await run(FIRST_REPORT_CATCHUP_SECONDS)).toBe(1);
-    expect(await run(FIRST_REPORT_CATCHUP_SECONDS - 1)).toBe(1);
-  });
-  it('stored one second beyond 3 days: never', async () => {
-    expect(await run(FIRST_REPORT_CATCHUP_SECONDS + 1)).toBe(0);
-  });
-  it('the report\'s own date does not matter: an old report stored just now is sent, a recent one stored long ago is not', async () => {
-    expect(await run(60, 30 * DAY)).toBe(1);
-    expect(await run(FIRST_REPORT_CATCHUP_SECONDS + 1, 0)).toBe(0);
-  });
-});
-
-describe('(f) the legacy instant: the catch-up is only for a first report stored before the real-time email existed', () => {
+describe('the rule: a first counted report stored before the legacy instant, no claim, any later 0 11 run', () => {
   const utc = (day: number, h: number, m = 0, sec = 0) => Date.UTC(2026, 10, day, h, m, sec) / 1000;
-  const nextDay = (d: number) => utc(d, 11);
+  const at11 = (d: number) => utc(d, 11);
 
-  it('is 2026-11-16 12:06:00 UTC (09:06 in Chile)', () => {
+  it('the legacy instant is 2026-11-16 12:06:00 UTC (09:06 in Chile)', () => {
     expect(new Date(FIRST_REPORT_EMAIL_LEGACY_UNTIL * 1000).toISOString()).toBe('2026-11-16T12:06:00.000Z');
   });
 
-  /** One proven domain, one counted report stored at `storedAt`, no email for it; then a daily run on each of the days given. */
-  async function story(storedAt: number, runDays: number[]) {
+  /** One proven domain, one counted report stored at `storedAt` (none when null), no email for it; then a daily run on each of the days given. */
+  async function story(storedAt: number | null, runDays: number[], claimed = false) {
     const w = await lifecycleWorld();
-    w.clock.now = storedAt;
-    w.addDomain({ domain: D, createdAt: storedAt - 2 * DAY, connectedAt: storedAt - 2 * DAY });
-    const reportId = w.addReport({ domain: D, day: utc(15, 0), storedAt, records: [google, sendgrid] });
+    w.clock.now = storedAt ?? utc(16, 10);
+    const id = w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
+    const reportId = storedAt === null ? 0 : w.addReport({ domain: D, day: utc(15, 0), storedAt, records: [google, sendgrid] });
+    if (claimed) w.sql.prepare("INSERT INTO lifecycle_sends (workspace_id, user_id, domain_id, kind, period, state) VALUES (?, ?, ?, 'first_report', 'once', 'sent')").run(WS, w.dana, id);
     w.dns.set(D, recordNamingUs());
-    for (const d of runDays) { w.clock.now = nextDay(d); await w.run(); }
+    for (const d of runDays) { w.clock.now = at11(d); await w.run(); }
     return { w, reportId };
   }
 
-  it('the owner: a first counted report stored 2026-11-16 10:52 UTC gets exactly one first-report email on the next 11:00 run, and none on the later ones', async () => {
-    const { w } = await story(utc(16, 10, 52), [17]);
+  it('(a) stored 2026-11-16 10:52 UTC, no claim, run on 2026-11-20 11:00 UTC: exactly one first-report email', async () => {
+    const { w } = await story(utc(16, 10, 52), [20]);
     expect(firstReports(w)).toHaveLength(1);
     expect(firstReports(w)[0].to).toBe('dana@brightwave-mail.com');
     expect(claim(w)).toHaveLength(1);
-    for (const d of [18, 19, 20, 21]) { w.clock.now = nextDay(d); await w.run(); }
-    expect(firstReports(w)).toHaveLength(1);
+    // Only that: no records-live and no no-reports email for this owner.
+    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report') && !s.startsWith('Week of'))).toEqual([]);
   });
 
-  it('a report stored 2026-11-16 13:00 UTC (after the legacy instant) gets nothing from the catch-up, on any of several daily runs; no claim is written', async () => {
-    const { w } = await story(utc(16, 13), [16, 17, 18, 19]);
+  it('(b) the next day\'s run and 40 more daily runs send nothing more', async () => {
+    const { w } = await story(utc(16, 10, 52), [20, 21]);
+    expect(firstReports(w)).toHaveLength(1);
+    for (let i = 0; i < 40; i++) { w.clock.now += DAY; await w.run(); }
+    expect(firstReports(w)).toHaveLength(1);
+    expect(claim(w)).toHaveLength(1);
+  });
+
+  it('(c) stored 2026-11-16 13:00 UTC (after the legacy instant): nothing on any run, no claim written', async () => {
+    const { w } = await story(utc(16, 13), [17, 20, 21]);
     expect(firstReports(w)).toEqual([]);
     expect(claim(w)).toEqual([]);
   });
 
-  it('the boundary: stored one second before the instant is caught up, at the instant or later is not', async () => {
-    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL - 1, [17])).w)).toHaveLength(1);
-    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL, [17])).w)).toEqual([]);
-    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL + 1, [17])).w)).toEqual([]);
+  it('(c) the boundary: one second before the instant is sent, exactly at it and after it is not', async () => {
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL - 1, [20])).w)).toHaveLength(1);
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL, [20])).w)).toEqual([]);
+    expect(firstReports((await story(FIRST_REPORT_EMAIL_LEGACY_UNTIL + 1, [20])).w)).toEqual([]);
+  });
+
+  it('(d) a domain that already has a first_report claim gets nothing', async () => {
+    const { w } = await story(utc(16, 10, 52), [20, 21], true);
+    expect(firstReports(w)).toEqual([]);
+    expect(claim(w)).toHaveLength(1);
+  });
+
+  it('(e) a domain with no counted report gets nothing', async () => {
+    const { w } = await story(null, [20, 21]);
+    expect(firstReports(w)).toEqual([]);
+    const un = await lifecycleWorld();
+    un.clock.now = utc(16, 10);
+    un.addDomain({ domain: D });
+    un.addReport({ domain: D, day: utc(15, 0), tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: utc(16, 10), records: [google] });
+    un.dns.set(D, recordNamingUs());
+    un.clock.now = at11(20);
+    await un.run();
+    expect(firstReports(un)).toEqual([]);
+  });
+
+  it('the report\'s own date does not matter, only when it was stored', async () => {
+    const w = await lifecycleWorld();
+    w.clock.now = utc(16, 10, 52);
+    w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
+    w.addReport({ domain: D, day: utc(1, 0), storedAt: utc(16, 10, 52), records: [google] });
+    w.dns.set(D, recordNamingUs());
+    w.clock.now = at11(20);
+    await w.run();
+    expect(firstReports(w)).toHaveLength(1);
   });
 
   it('the real-time path still works for a report stored after the instant: one email, then the daily runs add none', async () => {
@@ -158,7 +175,7 @@ describe('(f) the legacy instant: the catch-up is only for a first report stored
     await w.realtimeFirstReport(1, reportId);
     expect(firstReports(w)).toHaveLength(1);
     expect(claim(w)).toHaveLength(1);
-    for (const d of [17, 18, 19]) { w.clock.now = nextDay(d); await w.run(); }
+    for (const d of [17, 18, 19, 20]) { w.clock.now = at11(d); await w.run(); }
     expect(firstReports(w)).toHaveLength(1);
   });
 });

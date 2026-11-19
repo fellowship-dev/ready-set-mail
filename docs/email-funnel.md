@@ -4,6 +4,8 @@ What a free email check sends back, and the rules every non-transactional email 
 
 There is no follow-up sequence: the five emails that used to follow a free check (days 1, 3, 6, 10 and 14) were removed on 2026-11-16 ([ADR 0025](adr/0025-remove-the-leads-follow-up-sequence.md)). A free check now sends the report and nothing else.
 
+Account holders on the hosted service get their lifecycle emails from `src/lifecycle/email/` ([hosted.md](hosted.md#lifecycle-emails)), not from this module. One rule there for the first-report email: the real-time send claims it when the first counted report is stored; on the daily `0 11 * * *` run it is sent ONCE for any domain whose first counted report was stored before 2026-11-16 12:06 UTC (when the real-time email went live, which leaves no trace, so later domains are skipped) and that has no `first_report` claim in `lifecycle_sends`. There is no upper time window; the claim ends it. It fires at the first `0 11 * * *` run after the release (08:00 America/Santiago).
+
 ## Flow
 
 1. A visitor sends a real email to their `check+<token>@` address (`POST /api/check-sessions`). We reply with the report.
