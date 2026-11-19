@@ -52,7 +52,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
 	// The record that applies to this name (its organizational domain's) already sends reports here: nothing is missing, whatever the name's own lookup shows.
-	const inheritedReports = reach.data?.available === true && reach.data.reach.kind === 'inherited_record' && coverage.kind === 'inherited';
+	const inheritedReports = reportsArrive(reach.data) === true && reach.data?.available === true && reach.data.reach.kind === 'inherited_record' && coverage.kind === 'inherited';
 	const severity = hostedNoReports || inheritedReports
 		? coverage.kind === 'unknown'
 			? 'unknown'
@@ -218,7 +218,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							{recordProblem}
 						</Alert>
 					) : null}
-					{severity === 'warning' && rua && !applied && !recordProblem ? (
+					{severity === 'warning' && rua && !applied && !recordProblem && !reachSaid ? (
 						<p className="text-sm text-ink-2">
 							Your DMARC record exists but does not send reports to Ready Set Mail. Add <code className="font-mono text-ink-1">rua=mailto:{rua}</code> to receive
 							aggregate reports.

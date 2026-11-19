@@ -11,6 +11,8 @@ import {
 	useReportAddressMutations,
 	useReportIntakeEnabled,
 	reachWords,
+	applyOffered,
+	applyable,
 	type OwnPlan,
 	type ReportAddressPlan,
 	type ReportAddressState,
@@ -69,9 +71,6 @@ const STATE_DOT: Record<ReportAddressState, { status: StatusDotStatus; label: st
 	receiving: { status: 'ok', label: 'Reports received' },
 	unknown: { status: 'unknown', label: 'Connected, DNS check failed' },
 };
-
-/** What Apply can still do for a review: write or only connect, or a choice among the first two addresses. Never a blocked review. */
-const applyable = (review: ReportRecordReview | null | undefined): review is ReportRecordReview => !!review && review.outcome.kind !== 'blocked';
 
 /** The record changed between the review and Apply: the server answers 409 with the fresh review (src/hosted/report-address-routes.ts). */
 function changedReview(error: unknown): ReportRecordReview | null {
@@ -154,7 +153,7 @@ function Panel({ domainId, domainName, bare }: { domainId: number; domainName: s
 	const disconnectErr = m.disconnect.isError ? errorMessage(m.disconnect.error) : null;
 	const livePlan = s.dns?.plan ?? null;
 	// Apply is offered while the record in the zone does not list the address yet; once it does (written), only public DNS is being waited for.
-	const canApply = s.apply_via_cloudflare === true && applyable(review) && s.state !== 'written' && s.state !== 'waiting' && s.state !== 'receiving';
+	const canApply = applyOffered(s, review);
 	return (
 		<div className="space-y-4 rounded-lg border border-line bg-surface-1 p-4" data-state={s.state} {...(s.state === 'not_published' ? { 'data-active': true } : {})}>
 			{applyFailed}
