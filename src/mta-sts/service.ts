@@ -1,4 +1,4 @@
-// MTA-STS for one domain (ADR 0026): availability, the status a person reads, turning it on, checking it, changing its mode and turning it off.
+// MTA-STS for one domain (ADR 0021): availability, the status a person reads, turning it on, checking it, changing its mode and turning it off.
 //
 // One path for hosted and self-host: the three DNS records go into the CUSTOMER's zone (through their Cloudflare connection when one reaches the
 // zone, by hand otherwise) and the policy is served by this Worker on `mta-sts.<domain>`, reached the way src/mta-sts/policy-host.ts says.
