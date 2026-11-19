@@ -96,8 +96,9 @@ describe('signed in with no workspace (signed up through an invite)', () => {
 });
 
 describe('a login whose invitations are gone', () => {
-	it('can create a workspace of its own', async () => {
+	it('hosted: can create a workspace of its own', async () => {
 		const { calls } = renderApp(<NoWorkspacePage />, {
+			status: { mode: 'saas' },
 			routes: {
 				'GET /api/me': { user: { id: 'u1', email: 'friend@example.com', name: 'F' }, role: null, workspace_id: null, kind: 'session', pending_invites: [] },
 				'POST /api/workspaces': { id: 'ws_new', name: 'Friend Co', role: 'owner', member_count: 1 },
@@ -108,5 +109,15 @@ describe('a login whose invitations are gone', () => {
 		await user.type(screen.getByLabelText(/start a workspace of your own/i), 'Friend Co');
 		await user.click(screen.getByRole('button', { name: 'Create workspace' }));
 		await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/workspaces')?.body).toEqual({ name: 'Friend Co' }));
+	});
+
+	it('self-host: only the instance owner creates workspaces, so the page says to ask them and offers no form', async () => {
+		renderApp(<NoWorkspacePage />, {
+			status: { mode: 'self-host' },
+			routes: { 'GET /api/me': { user: { id: 'u1', email: 'friend@example.com', name: 'F' }, role: null, workspace_id: null, kind: 'session', pending_invites: [] } },
+		});
+		expect(await screen.findByText('Ask the owner of this instance to invite you again: only they can create workspaces.')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create workspace' })).toBeNull();
+		expect(screen.queryByText(/create a workspace of your own/i)).toBeNull();
 	});
 });

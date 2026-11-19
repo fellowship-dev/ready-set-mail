@@ -17,6 +17,8 @@ export interface WorkspaceSummary {
 	name: string;
 	role: MembershipRole;
 	member_count: number;
+	/** How many of the members are owners: with one, the last owner cannot leave. */
+	owner_count: number;
 	created_at: number;
 }
 
@@ -31,6 +33,7 @@ export function workspaceLifecycle(dbLike: DbLike) {
 					name: workspaces.name,
 					role: memberships.role,
 					member_count: sql<number>`(SELECT COUNT(*) FROM memberships m2 WHERE m2.workspace_id = ${workspaces.id})`,
+					owner_count: sql<number>`(SELECT COUNT(*) FROM memberships m3 WHERE m3.workspace_id = ${workspaces.id} AND m3.role = 'owner')`,
 					created_at: workspaces.created_at,
 				})
 				.from(memberships)

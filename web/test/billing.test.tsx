@@ -426,9 +426,10 @@ describe('the instance owner\'s orders', () => {
 		await waitFor(() => expect(r.calls.some((c) => c.path === '/api/operator/orders/ord_c/done')).toBe(true));
 	});
 
-	it('explains a 403 for everyone but the instance owner', async () => {
+	it('explains a 403 for everyone but the instance owner, without naming the instance\'s settings', async () => {
 		renderApp(<OrdersPage />, { role: 'admin', status: { mode: 'saas' }, routes: { 'GET /api/operator/orders': fail(403, 'operator required') } });
-		expect(await screen.findByText('Only the instance owner can see orders')).toBeInTheDocument();
+		expect(await screen.findByText('This page is not available to your account')).toBeInTheDocument();
+		expect(document.body.textContent).not.toMatch(/OWNER_EMAIL/);
 	});
 	it('says so when there are none', async () => {
 		renderApp(<OrdersPage />, { status: { mode: 'saas' }, routes: { 'GET /api/operator/orders': { orders: [] } } });

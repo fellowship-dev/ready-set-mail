@@ -113,7 +113,7 @@ When the hosted service has PostHog configured ([analytics.md](analytics.md)), e
    so the daily job can retry; the tombstone is written *before* the connection is deleted, and if it cannot be written (or the connections cannot be listed) the deletion stops with `502 revoke_failed` and nothing more is removed.
    The tombstone is deleted on success, and given up after 30 days (logged and recorded in the audit log under the deleted workspace's id).
    **Pasted API tokens cannot be revoked from here**: the response says how many there were (`cloudflare.pasted_tokens`) and the owner must revoke them in the Cloudflare dashboard.
-4. All workspace data is deleted, and people who belonged only to this workspace are deleted with it. **Billing orders are not**: they stay as accounting records ([Billing records](#billing-records)), and the Stripe Customer is left alone.
+4. All workspace data is deleted, including its memberships, API keys and agent approvals. The people who belonged to it keep their accounts (ADR 0024); anyone with no other workspace lands on "No workspace yet". **Billing orders are not**: they stay as accounting records ([Billing records](#billing-records)), and the Stripe Customer is left alone.
 
 ## Deleting an account
 

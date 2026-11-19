@@ -104,6 +104,29 @@ describe('hosted wizard: connected, then every zone is added', () => {
 		expect(calls.filter((c) => c.path.endsWith('/import')).at(-1)!.body).toEqual({ zone_ids: ['z0', 'z1'] });
 	});
 
+	it('a zone that is already waiting for proof holds its place: choosing it costs none of what is left, even when none is left', async () => {
+		const zones = ['a.com', 'b.com', 'c.com'].map((name, i) => ({ id: `z${i}`, name, account_id: 'a1', account_name: 'Example Co' }));
+		let first = true;
+		const { calls } = renderApp(<Wizard />, {
+			route: '/setup/cloudflare',
+			status: hosted,
+			routes: {
+				'GET /api/cloudflare/connections': offer([conn()]),
+				'POST /api/cloudflare/connections/c1/import': ({ body }: { body: any }) => (first ? ((first = false), done({ needs_selection: { room: 0, cap: 1, zones, claimed: ['z0'] } })) : done({ imported: body.zone_ids.map((id: string, i: number) => ({ domain: zones.find((z) => z.id === id)!.name, domain_id: i + 1 })), accounts: [{ id: 'a1', name: 'Example Co' }] })),
+			},
+		});
+		expect(await screen.findByText('Your plan covers 1 domain. Choose which to add (0 left).')).toBeInTheDocument(); // not "Your plan is full": a.com can still be added
+		const boxes = screen.getAllByRole('checkbox');
+		await userEvent.click(boxes[1]!);
+		expect(screen.getByText('1 of 0 chosen')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Add 1 domain' })).toBeDisabled();
+		await userEvent.click(boxes[1]!);
+		await userEvent.click(boxes[0]!);
+		expect(screen.getByText('0 of 0 chosen')).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Add 1 domain' }));
+		await waitFor(() => expect(calls.filter((c) => c.path.endsWith('/import')).at(-1)!.body).toEqual({ zone_ids: ['z0'] }));
+	});
+
 	it('a plan that is already full says so and does not ask to choose', async () => {
 		renderApp(<Wizard />, { route: '/setup/cloudflare', status: hosted, routes: { 'GET /api/cloudflare/connections': offer([conn()]), 'POST /api/cloudflare/connections/c1/import': done({ needs_selection: { room: 0, cap: 2, zones: [{ id: 'z1', name: 'a.com', account_id: null, account_name: null }] } }) } });
 		expect(await screen.findByText(/Your plan covers 2 domains and this workspace has them all/)).toBeInTheDocument();

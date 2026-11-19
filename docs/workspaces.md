@@ -6,7 +6,7 @@ A **workspace** holds domains, reports, members, Cloudflare connections and (lat
 
 * The **switcher** at the top of the sidebar shows the workspace you are in, lists every workspace you belong to with your role, and has *Create workspace*. Whoever creates a workspace is its owner.
 * The workspace is in the URL: `#/w/<workspaceId>/domains/1`. Links are shareable and a reload keeps your place. After signing in you land in the last one you used (remembered in the browser); a link to a workspace you cannot use shows a notice and opens one you can.
-* **Members** (sidebar) is the member list of the open workspace. Owners and admins invite people there; an invite is a one-time link (7 days).
+* **Members** (sidebar, owners and admins only: the server refuses the list to a member, so a member is not offered it) is the member list of the open workspace. Owners and admins invite people there; an invite is a one-time link (7 days). Nothing is emailed from that form on either mode (it says "This invite is not emailed"); on the hosted service, handing a domain's setup to a teammate is a separate invite, with its own screen, that is emailed when `mayEmailHandoff` allows it. The owner changes a member's role there (member or admin) from the row's role menu.
 * **Settings → Workspace**: rename (owner), leave, delete (owner).
 
 ### Invites
@@ -14,12 +14,19 @@ A **workspace** holds domains, reports, members, Cloudflare connections and (lat
 * Email with **no login yet**: the link asks for a name and password, creates the login and the membership.
 * Email that **already has a login**: no second user is created. Signed in as that email, the link is one click ("Accept invite"); not signed in, the page asks for that login's password first; signed in as a *different* email, it says so and offers to sign out. A password is never accepted to take over an existing login.
 * Inviting someone who is already a member of the workspace is refused (`409`). An invite link works once: of simultaneous accepts, exactly one wins.
+* A workspace has at most one open invite per address: a new invite to the same address revokes the earlier open one (audit `auth.invite_revoked`, reason "replaced by a new invite"), and the answer says how many it replaced (`replaced`). A hand-off counts too.
+
+### Roles and removal
+
+* Only the **owner** changes a role: `POST /api/workspaces/:id/members/:userId/role {role: "admin" | "member"}`. Never the owner's own row, never yourself, never to `owner` (that is `transfer-ownership`). Audited as `team.role_changed`.
+* Removing a member ends only their membership (`teamQueries.removeMembership`): they keep their login, their sessions and any other workspace. Their API keys and agent approvals for this workspace end at once (`teamQueries.revokeAccessOf`: keys revoked; human access principals disabled with their grants and credentials); nothing of the workspace's data goes with them. If it was their only workspace they land on "No workspace yet" (see below). ADR 0024.
 
 ### Leaving and deleting
 
-* You cannot leave your **only** workspace, and the **last owner** cannot leave a workspace (make someone else an owner, or delete it).
-* Only an owner can delete a workspace; the default workspace (`ws_default`) and your only workspace cannot be deleted.
-* A workspace **with domains** is deleted only when the request repeats its name (`?confirm=<name>`). Before anything is deleted, Cloudflare (and the hosted-records zone, for hosted domains) is checked for **every** domain; if any cannot be reached, nothing is deleted (`502 cloudflare_preflight_failed`, naming the domain). Domains are then deleted one at a time through the normal domain delete (DNS records and hosted records first). Each of those is final, so if one fails part-way the answer says how many were already deleted (`502 domain_cleanup_failed`); the workspace and its remaining data are kept and the delete can be retried. People who belonged only to that workspace are removed with it.
+* Any member or admin may leave, including their **only** workspace (`POST /api/workspaces/:id/leave`): they keep their login and sessions, and their keys and agent approvals for it end, as with removal. The **last owner** cannot leave (`409 last_owner`): make someone else an owner first. So the only owner of a workspace leaves by making someone else an owner first, or by deleting the workspace (the dashboard disables Leave and says so).
+* **No workspace yet.** A signed-in person with no membership gets `GET /api/me` with `workspace_id: null` and any pending invitations, and every other call `403 no_workspace`; the dashboard (`NoWorkspacePage`) shows the invitations and, where they may, **Create workspace**, which leads into the first-run setup. Hosted: anyone may create one. Self-host: only the owner of the instance (owner of `ws_default`) may, so everyone else is told to ask that owner to invite them.
+* Only an owner can delete a workspace; the default workspace (`ws_default`) cannot be deleted. Deleting your only workspace is allowed: you keep your login and land on "No workspace yet" (ADR 0024).
+* A workspace **with domains** is deleted only when the request repeats its name (`?confirm=<name>`). Before anything is deleted, Cloudflare (and the hosted-records zone, for hosted domains) is checked for **every** domain; if any cannot be reached, nothing is deleted (`502 cloudflare_preflight_failed`, naming the domain). Domains are then deleted one at a time through the normal domain delete (DNS records and hosted records first). Each of those is final, so if one fails part-way the answer says how many were already deleted (`502 domain_cleanup_failed`); the workspace and its remaining data are kept and the delete can be retried. Its members keep their accounts (ADR 0024): their memberships, API keys and agent approvals for it go with it, and anyone with no other workspace lands on "No workspace yet".
 
 ## Self-host and hosted
 
@@ -48,7 +55,8 @@ All routes need a signed-in **user** (a session, not an API key or the instance 
 | `GET /api/workspaces` | any user | `{workspaces: [{id, name, role, member_count, created_at}]}` |
 | `POST /api/workspaces` `{name}` | any user (self-host: the instance owner only, else `403 instance_owner_required`) | create; caller becomes owner. `201 {id, name, role, member_count}` |
 | `PATCH /api/workspaces/:id` `{name}` | owner | rename |
-| `POST /api/workspaces/:id/leave` | any member | `409 only_workspace` / `409 last_owner` |
-| `DELETE /api/workspaces/:id[?confirm=<name>]` | owner | `409 confirm_required` when it has domains; `502 cloudflare_preflight_failed` / `domain_cleanup_failed`; `400 default_workspace`; `409 only_workspace` |
+| `POST /api/workspaces/:id/leave` | any member | `409 last_owner` |
+| `POST /api/workspaces/:id/members/:userId/role` `{role}` | owner | `200 {ok, role, changed}`; `400` yourself, owner as the new role, bad role; `403` not owner, or the owner's row; `404` not a member |
+| `DELETE /api/workspaces/:id[?confirm=<name>]` | owner | `409 confirm_required` when it has domains; `502 cloudflare_preflight_failed` / `domain_cleanup_failed`; `400 default_workspace` |
 | `GET /api/invites/:token` | token | adds `workspace_id`, `workspace_name`, `user_exists`, `signed_in_as` |
 | `POST /api/invites/:token` | token | new email: `{name, password}` → `201` + session. Existing login: `{}` while signed in as that email → `200 {ok, workspace_id}`; `401` not signed in; `403 wrong_user` signed in as someone else |

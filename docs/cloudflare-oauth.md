@@ -141,7 +141,7 @@ claim. Pending claims for imported names, or for names inside an allowed zone, a
 `PUT …/zones`: `verified_claims` lists them). It adds at most 10 domains per request and answers `more` > 0 when the caller should ask again.
 
 * **Plan.** On the hosted service a workspace holds at most `MAX_DOMAINS_PER_WORKSPACE` domains (default 10; enforced in the domain insert, `src/domains/service.ts`
-  `domainCap`). When the zones would not all fit, nothing is imported and the answer carries `needs_selection: { room, cap, zones }`; the dashboard shows
+  `domainCap`; domains waiting for proof take a place too, `domainRoom` in `src/hosted/plan-limits.ts`, and a zone that is itself a waiting claim takes its own). When the zones would not all fit, nothing is imported and the answer carries `needs_selection: { room, cap, zones, claimed }` (`claimed`: zones that are waiting claims; choosing one costs none of `room`); the dashboard shows
   the list with "Your plan covers N domains. Choose which to add." and calls import again with `{ "zone_ids": [...] }`. More ids than the room
   is refused (`403 plan_limit`). Self-host has no cap and keeps the zone list, domain step and DNS plan.
 * **Idempotent.** A domain the workspace already has is left alone; a second grant for the same account adds nothing twice. A domain a person removes is remembered

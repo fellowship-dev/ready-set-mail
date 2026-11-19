@@ -240,6 +240,7 @@ export function formatTimestamp(unix: number): string {
 	return new Date(unix * 1000).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+/** Whole units: "Nd ago" means N whole days have passed, so 36 hours ago is "1d ago", not "2d ago". */
 export function relativeTime(value: number | string, now = Date.now()): string {
 	const diff = now - toDate(value).getTime();
 	const abs = Math.abs(diff);
@@ -247,12 +248,12 @@ export function relativeTime(value: number | string, now = Date.now()): string {
 	const MIN = 60_000;
 	const DAY = 86_400_000;
 	if (abs < MIN) return 'just now';
-	if (abs < 60 * MIN) return `${Math.round(abs / MIN)}m${suffix}`;
-	if (abs < DAY) return `${Math.round(abs / (60 * MIN))}h${suffix}`;
-	if (abs < 7 * DAY) return `${Math.round(abs / DAY)}d${suffix}`;
-	if (abs < 30 * DAY) return `${Math.round(abs / (7 * DAY))}w${suffix}`;
-	if (abs < 365 * DAY) return `${Math.round(abs / (30 * DAY))}mo${suffix}`;
-	return `${Math.round(abs / (365 * DAY))}y${suffix}`;
+	if (abs < 60 * MIN) return `${Math.floor(abs / MIN)}m${suffix}`;
+	if (abs < DAY) return `${Math.floor(abs / (60 * MIN))}h${suffix}`;
+	if (abs < 7 * DAY) return `${Math.floor(abs / DAY)}d${suffix}`;
+	if (abs < 30 * DAY) return `${Math.floor(abs / (7 * DAY))}w${suffix}`;
+	if (abs < 365 * DAY) return `${Math.floor(abs / (30 * DAY))}mo${suffix}`;
+	return `${Math.floor(abs / (365 * DAY))}y${suffix}`;
 }
 
 export const formatDayWithRelative = (value: number | string, now = Date.now()): string => `${formatDay(value)} · ${relativeTime(value, now)}`;

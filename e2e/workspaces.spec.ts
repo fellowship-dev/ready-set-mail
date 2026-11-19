@@ -11,6 +11,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { runSql } from './support/db';
 import { signIn } from './support/session';
+import { shots } from './support/signup';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -141,4 +142,54 @@ test('Max switches between Fellowship and Lexgo, and a reload keeps his place', 
 	await expect(page.getByText(COWORKER)).toBeVisible();
 	await page.goto('/#/w/ws_default/members');
 	await expect(page.getByText(COWORKER)).toHaveCount(0);
+});
+
+test('the coworker sees what leaving would do; Max removes them; they keep their login, land on "No workspace yet", and a new invite brings them back', async ({ browser, page }) => {
+	const signInCoworker = async (p: Page) => {
+		await p.goto('/');
+		await p.getByLabel('Email', { exact: true }).fill(COWORKER);
+		await p.getByLabel('Password', { exact: true }).fill(COWORKER_PASSWORD);
+		await p.getByRole('button', { name: 'Sign in' }).click();
+	};
+	// The coworker's only workspace can be left: the dialog says what follows (self-host: nobody but the instance owner creates workspaces).
+	const ctx = await browser.newContext();
+	const cw = await ctx.newPage();
+	await signInCoworker(cw);
+	await expect(workspaceButton(cw, 'Lexgo')).toBeVisible();
+	await cw.goto(`/#/w/${lexgoId}/settings`);
+	await expect(cw.getByText(/This is your only workspace\. If you leave it: you keep your account and land on a page where you wait for an invitation, because only the owner of this instance can create workspaces\./)).toBeVisible();
+	await cw.getByRole('button', { name: 'Leave workspace' }).click();
+	await expect(cw.getByRole('dialog').getByText(/You keep your account and land on a page where you wait for an invitation/)).toBeVisible();
+	await shots(cw, 'leave-dialog-selfhost');
+	await cw.getByRole('button', { name: 'Cancel' }).click();
+
+	// Max removes them from Lexgo.
+	await signIn(page);
+	await page.goto(`/#/w/${lexgoId}/members`);
+	await page.getByRole('button', { name: `Remove ${COWORKER}` }).click();
+	await expect(page.getByRole('dialog').getByText(/They lose access to this workspace immediately, and their API keys for it stop working\. They keep their account\./)).toBeVisible();
+	await shots(page, 'remove-dialog-selfhost');
+	await page.getByRole('dialog').getByRole('button', { name: 'Remove member' }).click();
+	await expect(page.getByRole('button', { name: `Remove ${COWORKER}` })).toHaveCount(0);
+
+	// Their open tab asks again at its next request; a new sign-in lands on the same page.
+	await cw.reload();
+	await expect(cw.getByRole('heading', { name: 'No workspace yet' })).toBeVisible();
+	await ctx.clearCookies();
+	await signInCoworker(cw);
+	await expect(cw.getByRole('heading', { name: 'No workspace yet' })).toBeVisible();
+	await expect(cw.getByText('Ask the owner of this instance to invite you again: only they can create workspaces.')).toBeVisible();
+	await expect(cw.getByRole('button', { name: 'Create workspace' })).toHaveCount(0);
+	await shots(cw, 'no-workspace-selfhost');
+
+	// Invited again, they accept and are back in.
+	await page.goto(`/#/w/${lexgoId}/members`);
+	await page.getByLabel('Email').fill(COWORKER);
+	await page.getByRole('button', { name: 'Create invite link' }).click();
+	await expect(page.getByTestId('invite-link')).toContainText('#/invite/');
+	await cw.reload();
+	await expect(cw.getByText(/invited by/)).toBeVisible();
+	await cw.getByRole('button', { name: 'Accept' }).click();
+	await expect(workspaceButton(cw, 'Lexgo')).toBeVisible();
+	await ctx.close();
 });

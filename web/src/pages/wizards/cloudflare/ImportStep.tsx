@@ -104,14 +104,17 @@ export function ImportStep({ connection, onDone, agency }: { connection: CfConne
 /** The plan covers fewer domains than the account has zones: the person picks which to add. */
 export function Choose({ selection, onChoose, onDismiss, busy = false, error }: { selection: Selection; onChoose: (zoneIds: string[]) => void; onDismiss: () => void; busy?: boolean; error?: unknown }) {
 	const [picked, setPicked] = useState<Set<string>>(new Set());
-	const over = picked.size > selection.room;
+	// A zone that is already waiting for proof holds its place: choosing it costs none of what is left.
+	const claimed = new Set(selection.claimed ?? []);
+	const costing = [...picked].filter((id) => !claimed.has(id)).length;
+	const over = costing > selection.room;
 	const toggle = (id: string, on: boolean) => {
 		const next = new Set(picked);
 		if (on) next.add(id);
 		else next.delete(id);
 		setPicked(next);
 	};
-	if (selection.room === 0) {
+	if (selection.room === 0 && claimed.size === 0) {
 		return (
 			<StepCard title="Your plan is full">
 				<div className="space-y-4">
@@ -135,12 +138,13 @@ export function Choose({ selection, onChoose, onDismiss, busy = false, error }: 
 							<label className="flex cursor-pointer items-center gap-3 px-4 py-3 text-sm">
 								<Checkbox checked={picked.has(z.id)} onCheckedChange={(c) => toggle(z.id, c === true)} />
 								<span className="min-w-0 font-medium [overflow-wrap:anywhere]">{z.name}</span>
+								{claimed.has(z.id) ? <span className="text-ink-2">already waiting for proof, takes no new place</span> : null}
 							</label>
 						</li>
 					))}
 				</ul>
 				<p className={over ? 'text-sm text-danger' : 'text-sm text-ink-2'} aria-live="polite">
-					{picked.size} of {selection.room} chosen
+					{costing} of {selection.room} chosen
 				</p>
 				{error ? <FieldError>{error instanceof ApiError ? errorMessage(error) : 'Could not add them. Try again.'}</FieldError> : null}
 				<StepFooter

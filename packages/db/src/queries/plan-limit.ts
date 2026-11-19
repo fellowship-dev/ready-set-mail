@@ -46,14 +46,23 @@ export function proofValues(domain: string, verifiedVia: string | undefined, pro
  * changes nothing; and an insert that fails (UNIQUE) rolls the whole batch back. The side effects of an eviction (hosted records, email, audit) are not
  * here: they follow once the insert is known to have committed.
  */
-export function freeNameStatements(holderId: number, winnerWorkspaceId: string, max: number | undefined) {
-	const room = max === undefined ? sql`` : sql` AND (SELECT COUNT(*) FROM domains WHERE workspace_id = ${winnerWorkspaceId} AND evicted_at IS NULL) < ${max}`;
+export function freeNameStatements(holderId: number, winnerWorkspaceId: string, max: number | undefined, newName: string) {
+	const room = max === undefined ? sql`` : sql` AND ${slotsUsed(winnerWorkspaceId, newName)} < ${max}`;
 	return [
 		sql`UPDATE domains SET evicted_at = unixepoch(), evicted_name = domain, domain = 'evicted-' || id || '.invalid', is_default = 0, alerts_enabled = 0, cf_connection_id = NULL, dns_record_id = NULL
 			WHERE id = ${holderId} AND NOT (workspace_id = ${winnerWorkspaceId}) AND (verified_via = 'legacy' OR (verified_via = 'cloudflare' AND cf_name_servers IS NULL)) AND evicted_at IS NULL${room}`,
 		sql`DELETE FROM intake_tokens WHERE domain_id = ${holderId} AND workspace_id = (SELECT workspace_id FROM domains WHERE id = ${holderId} AND evicted_at IS NOT NULL)`,
 	];
 }
+
+/**
+ * The places a workspace has used, as SQL: its live domains plus its open claims, where a claim for a name the workspace already holds, and the
+ * claim for `name` itself (it is about to become that domain), are not a second place. A new row needs `slotsUsed < max`. This is the SQL twin of
+ * `domainRoom` in src/hosted/plan-limits.ts: the one rule, written where the insert is atomic.
+ */
+export const slotsUsed = (workspaceId: string, name: string) => sql`((SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL)
+	+ (SELECT COUNT(*) FROM domain_claims WHERE workspace_id = ${workspaceId} AND settled_at IS NULL AND domain <> ${name}
+		AND domain NOT IN (SELECT domain FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL)))`;
 
 /** Rows changed by a D1 result, whichever driver shape it has. */
 export const changesOf = (res: unknown): number => (res as any)?.meta?.changes ?? (res as any)?.changes ?? 0;
