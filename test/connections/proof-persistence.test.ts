@@ -40,7 +40,8 @@ async function setup(zones: Record<string, { account?: string; status?: string; 
   const imp = (id: string, body?: unknown, as = C.token) => w.api(as, 'POST', `${CONNECTIONS}/${id}/import`, body);
   const domainsOf = (wsId: string) => w.rows('SELECT id, domain, verified_via, evicted_at, cf_name_servers, cf_zone_name, proof_lost_at FROM domains WHERE workspace_id = ? ORDER BY id', wsId);
   const audit = (action: string) => w.rows('SELECT workspace_id, resource_name FROM audit_log WHERE action = ? ORDER BY id', action);
-  const mailed = () => w.send.mock.calls.map((c: any[]) => c[0] as { to: string[]; subject: string; text: string });
+  // The proof notices only: a revoked token also gets the "connection needs attention" notice, which goes out from the platform sender now (src/monitor/notify.ts).
+  const mailed = () => w.send.mock.calls.map((c: any[]) => c[0] as { to: string[]; subject: string; text: string }).filter(m => !/^Cloudflare connection .* needs attention$/.test(m.subject));
   const tenantOf = (workspaceId: string) => loadTenant(w.env, { workspaceId });
   return { w, C, connect, imp, domainsOf, audit, mailed, tenantOf };
 }

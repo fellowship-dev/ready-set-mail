@@ -1,18 +1,12 @@
 // Configuration of the email funnel, all from the environment.
 
 import type { Env } from '../index';
-import { hostedEnabled } from '../hosted/config';
 
 export type FunnelEnv = Pick<
   Env,
-  | 'MODE' | 'SAAS_ENABLED' | 'ONBOARDING_SEQUENCE_ENABLED' | 'PUBLIC_BASE_URL' | 'BETTER_AUTH_URL' | 'POSTAL_ADDRESS' | 'BOOKING_URL'
-  | 'SERVICE_PRICES' | 'MAIL_FROM' | 'MAIL_FROM_NAME' | 'MAIL_REPLY_TO' | 'CANARY_DOMAIN' | 'SITE_ORIGINS' | 'SITE_URL'
+  | 'MODE' | 'SAAS_ENABLED' | 'PUBLIC_BASE_URL' | 'BETTER_AUTH_URL' | 'POSTAL_ADDRESS' | 'BOOKING_URL'
+  | 'MAIL_FROM' | 'MAIL_FROM_NAME' | 'MAIL_REPLY_TO' | 'CANARY_DOMAIN' | 'SITE_ORIGINS' | 'SITE_URL'
 >;
-
-/** Hosted: on unless ONBOARDING_SEQUENCE_ENABLED=0. Self-host: off unless ONBOARDING_SEQUENCE_ENABLED=1. */
-export function sequenceEnabled(env: FunnelEnv): boolean {
-  return hostedEnabled(env) ? env.ONBOARDING_SEQUENCE_ENABLED !== '0' : env.ONBOARDING_SEQUENCE_ENABLED === '1';
-}
 
 /** Public origin for links in email, no trailing slash. Null when none is configured. */
 export function publicBaseUrl(env: FunnelEnv): string | null {
@@ -44,20 +38,6 @@ export function helpUrl(env: Pick<FunnelEnv, 'BOOKING_URL'>): string | null {
     return new URL(raw).protocol === 'https:' ? raw : null;
   } catch {
     return null;
-  }
-}
-
-export interface ServicePrices { fix?: string; keepFixed?: string; bimi?: string }
-
-/** The offer prices, as configured. Nothing is hardcoded: an unset or malformed value means "no prices yet". */
-export function servicePrices(env: FunnelEnv): ServicePrices {
-  try {
-    const raw = JSON.parse(env.SERVICE_PRICES ?? '{}') as Record<string, unknown>;
-    const out: ServicePrices = {};
-    for (const k of ['fix', 'keepFixed', 'bimi'] as const) if (typeof raw[k] === 'string' && (raw[k] as string).trim()) out[k] = (raw[k] as string).trim();
-    return out;
-  } catch {
-    return {};
   }
 }
 

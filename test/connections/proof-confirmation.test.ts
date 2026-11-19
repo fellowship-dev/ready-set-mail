@@ -41,7 +41,8 @@ async function setup(zones: Record<string, { account?: string; nameServers?: str
   const connect = async (as = C.token, secret = TOKEN_C) => (await w.addToken(as, secret)).id;
   const imp = (id: string, body?: unknown, as = C.token) => w.api(as, 'POST', `${CONNECTIONS}/${id}/import`, body);
   const rows = (wsId: string) => w.rows('SELECT id, domain, verified_via, evicted_at, cf_zone_id, cf_zone_name, cf_name_servers, cf_account_id, proof_lost_at, proof_attempted_at, proof_suspected_at, proof_checked_at FROM domains WHERE workspace_id = ? ORDER BY id', wsId);
-  const mailed = () => w.send.mock.calls.map((c: any[]) => c[0] as { to: string[]; subject: string; text: string });
+  // The proof notices only: a revoked token also gets the "connection needs attention" notice, which goes out from the platform sender now (src/monitor/notify.ts).
+  const mailed = () => w.send.mock.calls.map((c: any[]) => c[0] as { to: string[]; subject: string; text: string }).filter(m => !/^Cloudflare connection .* needs attention$/.test(m.subject));
   const claim = (as: string, domain: string) => call(w.env, 'POST', '/api/domains', { key: as, body: { domain } });
   const addReport = (domainId: number) => w.db.sqlite.prepare("INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count) VALUES (?, 'g', ?, 1, 2, 5, 5, 0)").run(domainId, `r${domainId}-${Math.random()}`);
   const reports = (domainId: number) => w.rows('SELECT COUNT(*) AS n FROM aggregate_reports WHERE domain_id = ?', domainId)[0].n as number;

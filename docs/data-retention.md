@@ -29,6 +29,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
 | Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
+| Lifecycle email records (hosted: `email_preferences` a person's choices per workspace; `lifecycle_sends` which lifecycle email was claimed or sent to whom and when, no address and no content; `domain_milestones` when a domain's records were first seen live) | while the workspace exists; a person's preference rows go when they leave the workspace; all three go with the workspace | | `lifecycle_sends` is what keeps an email from being sent twice, so it is kept as long as the workspace is. Choices are in the workspace export. |
 | Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
 | Apps that registered themselves and were never approved | **24 hours** (`MCP_DCR_UNUSED_HOURS`) | `MCP_DCR_UNUSED_HOURS` | Deleted by the next registrations and the daily job. See [agent operations](agent-operations.md#letting-apps-register-themselves). |
 | Agent connections that ended (revoked, or past their end date) | **7 days** after they ended, then the record, its principal and grants, and the registered app when no record of it remains | | Daily job. The audit log keeps who approved, revoked and what was removed for its own 12 months. |
@@ -53,7 +54,7 @@ records the privacy policy describes for the website and for sales prospecting.
 * A failing step is logged and the other steps still run.
 * Logs one line per run with the counts: `[retention] {"aggregate_reports":12,"sessions":4,…,"failed":0}`.
   Read it in Workers logs; an alert on `"failed":` greater than 0 is worthwhile.
-* Retention for `leads`, suppression lists, unsubscribe records and the free-monitor subscriptions is owned by the onboarding feature, not by this job.
+* Retention for `leads` (nothing writes them since the follow-up sequence was removed, ADR 0025; old rows are deleted 12 months after their last activity), suppression lists, unsubscribe records and the free-monitor subscriptions is owned by the onboarding feature, not by this job.
 
 ## Public domain reports
 

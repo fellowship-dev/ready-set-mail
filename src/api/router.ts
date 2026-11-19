@@ -53,7 +53,6 @@
 //   GET    /api/reports                       — list recent aggregate reports
 //   GET    /api/reports/:id                   — single report with per-IP records
 //   GET    /api/check-results                 — recent free check results (last 20)
-//   GET    /api/leads, POST /api/leads/:id/stop — free-check leads and the onboarding sequence (instance owner only)
 //   GET/POST /api/keys, POST /api/keys/revoke-all, DELETE /api/keys/:id — per-user API keys
 //   GET    /api/workspaces                    — the caller's workspaces (role, member count)
 //   POST   /api/workspaces                    — create a workspace (caller becomes owner)
@@ -105,7 +104,7 @@ import { openHostedZone } from '../hosted/records';
 import { issueCanary } from '../hosted/canary';
 import { isCorsPath, preflight, withCors } from './cors';
 import { handlePublicReportRoute } from '../public-reports/routes';
-import { handleLeadRoutes, handlePublicFunnelRoute, isInstanceOwner } from '../funnel/routes';
+import { handlePublicFunnelRoute, isInstanceOwner } from '../funnel/routes';
 import { agentAvailability, instancePreflight } from '../setup/preflight';
 import { requestMonitorSubscription } from '../funnel/monitor-optin';
 import type { AuthedWorkspace } from '../auth/resolver';
@@ -840,8 +839,6 @@ async function _handleApi(
     return json(await instancePreflight(env, url.origin));
   }
 
-  const leadResponse = await handleLeadRoutes(request, env, instanceOwner);
-  if (leadResponse) return leadResponse;
   const reporterResponse = await handleUnknownReporterRoutes(request, env, instanceOwner);
   if (reporterResponse) return reporterResponse;
 

@@ -700,7 +700,7 @@ describe('cost', () => {
     expect(prepare).not.toHaveBeenCalled();
     dnsChecked(tenant, ctx, row, { p: 'none', rua: [row.rua_address!] }, 'daily');
     await settle();
-    expect(prepare).toHaveBeenCalledTimes(1); // the marker, already there: no event, no other read
+    expect(prepare).toHaveBeenCalledTimes(2); // the marker, already there (no event, no other read), and the lifecycle milestone's one INSERT OR IGNORE (src/lifecycle/email/milestones.ts)
     expect(w.sent.flatMap((r) => JSON.parse(r.body).batch).filter((e: any) => e.event === 'Records Live')).toHaveLength(1);
   }, 60_000);
 });

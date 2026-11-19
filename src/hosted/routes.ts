@@ -12,6 +12,7 @@
 // Writes need an admin (the router's member read-only rule already applies to everything but GET).
 
 import type { TenantContext } from '../tenancy/context';
+import { handleEmailPreferences } from '../lifecycle/email/routes';
 import { hostedConfig, hostedEnabled } from './config';
 import { disableHosted, enableHosted, hostedStatus, hostedStatuses, HostedError, rotateHostedToken, verifyDomainPointers, type HostedDeps } from './service';
 
@@ -28,6 +29,9 @@ export async function handleHostedRoutes(
   deps: HostedDeps = {},
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
+  // GET|PUT /api/email-preferences: which optional lifecycle emails this person gets (src/lifecycle/email/routes.ts).
+  const preferences = await handleEmailPreferences(request, tenant, actor);
+  if (preferences) return preferences;
   // GET /api/hosted/config — lets the dashboard decide whether to show the hosted UI. Never an error, never a secret.
   if (path === '/api/hosted/config' && request.method.toUpperCase() === 'GET') {
     const enabled = hostedEnabled(tenant.env);

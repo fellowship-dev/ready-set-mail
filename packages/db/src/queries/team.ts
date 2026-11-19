@@ -121,6 +121,7 @@ export function teamQueries(db: Db, workspaceId: string) {
 		 */
 		async removeMembership(userId: string, now: number) {
 			await this.revokeAccessOf(userId, now);
+			await db.run(sql`DELETE FROM email_preferences WHERE workspace_id = ${workspaceId} AND user_id = ${userId}`);
 			await db.delete(memberships).where(and(eq(memberships.workspace_id, workspaceId), eq(memberships.user_id, userId))).run();
 		},
 

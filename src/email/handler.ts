@@ -16,7 +16,7 @@ import { hashToken, isTokenShaped, parseRecipient } from '../hosted/tokens';
 export async function handleEmail(
   message: ForwardableEmailMessage,
   tenant: TenantContext,
-  _ctx: ExecutionContext
+  ctx: ExecutionContext
 ): Promise<void> {
   const to = message.to.toLowerCase();
   const localPart = to.split('@')[0];
@@ -28,7 +28,7 @@ export async function handleEmail(
       logIntake({ kind, outcome, reason, tier: r.tier ?? null, reporter: r.reporter ?? null, dkim_org: r.dkimOrg ?? null, from_org: r.fromOrg ?? null, email_matched: r.emailMatched ?? null, dedup: r.dedup ?? null, size: message.rawSize ?? 0, records: r.records ?? null, ms: Date.now() - started, ws: tenant.workspaceId });
     let r: ReportResult;
     try {
-      r = kind === 'rua' ? await handleDmarcReport(message, tenant) : await handleTlsRptReport(message, tenant);
+      r = kind === 'rua' ? await handleDmarcReport(message, tenant, { ctx }) : await handleTlsRptReport(message, tenant);
     } catch (e) {
       line('deferred', e instanceof StorageFailure ? 'storage_failed' : 'internal_error', e instanceof StorageFailure ? e.known : {});
       throw e; // the sender retries

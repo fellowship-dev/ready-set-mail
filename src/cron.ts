@@ -4,6 +4,8 @@
 // its own try/catch, so one workspace's failure (a revoked Cloudflare token answering 403, a broken
 // row) is logged and skipped instead of stopping the workspaces after it.
 
+import { lifecycleReadOrder } from '@ready-set-mail/db';
+import { hostedEnabled } from './hosted/config';
 import type { BoundEnv } from './index';
 import { loadTenant } from './tenancy/load';
 import { reportsAddressVia } from './hosted/report-address';
@@ -14,6 +16,7 @@ import { sendChangeNotification } from './monitor/notify';
 import { sendWeeklyDigests } from './digest/weekly';
 import { logAudit } from './audit/log';
 import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
+import { newBudget, runLifecycleForWorkspace, type Budget } from './lifecycle/email/run';
 import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
 import { backfillVerdicts } from './lifecycle/verdict-backfill';
@@ -50,10 +53,13 @@ export async function runCronForWorkspaces(
   const load = opts.load ?? loadTenant;
   const workspaces = opts.workspaces ?? await listCronWorkspaces(env);
   await runFunnelCron(event, env);
-  for (const workspaceId of workspaces) {
+  const lifecycle = newBudget(); // one budget for the whole invocation: the caps on lifecycle emails and on DNS reads are global, the reads also per workspace
+  // The workspace whose domains were read longest ago goes first, so the global cap on DNS reads is shared fairly (hosted lifecycle emails only).
+  const order = hostedEnabled(env) && event.cron === '0 11 * * *' ? await lifecycleReadOrder(env.DB, workspaces).catch(() => workspaces) : workspaces;
+  for (const workspaceId of order) {
     try {
       const tenant = await load(env, { workspaceId });
-      await runCron(event, tenant, ctx);
+      await runCron(event, tenant, ctx, lifecycle);
     } catch (e) {
       console.error(`[cron ${event.cron}] workspace ${workspaceId} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
     }
@@ -74,14 +80,17 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 }
 
 /** One cron tick for one workspace. */
-async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext): Promise<void> {
-  // Daily product analytics — every day 11am UTC: hosted with PostHog configured only (docs/analytics.md); a no-op everywhere else.
+async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, lifecycle: Budget): Promise<void> {
+  // Every day 11am UTC. Product analytics: hosted with PostHog configured only (docs/analytics.md). Lifecycle emails: hosted only
+  // (src/lifecycle/email/run.ts): records live, first-report catch-up, no reports yet, and, claimed by the ISO week they report on, the weekly
+  // summary and the tips (Monday's run sends them; a later run of the same week catches up a missed Monday, once). Both are no-ops elsewhere.
   if (event.cron === '0 11 * * *') {
     dailyAnalytics(tenant, ctx);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle);
     return;
   }
 
-  // Weekly digest — every Monday 9am UTC
+  // Every Monday 9am UTC: the weekly digest on self-host (sendWeeklyDigests returns at once on hosted). No lifecycle email depends on this trigger.
   if (event.cron === '0 9 * * 1') {
     await sendWeeklyDigests(tenant);
     return;

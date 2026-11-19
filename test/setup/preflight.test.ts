@@ -30,7 +30,7 @@ describe('instance preflight', () => {
   expect(result.items.find(i => i.id === 'oauth_storage')).toMatchObject({ setting: 'OAUTH_KV', message: expect.stringContaining('agents cannot connect') });
  });
 
- it('hosted mode needs the bot check and a mail sender to open sign-up, and a booking link for the follow-up email', async () => {
+ it('hosted mode needs the bot check and a mail sender to open sign-up, and a booking link', async () => {
   const hosted = env({ MODE: 'saas', SAAS_ENABLED: '1', OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN });
   expect(await ids(hosted)).toEqual(['action:mail_sender', 'action:bot_check', 'note:cloudflare_connections', 'action:rate_limits', 'action:intake', 'note:intake', 'note:booking_link']);
   const ready = env({ TOKEN_ENCRYPTION_KEY: 'k1:x', MODE: 'saas', SAAS_ENABLED: '1', AUTHSERV_ID: 'mx.cloudflare.net', AUTHSERV_HEADER: 'ar', ...limiters, OAUTH_KV: kv, BETTER_AUTH_URL: ORIGIN, SEND_EMAIL: sendEmail, TURNSTILE_SECRET_KEY: 'x', TURNSTILE_SITE_KEY: 'y', BOOKING_URL: 'https://cal.example/max', INTAKE_DOMAIN: 'rua.example.com', HOSTED_CONNECT_REPORTS: 'all' });
@@ -59,7 +59,7 @@ describe('instance preflight', () => {
  it('never includes a configured value, secret or not', async () => {
   const values = {
    BETTER_AUTH_URL: 'http://not-https.example/secret-path', TURNSTILE_SECRET_KEY: 'turnstile-secret-value-123', BOOKING_URL: 'ftp://booking-value.example',
-   MODE: 'mode-value-xyz', MCP_DCR_ENABLED: '1', BETTER_AUTH_SECRET: 'auth-secret-value-456', BOOTSTRAP_SECRET: 'bootstrap-secret-value-789', ONBOARDING_SEQUENCE_ENABLED: '1',
+   MODE: 'mode-value-xyz', MCP_DCR_ENABLED: '1', BETTER_AUTH_SECRET: 'auth-secret-value-456', BOOTSTRAP_SECRET: 'bootstrap-secret-value-789',
   };
   const text = JSON.stringify(await instancePreflight(env(values), ORIGIN));
   for (const v of Object.values(values).filter(v => v !== '1')) expect(text).not.toContain(v);
