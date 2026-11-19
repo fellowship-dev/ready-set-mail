@@ -1,7 +1,8 @@
 // Sender inventory: DMARC report records rolled up per sending IP, with a provider guess and alignment rates.
 //
-// D1 keeps each record's raw SPF/DKIM result and authenticated domain, not the report's own "aligned" verdict
-// (only the report totals use that). So alignment here is derived the way DMARC defines relaxed alignment:
+// D1 keeps each record's raw SPF/DKIM result and authenticated domain, and (since migration 0022) the receiver's own
+// aligned verdict per record (`report_records.spf_aligned/dkim_aligned`, `verdictSql`). This inventory still ESTIMATES
+// from the domains instead, and does not read that verdict. So alignment here is derived the way DMARC defines relaxed alignment:
 // the authenticated domain shares the organizational domain of the From domain, and the check passed.
 // Limits: only the first SPF and first DKIM result of each record are stored, so a message signed twice
 // (an ESP's domain first, yours second) can read as "DKIM not aligned" here though DMARC passed it. Strict
@@ -9,8 +10,8 @@
 // assumed. Every number derived from this is an ESTIMATE and is labelled so: only the reports' own pass/fail
 // totals (trend, pass rate) are exact, and only those may block a rollout step.
 
-import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
-import { identifySender, type SenderProvider } from '@ready-set-mail/dns-checks/sender-providers';
+import { aligned, RELAXED, type AlignMode, type AlignModes } from '@ready-set-mail/dns-checks/alignment';
+import { classifySource, identifySender, strongestClass, type SenderProvider, type SourceClass } from '@ready-set-mail/dns-checks/sender-providers';
 import type { SenderRow } from '@ready-set-mail/db';
 
 /** A sender whose first report is newer than this is flagged "new" (when older history exists to compare with). */
@@ -23,7 +24,11 @@ export interface Sender {
   org: string | null;
   country_code: string | null;
   provider: { id: string; name: string; evidence: string } | null;
+  /** Whose failure its mail is (`classifySource`, the one judgement), from the records that did not align; null when none failed (estimated). */
+  source_class: SourceClass | null;
   domains: string[];
+  /** The From domains its mail was sent as (a subdomain of the monitored domain, or the domain itself), lower-cased. */
+  from_domains: string[];
   messages: number;
   /** Share of all mail in scope, 0-100 with one decimal. */
   share_pct: number;
@@ -45,19 +50,8 @@ export interface Sender {
 
 export const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
-export type AlignMode = 'r' | 's';
-export interface AlignModes { spf: AlignMode; dkim: AlignMode }
-export const RELAXED = { spf: 'r', dkim: 'r' } as const;
-
-const norm = (d: string) => d.trim().toLowerCase().replace(/\.$/, '');
-
-/** Do the two domains align? Relaxed: same organizational domain. Strict: the same domain. */
-export function aligned(a: string | null, b: string | null, mode: AlignMode = 'r'): boolean {
-  if (!a || !b) return false;
-  if (mode === 's') return norm(a) === norm(b);
-  const x = organizationalDomain(a);
-  return x !== null && x === organizationalDomain(b);
-}
+// Alignment itself (relaxed and strict) is packages/dns-checks/src/alignment.ts.
+export { aligned, RELAXED, type AlignMode, type AlignModes };
 
 /** Relaxed DMARC alignment of one record against the From domain it was sent as. */
 export function recordAlignment(r: Pick<SenderRow, 'header_from' | 'domain' | 'spf_domain' | 'spf_result' | 'dkim_domain' | 'dkim_result'>, modes: AlignModes = RELAXED): { spf: boolean; dkim: boolean } {
@@ -89,6 +83,7 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
     spf: number;
     dkim: number;
     pass: number;
+    failClass: SourceClass | null;
     first: number;
     last: number;
     spfBy: Map<string, number>;
@@ -96,13 +91,17 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
   }
   const byIp = new Map<string, Acc>();
   for (const r of rows) {
-    const a: Acc = byIp.get(r.source_ip) ?? { rows: [], messages: 0, spf: 0, dkim: 0, pass: 0, first: r.first_seen, last: r.last_seen, spfBy: new Map(), dkimBy: new Map() };
+    const a: Acc = byIp.get(r.source_ip) ?? { rows: [], messages: 0, spf: 0, dkim: 0, pass: 0, failClass: null, first: r.first_seen, last: r.last_seen, spfBy: new Map(), dkimBy: new Map() };
     const al = recordAlignment(r, align);
     a.rows.push(r);
     a.messages += r.messages;
     if (al.spf) a.spf += r.messages;
     if (al.dkim) a.dkim += r.messages;
     if (al.spf || al.dkim) a.pass += r.messages;
+    else if (r.messages > 0) {
+      const c = classifySource({ ...r, spf_pass: r.spf_result === 'pass', dkim_pass: r.dkim_result === 'pass' }, r.domain);
+      a.failClass = a.failClass ? strongestClass(a.failClass, c) : c;
+    }
     a.first = Math.min(a.first, r.first_seen);
     a.last = Math.max(a.last, r.last_seen);
     if (r.spf_domain) a.spfBy.set(r.spf_domain, (a.spfBy.get(r.spf_domain) ?? 0) + r.messages);
@@ -128,7 +127,9 @@ export function buildSenders(rows: SenderRow[], { now, earliest, align = RELAXED
         org,
         country_code: first(a, 'country_code') ?? null,
         provider: p ? { id: p.id, name: p.name, evidence: p.evidence } : null,
+        source_class: a.failClass,
         domains: [...new Set(a.rows.map((r) => r.domain))].sort(),
+        from_domains: [...new Set(a.rows.map((r) => (r.header_from || r.domain).toLowerCase()))].sort(),
         messages: a.messages,
         share_pct: pct(a.messages, total),
         spf_aligned_pct: pct(a.spf, a.messages),

@@ -204,6 +204,9 @@ export const aggregateReports = sqliteTable(
 		ingest_token: text('ingest_token'),
 		/** Rows stored in report_records for this report. Null: stored before 0010. */
 		record_count: integer('record_count'),
+		/** The alignment modes of the policy the receiver applied (policy_published aspf / adkim: 'r' relaxed, 's' strict). Null: stored before 0022. */
+		aspf: text('aspf'),
+		adkim: text('adkim'),
 	},
 	(t) => [
 		unique().on(t.domain_id, t.report_id),
@@ -230,6 +233,9 @@ export const reportRecords = sqliteTable(
 		spf_result: text('spf_result'),
 		spf_domain: text('spf_domain'),
 		header_from: text('header_from'),
+		/** The receiver's own alignment verdict (policy_evaluated spf / dkim): 1 aligned, 0 not. Null: stored before 0022. A message fails DMARC when neither is 1. */
+		spf_aligned: integer('spf_aligned'),
+		dkim_aligned: integer('dkim_aligned'),
 		created_at: integer('created_at').notNull().default(now),
 		reverse_dns: text('reverse_dns'),
 		base_domain: text('base_domain'),
@@ -845,6 +851,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'reporter_candidate_days',
 	'billing_orders',
 	'billing_checkout_sessions',
+	'workspace_plans',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1111,6 +1118,17 @@ export const billingCheckoutSessions = sqliteTable(
 		index('idx_billing_checkout_workspace').on(t.workspace_id),
 	],
 );
+
+/** The hosted plan of a workspace (0026): the interval its extra domains are billed at and the one Stripe subscription that bills them (src/billing/plan.ts). */
+export const workspacePlans = sqliteTable('workspace_plans', {
+	workspace_id: text('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
+	interval: text('interval', { enum: ['month', 'year'] }).notNull().default('year'),
+	stripe_subscription_id: text('stripe_subscription_id'),
+	stripe_item_id: text('stripe_item_id'),
+	quantity: integer('quantity').notNull().default(0),
+	synced_at: integer('synced_at'),
+	sync_error: text('sync_error'),
+});
 
 /** The Stripe price an offer resolves to by lookup key. */
 export const billingPriceCache = sqliteTable('billing_price_cache', {

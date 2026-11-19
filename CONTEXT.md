@@ -58,6 +58,32 @@ Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 A domain's rung on the authentication ladder. **Two ladders today** (three counting the email check's protected / at risk / exposed): the dashboard's three rungs, Delivering / Authenticated / Protected (`assessDomain` in `web/src/lib/levels.ts`, names in `packages/ui/src/components/level-ladder.tsx`), and the agent report's four, Unprotected / Monitoring / Enforced / Hardened (`packages/dns-checks/src/report.ts`). Which one is canonical is an **open owner decision** (`docs/adr/OPEN.md`); do not build on either.
 _Avoid_: grade, score
 
+**Subdomain**:
+A name under a domain (`app.example.com` under `example.com`), shown inside that domain's page, never as a sibling (ADR 0023, decided; the data model still keeps each added subdomain as its own row, which a later slice changes). Its mail is reported inside its organizational domain's report unless it publishes a DMARC record of its own. The names a domain's reports show are listed on its page: `namesSeen` in `src/domains/names.ts`, `GET /api/domains/:id/names`.
+_Avoid_: sibling domain, child domain
+
+**Organizational domain**:
+The registrable name a subdomain belongs to, from the Public Suffix List with its private section (`mail.example.co.uk` is under `example.co.uk`, never `co.uk`; `alice.github.io` is its own). DMARC's relaxed alignment compares organizational domains. RFC 9989 replaces the list with a DNS tree walk; that change is not decided (`docs/adr/OPEN.md`). Not the "organisation" of a report sender or of a company (see **Organization**).
+Home: `organizationalDomain`, `sameOrganizationalDomain` and `domainAncestry` (the names from a domain up to its organizational domain: report filing and `domains.parent_id`) in `packages/dns-checks/src/org-domain.ts`.
+
+**Effective policy**:
+The DMARC policy receivers apply to mail from ONE name, and where it comes from: the name's own record's `p=`; else the organizational domain's `sp=` when the name exists or `np=` when it does not exist (NXDOMAIN), then `sp=`, then `p=` (RFC 9989 sections 4.10.1 and 4.7; an invalid `sp=` makes the record `p=none`). It is never the parent's `p=` read for a subdomain. Every level, grade and verdict for a name takes it from `DmarcLookup.effective`.
+Home: `effectivePolicy` in `packages/dns-checks/src/effective-policy.ts`, reached through `lookupDmarc` in `packages/dns-checks/src/dmarc.ts`; existence in `packages/dns-checks/src/name-exists.ts`. The dashboard's `policyInForce` in `packages/dns-checks/src/dmarc-next-step.ts` reads the stored facts built from it (`dmarcFactsFromLookup` in `src/email/dns-snapshot.ts`).
+_Avoid_: inherited policy (say which tag and which record), "the policy" without a name
+
+**Alignment**:
+Whether the domain SPF or DKIM authenticated is the same as the From domain: relaxed means the same organizational domain, strict the identical domain (RFC 9989 sections 3.2.10.1 and 3.2.10.2). The SPF identifier is the return-path (MAIL FROM) domain, never the From domain, and the DKIM identifier is the signature's `d=`. A message fails DMARC when neither identifier aligns, even if both passed. The receiver's own verdict is stored per record (`spf_aligned`, `dkim_aligned`, and the report's `aspf` and `adkim`, migration 0022); the sentence for the identifier that did not align, and the fix at the right place, is one function.
+Home: `aligned`, `alignmentVerdict`, `explainAlignment` in `packages/dns-checks/src/alignment.ts`; what a missing SPF record at a name means: `packages/dns-checks/src/spf-identity.ts`.
+
+**Failing source (whose failure it is)**:
+Every source whose mail failed DMARC is one of three, by one function: `yours` (SPF or DKIM passed for a name of the owner's organizational domain: the owner's to fix), `service_not_set_up` (a known sending service, or a source whose SPF and DKIM both passed for its own domains: a real service sending as the owner's domain without being set up for it; one thing to look at, never called spoofing) and `not_yours` (everything else: nothing to fix, outside mail). The next step, the names panel, Analytics and the agent report read the same class.
+Home: `classifySource`, `serviceNotSetUpSentence` in `packages/dns-checks/src/sender-providers.ts` (`likelyNotYours` is a reading of it); the counts: `failed_not_yours`, `failed_service` in `packages/db/src/queries/reports.ts`.
+_Avoid_: "likely mail pretending to be…" for a service that passed SPF and DKIM for its own domains
+
+**Reports reach a name**:
+How reports reach a name, as one answer (`reach` on the report-address view): `own` (connected, its own record lists our address), `via_parent` (no connection of its own; the intake files the reports that name it under its row through a connected parent), `inherited_record` (no DMARC record of its own, and the record that applies to it, its organizational domain's, already sends reports here: its mail is counted in that domain's reports) or `none`. Every surface says it in the same words with the real counts (`reportReachWords`), and none offers "Connect reports" for a name whose reports already arrive. A connected name with a counted report stored for it, before or since it was connected, is receiving, never "waiting for the first report".
+Home: `reportReachOf` in `src/hosted/report-address.ts`; words in `packages/dns-checks/src/report-reach.ts`; the web reads `reachWords` and `reportsArrive` in `web/src/lib/report-address.ts`.
+
 **Verdict**:
 The one-line judgement of a domain shown to a person (verified, needs attention, unknown…) with its reason.
 Home: `domainVerdict` in `web/src/lib/verdict.ts`; words in `STATUS` in `packages/ui/src/components/status.tsx`.
@@ -111,6 +137,11 @@ The hosted service's own counts of the steps people take from sign-up to a paid 
 _Avoid_: telemetry (the opt-in self-host telemetry was removed; its endpoint never resolved), tracking, usage stats, the website's browser analytics (Plausible, a different thing)
 Home: `src/product-analytics/` (`capture.ts` the one sender, `events.ts` the allow-list, `steps.ts` and `auth.ts` the hooks the server actions call, `identity.ts` the analytics id and the once-only markers); `scripts/posthog-setup.mjs` for the funnels; `docs/analytics.md`; ADR 0008.
 
+**Plan**, **extra domain**, **add-on**:
+The plan is the hosted pay-as-you-go arrangement (ADR 0025), on only with `HOSTED_PLAN=pay_as_you_go` (`hostedPlanOn` in `src/billing/plan.ts`): a workspace holds one domain for free, and a domain waiting for proof counts. An extra domain is a proven, live domain beyond the free one: one card on file allows it, one Stripe subscription per workspace bills it (`syncPlan`). An add-on is a feature priced per domain, attached through `PLAN_ADD_ONS` (price open, nothing charged today). The plan is not the offer: the offer is the one-time fix.
+_Avoid_: tier, package, seat
+Home: `src/billing/plan.ts`; `docs/billing.md#pay-as-you-go-for-extra-domains`.
+
 **Analytics id**:
 `settings.analytics_id`: one random UUID per workspace, made by the Worker (`crypto.randomUUID()`, never derived from an email, a domain, a user or a workspace id and never chosen by a link), used as the `distinct_id` of every event about the workspace. A sign-up by email code mints it with the pending attempt and the new workspace adopts it. The once-only markers (`analytics:live:<domain id>`, `analytics:applied:<domain id>`) are rows in the same `settings` table.
 _Avoid_: visitor id, user id, person id (events are personless)
@@ -121,7 +152,7 @@ Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`,
 **Offer** and **order**:
 The offer is the priced service, today one: "Fix one domain" (ADR 0013; the amount always comes from the Stripe price, intended $149). An order is one purchase of it by a workspace.
 An order becomes **paid** only in `applyInvoice` in `src/billing/sync.ts`, after it re-reads the invoice from Stripe and Stripe says paid. Three callers reach it: Stripe's webhook (`src/billing/webhook.ts`: `invoice.paid`, and `invoice.payment_action_required` or `invoice.payment_failed` when the re-read invoice is paid); `failOrder` when an invoice it was about to fail turns out paid (the purchase itself can take this path); and the daily reconcile, `runBillingJob` in `src/billing/reconcile.ts` (the hosted cron at 11:00 UTC, orders pending for over an hour, 25 per run). Pressing Pay never marks an order paid on its own.
-_Avoid_: plan, subscription, package
+_Avoid_: package
 Home: `src/billing/offer.ts`, order states `src/billing/orders.ts`; `docs/billing.md`.
 
 **Agent**:

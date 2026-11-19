@@ -62,8 +62,8 @@ const choice = (z: { id: string; name: string; cfAccountId?: string; cfAccountNa
 export async function verifyPendingClaims(tenant: TenantContext, caller: Caller, ctx?: ExecutionContext): Promise<string[]> {
   if (getMode(tenant.env) !== 'saas') return [];
   const done: string[] = [];
-  const cap = domainCap(tenant);
-  const use = cap === undefined ? undefined : await domainUse(tenant);
+  const use = getMode(tenant.env) === 'saas' ? await domainUse(tenant) : undefined;
+  const cap = await domainCap(tenant, use);
   for (const claim of await tenant.scope.claims.list()) {
     if (claim.status !== 'pending' || claim.settled_at !== null) continue;
     if (cap !== undefined && !domainRoom(cap, use!, claim.domain).ok) break; // a plan over its places: nothing is verified, and nobody's domain is taken, for a domain that cannot be added
@@ -120,9 +120,10 @@ export async function importZones(tenant: TenantContext, connectionId: string, i
   // The plan: hosted workspaces hold a limited number of domains. If they would not all fit, the person chooses.
   // Room is the one rule (domainRoom): places = domains + domains waiting for proof. A zone that is a waiting claim already has its place, so importing it
   // costs none; every other zone needs one of the places that are left.
-  const cap = saas ? domainCap(tenant) : undefined;
+  const use0 = saas ? await domainUse(tenant) : undefined;
+  const cap = saas ? await domainCap(tenant, use0) : undefined;
   if (cap !== undefined) {
-    const use = await domainUse(tenant);
+    const use = use0 ?? await domainUse(tenant);
     const used = new Set([...use.domains, ...use.waiting]);
     const room = Math.max(0, cap - used.size);
     const needing = fresh.filter(z => !used.has(z.name));
@@ -236,8 +237,8 @@ export async function autoVerifyClaims(tenant: TenantContext, caller: Caller, ct
     .sort((a, b) => a.until - b.until || a.claim.id - b.claim.id)
     .slice(0, CLAIM_AUTOCHECKS_PER_REQUEST);
 
-  const cap = domainCap(tenant);
-  const use = cap === undefined ? undefined : await domainUse(tenant);
+  const use = getMode(tenant.env) === 'saas' ? await domainUse(tenant) : undefined;
+  const cap = await domainCap(tenant, use);
   const done: string[] = [];
   for (const { claim } of due) {
     if (cap !== undefined && !domainRoom(cap, use!, claim.domain).ok) break; // a plan over its places: nothing is checked, nothing verified, nobody evicted

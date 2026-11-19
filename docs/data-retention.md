@@ -10,7 +10,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 
 | Data | Kept for | Variable | Notes |
 |---|---|---|---|
-| Aggregate report rows and their records (`aggregate_reports`, `report_records`) | **13 months** (395 days after the report period ended) | `RETENTION_REPORTS_DAYS` | Year-over-year trends need 13 months. |
+| Aggregate report rows and their records (`aggregate_reports`, `report_records`) | **13 months** (395 days after the report period ended) | `RETENTION_REPORTS_DAYS` | Year-over-year trends need 13 months. Each record also keeps the receiver's own alignment verdict (`spf_aligned`, `dkim_aligned`) and each report the alignment modes it applied (`aspf`, `adkim`): they are columns of those rows and go with them. |
 | TLS-RPT reports | **13 months** (395 days) | `RETENTION_TLS_DAYS` | |
 | Raw report XML (and the raw JSON of TLS-RPT reports) | **30 days** self-hosted; **not stored** in hosted mode | `RAW_XML_RETENTION_DAYS` | `0` = never store. The parsed rows above are what the raw payload contained. After the window only the raw payload is removed. Hosted mode defaults to `0`. |
 | IP enrichment cache (`ip_info`: reverse DNS, ASN, organisation, country) | **30 days** | `RETENTION_IP_INFO_DAYS` | A global cache, not per workspace. |
@@ -28,6 +28,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 | Invites | **30 days after they expire** (used or not) | `RETENTION_INVITES_DAYS` | |
 | Audit log | **12 months** (365 days) | `RETENTION_AUDIT_DAYS` | |
 | Expired canary (free-check) tokens | 1 day after they expire | | Existing rule, in the hosted daily job. |
+| Hosted plan (`workspace_plans`: interval, Stripe subscription and item ids, quantity billed, last sync error) | While the workspace exists | deleted with the workspace | The Stripe subscription itself is not cancelled by Ready Set Mail, see [Billing records](#billing-records). |
 | Billing orders (`billing_orders`: workspace id and name, domain, buyer's email, amount, Stripe ids, status and dates) | **7 years** from creation, then deleted by the daily job; kept when the workspace or domain is deleted | | Accounting records, see [Billing records](#billing-records). |
 | Stripe event ledger (`billing_events`: event id, type, outcome; no payload) | **90 days** | | Webhook idempotency only. |
 | Apps that registered themselves and were never approved | **24 hours** (`MCP_DCR_UNUSED_HOURS`) | `MCP_DCR_UNUSED_HOURS` | Deleted by the next registrations and the daily job. See [agent operations](agent-operations.md#letting-apps-register-themselves). |

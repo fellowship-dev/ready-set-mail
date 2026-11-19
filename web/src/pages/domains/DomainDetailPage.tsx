@@ -14,7 +14,8 @@ import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
 import { ProofLost } from '../../components/domain/ProofLost';
 import { isUnproven } from '../../lib/proof';
-import { FailingSources } from '../../components/domain/FailingSources';
+import { FailingSources, notRecordedLine, oneCheckLine } from '../../components/domain/FailingSources';
+import { SubdomainNames, namesSummary } from '../../components/domain/SubdomainNames';
 import { HostedPanel } from '../../components/hosted/HostedPanel';
 import { ConnectReports } from '../../components/reports/ConnectReports';
 import { Rollout } from '../../components/domain/Rollout';
@@ -27,7 +28,7 @@ import { dmarcStepsFor, domainVerdict, totalsFromSummary, unavailableVerdict, ty
 import { dmarcRecordProblem, enforcementLevel, invalidDmarcSp, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
 import { recordAlignment } from '../../lib/dmarc-coverage';
 import { spTag, sumStats, wizardProgress } from '../../lib/dmarc';
-import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
+import { domainKeys, useCheckSummary, useDnsCheck, useDomainSummaries, useFailingSources, useMtaSts, useNames, useOnboardingStatus, useRolloutNext, useSpfFlatten, useStats, useWizardState } from '../../lib/domain-queries';
 import { listedParentFinder } from '../../lib/listed-parent';
 import { useReportAddress, useReportIntakeEnabled, useReportsRefusal } from '../../lib/report-address';
 import type { ReportsRefusal } from '../../lib/dmarc-step';
@@ -279,6 +280,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
+	const names = useNames(domain.id, !reportsOff);
 	const nxdomain = !!onboarding.data?.nxdomain;
 	// Hosted: the self-host reporting-address block never applies (the reports panel shows the address).
 	const hostedMode = useHosted();
@@ -315,7 +317,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// action fit the first screen, and stay there for this visit: the panel that is acted on never moves under the person.
 	const needsAction = (() => {
 		const a = reportAddr.data;
-		return !!a && a.available && !a.managed_by && a.can_connect && (a.state === 'not_connected' || a.state === 'not_published');
+		// Reports that already arrive through the parent or its record (`reach`) have nothing to connect.
+		return !!a && a.available && !a.managed_by && a.can_connect && a.reach.kind === 'none' && (a.state === 'not_connected' || a.state === 'not_published');
 	})();
 	const reportsFirst = useRef<number | null>(null);
 	if (needsAction) reportsFirst.current = domain.id;
@@ -331,7 +334,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
 		summary: summary.data ?? (summary.isError ? null : undefined),
-		sources: sources.data ?? null,
+		sources: sources.data?.sources ?? null,
 		// A fix to an inherited policy belongs on the parent: link to it when it is in this workspace (as the overview does).
 		parentId: all.find((d) => d.domain === summary.data?.dmarc_inherited_from)?.id,
 		summaryFresh,
@@ -354,7 +357,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
 	const toolsShown = !((spfOff || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && (mtaOff || (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config)));
-	const failing = sources.data?.length ?? 0;
+	const failing = sources.data?.sources.length ?? 0;
+	const oneCheck = sources.data?.one_check.sources ?? 0;
+	const unrecorded = sources.data?.not_recorded.sources ?? 0;
 
 	return (
 		<div className="space-y-8">
@@ -387,9 +392,10 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
-			{/* The same order at every width: the steps, the offer, then the reports panel, so the offer sits where it always did. With no offer on the page there is
-			    nothing to protect and the panel is first, where its statement and action are in the first screen. The panel also comes first once there is something to Apply
-			    (ConnectReports). The connect-reports step in "Do this next" presses the panel's button. */}
+			{/* The order is the same at every width: the first step, the offer (once, right after the first step so it is on the first screen and "Do this next" still leads; never on a domain
+			    that is fine or still being read; renders nothing unless hosted billing is on), the other steps, then the reports panel. With no offer on the page the panel is first,
+			    where its statement and action are in the first screen. The panel also comes first once there is something to Apply (ConnectReports). The connect-reports step in
+			    "Do this next" presses the panel's button. */}
 			<div className="flex flex-col gap-8 [&:not(:has(#fix-offer-title))>:last-child]:order-first">
 			<DoThisNext
 				actions={actions}
@@ -398,9 +404,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				onReloadSummary={() => void summary.refetch()}
 				canWrite={canWrite}
 				onRetry={() => void Promise.all([dns.refetch(), onboarding.refetch()])}
+				afterFirst={<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />}
 			/>
-			{/* An offer, not a nag: once, below the steps, never on a domain that is fine or still being read. Renders nothing unless hosted billing is on. */}
-			<FixOffer domain={domain} eligible={!nxdomain && !isUnproven(domain) && hasSomethingToFix(actions, actionsPending(actionInput))} />
 			{connectLoading ? <ListSkeleton rows={1} label="Loading the report address" /> : connectFirst ? <ConnectReports domain={domain} /> : null}
 			</div>
 			<WhereItStands domain={domain} nxdomain={nxdomain} readAt={onboarding.isSuccess ? onboarding.dataUpdatedAt : 0} idByName={new Map(all.map((d) => [d.domain, d.id]))} suffixParent={suffixParent} reportsRefusal={refusalPending ? undefined : reportsRefusal} />
@@ -474,6 +479,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 								<p className="text-sm text-ink-1">
 									{dns.data.error
 										? 'We could not check your DNS record just now. See DNS records above.'
+										: reportAddr.data?.available && reportAddr.data.reach.kind === 'inherited_record'
+											? `No report is filed for ${domain.domain} itself: it has no record of its own, and the record that applies to it already sends reports here (see DMARC reports above).`
 										: dns.data.found && dmarcRecordProblem(dns.data.current_record, `_dmarc.${domain.domain}`, summary.data?.dmarc_inherited_from ? null : summary.data?.dmarc_issue)
 											? 'The DMARC record is not applied as published, so reports may not arrive. See DNS records above.'
 										: dns.data.found && dns.data.has_rua
@@ -508,9 +515,27 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 					</Disclosure>
 				)}
 
-				{!reportsOff && (failing > 0 || sources.isError) ? (
-					<Disclosure title="Failing senders" summary={sources.isError ? 'Could not be loaded.' : `${plural(failing, 'source')} sent mail that failed DMARC in the last 7 days.`}>
+				{!reportsOff && (failing > 0 || oneCheck > 0 || unrecorded > 0 || sources.isError) ? (
+					<Disclosure
+						title={failing > 0 || sources.isError ? 'Failing senders' : 'Senders to look at'}
+						summary={
+							sources.isError
+								? 'Could not be loaded.'
+								: failing > 0
+									? `${plural(failing, 'source')} sent mail that failed DMARC in the last 7 days.`
+									: [oneCheck > 0 ? oneCheckLine(oneCheck) : null, unrecorded > 0 ? notRecordedLine(unrecorded, sources.data?.not_recorded.messages ?? 0) : null].filter(Boolean).join(' ')
+						}
+					>
 						<FailingSources domainId={domain.id} q={sources} />
+					</Disclosure>
+				) : null}
+
+				{!reportsOff && (names.isError || (names.data?.length ?? 0) > 0) ? (
+					<Disclosure
+						title="Names seen sending as this domain"
+						summary={names.isError ? 'Could not be loaded.' : namesSummary(names.data!, domain.domain)}
+					>
+						<SubdomainNames domainId={domain.id} domain={domain.domain} q={names} />
 					</Disclosure>
 				) : null}
 

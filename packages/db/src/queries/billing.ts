@@ -7,15 +7,16 @@
  * Stripe or the operator supplies, before any workspace is known; the daily job sweeps). Each such read is marked
  * `workspace-scope-exempt`; once a row is in hand every write goes through the scoped queries with the row's own workspace id.
  */
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { getDb, unwrapDriverError, type Db, type DbLike } from '../client';
-import { billingCheckoutSessions, billingEvents, billingOrders, billingPriceCache, workspaces, type OrderStatus } from '../schema';
+import { billingCheckoutSessions, billingEvents, billingOrders, billingPriceCache, workspacePlans, workspaces, type OrderStatus } from '../schema';
 import { changesOf } from './plan-limit';
 
 export type OrderRow = typeof billingOrders.$inferSelect;
 export type NewOrder = Omit<typeof billingOrders.$inferInsert, 'workspace_id' | 'status' | 'created_at' | 'updated_at'>;
 export type CheckoutSessionRow = typeof billingCheckoutSessions.$inferSelect;
 export type PriceCacheRow = typeof billingPriceCache.$inferSelect;
+export type PlanRow = typeof workspacePlans.$inferSelect;
 /** Statuses in which an order holds its domain's single slot (the partial unique index `idx_billing_orders_open`). */
 export const OPEN_ORDER_STATUSES = ['pending', 'paid', 'started'] as const satisfies readonly OrderStatus[];
 
@@ -36,6 +37,24 @@ export function billingQueries(dbLike: DbLike, workspaceId: string) {
 			claim: (customerId: string) => db.update(workspaces).set({ stripe_customer_id: customerId }).where(and(eq(workspaces.id, workspaceId), isNull(workspaces.stripe_customer_id))).run().then((r) => changesOf(r) > 0),
 			/** Forget the customer when Stripe says it is gone (only if it is still that one). */
 			clear: (customerId: string) => db.update(workspaces).set({ stripe_customer_id: null }).where(and(eq(workspaces.id, workspaceId), eq(workspaces.stripe_customer_id, customerId))).run().then((r) => changesOf(r) > 0),
+		},
+
+		/** The hosted plan row (0026): the interval, the one subscription and what was last billed. */
+		plan: {
+			get: () => db.select().from(workspacePlans).where(eq(workspacePlans.workspace_id, workspaceId)).get().then((r) => r ?? null),
+			/** Choose the interval; refused (false) once a subscription exists. */
+			async choose(interval: 'month' | 'year'): Promise<boolean> {
+				await db.insert(workspacePlans).values({ workspace_id: workspaceId, interval }).onConflictDoNothing().run();
+				return db.update(workspacePlans).set({ interval }).where(and(eq(workspacePlans.workspace_id, workspaceId), isNull(workspacePlans.stripe_subscription_id))).run().then((r) => changesOf(r) > 0);
+			},
+			/** Make sure a row exists (default interval) so the daily job finds it. */
+			ensure: () => db.insert(workspacePlans).values({ workspace_id: workspaceId }).onConflictDoNothing().run(),
+			/** Store the subscription the first time (only if none is stored yet): true for the one caller that stored it. */
+			attach: (subscriptionId: string, itemId: string, quantity: number, nowSeconds: number) =>
+				db.update(workspacePlans).set({ stripe_subscription_id: subscriptionId, stripe_item_id: itemId, quantity, synced_at: nowSeconds, sync_error: null })
+					.where(and(eq(workspacePlans.workspace_id, workspaceId), isNull(workspacePlans.stripe_subscription_id))).run().then((r) => changesOf(r) > 0),
+			synced: (quantity: number, nowSeconds: number) => db.update(workspacePlans).set({ quantity, synced_at: nowSeconds, sync_error: null }).where(eq(workspacePlans.workspace_id, workspaceId)).run(),
+			failed: (message: string) => db.update(workspacePlans).set({ sync_error: message.slice(0, 200) }).where(eq(workspacePlans.workspace_id, workspaceId)).run(),
 		},
 
 		orders: {
@@ -114,6 +133,8 @@ export function billingLookups(dbLike: DbLike) {
 
 		/** The workspace a Stripe customer belongs to (the table is the tenant registry, not tenant data). */
 		workspaceByCustomer: (customerId: string) => db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.stripe_customer_id, customerId)).get().then((r) => r?.id ?? null),
+		/** Every workspace with a plan row or a Stripe customer (a card may be on file before any plan row exists): the daily job syncs them all. */
+		planWorkspaces: () => db.select({ id: workspaces.id }).from(workspaces).where(/* workspace-scope-exempt: the daily job re-syncs every workspace that has a plan row or a Stripe customer */ or(isNotNull(workspaces.stripe_customer_id), inArray(workspaces.id, db.select({ id: workspacePlans.workspace_id }).from(workspacePlans).where(/* workspace-scope-exempt: the same sweep, the workspaces that have a plan row */ undefined)))).all().then((r) => r.map((x) => x.id)),
 		workspaceName: (workspaceId: string) => db.select({ name: workspaces.name }).from(workspaces).where(eq(workspaces.id, workspaceId)).get().then((r) => r?.name ?? null),
 
 		events: {

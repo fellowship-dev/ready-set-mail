@@ -1,10 +1,10 @@
 import { Alert, Badge, Button, Card, CardContent, CardFooter, Skeleton } from '@ready-set-mail/ui';
-import { useMutation } from '@tanstack/react-query';
-import { CreditCard, ExternalLink } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Check, CreditCard, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router';
 import { Section } from '../../components/states';
 import { errorMessage } from '../../lib/api';
-import { cardLine, formatMoney, openPortal, orderDate, startCardSession, STATUS_WORDS, statusDate, useBilling, type Order } from '../../lib/billing';
+import { billingKeys, cardLine, choosePlan, formatMoney, openPortal, priceWord, orderDate, startCardSession, STATUS_WORDS, statusDate, useBilling, type Order, type PlanInterval, type PlanView } from '../../lib/billing';
 import { useCardReturn } from '../../lib/card-return';
 import { useHosted } from '../../lib/session';
 
@@ -19,10 +19,12 @@ export function BillingSection() {
 	useCardReturn();
 	const portal = useMutation({ mutationFn: openPortal });
 	const add = useMutation({ mutationFn: () => startCardSession('/settings') });
+	const qc = useQueryClient();
+	const choose = useMutation({ mutationFn: choosePlan, onSuccess: () => qc.invalidateQueries({ queryKey: billingKeys.all }) });
 	if (!hosted || q.data === null) return null;
 	if (q.isError) return null;
 	const b = q.data;
-	const failure = portal.error ?? add.error;
+	const failure = portal.error ?? add.error ?? choose.error;
 
 	return (
 		<Section title="Billing" description="One card per workspace. Cards are added and changed on Stripe's own pages, never here.">
@@ -30,6 +32,7 @@ export function BillingSection() {
 				<Skeleton className="h-32 w-full" />
 			) : (
 				<>
+					{b.plan ? <PlanBlock plan={b.plan} canManage={b.can_manage} choosing={choose.isPending} onChoose={(i) => choose.mutate(i)} /> : null}
 					<Card>
 						<CardContent className="py-2">
 							<dl className="divide-y divide-line">
@@ -98,6 +101,34 @@ export function BillingSection() {
 				</>
 			)}
 		</Section>
+	);
+}
+
+/** The hosted plan, only when the server says it is on. */
+function PlanBlock({ plan, canManage, choosing, onChoose }: { plan: PlanView; canManage: boolean; choosing: boolean; onChoose: (i: PlanInterval) => void }) {
+	const n = plan.billed_domains;
+	return (
+		<Card>
+			<CardContent className="space-y-3 py-4">
+				<h3 className="text-base font-semibold tracking-tight">Plan</h3>
+				<p className="text-sm text-ink-1">
+					Free for {plan.free_domains === 1 ? 'one domain' : `${plan.free_domains} domains`}. Each extra domain is {priceWord(plan.prices.year)} a year (or {priceWord(plan.prices.month)} a month), charged only once it is proven.
+				</p>
+				<p className="text-sm text-ink-1">Billed now: {n} extra {n === 1 ? 'domain' : 'domains'}.</p>
+				{canManage && !plan.started ? (
+					<div role="group" aria-label="Billing interval" className="flex flex-wrap gap-2">
+						{(['year', 'month'] as const).map((i) => (
+							<Button key={i} variant="secondary" aria-pressed={plan.interval === i} disabled={choosing} onClick={() => plan.interval !== i && onChoose(i)}>
+								{plan.interval === i ? <Check aria-hidden /> : null}
+								{i === 'year' ? 'Yearly' : 'Monthly'}
+							</Button>
+						))}
+					</div>
+				) : (
+					<p className="text-sm text-ink-2">Billed {plan.interval === 'year' ? 'yearly' : 'monthly'}.</p>
+				)}
+			</CardContent>
+		</Card>
 	);
 }
 

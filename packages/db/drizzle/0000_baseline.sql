@@ -62,6 +62,8 @@ CREATE TABLE `aggregate_reports` (
 	`reporter_identity` text,
 	`ingest_token` text,
 	`record_count` integer,
+	`aspf` text,
+	`adkim` text,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
@@ -653,6 +655,8 @@ CREATE TABLE `report_records` (
 	`spf_result` text,
 	`spf_domain` text,
 	`header_from` text,
+	`spf_aligned` integer,
+	`dkim_aligned` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`reverse_dns` text,
 	`base_domain` text,
@@ -806,3 +810,14 @@ CREATE TABLE `workspaces` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `idx_workspaces_stripe_customer` ON `workspaces` (`stripe_customer_id`);
+--> statement-breakpoint
+CREATE TABLE `workspace_plans` (
+	`workspace_id` text PRIMARY KEY NOT NULL,
+	`interval` text DEFAULT 'year' NOT NULL,
+	`stripe_subscription_id` text,
+	`stripe_item_id` text,
+	`quantity` integer DEFAULT 0 NOT NULL,
+	`synced_at` integer,
+	`sync_error` text,
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
+);

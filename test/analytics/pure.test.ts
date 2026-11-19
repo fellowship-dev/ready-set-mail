@@ -191,10 +191,46 @@ describe('buildFixes', () => {
     expect(spfWithInclude(null, 'a.com')).toBeNull();
   });
 
-  it('asks you to investigate an unrecognised failing sender instead of guessing a provider', () => {
-    const fixes = buildFixes(dom, send([row({ messages: 900 }), row({ source_ip: '203.0.113.9', messages: 100, spf_result: 'fail', dkim_result: 'none', org: 'Shady Hosting' })]));
-    expect(fixes[0]).toMatchObject({ kind: 'investigate-sender', sender: { provider_id: null }, records: [] });
-    expect(fixes[0]!.title).toContain('Shady Hosting');
+  // The one "is it yours" judgement (classifySource) decides what Analytics says of a failing source that is not a known service.
+  const spoof = (o: Partial<SenderRow> = {}) => row({ source_ip: '203.0.113.9', messages: 100, spf_result: 'fail', dkim_result: 'none', org: 'Shady Hosting', ...o });
+  const unalignedService = (o: Partial<SenderRow> = {}) => row({ source_ip: '203.0.113.7', messages: 100, spf_domain: 'bounce.other-provider.example', dkim_domain: 'some-other-domain.example', ...o });
+
+  it('a failing source that is not a known service and authenticated as no one is outside mail: nothing to fix, never High impact, never ranked above a real fix', () => {
+    const outside = buildFixes({ ...dom, dmarc_policy: 'reject' }, send([row({ messages: 900 }), spoof()]));
+    expect(outside).toHaveLength(1);
+    expect(outside[0]).toMatchObject({ kind: 'outside-mail', severity: 'low', sender: { provider_id: null }, records: [] });
+    expect(outside[0]!.title).toBe('Mail from outside, rejected by your policy: Shady Hosting');
+    expect(outside[0]!.detail).toContain('likely mail pretending to be acme.com');
+    expect(outside[0]!.steps).toEqual(['Nothing to fix. If it is a service you use, authorize it.']);
+    expect(buildFixes({ ...dom, dmarc_policy: 'none' }, send([row({ messages: 900 }), spoof()]))[0]!.title).toBe('Mail from outside, not yet blocked: Shady Hosting');
+    expect(buildFixes({ ...dom, dmarc_policy: 'quarantine' }, send([row({ messages: 900 }), spoof()]))[0]!.title).toBe('Mail from outside, sent to spam by your policy: Shady Hosting');
+    // beside a real fix it ranks last
+    const mixed = buildFixes({ ...dom, spf_lookup_count: 3, dmarc_policy: 'reject' }, send([row({ messages: 800 }), spoof({ messages: 150 }), ownEnvelope({ messages: 50 })]));
+    expect(mixed.map((f) => f.kind)).toEqual(['authorize-sender', 'outside-mail']);
+  });
+
+  it('outside mail that sent as a SUBDOMAIN names that subdomain, and does not quote this domain\'s policy for it', () => {
+    const fix = buildFixes({ ...dom, dmarc_policy: 'reject' }, send([row({ messages: 900 }), spoof({ header_from: 'app.acme.com' })]))[0]!;
+    expect(fix.kind).toBe('outside-mail');
+    expect(fix.title).toBe('Mail from outside, sent as app.acme.com: Shady Hosting');
+    expect(fix.detail).toContain('The policy that applies to app.acme.com applies to it.');
+    expect(fix.detail + fix.steps.join(' ')).not.toContain('p=reject');
+  });
+
+  it('a real mail service sending as the domain without being set up for it (SPF and DKIM both pass for its own domains) is one thing to look at, never "likely spoofing"', () => {
+    const fix = buildFixes({ ...dom, dmarc_policy: 'reject' }, send([row({ messages: 900 }), unalignedService()]))[0]!;
+    expect(fix).toMatchObject({ kind: 'investigate-sender', severity: 'medium' });
+    expect(fix.title).toBe('10% of your mail comes from mail.other.example, a service sending as acme.com that is not set up for it'.replace('mail.other.example', fix.sender.name));
+    expect(fix.detail).toContain('A service sending as acme.com that is not set up for it: if it is yours, set up its custom return-path and DKIM for acme.com; if not, nothing to do.');
+    expect(fix.detail + fix.steps.join(' ')).not.toMatch(/spoof|pretending/);
+  });
+
+  it('a failing unrecognised source that did authenticate as the domain (strict alignment) keeps the old investigate words', () => {
+    const rows = [row({ messages: 900 }), row({ source_ip: '203.0.113.9', messages: 100, spf_domain: 'mail.acme.com', dkim_result: 'none', org: 'Shady Hosting' })];
+    const fix = buildFixes({ ...dom, dmarc_policy: 'reject' }, buildSenders(rows, { now: NOW, earliest: NOW - 60 * DAY, align: { spf: 's', dkim: 's' } }))[0]!;
+    expect(fix).toMatchObject({ kind: 'investigate-sender', severity: 'high' });
+    expect(fix.steps[1]).toContain('set up DKIM signing as');
+    expect(fix.detail).toContain('your DMARC policy (p=reject) already applies to it');
   });
 
   it('ignores noise and healthy senders; lists a new passing sender as low priority', () => {

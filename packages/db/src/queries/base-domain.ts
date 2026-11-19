@@ -2,6 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { domains, settings } from '../schema';
 import { sql } from 'drizzle-orm';
+import { nearestListedAncestorId } from './parent';
 import { PlanLimitError, changesOf, freeNameStatements, proofValues, slotsUsed, type ZoneProofColumns } from './plan-limit';
 
 /**
@@ -29,16 +30,7 @@ export function baseDomainQueries(db: Db, workspaceId: string) {
 		async apply(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns; settings: Record<string, string> }, opts: { maxDomains?: number; freeing?: number } = {}): Promise<number | null> {
 			const existing = await db.select({ id: domains.id }).from(domains).where(and(eq(domains.workspace_id, workspaceId), isNull(domains.evicted_at), eq(domains.domain, d.domain))).get();
 			const pv = existing ? {} as ReturnType<typeof proofValues> : proofValues(d.domain, d.verified_via, d.proof); // a zone proof without its servers is refused before anything is written
-			const parts = d.domain.split('.');
-			let parentId: number | null = null;
-			if (!existing && parts.length > 2) {
-				const parent = await db
-					.select({ id: domains.id })
-					.from(domains)
-					.where(and(eq(domains.workspace_id, workspaceId), isNull(domains.evicted_at), eq(domains.domain, parts.slice(1).join('.'))))
-					.get();
-				parentId = parent?.id ?? null;
-			}
+			const parentId = existing ? null : await nearestListedAncestorId(db, workspaceId, d.domain);
 			const max = opts.maxDomains;
 			const capped = !existing && max !== undefined;
 			const domainInsert = capped

@@ -5,6 +5,9 @@ import {
 	dmarcAdvice,
 	explain,
 	isActive,
+	isFailing,
+	isOneCheck,
+	isUnrecorded,
 	isoDay,
 	passRate,
 	prettyJson,
@@ -24,6 +27,7 @@ const src = (over: Partial<AuthSource> = {}): AuthSource => ({
 	dkim_domain: null,
 	spf_pass: 0,
 	dkim_pass: 0,
+	verdict: 'failed',
 	base_domain: null,
 	org: null,
 	...over,
@@ -52,15 +56,51 @@ describe('explain', () => {
 		expect(explain(src())).toContain('has no authorization to send as "example.com"');
 		expect(explain(src())).toContain('this server');
 	});
-	it('names the include to add when only SPF fails', () => {
-		expect(explain(src({ spf_pass: 0, dkim_pass: 1, spf_domain: 'mailchimp.com' }))).toContain('Add include:mailchimp.com to your SPF record.');
-		expect(explain(src({ dkim_pass: 1 }))).toContain('Add this server to your SPF record.');
+	it('says where the SPF fix belongs when only SPF fails: at the return-path domain, never an include at the From name', () => {
+		const one = { spf_pass: 0, dkim_pass: 1, spf_aligned: 0, dkim_aligned: 1, verdict: 'passed-one' } as const;
+		const t = explain(src({ ...one, spf_domain: 'mailchimp.com' }));
+		expect(t).toContain('the SPF record of mailchimp.com must authorize this server');
+		expect(t).not.toContain('Add include:');
+		expect(explain(src(one))).toContain('SPF did not pass for its return-path (MAIL FROM) domain, which the report does not name.');
 	});
 	it('asks for DKIM when only DKIM fails', () => {
-		expect(explain(src({ spf_pass: 1, dkim_pass: 0, dkim_domain: 'sendgrid.net' }))).toMatch(/^sendgrid\.net sent mail without a valid DKIM signature/);
+		const t = explain(src({ spf_pass: 1, dkim_pass: 0, spf_aligned: 1, dkim_aligned: 0, verdict: 'passed-one', dkim_domain: 'sendgrid.net' }));
+		expect(t).toMatch(/^sendgrid\.net passed DMARC as "example\.com" on SPF alone\./);
+		expect(t).toContain('DKIM did not pass for the signing domain d=sendgrid.net.');
 	});
 	it('falls back to "your domain" without a From', () => {
 		expect(explain(src({ header_from: null }))).toContain('send as your domain');
+	});
+});
+
+describe('explain by the receiver\'s verdict', () => {
+	const one = (over: Partial<AuthSource> = {}) => src({ spf_pass: 0, dkim_pass: 1, spf_aligned: 0, dkim_aligned: 1, verdict: 'passed-one', ...over });
+	it('passed on DKIM alone, SPF failed at another return-path domain: the SPF record to fix is that domain\'s', () => {
+		const t = explain(one({ spf_domain: 'bounces.esp.example', dkim_domain: 'example.com' }));
+		expect(t).toContain('passed DMARC as "example.com" on DKIM alone.');
+		expect(t).toContain('SPF did not pass for its return-path (MAIL FROM) domain bounces.esp.example, the name where SPF is checked for this mail, so an SPF record at example.com does not apply to it.');
+		expect(t).toContain('Worth fixing so there is a backup: if the DKIM signature breaks on the way, this mail fails DMARC.');
+	});
+	it('the return-path is the From domain itself: its SPF record must authorize the server, and never "does not apply"', () => {
+		const t = explain(one({ spf_domain: 'Example.com' }));
+		expect(t).toContain('SPF did not pass for example.com, which is also its return-path (MAIL FROM) domain, so the SPF record at example.com must authorize this server');
+		expect(t).not.toContain('does not apply');
+	});
+	it('passed on SPF alone, DKIM not aligned: says why and the fix from the alignment module', () => {
+		const t = explain(src({ spf_pass: 1, dkim_pass: 1, spf_domain: 'example.com', dkim_domain: 'esp.example', spf_aligned: 1, dkim_aligned: 0, verdict: 'passed-one' }));
+		expect(t).toContain('on SPF alone.');
+		expect(t).toContain('DKIM passed for the signing domain d=esp.example, which is not in the same organization as example.com');
+		expect(t).toContain('Worth fixing so there is a backup: forwarded mail usually fails SPF, and then this mail fails DMARC.');
+	});
+	it('not recorded: says so, and nothing about passing or failing', () => {
+		expect(explain(src({ verdict: 'not-recorded' }))).toBe("This report was stored before Ready Set Mail kept each receiver's DMARC verdict, so whether this mail passed DMARC is not recorded.");
+	});
+	it('only a failed verdict is failing; an unknown one never is', () => {
+		expect(isFailing(src({ verdict: 'failed' }))).toBe(true);
+		expect(isFailing(src({ verdict: 'passed-one' }))).toBe(false);
+		expect(isFailing(src({ verdict: undefined, spf_pass: 0, dkim_pass: 0 }))).toBe(false);
+		expect(isUnrecorded(src({ verdict: undefined }))).toBe(true);
+		expect(isOneCheck(src({ verdict: 'passed-one' }))).toBe(true);
 	});
 });
 

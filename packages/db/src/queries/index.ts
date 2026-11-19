@@ -23,6 +23,7 @@ import { settingsQueries } from './settings';
 import { teamQueries } from './team';
 
 export * from './reports';
+export { verdictSql, type DmarcVerdict } from './verdict';
 export { counted, type CountingMode } from './counting';
 export type { DomainClaimRow, ZoneHolder } from './claims';
 export { claimLookups, isUnprovenRow } from './claims';
@@ -42,7 +43,7 @@ export { publicReportQueries, type NewPublicReport, type PublicReportBudget, typ
 export { byteLength, chunkJson, storeStatements, JSON_PARAM_MAX_BYTES, SQL_MAX_BYTES, type RecordTuple, type StoreReportInput } from './report-store';
 export { lifecycleQueries, sweepLimits, DEFAULT_STATEMENT_BUDGET, type SweepLimits, type SweepResult, type Tombstone } from './global-lifecycle';
 export { exportQueries, EXPORT_COLUMNS, EXPORT_EXCLUDED, EXPORT_SETTING_KEYS } from './export';
-export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow } from './billing';
+export { billingQueries, billingLookups, OPEN_ORDER_STATUSES, type OrderRow, type NewOrder, type OrderPatch, type CheckoutSessionRow, type PriceCacheRow, type PlanRow } from './billing';
 export { funnelQueries, hashEmail, type LeadRow } from './funnel';
 
 /**

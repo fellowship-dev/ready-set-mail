@@ -31,7 +31,7 @@ function note(r: BulkImportItem, hosted: boolean): string {
 export function ImportResults({ result, showNotes = true }: { result: BulkImportResponse; showNotes?: boolean }) {
 	const hosted = useHosted();
 	// Once per import, above the rows: every row after the cap carries the same code.
-	const limitRow = result.results.find((r) => r.code === 'plan_limit');
+	const limitRow = result.results.find((r) => r.code === 'plan_limit' || r.code === 'card_required');
 	return (
 		<div className="space-y-4" data-testid="import-results">
 			<p>
@@ -39,7 +39,7 @@ export function ImportResults({ result, showNotes = true }: { result: BulkImport
 					{result.imported} of {result.total} domain{result.total === 1 ? '' : 's'} imported
 				</Badge>
 			</p>
-			{limitRow ? <PlanLimitNotice limit={{ kind: 'domains_per_workspace', message: limitRow.error ?? 'This workspace has reached its limit of domains.', help_url: limitRow.help_url ?? null }} /> : null}
+			{limitRow ? <PlanLimitNotice limit={{ code: limitRow.code === 'card_required' ? 'card_required' : 'plan_limit', kind: 'domains_per_workspace', message: limitRow.error ?? 'This workspace has reached its limit of domains.', help_url: limitRow.help_url ?? null }} /> : null}
 			<Table label="Import results">
 				<TableHeader>
 					<TableRow>

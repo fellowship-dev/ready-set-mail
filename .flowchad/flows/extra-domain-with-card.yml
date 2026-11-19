@@ -1,0 +1,39 @@
+name: Hosted owner with one proven domain adds a second with a card and is billed once it is proven
+goal: The second domain is proven and Settings → Billing says one extra domain is billed, with one yearly subscription of quantity 1
+value_moment: Settings → Billing says "Billed now: 1 extra domain." after the second domain is proven (the fake shows one subscription, quantity 1, yearly price)
+url: /#/add
+tags: [billing, value]
+priority: P1
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+  billing: on (test keys)
+  plan: HOSTED_PLAN=pay_as_you_go
+steps:
+  - action: navigate
+    url: /#/add
+    expect: The add-domain form
+  - action: fill
+    selector: "#domain-input"
+    value: second-site-demo.org
+    expect: Continue is refused with the card_required sentence and "Add a card"
+  - action: click
+    selector: "text=Add a card"
+    expect: Settings → Billing shows the plan (free for one domain, $50 a year or $5 a month) and the interval choice
+  - action: click
+    selector: "text=Add a card"
+    effect: write
+    expect: Stripe-hosted Checkout in setup mode, then back on Settings → Billing with the card
+  - action: fill
+    selector: "#domain-input"
+    value: second-site-demo.org
+    expect: The second domain is waiting for proof; nothing is charged (no subscription yet)
+  - action: click
+    selector: "text=Verify"
+    effect: write
+    expect: The TXT record is found and the second domain is proven and live
+  - action: navigate
+    url: /#/settings
+    expect: Billing says "Billed now: 1 extra domain."; one yearly subscription of quantity 1
+    first_value: true

@@ -73,7 +73,7 @@ describe('ClaimPreview', () => {
 		await loaded();
 		expect(screen.getByRole('group', { name: /Level 0/ })).toBeInTheDocument();
 		const findings = screen.getByRole('list', { name: 'Findings' });
-		expect(findings).toHaveTextContent('No SPF record found. Receivers cannot tell which servers may send for you.');
+		expect(findings).toHaveTextContent('No SPF record at acme.io. SPF is checked at the return-path (MAIL FROM) domain of each message');
 		expect(findings).toHaveTextContent('No DMARC record found.');
 		const dkim = row('DKIM');
 		expect(within(dkim).getByText('Not found in common places')).toBeInTheDocument();

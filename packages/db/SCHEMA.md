@@ -34,6 +34,7 @@ Every workspace-owned table has `workspace_id TEXT NOT NULL DEFAULT 'ws_default'
 | `cloudflare_connection_zones` | ✔ | the zones Ready Set Mail may manage through a connection (owner-picked allow-list) |
 | `cloudflare_connection_blocked_zones` | ✔ | child zones of an allowed zone that are not on the list (their names are refused, not written to the parent) |
 | `billing_orders` | ✔ (no FK) | hosted purchases: accounting records that outlive the workspace and the domain (`workspace_name`, `domain_name` are snapshots); one open order per workspace + domain name + offer (partial unique index). Read across workspaces only by the Stripe webhook, the instance owner's Orders list and the daily job (`billingLookups`) |
+| `workspace_plans` | ✔ | the hosted pay-as-you-go plan of a workspace (0026): the billing interval, its one Stripe subscription and item, the quantity last billed, the last sync error; deleted with the workspace |
 | `billing_checkout_sessions` | ✔ | binds a Stripe Checkout (add a card) session to the workspace and person that started it; deleted with the workspace |
 | `refresh_rotations` | global | agent refresh tokens already used once: the hash of the token, the grant, the first use, and the answer it got sealed under the token (the grace window of a rotation; `src/mcp/refresh-replay.ts`) |
 | `billing_events`, `billing_price_cache` | global | Stripe events already seen (webhook idempotency); the Stripe price an offer resolves to |

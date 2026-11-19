@@ -70,6 +70,7 @@ export interface Env {
   STRIPE_SECRET_KEY?: string;        // secret: a RESTRICTED Stripe key (rk_live_ / rk_test_); a full sk_ key is refused (preflight says so)
   STRIPE_WEBHOOK_SECRET?: string;    // secret: whsec_… signing secret of the webhook endpoint (POST /api/stripe/webhook)
   STRIPE_PRICE_LOOKUP_KEY?: string;  // lookup key of the one-time "Fix one domain" price (default rsm_fix_one_domain)
+  HOSTED_PLAN?: string;              // 'pay_as_you_go' turns on the hosted plan: one free domain per workspace, extra domains billed once proven (docs/billing.md). Unset: off, caps as before
   STRIPE_API_BASE?: string;          // testing only: a local fake Stripe, http://127.0.0.1:<port> or http://localhost:<port> (anything else is ignored)
   // Hosted product analytics (MODE=saas only, docs/analytics.md). Off unless BOTH are set; a self-hosted installation never sends anything.
   POSTHOG_KEY?: string;              // the PUBLIC PostHog project key (phc_…): it can only send events. Not a personal API key
