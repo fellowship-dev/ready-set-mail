@@ -1146,7 +1146,7 @@ export const refreshRotations = sqliteTable(
 	],
 );
 
-// ── Lifecycle emails (0018) ─────────────────────────────────
+// ── Lifecycle emails (0023) ─────────────────────────────────
 
 /** The kinds of email a person can turn off (src/lifecycle/email/preferences.ts). */
 export const EMAIL_PREFERENCE_KINDS = ['summary', 'tips'] as const;

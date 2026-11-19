@@ -146,7 +146,7 @@ Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`,
 
 **Lifecycle email**:
 An email the hosted service sends an account holder because a stored fact about their domain became true (or verifiably did not happen by a deadline measured from one): records live, first report, no reports yet, the weekly summary and tips. Never on a bare timer. Each is claimed in `lifecycle_sends` before it is sent, so a second run sends nothing. Records live, first report and no reports yet are account notices (no unsubscribe); the weekly summary and the tips are optional (one-click off, per person and workspace, in Settings). The first-report email is the one that also exists on self-host.
-_Avoid_: drip, campaign, newsletter, the onboarding sequence (the free-check follow-up emails, deleted, ADR 0015), digest
+_Avoid_: drip, campaign, newsletter, the onboarding sequence (the free-check follow-up emails, deleted, ADR 0025), digest
 Home: `src/lifecycle/email/run.ts` (the job), `src/lifecycle/email/copy.ts` (the words), `src/lifecycle/email/analysis.ts` (what a week says), `src/lifecycle/email/preferences.ts` (who gets what), `src/lifecycle/email/routes.ts` (the off link and the Settings API); `src/notifications/first-report.ts`; `docs/hosted.md#lifecycle-emails`.
 
 ## Selling and agents

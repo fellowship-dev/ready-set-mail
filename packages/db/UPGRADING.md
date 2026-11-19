@@ -19,9 +19,9 @@ Migration `0022_report_alignment.sql` is additive: two nullable integer columns 
 
 Migration `0021_refresh_rotations.sql` is additive: one new table, `refresh_rotations` (one row per agent refresh token that was used to get a new one: the SHA-256 of the token, the grant, the first use, and the new tokens sealed with AES-GCM under a key derived from the old token). Apply it before serving the new Worker (the schema guard requires it). Nothing existing changes. It makes a refresh token usable again for 30 seconds after its first use with the same answer, so two parallel refreshes no longer end the connection; the daily job deletes rows older than 30 days. (Numbers 0017–0020 are not used on this line; a gap in the numbering is harmless.)
 
-## Lifecycle emails (0018)
+## Lifecycle emails (0023)
 
-Migration `0018_lifecycle_emails.sql` is additive: three new tables and nothing changed in the existing ones. `domain_milestones` (one row per domain: when its DMARC record was first seen naming the domain's reports address, and whether a person's own read or the daily job saw it first; cascades with the domain), `email_preferences` (a person's choice per workspace for the weekly summary and tips; no row means the default for their role) and `lifecycle_sends` (every lifecycle email, claimed before it is sent so a second run cannot send it twice). Nothing is read or sent unless `MODE=saas`; self-hosters only get the new tables (and a first-report email whose sender and wording changed, see the changelog). No backfill is needed.
+Migration `0023_lifecycle_emails.sql` is additive: three new tables and nothing changed in the existing ones. `domain_milestones` (one row per domain: when its DMARC record was first seen naming the domain's reports address, and whether a person's own read or the daily job saw it first; cascades with the domain), `email_preferences` (a person's choice per workspace for the weekly summary and tips; no row means the default for their role) and `lifecycle_sends` (every lifecycle email, claimed before it is sent so a second run cannot send it twice). Nothing is read or sent unless `MODE=saas`; self-hosters only get the new tables (and a first-report email whose sender and wording changed, see the changelog). No backfill is needed.
 
 ## Billing (0016)
 

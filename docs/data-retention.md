@@ -54,7 +54,7 @@ records the privacy policy describes for the website and for sales prospecting.
 * A failing step is logged and the other steps still run.
 * Logs one line per run with the counts: `[retention] {"aggregate_reports":12,"sessions":4,…,"failed":0}`.
   Read it in Workers logs; an alert on `"failed":` greater than 0 is worthwhile.
-* Retention for `leads` (nothing writes them since the follow-up sequence was removed, ADR 0015; old rows are deleted 12 months after their last activity), suppression lists, unsubscribe records and the free-monitor subscriptions is owned by the onboarding feature, not by this job.
+* Retention for `leads` (nothing writes them since the follow-up sequence was removed, ADR 0025; old rows are deleted 12 months after their last activity), suppression lists, unsubscribe records and the free-monitor subscriptions is owned by the onboarding feature, not by this job.
 
 ## Public domain reports
 

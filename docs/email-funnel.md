@@ -2,7 +2,7 @@
 
 What a free email check sends back, and the rules every non-transactional email follows. Code: `src/funnel/`, `src/mail/`.
 
-There is no follow-up sequence: the five emails that used to follow a free check (days 1, 3, 6, 10 and 14) were removed on 2026-11-16 ([ADR 0015](adr/0015-remove-the-leads-follow-up-sequence.md)). A free check now sends the report and nothing else.
+There is no follow-up sequence: the five emails that used to follow a free check (days 1, 3, 6, 10 and 14) were removed on 2026-11-16 ([ADR 0025](adr/0025-remove-the-leads-follow-up-sequence.md)). A free check now sends the report and nothing else.
 
 ## Flow
 

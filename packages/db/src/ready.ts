@@ -5,7 +5,7 @@
  */
 
 /** The newest migration this build of the code depends on. Bump with every new migration. */
-export const REQUIRED_MIGRATION = '0018_lifecycle_emails.sql';
+export const REQUIRED_MIGRATION = '0023_lifecycle_emails.sql';
 
 export class SchemaNotReadyError extends Error {
 	constructor(detail: string) {
