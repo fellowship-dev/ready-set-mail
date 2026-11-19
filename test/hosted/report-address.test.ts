@@ -229,12 +229,12 @@ describe('the fixed address files by verified ownership', () => {
     expect(w.stored().map(r => r.report_id)).toEqual(['z1', 'z2']);
   });
 
-  it('tls-rpt@ without a token is still refused (TLS-RPT keeps token addresses)', async () => {
+  it('tls-rpt@ without a token is refused when no domain with MTA-STS on owns the report', async () => {
     const w = await world();
     await w.connect(1);
     const m = fakeMessage(`tls-rpt@${RUA}`, tlsRptMime(tlsRptJson('a-corp.com')));
     await handleHostedEmail(m, w.env as any);
-    expect(m.setReject).toHaveBeenCalledWith('Unknown intake token');
+    expect(m.setReject).toHaveBeenCalledWith('Report is for a domain whose reports are not connected to this address');
   });
 });
 
@@ -307,7 +307,7 @@ describe('deployment settings', () => {
 
   it('GET /api/hosted/config says which hosted parts are on', async () => {
     const w = await world();
-    expect(await (await call(w.env, 'GET', '/api/hosted/config', { key: w.A.token })).json()).toEqual({ enabled: true, reports: true, records: false });
+    expect(await (await call(w.env, 'GET', '/api/hosted/config', { key: w.A.token })).json()).toEqual({ enabled: true, reports: true, records: false, mta_sts: false });
   });
 
   it('self-host: the route does not exist', async () => {

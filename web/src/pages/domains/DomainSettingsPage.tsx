@@ -13,7 +13,8 @@ import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteBu
 import { ApiError, api, errorMessage } from '../../lib/api';
 import { dmarcRecordProblem, hasReportAddress } from '../../lib/dmarc-record';
 import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
-import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useOnboardingStatus, useSpfFlatten, type MonitorSub } from '../../lib/domain-queries';
+import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useMtaSts, useOnboardingStatus, useSpfFlatten, type MonitorSub } from '../../lib/domain-queries';
+import { maxAgeWords } from '../../lib/mta-sts';
 import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
@@ -183,6 +184,9 @@ function DangerZone({ domain }: { domain: Domain }) {
 	const addOn = useAddOns().spf_flattening;
 	const spf = useSpfFlatten(domain.id, addOn);
 	const flattened = addOn ? (spf.data?.config ?? null) : null;
+	// Asked only when the dialog opens (the answer costs a DNS lookup): is MTA-STS enforcing, so senders may still hold its policy?
+	const mta = useMtaSts(domain.id, open);
+	const enforcing = mta.data?.config?.enabled && mta.data.config.mode === 'enforce';
 	const remove = useMutation({
 		mutationFn: (leaveSpf: boolean) => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}${leaveSpf ? '?leave_spf_record=1' : ''}`, { method: 'DELETE' }),
 		onSuccess: async (res) => {
@@ -212,11 +216,11 @@ function DangerZone({ domain }: { domain: Domain }) {
 					if (!o) remove.reset();
 				}}
 				title={`Remove ${domain.domain}?`}
-				description={stop ? null : 'All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.'}
-				confirmLabel={cleanupFailed ? 'Retry' : stop ? 'Try again' : 'Yes, remove'}
 				busyLabel="Removing…"
 				variant="danger"
 				busy={remove.isPending}
+				description={stop ? null : `All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.${enforcing ? ` MTA-STS is enforcing: senders that already fetched the policy may refuse to deliver to mail servers that are not in it for up to ${maxAgeWords(mta.data?.max_age ?? 604800)}.` : ''}`}
+				confirmLabel={cleanupFailed ? 'Retry' : stop ? 'Try again' : 'Yes, remove'}
 				error={remove.isError && !stop ? (cleanupFailed ? `${errorMessage(remove.error)} ${domain.domain} was NOT deleted. Nothing was removed, so you can retry.` : errorMessage(remove.error)) : null}
 				onConfirm={() => remove.mutate(false)}
 			>

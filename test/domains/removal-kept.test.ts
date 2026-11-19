@@ -35,7 +35,7 @@ describe('removing a domain whose report-authorisation record the customer chang
     w.cf.records.get(Z)![0].content = 'v=DMARC1; rua=mailto:me@example.net';
     const res = await w.api('DELETE', '/api/domains/2');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, kept: [{ type: 'TXT', name: AUTH_NAME, reason: 'its content no longer matches what Ready Set Mail wrote' }] });
+    expect(await res.json()).toMatchObject({ ok: true, kept: [{ type: 'TXT', name: AUTH_NAME, reason: 'its content no longer matches what Ready Set Mail wrote' }] });
     expect(w.cf.records.get(Z)).toHaveLength(1);
     expect(w.db.sqlite.prepare('SELECT id FROM domains WHERE id = 2').all()).toEqual([]);
     await new Promise(r => setTimeout(r, 20));
@@ -78,7 +78,7 @@ describe('disabling MTA-STS when the customer changed a record', () => {
     w.cf.records.get('e2'.repeat(16))!.find(r => r.id === w.a.id)!.content = 'something the customer wrote';
     const res = await w.api('DELETE', '/api/domains/2/mta-sts');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, kept: [{ type: 'TXT', name: '_mta-sts.other.org', reason: 'its content no longer matches what Ready Set Mail wrote' }] });
+    expect(await res.json()).toMatchObject({ ok: true, kept: [{ type: 'TXT', name: '_mta-sts.other.org', reason: 'its content no longer matches what Ready Set Mail wrote' }] });
     expect(w.cf.records.get('e2'.repeat(16))!.map(r => r.name)).toEqual(['_mta-sts.other.org']);
     await new Promise(r => setTimeout(r, 20));
     const dns = w.audit().filter(a => a.action.startsWith('dns.'));

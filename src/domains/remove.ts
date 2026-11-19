@@ -1,6 +1,7 @@
-// The resource cleanup of taking a domain out of service: its hosted records (and their quota in the shared zone) and its
-// report-authorisation DNS record. Shared by DELETE /api/domains/:id and by the eviction of an unproven holder.
+// The resource cleanup of taking a domain out of service: its hosted records (and their quota in the shared zone), its MTA-STS records and
+// policy host, and its report-authorisation DNS record. Shared by DELETE /api/domains/:id and by the eviction of an unproven holder.
 import { disableHosted } from '../hosted/service';
+import { retireMtaSts, type RetireReason, type RetiringView } from '../mta-sts/retire';
 import { hostedEnabled } from '../hosted/config';
 import { deprovisionDomain } from '../dns/provision';
 import { logAudit } from '../audit/log';
@@ -15,6 +16,20 @@ export async function removeHostedRecords(tenant: TenantContext, domain: DomainR
   if (!(hostedEnabled(tenant.env) && (await tenant.scope.hosted.get(domain.id)))) return false;
   await disableHosted(tenant, domain, {}, actor && { id: actor.id ?? undefined, email: actor.email ?? undefined }, ctx);
   return true;
+}
+
+/**
+ * Take a domain's MTA-STS out of service, the RFC 8461 section 8.3 way (src/mta-sts/retire.ts): a policy senders may hold keeps being served as `mode: none` until it has
+ * expired, then its hostname and records go; one nobody fetched goes at once. Returns the records kept now (a changed one is kept and returned) and what is retiring, for the
+ * answer to the person. Never throws: the daily job finishes it and removes operator-side leftovers (src/mta-sts/refresh.ts).
+ */
+export async function removeMtaSts(tenant: TenantContext, domain: DomainRow, actor?: Actor, ctx?: ExecutionContext, reason: RetireReason = 'removed'): Promise<{ kept: KeptRecord[]; retiring: RetiringView | null }> {
+  try {
+    return (await retireMtaSts({ tenant, domain, actor: actor ? { id: actor.id, email: actor.email } : undefined, ec: ctx }, reason)) ?? { kept: [], retiring: null };
+  } catch (e) {
+    console.warn(`removeMtaSts failed for domain ${domain.id}:`, e instanceof Error ? e.message : e);
+    return { kept: [], retiring: null };
+  }
 }
 
 /**

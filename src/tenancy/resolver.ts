@@ -10,6 +10,7 @@
 import type { Env } from '../index';
 import { IMPLICIT_WORKSPACE_ID, globalQueries, intakeLookups, workspaceLifecycle } from '@ready-set-mail/db';
 import { getMode } from './mode';
+import { reportDomainCandidates } from '../hosted/fixed-address';
 import { sessionWorkspaceResolver } from '../auth/resolver';
 
 export interface ResolvedWorkspace {
@@ -54,10 +55,11 @@ export async function resolveInboundWorkspace(env: Env, toAddress: string): Prom
 /**
  * Workspace that owns a monitored domain, for unauthenticated lookups keyed by hostname
  * (the MTA-STS policy file). Self-host: the workspace monitoring that hostname, else the implicit one.
- * Saas: the workspace of the hosted domain, or null when nobody hosts it (the caller answers 404).
+ * Saas: the workspace that owns the name by the proven-owner rule (the domain is live and proven), or null (the caller answers 404).
  */
 export async function resolveDomainOwner(env: Env, domain: string): Promise<string | null> {
   if (getMode(env) !== 'saas') return (env.DB && (await workspaceLifecycle(env.DB).byDomain(domain.toLowerCase()))) || IMPLICIT_WORKSPACE_ID;
   if (!env.DB) return null;
-  return (await intakeLookups(env.DB).hostedByDomain(domain.toLowerCase()))?.workspace_id ?? null;
+  const name = domain.toLowerCase();
+  return (await intakeLookups(env.DB).provenOwnerOf(name, reportDomainCandidates(name)))?.workspace_id ?? null;
 }

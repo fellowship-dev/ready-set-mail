@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1c16eedb-424f-46d6-8705-a2a24171ae94",
+  "id": "f817005c-7a4a-404e-8ad4-646f1323980f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "access_credentials": {
@@ -2133,6 +2133,92 @@
         }
       }
     },
+    "domain_milestones": {
+      "name": "domain_milestones",
+      "columns": {
+        "domain_id": {
+          "name": "domain_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "records_live_at": {
+          "name": "records_live_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "live_seen_by": {
+          "name": "live_seen_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_seen": {
+          "name": "policy_seen",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_seen_at": {
+          "name": "policy_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dns_read_at": {
+          "name": "dns_read_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_domain_milestones_workspace": {
+          "name": "idx_domain_milestones_workspace",
+          "columns": [
+            "workspace_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "domain_milestones_domain_id_domains_id_fk": {
+          "name": "domain_milestones_domain_id_domains_id_fk",
+          "tableFrom": "domain_milestones",
+          "tableTo": "domains",
+          "columnsFrom": [
+            "domain_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "domain_milestones_seen_by_check": {
+          "name": "domain_milestones_seen_by_check",
+          "value": "\"domain_milestones\".\"live_seen_by\" IN ('app', 'job')"
+        }
+      }
+    },
     "domains": {
       "name": "domains",
       "columns": {
@@ -2515,6 +2601,74 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "email_preferences": {
+      "name": "email_preferences",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_email_preferences_workspace": {
+          "name": "idx_email_preferences_workspace",
+          "columns": [
+            "workspace_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "email_preferences_user_id_workspace_id_kind_pk": {
+          "columns": [
+            "user_id",
+            "workspace_id",
+            "kind"
+          ],
+          "name": "email_preferences_user_id_workspace_id_kind_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "email_preferences_kind_check": {
+          "name": "email_preferences_kind_check",
+          "value": "\"email_preferences\".\"kind\" IN ('summary', 'tips')"
+        }
+      }
     },
     "google_postmaster_connections": {
       "name": "google_postmaster_connections",
@@ -3582,6 +3736,92 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "lifecycle_sends": {
+      "name": "lifecycle_sends",
+      "columns": {
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "domain_id": {
+          "name": "domain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "period": {
+          "name": "period",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_lifecycle_sends_user": {
+          "name": "idx_lifecycle_sends_user",
+          "columns": [
+            "user_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "lifecycle_sends_workspace_id_user_id_domain_id_kind_period_pk": {
+          "columns": [
+            "workspace_id",
+            "user_id",
+            "domain_id",
+            "kind",
+            "period"
+          ],
+          "name": "lifecycle_sends_workspace_id_user_id_domain_id_kind_period_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "lifecycle_sends_state_check": {
+          "name": "lifecycle_sends_state_check",
+          "value": "\"lifecycle_sends\".\"state\" IN ('claimed', 'sent', 'failed')"
+        }
+      }
+    },
     "memberships": {
       "name": "memberships",
       "columns": {
@@ -4008,6 +4248,120 @@
           "notNull": false,
           "autoincrement": false
         },
+        "via": {
+          "name": "via",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "policy_host": {
+          "name": "policy_host",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'worker_route'"
+        },
+        "ch_id": {
+          "name": "ch_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ch_status": {
+          "name": "ch_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "ch_ssl_status": {
+          "name": "ch_ssl_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "route_id": {
+          "name": "route_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_published_at": {
+          "name": "policy_published_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "mode_changed_at": {
+          "name": "mode_changed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "left_enforce_at": {
+          "name": "left_enforce_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_checked_at": {
+          "name": "last_checked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notice": {
+          "name": "notice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notice_at": {
+          "name": "notice_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fetch_checked_at": {
+          "name": "fetch_checked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fetch_ok": {
+          "name": "fetch_ok",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fetch_reason": {
+          "name": "fetch_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -4040,6 +4394,14 @@
             "workspace_id"
           ],
           "isUnique": false
+        },
+        "idx_mta_sts_checked": {
+          "name": "idx_mta_sts_checked",
+          "columns": [
+            "enabled",
+            "last_checked_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -4058,6 +4420,167 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "mta_sts_retiring": {
+      "name": "mta_sts_retiring",
+      "columns": {
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "domain": {
+          "name": "domain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode_before": {
+          "name": "mode_before",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mx_hosts": {
+          "name": "mx_hosts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "policy_id": {
+          "name": "policy_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "via": {
+          "name": "via",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "policy_host": {
+          "name": "policy_host",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'worker_route'"
+        },
+        "ch_id": {
+          "name": "ch_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "mta_sts_record_id": {
+          "name": "mta_sts_record_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tls_rpt_record_id": {
+          "name": "tls_rpt_record_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cname_record_id": {
+          "name": "cname_record_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cf_connection_id": {
+          "name": "cf_connection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "retire_after": {
+          "name": "retire_after",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_mta_sts_retiring_after": {
+          "name": "idx_mta_sts_retiring_after",
+          "columns": [
+            "retire_after"
+          ],
+          "isUnique": false
+        },
+        "idx_mta_sts_retiring_domain": {
+          "name": "idx_mta_sts_retiring_domain",
+          "columns": [
+            "domain"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "mta_sts_retiring_workspace_id_workspaces_id_fk": {
+          "name": "mta_sts_retiring_workspace_id_workspaces_id_fk",
+          "tableFrom": "mta_sts_retiring",
+          "tableTo": "workspaces",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "mta_sts_retiring_workspace_id_domain_pk": {
+          "columns": [
+            "workspace_id",
+            "domain"
+          ],
+          "name": "mta_sts_retiring_workspace_id_domain_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -5323,6 +5846,55 @@
           "notNull": false,
           "autoincrement": false
         },
+        "sts_success": {
+          "name": "sts_success",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sts_failure": {
+          "name": "sts_failure",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sts_failure_types": {
+          "name": "sts_failure_types",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reporter_auth": {
+          "name": "reporter_auth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reporter_tier": {
+          "name": "reporter_tier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reporter_identity": {
+          "name": "reporter_identity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "raw_json": {
           "name": "raw_json",
           "type": "text",
@@ -5348,6 +5920,16 @@
         }
       },
       "indexes": {
+        "idx_tls_reports_dedup": {
+          "name": "idx_tls_reports_dedup",
+          "columns": [
+            "domain_id",
+            "reporter_identity",
+            "report_id"
+          ],
+          "isUnique": true,
+          "where": "\"tls_reports\".\"report_id\" IS NOT NULL"
+        },
         "idx_tls_reports_domain": {
           "name": "idx_tls_reports_domain",
           "columns": [

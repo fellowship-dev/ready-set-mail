@@ -35,24 +35,51 @@ export interface KnownReporter {
   reportEmails: readonly string[];
   /** Or any address under one of these domains. */
   reportEmailDomains?: readonly string[];
+  /**
+   * The same reporter's TLS-RPT identity (RFC 8460), when it sends those reports: the From address of the report mail and the report's `contact-info`
+   * address. The DKIM organisation is the entry's own (`dkimOrgs`): RFC 8460 section 3 asks for a signature by the reporting domain. A DMARC report from
+   * the TLS From address does not count, and a TLS report from the DMARC one does not either: each kind matches only its own identity.
+   */
+  tls?: { from: readonly string[]; reportEmails: readonly string[]; evidence: readonly RegistryEvidence[] };
   /** A fact to say plainly when it is not confirmed. */
   caveat?: string;
   evidence: readonly RegistryEvidence[];
   verified: string;
 }
 
+/** Which report a carrier delivers: a DMARC aggregate report or a TLS-RPT report (RFC 8460). */
+export type ReportKind = 'dmarc' | 'tls';
+
 const VERIFIED = '2026-11-14';
 const MOX = 'test/fixtures/third-party/mox (mjl-/mox@b32f0de)';
+const PARSEDMARC_TLS = 'test/fixtures/third-party/parsedmarc/google.com_smtp_tls_report.eml (domainaware/parsedmarc@2425d651, Apache-2.0)';
+const TLSRPT_RS = 'kravietz/tlsrpt-rs@376b1888 tlsrpt/fixtures';
+const MTA_STS_EXPORTER = 'phi-ag/mta-sts-exporter@e8d7e550 examples';
 const FREITAG = 'test/fixtures/third-party/freitagsrunde (freitagsrunde/dmarc-report-aggregator@1967d79)';
 
 export const KNOWN_REPORTERS: readonly KnownReporter[] = [
   {
     id: 'google', label: 'Google', dkimOrgs: ['google.com'], from: ['noreply-dmarc-support@google.com'], reportEmails: ['noreply-dmarc-support@google.com'], verified: VERIFIED,
     evidence: [{ ref: `${MOX}/google.eml`, note: 'From noreply-dmarc-support@google.com; DKIM d=google.com (pass); report_metadata/email the same', copied: true }],
+    tls: {
+      from: ['noreply-smtp-tls-reporting@google.com'], reportEmails: ['smtp-tls-reporting@google.com'],
+      evidence: [
+        { ref: PARSEDMARC_TLS, note: 'From noreply-smtp-tls-reporting@google.com; DKIM d=google.com; TLS-Report-Submitter google.com; contact-info smtp-tls-reporting@google.com; organization-name "Google Inc."; period 00:00:00Z to 23:59:59Z', copied: true },
+        { ref: `${TLSRPT_RS}/google1.eml (licence not asserted: read, not copied)`, note: 'the same From, DKIM d=google.com signing the TLS-Report headers, Submitter google.com, contact-info smtp-tls-reporting@google.com', copied: false },
+        { ref: `${MTA_STS_EXPORTER}/google.json (MIT)`, note: 'contact-info smtp-tls-reporting@google.com, organization-name "Google Inc."', copied: false },
+      ],
+    },
   },
   {
     id: 'microsoft', label: 'Microsoft', dkimOrgs: ['microsoft.com'], from: ['dmarcreport@microsoft.com'], reportEmails: ['dmarcreport@microsoft.com'], verified: VERIFIED,
     evidence: [{ ref: `${MOX}/outlook.eml`, note: 'From "DMARC Aggregate Report" <dmarcreport@microsoft.com>; DKIM d=notification.microsoft.com (pass), organisational domain microsoft.com; metadata dmarcreport@microsoft.com', copied: true }],
+    tls: {
+      from: ['tlsrpt-noreply@microsoft.com'], reportEmails: ['tlsrpt-noreply@microsoft.com'],
+      evidence: [
+        { ref: `${TLSRPT_RS}/microsoft1.eml (licence not asserted: read, not copied)`, note: 'From <tlsrpt-noreply@microsoft.com>; DKIM d=microsoft.com; TLS-Report-Submitter microsoft.com (the signature does not cover the TLS-Report headers); contact-info tlsrpt-noreply@microsoft.com; organization-name "Microsoft Corporation"', copied: false },
+        { ref: `${MTA_STS_EXPORTER}/microsoft.json (MIT)`, note: 'contact-info tlsrpt-noreply@microsoft.com, organization-name "Microsoft Corporation"', copied: false },
+      ],
+    },
   },
   {
     id: 'yahoo', label: 'Yahoo (and AOL)', dkimOrgs: ['yahoo.com'], from: ['noreply@dmarc.yahoo.com'], reportEmails: ['dmarchelp@yahooinc.com', 'postmaster@dmarc.yahoo.com'], verified: VERIFIED,
@@ -106,8 +133,9 @@ export const NAMED_BUT_UNVERIFIED: ReadonlyArray<{ org: string; why: string }> =
 
 export interface RegistryEnv {
   /**
-   * Extra registry entries, one per `;` or newline, each `id|label|dkim-org[,dkim-org]|from[,from]|report-email[,report-email]` (lowercase). A from
-   * pattern may be `local@*.example.net`. Example: `acme|Acme Receiver|acme-mail.com|dmarc@acme-mail.com|dmarc@acme-mail.com`.
+   * Extra registry entries, one per `;` or newline, each `id|label|dkim-org[,dkim-org]|from[,from]|report-email[,report-email]` (lowercase), optionally
+   * followed by the TLS-RPT identity `|tls-from[,tls-from]|tls-contact-email[,tls-contact-email]`. A from pattern may be `local@*.example.net`.
+   * Example: `acme|Acme Receiver|acme-mail.com|dmarc@acme-mail.com|dmarc@acme-mail.com|tls@acme-mail.com|tls@acme-mail.com`.
    */
   INTAKE_KNOWN_REPORTERS?: string;
   /** Built-in entry ids to switch off, comma or space separated (`yahoo,fastmail`). */
@@ -140,14 +168,16 @@ export function parseOperatorEntries(raw: string | undefined): ParsedRegistry {
   const entries: KnownReporter[] = [];
   const issues: string[] = [];
   for (const line of (raw ?? '').split(/[;\n]+/).map((l) => l.trim()).filter(Boolean)) {
-    const [id, label, dkim, from, emails] = line.split('|').map((p) => p.trim().toLowerCase());
+    const [id, label, dkim, from, emails, tlsFrom, tlsEmails] = line.split('|').map((p) => p.trim().toLowerCase());
     const list = (v: string | undefined) => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
-    const dkimOrgs = list(dkim), froms = list(from), reportEmails = list(emails);
+    const dkimOrgs = list(dkim), froms = list(from), reportEmails = list(emails), tlsFroms = list(tlsFrom), tlsReportEmails = list(tlsEmails);
     if (!id || !/^[a-z0-9-]+$/.test(id) || !label || !dkimOrgs.length || !froms.length || !reportEmails.length) { issues.push(`${line}: expected id|label|dkim-org,…|from,…|report-email,…`); continue; }
     if (!dkimOrgs.every((d) => DOMAIN_RE.test(d)) || !froms.every((a) => FROM_RE.test(a)) || !reportEmails.every((a) => ADDRESS_RE.test(a))) { issues.push(`${line}: invalid domain or address`); continue; }
+    if (!!tlsFroms.length !== !!tlsReportEmails.length || !tlsFroms.every((a) => FROM_RE.test(a)) || !tlsReportEmails.every((a) => ADDRESS_RE.test(a))) { issues.push(`${line}: the TLS identity needs both tls-from and tls-contact-email, valid addresses`); continue; }
     if (RESERVED_IDS.has(id)) { issues.push(`${line}: id "${id}" is a built-in reporter id and cannot be reused (to replace a built-in entry, disable it with INTAKE_KNOWN_REPORTERS_DISABLE and use another id)`); continue; }
     if (RESERVED_LABELS.has(label)) { issues.push(`${line}: label "${label}" is a built-in reporter's name and cannot be reused`); continue; }
-    entries.push({ id, label: (label.charAt(0).toUpperCase() + label.slice(1)), dkimOrgs, from: froms, reportEmails, verified: 'operator', evidence: [{ ref: 'INTAKE_KNOWN_REPORTERS', note: 'added by the operator', copied: false }] });
+    const added: RegistryEvidence[] = [{ ref: 'INTAKE_KNOWN_REPORTERS', note: 'added by the operator', copied: false }];
+    entries.push({ id, label: (label.charAt(0).toUpperCase() + label.slice(1)), dkimOrgs, from: froms, reportEmails, verified: 'operator', evidence: added, ...(tlsFroms.length ? { tls: { from: tlsFroms, reportEmails: tlsReportEmails, evidence: added } } : {}) });
   }
   // The same id twice in the operator's list is ambiguous (which entry is it?): refuse every entry with that id.
   const seen = new Map<string, number>();
@@ -158,6 +188,9 @@ export function parseOperatorEntries(raw: string | undefined): ParsedRegistry {
 }
 
 /** The built-in entries minus the disabled ones, plus the operator's. */
+/** The reporters whose signed TLS reports count (they have a TLS identity): today Google and Microsoft, plus what the operator added. For the words on the MTA-STS page. */
+export const tlsReporterLabels = (env: RegistryEnv): string[] => effectiveRegistry(env).filter((e) => e.tls).map((e) => e.label);
+
 export function effectiveRegistry(env: RegistryEnv): KnownReporter[] {
   const off = new Set((env.INTAKE_KNOWN_REPORTERS_DISABLE ?? '').split(/[\s,;]+/).map((t) => t.trim().toLowerCase()).filter(Boolean));
   return [...KNOWN_REPORTERS.filter((e) => !off.has(e.id)), ...parseOperatorEntries(env.INTAKE_KNOWN_REPORTERS).entries];
@@ -171,18 +204,23 @@ const fromMatches = (pattern: string, address: string): boolean => {
   return local === aLocal && aDomain.endsWith('.' + suffix) && aDomain.length > suffix.length + 1;
 };
 
-/** The registry entries whose DKIM organisation and From address match this authenticated carrier (before the report email is known). */
-export function registryCandidates(dkimOrg: string | null, fromAddress: string | null, env: RegistryEnv): KnownReporter[] {
+/** The From patterns and accepted report emails of an entry for one kind of report; null when the reporter does not send that kind. */
+const identityOf = (e: KnownReporter, kind: ReportKind): { from: readonly string[]; reportEmails: readonly string[]; reportEmailDomains?: readonly string[] } | null =>
+  kind === 'tls' ? e.tls ?? null : e;
+
+/** The registry entries whose DKIM organisation and From address (of this kind of report) match this authenticated carrier (before the report email is known). */
+export function registryCandidates(dkimOrg: string | null, fromAddress: string | null, env: RegistryEnv, kind: ReportKind = 'dmarc'): KnownReporter[] {
   if (!dkimOrg || !fromAddress) return [];
   const from = fromAddress.toLowerCase();
-  return effectiveRegistry(env).filter((e) => e.dkimOrgs.includes(dkimOrg.toLowerCase()) && e.from.some((p) => fromMatches(p, from)));
+  return effectiveRegistry(env).filter((e) => e.dkimOrgs.includes(dkimOrg.toLowerCase()) && !!identityOf(e, kind)?.from.some((p) => fromMatches(p, from)));
 }
 
-/** Is the report's own `report_metadata/email` in the entry's accepted set? (The report's org_name is never consulted.) */
-export function reportEmailAccepted(entry: KnownReporter, reportEmail: string | null | undefined): boolean {
+/** Is the report's own `report_metadata/email` (DMARC) or `contact-info` address (TLS-RPT) in the entry's accepted set? (The report's org_name is never consulted.) */
+export function reportEmailAccepted(entry: KnownReporter, reportEmail: string | null | undefined, kind: ReportKind = 'dmarc'): boolean {
+  const id = identityOf(entry, kind);
   const e = (reportEmail ?? '').trim().toLowerCase();
-  if (!e.includes('@')) return false;
-  if (entry.reportEmails.includes(e)) return true;
+  if (!id || !e.includes('@')) return false;
+  if (id.reportEmails.includes(e)) return true;
   const domain = e.slice(e.lastIndexOf('@') + 1);
-  return (entry.reportEmailDomains ?? []).some((d) => domain === d || domain.endsWith('.' + d));
+  return (id.reportEmailDomains ?? []).some((d) => domain === d || domain.endsWith('.' + d));
 }

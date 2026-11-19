@@ -263,12 +263,22 @@ export const tlsReports = sqliteTable(
 		total_success: integer('total_success').notNull().default(0),
 		total_failure: integer('total_failure').notNull().default(0),
 		failure_details: text('failure_details'),
+		sts_success: integer('sts_success'),
+		sts_failure: integer('sts_failure'),
+		sts_failure_types: text('sts_failure_types'),
+		/** Who sent the report mail (src/dmarc/reporter-auth.ts, the rule DMARC reports use): pass | fail | none, the tier (counted | unknown | unauthenticated) and the identity (registry id, authenticated organisation, or ~unauth). NULL on rows stored before 0020. */
+		reporter_auth: text('reporter_auth'),
+		reporter_tier: text('reporter_tier'),
+		reporter_identity: text('reporter_identity'),
+		/** The reporter's own report-id, or `~period|<start>|<end>|<policy-domain>` when it sent none: the replay key within (domain, identity). */
+		report_id: text('report_id'),
 		raw_json: text('raw_json'),
 		created_at: integer('created_at').notNull().default(now),
 		workspace_id: workspaceId(),
 	},
 	(t) => [
 		unique().on(t.domain_id, t.org_name, t.date_begin),
+		uniqueIndex('idx_tls_reports_dedup').on(t.domain_id, t.reporter_identity, t.report_id).where(sql`${t.report_id} IS NOT NULL`),
 		index('idx_tls_reports_domain').on(t.domain_id, t.date_begin),
 		index('idx_tls_reports_workspace').on(t.workspace_id),
 		index('idx_tls_reports_date_end').on(t.date_end),
@@ -340,11 +350,28 @@ export const mtaStsConfig = sqliteTable(
 		tls_rpt_record_id: text('tls_rpt_record_id'),
 		cname_record_id: text('cname_record_id'),
 		last_error: text('last_error'),
+		via: text('via', { enum: ['cloudflare', 'manual'] }),
+		state: text('state', { enum: ['creating', 'waiting_records', 'waiting_certificate', 'waiting_policy', 'waiting_txt', 'active'] }).notNull().default('active'),
+		policy_host: text('policy_host', { enum: ['worker_route', 'saas_hostname'] }).notNull().default('worker_route'),
+		ch_id: text('ch_id'),
+		ch_status: text('ch_status'),
+		ch_ssl_status: text('ch_ssl_status'),
+		route_id: text('route_id'),
+		policy_published_at: integer('policy_published_at'),
+		mode_changed_at: integer('mode_changed_at'),
+		left_enforce_at: integer('left_enforce_at'),
+		last_checked_at: integer('last_checked_at'),
+		notice: text('notice'),
+		notice_at: integer('notice_at'),
+		/** The last fetch of the policy URL by the reconcile: when, did it pass (1/0; NULL: never fetched), one reason code. */
+		fetch_checked_at: integer('fetch_checked_at'),
+		fetch_ok: integer('fetch_ok'),
+		fetch_reason: text('fetch_reason'),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		workspace_id: workspaceId(),
 	},
-	(t) => [index('idx_mta_sts_workspace').on(t.workspace_id)],
+	(t) => [index('idx_mta_sts_workspace').on(t.workspace_id), index('idx_mta_sts_checked').on(t.enabled, t.last_checked_at)],
 );
 
 // ── Monitoring subscriptions (free-check "watch my domain") ──
@@ -806,6 +833,37 @@ export const removedDomains = sqliteTable(
 );
 
 /**
+ * An MTA-STS policy being taken down the RFC 8461 section 8.3 way: it serves `mode: none` (one day) until `retire_after` (the last served policy's max_age after the
+ * change), then its custom hostname and records go. It is NOT a reference to `domains`: a removed domain is gone, and an evicted one is renamed, but senders may still
+ * hold the policy, so the name and the ids to remove live here. Serving it needs no proof of the domain (a `none` policy can only stop senders from refusing).
+ */
+export const mtaStsRetiring = sqliteTable(
+	'mta_sts_retiring',
+	{
+		workspace_id: text('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+		/** The name as published (lowercase). */
+		domain: text('domain').notNull(),
+		reason: text('reason', { enum: ['lost_proof', 'removed', 'evicted'] }).notNull(),
+		/** What it was before: senders may hold an enforce policy for a week, a testing one for a day. */
+		mode_before: text('mode_before', { enum: ['testing', 'enforce'] }).notNull(),
+		mx_hosts: text('mx_hosts').notNull(),
+		policy_id: text('policy_id').notNull(),
+		via: text('via', { enum: ['cloudflare', 'manual'] }),
+		policy_host: text('policy_host', { enum: ['worker_route', 'saas_hostname'] }).notNull().default('worker_route'),
+		ch_id: text('ch_id'),
+		mta_sts_record_id: text('mta_sts_record_id'),
+		tls_rpt_record_id: text('tls_rpt_record_id'),
+		cname_record_id: text('cname_record_id'),
+		/** The Cloudflare connection that reached the domain's zone: the records are removed through it at the end, when no domain row links it any more. */
+		cf_connection_id: text('cf_connection_id'),
+		retire_after: integer('retire_after').notNull(),
+		last_error: text('last_error'),
+		created_at: integer('created_at').notNull().default(now),
+	},
+	(t) => [primaryKey({ columns: [t.workspace_id, t.domain] }), index('idx_mta_sts_retiring_after').on(t.retire_after), index('idx_mta_sts_retiring_domain').on(t.domain)],
+);
+
+/**
  * Zones that sit below an allowed zone but are NOT on the allow-list, as seen when the list was saved.
  * A child zone is delegated, so a record written for a name inside it in the parent zone is shadowed and
  * has no effect: such names are refused (with the blocking zone named) instead of written to the parent.
@@ -863,6 +921,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'tls_reports',
 	'spf_flatten_config',
 	'mta_sts_config',
+	'mta_sts_retiring',
 	'monitor_subscriptions',
 	'settings',
 	'invites',
@@ -882,6 +941,9 @@ export const WORKSPACE_OWNED_TABLES = [
 	'reporter_candidate_days',
 	'billing_orders',
 	'billing_checkout_sessions',
+	'domain_milestones',
+	'email_preferences',
+	'lifecycle_sends',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1171,5 +1233,77 @@ export const refreshRotations = sqliteTable(
 	(t) => [
 		index('idx_refresh_rotations_first_used').on(t.first_used_at),
 		check('refresh_rotations_state_check', sql`${t.state} IN ('pending', 'done')`),
+	],
+);
+
+// ── Lifecycle emails (0023) ─────────────────────────────────
+
+/** The kinds of email a person can turn off (src/lifecycle/email/preferences.ts). */
+export const EMAIL_PREFERENCE_KINDS = ['summary', 'tips'] as const;
+export type EmailPreferenceKind = (typeof EMAIL_PREFERENCE_KINDS)[number];
+
+/** Who first saw a domain's records live: a person on the dashboard (`app`), or the daily job (`job`). */
+export const LIVE_SEEN_BY = ['app', 'job'] as const;
+export type LiveSeenBy = (typeof LIVE_SEEN_BY)[number];
+
+export const LIFECYCLE_SEND_STATES = ['claimed', 'sent', 'failed'] as const;
+export type LifecycleSendState = (typeof LIFECYCLE_SEND_STATES)[number];
+
+/** One row per domain: when its DMARC record was first seen naming the reports address, and by whom. Written whatever PostHog is doing. */
+export const domainMilestones = sqliteTable(
+	'domain_milestones',
+	{
+		domain_id: integer('domain_id').primaryKey().references(() => domains.id, { onDelete: 'cascade' }),
+		workspace_id: text('workspace_id').notNull(),
+		records_live_at: integer('records_live_at'),
+		live_seen_by: text('live_seen_by', { enum: LIVE_SEEN_BY }),
+		/** The DMARC policy last observed for the domain (an opaque key) and when it was first seen at that value. */
+		policy_seen: text('policy_seen'),
+		policy_seen_at: integer('policy_seen_at'),
+		/** When the lifecycle job last read the domain's DMARC record in public DNS: the order of its read budget, least recently read first. */
+		dns_read_at: integer('dns_read_at'),
+	},
+	(t) => [
+		index('idx_domain_milestones_workspace').on(t.workspace_id),
+		check('domain_milestones_seen_by_check', sql`${t.live_seen_by} IN ('app', 'job')`),
+	],
+);
+
+/** A person's choice for one kind of email in one workspace. No row: the default for their role (src/lifecycle/email/preferences.ts). */
+export const emailPreferences = sqliteTable(
+	'email_preferences',
+	{
+		user_id: text('user_id').notNull(),
+		workspace_id: text('workspace_id').notNull(),
+		kind: text('kind', { enum: EMAIL_PREFERENCE_KINDS }).notNull(),
+		enabled: integer('enabled').notNull(),
+		updated_at: integer('updated_at').notNull().default(now),
+	},
+	(t) => [
+		primaryKey({ columns: [t.user_id, t.workspace_id, t.kind] }),
+		index('idx_email_preferences_workspace').on(t.workspace_id),
+		check('email_preferences_kind_check', sql`${t.kind} IN ('summary', 'tips')`),
+	],
+);
+
+/**
+ * Every lifecycle email, claimed before it is sent (INSERT OR IGNORE: the run whose insert changed a row is the one that sends). `domain_id` 0:
+ * not about one domain. `period` says which occurrence: `once`, an ISO week, a source, a policy state.
+ */
+export const lifecycleSends = sqliteTable(
+	'lifecycle_sends',
+	{
+		workspace_id: text('workspace_id').notNull(),
+		user_id: text('user_id').notNull(),
+		domain_id: integer('domain_id').notNull().default(0),
+		kind: text('kind').notNull(),
+		period: text('period').notNull(),
+		state: text('state', { enum: LIFECYCLE_SEND_STATES }).notNull(),
+		created_at: integer('created_at').notNull().default(now),
+	},
+	(t) => [
+		primaryKey({ columns: [t.workspace_id, t.user_id, t.domain_id, t.kind, t.period] }),
+		index('idx_lifecycle_sends_user').on(t.user_id, t.created_at),
+		check('lifecycle_sends_state_check', sql`${t.state} IN ('claimed', 'sent', 'failed')`),
 	],
 );

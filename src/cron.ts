@@ -5,6 +5,8 @@
 // row) is logged and skipped instead of stopping the workspaces after it.
 
 import { resolverFor } from './dns/resolver';
+import { lifecycleReadOrder } from '@ready-set-mail/db';
+import { hostedEnabled } from './hosted/config';
 import type { BoundEnv } from './index';
 import { loadTenant } from './tenancy/load';
 import { reportsAddressVia } from './hosted/report-address';
@@ -16,6 +18,7 @@ import { sendWeeklyDigests } from './digest/weekly';
 import { logAudit } from './audit/log';
 import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
 import { newSpfBudget, runSpfRefresh, type SpfBudget } from './spf/refresh';
+import { newBudget, runLifecycleForWorkspace, type Budget } from './lifecycle/email/run';
 import { snapshotDns } from './email/dns-snapshot';
 import { backfillVerdicts } from './lifecycle/verdict-backfill';
 import { runRetention } from './lifecycle/retention';
@@ -23,7 +26,7 @@ import { retryRevocations } from './lifecycle/revoke';
 import { sweepAgentClients } from './auth/mcp-issuer';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
 import { mapLimit } from './util/map-limit';
-import { discoverMxHosts, generatePolicyId, updateMtaStsTxtRecord } from './email/mta-sts';
+import { refreshMtaStsForTenant } from './mta-sts/refresh';
 
 const DNS_REFRESH_CONCURRENCY = 5; // DNS reads of the daily DNS refresh below, a few at a time
 
@@ -48,10 +51,13 @@ export async function runCronForWorkspaces(
   const workspaces = opts.workspaces ?? await listCronWorkspaces(env);
   await runFunnelCron(event, env);
   const spf = newSpfBudget(); // one budget for the whole invocation: the SPF refresh spends subrequests across every workspace
-  for (const workspaceId of workspaces) {
+  const lifecycle = newBudget(); // one budget for the whole invocation: the caps on lifecycle emails and on DNS reads are global, the reads also per workspace
+  // The workspace whose domains were read longest ago goes first, so the global cap on DNS reads is shared fairly (hosted lifecycle emails only).
+  const order = hostedEnabled(env) && event.cron === '0 11 * * *' ? await lifecycleReadOrder(env.DB, workspaces).catch(() => workspaces) : workspaces;
+  for (const workspaceId of order) {
     try {
       const tenant = await load(env, { workspaceId });
-      await runCron(event, tenant, ctx, spf);
+      await runCron(event, tenant, ctx, spf, lifecycle);
     } catch (e) {
       console.error(`[cron ${event.cron}] workspace ${workspaceId} failed:`, e instanceof Error ? `${e.name}: ${e.message}` : 'unknown error');
     }
@@ -72,16 +78,19 @@ export async function runDataLifecycle(env: BoundEnv): Promise<void> {
 }
 
 /** One cron tick for one workspace. */
-async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, spf: SpfBudget): Promise<void> {
-  // Daily product analytics — every day 11am UTC: hosted with PostHog configured only (docs/analytics.md); a no-op everywhere else.
+async function runCron(event: ScheduledController, tenant: TenantContext, ctx: ExecutionContext, spf: SpfBudget, lifecycle: Budget): Promise<void> {
+  // Every day 11am UTC. Product analytics: hosted with PostHog configured only (docs/analytics.md). Lifecycle emails: hosted only
+  // (src/lifecycle/email/run.ts): records live, first-report catch-up, no reports yet, and, claimed by the ISO week they report on, the weekly
+  // summary and the tips (Monday's run sends them; a later run of the same week catches up a missed Monday, once). Both are no-ops elsewhere.
   if (event.cron === '0 11 * * *') {
     dailyAnalytics(tenant, ctx);
+    await runLifecycleForWorkspace(tenant, ctx, lifecycle);
     // SPF flattening: re-resolve every flattened record from its stored original (src/spf/refresh.ts). Nothing happens where nobody turned it on.
     await runSpfRefresh(tenant, ctx, spf);
     return;
   }
 
-  // Weekly digest — every Monday 9am UTC
+  // Every Monday 9am UTC: the weekly digest on self-host (sendWeeklyDigests returns at once on hosted). No lifecycle email depends on this trigger.
   if (event.cron === '0 9 * * 1') {
     await sendWeeklyDigests(tenant);
     return;
@@ -144,46 +153,10 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     }
   }
 
-  // MTA-STS MX refresh — update policy_id in DNS if MX hosts changed
-  if (tenant.hasCloudflare()) {
-    const mtaConfigs = await tenant.scope.mtaSts.allEnabled();
-    for (const cfg of mtaConfigs) {
-      const domain = await tenant.scope.domains.getById(cfg.domain_id);
-      if (!domain) continue;
-      // Hosted MTA-STS records live in the hosted zone: src/hosted/cron.ts refreshes those.
-      if (await tenant.scope.hosted.get(cfg.domain_id)) continue;
-      try {
-        const liveMx = await discoverMxHosts(domain.domain);
-        if (liveMx.length === 0) {
-          // No MX answer: never publish an MTA-STS policy that lists no mx hosts.
-          console.warn(`[mta-sts] ${domain.domain}: no MX records found, leaving policy unchanged`);
-          continue;
-        }
-        const storedMx = cfg.mx_hosts ? cfg.mx_hosts.split(',').filter(Boolean) : [];
-        // Compare as sets: DNS answer order is not stable
-        const sortedLive = [...liveMx].sort();
-        const sortedStored = [...storedMx].sort();
-        const changed = sortedLive.length !== sortedStored.length || sortedLive.some((h, i) => h !== sortedStored[i]);
-        if (changed && cfg.mta_sts_record_id) {
-          const newPolicyId = generatePolicyId();
-          await updateMtaStsTxtRecord(tenant, domain.domain, cfg.mta_sts_record_id, newPolicyId);
-          await tenant.scope.mtaSts.updateMxHosts(cfg.domain_id, liveMx.join(','), newPolicyId);
-          console.log(`[mta-sts] ${domain.domain}: MX changed, policy_id updated`);
-          logAudit(tenant, {
-            actor_type: 'system',
-            action: 'cron.mta_sts_mx',
-            resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
-            before_value: { mx_hosts: storedMx, policy_id: cfg.policy_id },
-            after_value: { mx_hosts: liveMx, policy_id: newPolicyId },
-            meta: { cron: '0 8 * * *' },
-          }, ctx);
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tenant.scope.mtaSts.updateError(cfg.domain_id, msg);
-        console.error(`[mta-sts] ${domain.domain}: MX refresh error — ${msg}`);
-      }
-    }
+  // MTA-STS: look at every enabled row, oldest check first (src/mta-sts/refresh.ts). The hosted service does this once for the whole database
+  // in its own 11:00 job (src/hosted/cron.ts), so it never runs here twice.
+  if (tenant.mode !== 'saas' && tenant.hasCloudflare()) {
+    try { await refreshMtaStsForTenant(tenant, ctx); } catch (e) { console.error('[mta-sts] refresh failed:', e instanceof Error ? e.message : e); }
   }
 
   const subscriptions = await tenant.scope.monitor.active(200);

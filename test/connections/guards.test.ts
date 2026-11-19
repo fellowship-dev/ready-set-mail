@@ -25,7 +25,7 @@ describe('connection secrets stay in their lane', () => {
   });
 
   it('nothing outside the connection layer builds a CfClient from a stored connection', () => {
-    expect(using(/new CfClient\(/)).toEqual(['connections/service.ts', 'hosted/records.ts', 'tenancy/context.ts']);
+    expect(using(/new CfClient\(/)).toEqual(['connections/service.ts', 'hosted/records.ts', 'mta-sts/policy-host.ts', 'tenancy/context.ts']);
   });
 
   it('no logging call in src/connections can mention a token, code, state, secret or envelope', () => {

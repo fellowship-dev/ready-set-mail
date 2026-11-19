@@ -6,7 +6,6 @@ import { READ_ONLY_REASON } from '../src/lib/session';
 import { DomainDetailPage } from '../src/pages/domains/DomainDetailPage';
 import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { DomainSettingsPage } from '../src/pages/domains/DomainSettingsPage';
-import { MtaStsPage } from '../src/pages/wizards/MtaStsPage';
 import { fail, renderApp } from './render';
 import { noReach, viaParentReach } from './reach';
 
@@ -20,11 +19,10 @@ const pointers = [
 const status = (ps: Record<string, string | null> = {}, extra: Record<string, unknown> = {}) => ({
 	enabled: true,
 	hosted_id: 'abc',
-	mta_sts: false,
 	records: {},
 	pointers,
-	pointer_status: { dmarc: 'ok', spf: 'missing', tls_rpt: 'wrong', mta_sts: null, checked_at: Math.floor(Date.now() / 1000) - 120, ...ps },
-	level_inputs: { dmarc_published: true, spf_published: false, mta_sts_published: false },
+	pointer_status: { dmarc: 'ok', spf: 'missing', tls_rpt: 'wrong', checked_at: Math.floor(Date.now() / 1000) - 120, ...ps },
+	level_inputs: { dmarc_published: true, spf_published: false },
 	...extra,
 });
 
@@ -152,14 +150,14 @@ describe('HostedPanel enable', () => {
 		});
 		const dlg = await openEnable();
 		await userEvent.type(dlg.getByLabelText(/SPF record/), 'v=spf1 include:x.test -all');
-		await userEvent.click(dlg.getByRole('checkbox', { name: /Also host MTA-STS/ }));
+		expect(dlg.queryByRole('checkbox')).not.toBeInTheDocument(); // MTA-STS is not a hosted record any more
 		await userEvent.click(dlg.getByRole('button', { name: 'Enable hosted records' }));
 
 		const alert = await screen.findByTestId('hosted-addresses');
 		expect(within(alert).getByText(/shown once, copy them now/)).toBeInTheDocument();
 		expect(within(alert).getByText(addresses.rua)).toBeInTheDocument();
 		expect(within(alert).getByText(addresses.tls_rpt)).toBeInTheDocument();
-		expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ spf_record: 'v=spf1 include:x.test -all', mta_sts: true });
+		expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ spf_record: 'v=spf1 include:x.test -all' });
 
 		const list = await screen.findByRole('list', { name: 'Pointer records' });
 		expect(within(list).getByText('_dmarc.example.com')).toBeInTheDocument();
@@ -336,13 +334,13 @@ describe('Overview row for a hosted domain', () => {
 	const row = () => screen.findByRole('listitem', { name: 'example.com', busy: false });
 
 	it('reads level_inputs for a hosted domain whose pointers are verified', async () => {
-		card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
+		card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true } }));
 		const r = await row();
 		await waitFor(() => expect(within(r).getByRole('progressbar')).toHaveAttribute('aria-valuetext', 'Level 1 of 2: Authenticated'));
 	});
 
 	it('a record written in our zone that DNS does not point to yet is "Change prepared", not counted as published', async () => {
-		card(status({ dmarc: 'missing', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
+		card(status({ dmarc: 'missing', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true } }));
 		const r = await row();
 		await waitFor(() => expect(within(r).getByText('Change prepared')).toBeInTheDocument());
 		expect(within(r).getByText('Your DMARC record is written, but public DNS does not point to it yet.')).toBeInTheDocument();
@@ -351,7 +349,7 @@ describe('Overview row for a hosted domain', () => {
 	});
 
 	it('a pointer whose lookup failed is Unknown, not missing', async () => {
-		card(status({ dmarc: 'error', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
+		card(status({ dmarc: 'error', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true } }));
 		const r = await row();
 		await waitFor(() => expect(within(r).getByText('Unknown')).toBeInTheDocument());
 		expect(within(r).getByText('The last lookup of your DMARC pointer failed, so it is not counted as published.')).toBeInTheDocument();
@@ -366,7 +364,7 @@ describe('Overview row for a hosted domain', () => {
 	});
 
 	it('asks for every hosted status in one request, never one per domain', async () => {
-		const { calls } = card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true, mta_sts_published: false } }));
+		const { calls } = card(status({ dmarc: 'ok', spf: 'ok' }, { level_inputs: { dmarc_published: true, spf_published: true } }));
 		await row();
 		await waitFor(() => expect(calls.filter((c) => c.path === '/api/hosted/statuses')).toHaveLength(1));
 		expect(calls.some((c) => c.path === '/api/domains/1/hosted')).toBe(false);
@@ -377,32 +375,6 @@ describe('Overview row for a hosted domain', () => {
 		const r = await row();
 		await waitFor(() => expect(within(r).getByText('Unknown')).toBeInTheDocument());
 		expect(screen.queryByText(/pointer/)).not.toBeInTheDocument();
-	});
-});
-
-describe('MTA-STS wizard on a hosted domain', () => {
-	it('shows a dedicated state on 409 instead of the generic error', async () => {
-		renderApp(
-			<Routes>
-				<Route path="/domains/:id/mta-sts" element={<MtaStsPage />} />
-			</Routes>,
-			{
-				route: '/domains/3/mta-sts',
-				routes: {
-					'GET /api/domains/3/mta-sts': { available: true, reach: noReach, config: null, summary: null },
-					'POST /api/domains/3/mta-sts': fail(409, 'MTA-STS is hosted for this domain'),
-				},
-			},
-		);
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		const enable = await screen.findByRole('button', { name: 'Enable MTA-STS' });
-		await waitFor(() => expect(enable).toBeEnabled());
-		await userEvent.click(enable);
-		expect(await screen.findByText("This domain's MTA-STS is hosted by Ready Set Mail")).toBeInTheDocument();
-		expect(screen.queryByText('Could not enable MTA-STS')).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Enable MTA-STS' })).not.toBeInTheDocument();
-		expect(screen.getByRole('link', { name: /Hosted records on the domain page/ })).toHaveAttribute('href', '/domains/3');
 	});
 });
 

@@ -35,7 +35,7 @@ Three handlers are exported:
 Routing priority (evaluated top to bottom):
 
 1. If `env.DB` is missing → return setup page (503 HTML with wrangler setup instructions)
-2. `mta-sts.*` hostname + `/.well-known/mta-sts.txt` path → serve MTA-STS policy file (RFC 8461)
+2. `mta-sts.*` hostname → the MTA-STS policy file at `/.well-known/mta-sts.txt` and a 404 for everything else that reaches the Worker (RFC 8461; `src/mta-sts/serve.ts`; which paths reach it: [docs/mta-sts.md](mta-sts.md#other-paths-on-a-policy-host))
 3. MCP/OAuth/discovery and agent-connection routes → installation-owned OAuth adapter with current D1 principal/grant checks
 4. `/health` or `/api/*` → `handleApi()` (dashboard API, DNS provisioning)
 5. Anything else → `env.ASSETS.fetch(request)` (dashboard SPA)
@@ -50,11 +50,11 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 
 | Cron | Time | Task |
 |------|------|------|
-| `0 11 * * *` | 11am UTC daily | SPF flattening refresh (`runSpfRefresh`, `src/spf/refresh.ts`; [spf-flattening.md](spf-flattening.md)); hosted product analytics' daily step ("No Report After 3 Days"), a no-op unless PostHog is configured ([analytics.md](analytics.md)); then, on the hosted service, `src/hosted/cron.ts` |
-| `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` |
+| `0 11 * * *` | 11am UTC daily | SPF flattening refresh (`runSpfRefresh`, `src/spf/refresh.ts`; [spf-flattening.md](spf-flattening.md)); on the hosted service only: the lifecycle emails of `src/lifecycle/email/` (records live, first-report catch-up, no reports yet; [hosted.md](hosted.md#lifecycle-emails)) and the product analytics' daily step ("No Report After 3 Days"; a no-op unless PostHog is configured, [analytics.md](analytics.md)); then `src/hosted/cron.ts` |
+| `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` (self-host; returns at once on the hosted service). Nothing in `src/lifecycle/email/` depends on it |
 | `0 10 * * *` | 10am UTC daily | Older installations only (they kept the trigger): the same SPF refresh as `0 11` |
 | `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, backfill pre-0022 alignment verdicts (`src/lifecycle/verdict-backfill.ts`), then retention sweeps (own invocation) |
-| `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS MX refresh |
+| `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS refresh (self-host; the hosted service runs it in its 11:00 job) |
 
 All handlers run `assertSchemaReady(env.DB)` (from `@ready-set-mail/db`) before business logic: the Worker no longer changes the schema, it only checks that `npm run migrate` has been run. Schema, migrations and queries live in `packages/db`.
 
@@ -117,7 +117,8 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 |---------------|------|
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
 | `src/spf/refresh.ts`, `src/spf/target.ts` | SPF flattening: turn on, refresh, turn off, roll back, the daily job, over `flattenFromSource` in `packages/dns-checks/src/spf-flatten.ts`; where the record lives (the customer's zone or the hosted zone) |
-| `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + Cloudflare provisioning |
+| `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + the customer's three records (`createPolicyHostCname`, `createTlsRptRecord`, `createPolicyIdRecord`, `deprovisionMtaSts`) |
+| `src/mta-sts/` | MTA-STS (ADR 0026): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |
 
 Public Suffix List data comes from the `tldts` dependency; update it with `npm update tldts`.

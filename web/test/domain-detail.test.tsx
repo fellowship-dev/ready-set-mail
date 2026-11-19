@@ -219,6 +219,14 @@ describe('DomainDetailPage', () => {
 	});
 });
 
+describe('DomainDetailPage: the DNS tools section', () => {
+	it('is not shown when neither tool is available and neither is set up (hosted without policy hosting)', async () => {
+		page({ routes: routes() });
+		await screen.findByRole('region', { name: 'Do this next' });
+		await waitFor(() => expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument());
+	});
+});
+
 describe('DomainDetailPage: the first screen says what to do', () => {
 	it('leads with "Do this next": one to three actions as Do this / Why, with who acts, most urgent first', async () => {
 		page({ routes: routes() });

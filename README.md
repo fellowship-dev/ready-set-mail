@@ -34,9 +34,9 @@ SPF has a hard limit of 10 DNS lookups. Add a third mail provider and you're ove
 
 ### MTA-STS / TLS-RPT
 
-MTA-STS (RFC 8461) lets you publish a policy that tells sending MTAs to require TLS when delivering to your domain — no opportunistic downgrade. Ready Set Mail provisions the three required DNS records, serves the policy file at the required `mta-sts.yourdomain.com/.well-known/mta-sts.txt` HTTPS endpoint via Cloudflare Workers, and manages the mode lifecycle: always starts in `testing` (non-enforcing, just signaling), and the dashboard surfaces a graduation prompt once you're ready for `enforce`.
+MTA-STS (RFC 8461) lets you publish a policy that tells sending MTAs to require TLS when delivering to your domain — no opportunistic downgrade. Ready Set Mail provisions the three required DNS records, serves the policy file at the required `mta-sts.yourdomain.com/.well-known/mta-sts.txt` HTTPS endpoint via Cloudflare Workers, and manages the mode lifecycle: always starts in `testing` (non-enforcing, just signaling), and the MTA-STS page offers `enforce` only once at least 7 days of TLS reports show senders can use TLS to every mail server. On the hosted service the same page works without a Cloudflare connection (you add the records by hand). Plain-words guide, the records, the enforce rule, turning off and the operator's setup: [docs/mta-sts.md](docs/mta-sts.md).
 
-TLS-RPT (RFC 8460) is the reporting side: sending MTAs email JSON reports to `tls-rpt@reports.yourdomain.com` when they encounter TLS failures. Ready Set Mail parses and stores these, and the MTA-STS card in the dashboard shows a 30-day success/failure count so you know whether enforcement is actually breaking anything.
+TLS-RPT (RFC 8460) is the reporting side: sending MTAs email JSON reports to `tls-rpt@reports.yourdomain.com` when they encounter TLS failures. Ready Set Mail parses and stores these, and the MTA-STS page lists the last 30 days of reports (who sent each, successful and failed sessions, failure types) so you know whether enforcement is actually breaking anything.
 
 ```
 Sending MTA → attempts TLS → policy says "enforce" → must succeed or reject
@@ -98,9 +98,9 @@ A visitor emails their `check+<token>@<reports domain>` address and gets the rep
 
 | Variable | Free check |
 |---|---|
-| `MAIL_REPLY_TO` | **Required for replies.** The report ends with "Need help? Any doubts? Reply." and carries this Reply-To (a mailbox someone reads, e.g. routed with Email Routing). Unset: no Reply-To, and the Leads page (`GET /api/leads` → `delivery.warnings`) flags it even when the onboarding sequence is off. |
+| `MAIL_REPLY_TO` | **Required for replies.** The report ends with "Need help? Any doubts? Reply." and carries this Reply-To (a mailbox someone reads, e.g. routed with Email Routing). Unset: no Reply-To, and the setup check notes it. |
 | `SITE_URL` | Your public marketing site (`https://…`), linked from the report. Unset: no marketing link. `PUBLIC_BASE_URL` stays the Worker's own origin, for unsubscribe and confirmation links. |
-| `RETENTION_CHECK_RESULTS_DAYS` | How long check results are kept (default 30). The report states it; a sender enrolled in the follow-up emails is told their address and a result summary are kept for follow-ups until they unsubscribe (then only the address, on a do-not-contact list), a past lead that it is kept up to 12 months after their last check, a suppressed address that it stays on the do-not-contact list. |
+| `RETENTION_CHECK_RESULTS_DAYS` | How long check results are kept (default 30). The report states it; a suppressed address is told it stays on the do-not-contact list. |
 
 ---
 

@@ -1,6 +1,6 @@
-import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { domains, mtaStsConfig, spfFlattenConfig } from '../schema';
+import { domains, mtaStsConfig, mtaStsRetiring, spfFlattenConfig } from '../schema';
 
 export type MtaStsMode = 'testing' | 'enforce';
 
@@ -152,6 +152,11 @@ export function spfFlattenQueries(db: Db, workspaceId: string) {
 	};
 }
 
+export type MtaStsRow = typeof mtaStsConfig.$inferSelect;
+/** What a caller may change on a config row (the key and the workspace never). */
+export type MtaStsPatch = Partial<Omit<MtaStsRow, 'domain_id' | 'workspace_id' | 'created_at' | 'updated_at'>>;
+export type NewMtaStsConfig = Pick<MtaStsRow, 'domain_id' | 'mode' | 'mx_hosts' | 'policy_id'> & MtaStsPatch;
+
 export function mtaStsQueries(db: Db, workspaceId: string) {
 	const mine = eq(mtaStsConfig.workspace_id, workspaceId);
 	const forDomain = (id: number) => and(mine, eq(mtaStsConfig.domain_id, id));
@@ -162,7 +167,7 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 			return db.select().from(mtaStsConfig).where(forDomain(domainId)).get().then((r) => r ?? null);
 		},
 
-		/** Enabled config for a hostname — used to serve /.well-known/mta-sts.txt. */
+		/** Enabled config for a hostname: used to serve /.well-known/mta-sts.txt. */
 		getEnabledByDomain(domain: string) {
 			return db
 				.select({ m: mtaStsConfig })
@@ -177,16 +182,33 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 			return db.select().from(mtaStsConfig).where(and(mine, eq(mtaStsConfig.enabled, 1))).all();
 		},
 
-		insert(c: { domain_id: number; mode: MtaStsMode; mx_hosts: string; policy_id: string; mta_sts_record_id: string | null; tls_rpt_record_id: string | null; cname_record_id: string | null }) {
+		/** This workspace's enabled configs, never-checked first, then the longest since a check. */
+		dueForRefresh(limit: number) {
+			return db.select().from(mtaStsConfig).where(and(mine, eq(mtaStsConfig.enabled, 1)))
+				.orderBy(sql`${mtaStsConfig.last_checked_at} IS NOT NULL`, mtaStsConfig.last_checked_at).limit(limit).all();
+		},
+
+		insert(c: NewMtaStsConfig) {
 			return db.insert(mtaStsConfig).values({ ...c, workspace_id: workspaceId }).run();
 		},
 
-		updateMode(domainId: number, mode: MtaStsMode, policy_id: string) {
-			return db.update(mtaStsConfig).set({ mode, policy_id, last_error: null, updated_at: touch }).where(forDomain(domainId)).run();
+		/** Change columns of one row. Returns once written. */
+		update(domainId: number, set: MtaStsPatch) {
+			return db.update(mtaStsConfig).set({ ...set, updated_at: touch }).where(forDomain(domainId)).run();
 		},
 
-		updateMxHosts(domainId: number, mx_hosts: string, policy_id: string) {
-			return db.update(mtaStsConfig).set({ mx_hosts, policy_id, updated_at: touch }).where(forDomain(domainId)).run();
+		/** A new mode: its id, when the mode changed, and (leaving enforce) when it left. The policy is as published as the caller says. */
+		updateMode(domainId: number, mode: MtaStsMode, policy_id: string, nowSeconds: number = Math.floor(Date.now() / 1000), opts: { leftEnforce?: boolean; published?: boolean; maxAge?: number } = {}) {
+			return db.update(mtaStsConfig).set({
+				mode, policy_id,
+				...(opts.maxAge === undefined ? {} : { max_age: opts.maxAge }), last_error: null, updated_at: touch, mode_changed_at: nowSeconds,
+				...(opts.leftEnforce ? { left_enforce_at: nowSeconds } : {}),
+				...(opts.published ? { policy_published_at: nowSeconds } : {}),
+			}).where(forDomain(domainId)).run();
+		},
+
+		updateMxHosts(domainId: number, mx_hosts: string, policy_id: string, nowSeconds?: number) {
+			return db.update(mtaStsConfig).set({ mx_hosts, policy_id, updated_at: touch, ...(nowSeconds === undefined ? {} : { policy_published_at: nowSeconds }) }).where(forDomain(domainId)).run();
 		},
 
 		updateError(domainId: number, error: string) {
@@ -195,6 +217,34 @@ export function mtaStsQueries(db: Db, workspaceId: string) {
 
 		delete(domainId: number) {
 			return db.delete(mtaStsConfig).where(forDomain(domainId)).run();
+		},
+	};
+}
+
+export type MtaStsRetiringRow = typeof mtaStsRetiring.$inferSelect;
+export type NewMtaStsRetiring = Omit<typeof mtaStsRetiring.$inferInsert, 'workspace_id' | 'created_at'>;
+
+/** The policies of this workspace that are being taken down (see `mtaStsRetiring` in schema.ts): by name, because the domain may be gone. */
+export function mtaStsRetiringQueries(db: Db, workspaceId: string) {
+	const mine = eq(mtaStsRetiring.workspace_id, workspaceId);
+	return {
+		get(domain: string) {
+			return db.select().from(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).get().then((r) => r ?? null);
+		},
+		/** One per name: starting again replaces what was there (a name that is retired twice has one policy to wait out, the later one). */
+		async put(r: NewMtaStsRetiring) {
+			await db.delete(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, r.domain.toLowerCase()))).run();
+			return db.insert(mtaStsRetiring).values({ ...r, domain: r.domain.toLowerCase(), workspace_id: workspaceId }).run();
+		},
+		update(domain: string, set: Partial<Omit<MtaStsRetiringRow, 'workspace_id' | 'domain' | 'created_at'>>) {
+			return db.update(mtaStsRetiring).set(set).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).run();
+		},
+		delete(domain: string) {
+			return db.delete(mtaStsRetiring).where(and(mine, eq(mtaStsRetiring.domain, domain.toLowerCase()))).run();
+		},
+		/** This workspace's entries whose time is up (self-host runs this per workspace). */
+		due(nowSeconds: number, limit: number) {
+			return db.select().from(mtaStsRetiring).where(and(mine, lte(mtaStsRetiring.retire_after, nowSeconds))).orderBy(mtaStsRetiring.retire_after).limit(limit).all();
 		},
 	};
 }

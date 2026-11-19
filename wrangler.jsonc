@@ -75,8 +75,8 @@
 
 	// Crons (what each does: docs/self-hosting.md#scheduled-jobs):
 	//   0 8 * * *  — daily DNS monitor check
-	//   0 9 * * 1  — weekly DMARC digest email (Mondays 9am UTC)
-	//   0 11 * * * — daily SPF flattening refresh (domains that turned it on), then hosted-only jobs (product analytics, the hosted service's reconcile)
+	//   0 9 * * 1  — weekly DMARC digest email on self-host (Mondays 9am UTC); nothing on the hosted service, whose weekly summary and tips run at 0 11
+	//   0 11 * * * — daily SPF flattening refresh (domains that turned it on), then hosted-only jobs (lifecycle emails: src/lifecycle/email/, product analytics' daily step, the hosted service's reconcile)
 	//                (an installation whose wrangler.local.jsonc still lists `0 10 * * *` keeps working: the same refresh answers it)
 	//   0 4 * * *  — daily data lifecycle: retry Cloudflare revocations, then retention sweeps (own invocation: src/cron.ts)
 	"triggers": {
@@ -84,10 +84,11 @@
 	},
 
 	// Email funnel (docs/email-funnel.md), all optional: RESEND_API_KEY (secret), AUTHSERV_ID, AUTHSERV_HEADER, MAIL_FROM, MAIL_REPLY_TO,
-	// PUBLIC_BASE_URL, POSTAL_ADDRESS, BOOKING_URL, SERVICE_PRICES, SITE_ORIGINS, ONBOARDING_SEQUENCE_ENABLED.
+	// PUBLIC_BASE_URL, POSTAL_ADDRESS, BOOKING_URL, SITE_ORIGINS.
 
 	// Hosted service only (MODE=saas + SAAS_ENABLED=1, see docs/hosted.md): INTAKE_DOMAIN, CANARY_DOMAIN,
 	// HOSTED_RECORDS_ZONE, HOSTED_RECORDS_LABEL, and the secret HOSTED_RECORDS_TOKEN. Self-hosters ignore these.
+	// Hosted MTA-STS (docs/hosted.md, ADR 0026): POLICY_HOST_ZONE, POLICY_HOST_TARGET, MAX_POLICY_HOSTS (default 100), and the secret POLICY_HOST_TOKEN.
 	// Hosted plan caps (positive integers, anything else keeps the default; never applied when self-hosting):
 	//   MAX_WORKSPACES_PER_USER    workspaces one person may own (default 5; workspaces they were only invited to do not count)
 	//   MAX_DOMAINS_PER_WORKSPACE  domains one workspace may hold (default 10)

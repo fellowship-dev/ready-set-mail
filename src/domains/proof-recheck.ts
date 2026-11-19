@@ -39,6 +39,7 @@ import type { TenantContext } from '../tenancy/context';
 import { loadTenant } from '../tenancy/load';
 import { EVICTED_KEEP_DAYS, demoteOrphanedSubdomains, within } from './ownership';
 import { stopSpf } from '../spf/refresh';
+import { removeMtaSts } from './remove';
 
 /** Zone-verified domains the daily job looks at in one run (oldest check first). Each costs at most one DNS-over-HTTPS query, shared by every domain of the same zone. */
 export const RECHECK_PER_RUN = 200;
@@ -158,8 +159,13 @@ export async function withdrawProof(env: BoundEnv, holder: ZoneHolder, why: Laps
   const tenant = await loadTenant(env, { workspaceId: holder.workspace_id });
   const demoted = await demoteOrphanedSubdomains(tenant);
   // A flattened SPF record is not refreshed for a domain that is no longer proven: it stops, and says what Cloudflare holds and how to put the original back.
-  await stopSpf(tenant, { id: holder.id, domain: holder.domain }, 'proof_lost');
-  for (const id of demoted) { const d = await tenant.scope.domains.getById(id); if (d) await stopSpf(tenant, d, 'proof_lost'); }
+  // An unproven domain is not an owner, so its policy is retired (src/mta-sts/retire.ts): it serves `none` until what senders hold has expired, then the policy host and the records go.
+  for (const id of [holder.id, ...demoted]) {
+    const row = await tenant.scope.domains.getById(id);
+    if (!row) continue;
+    await stopSpf(tenant, row, 'proof_lost');
+    await removeMtaSts(tenant, row, undefined, undefined, 'lost_proof');
+  }
   logAudit(tenant, {
     actor_type: 'system', action: 'domain.proof_lost', resource_type: 'domain', resource_id: String(holder.id), resource_name: holder.domain,
     meta: { reason: why === 'delegation' ? 'public DNS no longer delegates the zone to the name servers recorded at the proof' : 'Cloudflare no longer serves the zone, active and full, in the account that proved it', zone: holder.cf_zone_name, name_servers: parseServers(holder.cf_name_servers) },

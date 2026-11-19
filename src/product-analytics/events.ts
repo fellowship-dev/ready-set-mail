@@ -45,6 +45,9 @@ export const ROLES = ['owner', 'admin', 'member'] as const;
 export const DNS_PROVIDERS = ['cloudflare', 'godaddy', 'porkbun', 'namecheap', 'route53', 'google-cloud-dns', 'squarespace', 'digitalocean', 'vercel', 'ns1', 'other', 'mixed', 'unknown'] as const;
 /** Why SPF flattening could not keep a record current (src/spf/problems.ts). */
 export const SPF_PROBLEMS = ['include_unresolved', 'too_large', 'macro', 'no_addresses', 'connection_lost', 'edited_outside', 'record_missing', 'restore_failed', 'connection_gone', 'proof_lost', 'not_hostable'] as const;
+
+/** The lifecycle emails (src/lifecycle/email/kinds.ts) by kind. */
+export const LIFECYCLE_KINDS = ['records_live', 'first_report', 'no_reports', 'summary', 'tip_fix', 'tip_next'] as const;
 /** The agent tools (src/mcp/server.ts). */
 export const AGENT_TOOLS = ['whoami', 'list_products', 'list_domains', 'inspect_domain', 'add_domain', 'verify_domain', 'get_email_report', 'query_email_metrics', 'plan_remediation', 'get_source_status'] as const;
 
@@ -80,6 +83,8 @@ export const EVENTS = {
   'Records Live': { path: PATHS, records_by: RECORDS_BY, seen_by: SEEN_BY, method: ['cloudflare_zone', 'txt', 'parent', 'selfhost', 'other'], since_signup: LONG_WAIT, since_apply: SHORT_WAIT, domains_live: COUNT },
   'First Report Received': { path: PATHS, records_by: RECORDS_BY, since_live: LONG_WAIT },
   'No Report After 3 Days': { domains_waiting: COUNT },
+  // ── Lifecycle emails (src/lifecycle/email/): the kind only, never an address or a domain ──
+  'Lifecycle Email Sent': { kind: LIFECYCLE_KINDS },
   // ── Free email check from the dashboard ──
   'Email Check Started': {},
   'Email Check Done': { result: ['protected', 'at_risk', 'exposed', 'other'] },

@@ -2,7 +2,7 @@
 // Small exported functions, usable by any intake path (the single-address intake in PR 150 adopts the same ordering and tiers):
 //
 //   authenticateCarrier(raw, env)     read the topmost authentication header from the raw message and classify the carrier
-//   carrierFromHeaders(headers, env)  the same, from headers already read (`readAuthHeaders`)
+//   carrierFromHeaders(headers, env, kind)  the same, from headers already read (`readAuthHeaders`); kind 'tls' for TLS-RPT reports (below)
 //   decideTier(carrier, report, env)  after the report's metadata is known: counted / unknown / unauthenticated, and the reporter identity
 //   extractReportCapped(bytes, limit) decompress with a hard cap (src/dmarc/extract-report.ts)
 //   chargeIntakeCaps(...)             the pre-decompression caps (src/hosted/intake.ts)
@@ -19,11 +19,19 @@
 //   - the From header must hold exactly one address.
 // CONDITION 2, REGISTRY (src/dmarc/known-reporters.ts): the passing DKIM organisation, the From address and the report's own
 // report_metadata/email together match one entry. org_name, Submitter and subject never decide anything.
+//
+// TLS-RPT reports (RFC 8460) go through the SAME rule with `kind: 'tls'`: the carrier is matched against the entry's TLS identity (its own From
+// address and contact-info), never the DMARC one. Section 3: "Reports sent via SMTP MUST contain a valid DomainKeys Identified Mail (DKIM)
+// [RFC6376] signature by the reporting domain. Reports lacking such a signature MUST be ignored by the recipient." So for a TLS report a DMARC pass
+// that rests on SPF is not enough: the proof must be a passing DKIM signature (`via: 'dkim'`). Section 5.3: "The "TLS-Report-Submitter" value MUST
+// match the value found in the domain [RFC5321] of the "contact-info" from the report body." We take the receiver's verification of the signature
+// (the trusted Authentication-Results) exactly as for DMARC, and, to count, require the Submitter (if present) and the organisational domain of
+// contact-info to equal the authenticated DKIM organisation: the reporting domain.
 
 import { organizationalDomain } from '@ready-set-mail/dns-checks';
 import { authProof, parseAuthResults } from '../email/parse-headers';
 import { readAuthHeaders, resultsOverclaim, selectTrusted, type AuthHeaders } from '../email/sender-proof';
-import { registryCandidates, reportEmailAccepted, type KnownReporter, type RegistryEnv } from './known-reporters';
+import { registryCandidates, reportEmailAccepted, type KnownReporter, type RegistryEnv, type ReportKind } from './known-reporters';
 
 export type ReporterTier = 'counted' | 'unknown' | 'unauthenticated';
 
@@ -41,6 +49,8 @@ export interface AuthservEnv extends RegistryEnv {
 }
 
 export interface Carrier {
+  /** Which report this carrier is classified for: its registry candidates are the entries matching THAT kind's identity. */
+  kind: ReportKind;
   class: CarrierClass;
   authenticated: boolean;
   reason: AuthFailure | null;
@@ -61,14 +71,20 @@ export interface Carrier {
 const org = (d: string | null | undefined): string | null => (d ? (organizationalDomain(d) ?? d.toLowerCase()) : null);
 const domainOf = (address: string) => address.slice(address.lastIndexOf('@') + 1);
 
-/** Classify the carrier from the headers already read. */
-export function carrierFromHeaders(headers: AuthHeaders | undefined, env: AuthservEnv): Carrier {
+/** Can this instance tell who sent a message at all? Without AUTHSERV_ID and AUTHSERV_HEADER (ar|arc) nothing is authenticated (fail closed). */
+export function authservConfigured(env: AuthservEnv): boolean {
+  const mode = env.AUTHSERV_HEADER?.trim().toLowerCase();
+  return !!env.AUTHSERV_ID?.trim() && (mode === 'ar' || mode === 'arc');
+}
+
+/** Classify the carrier from the headers already read. `kind`: a DMARC aggregate report (the default) or a TLS-RPT report. */
+export function carrierFromHeaders(headers: AuthHeaders | undefined, env: AuthservEnv, kind: ReportKind = 'dmarc'): Carrier {
   const from = headers?.from ?? null;
   const fromOrg = from ? org(domainOf(from)) : null;
-  const base = { from, fromOrg, dkimOrg: null as string | null, via: null as Carrier['via'], candidates: [] as KnownReporter[] };
+  const base = { kind, from, fromOrg, dkimOrg: null as string | null, via: null as Carrier['via'], candidates: [] as KnownReporter[] };
   const fail = (reason: AuthFailure, presence: AuthPresence, extra: Partial<Carrier> = {}): Carrier => ({ class: 'unauthenticated', authenticated: false, reason, presence, ...base, ...extra });
   const mode = env.AUTHSERV_HEADER?.trim().toLowerCase();
-  if (!env.AUTHSERV_ID?.trim() || (mode !== 'ar' && mode !== 'arc')) return fail('authserv_unconfigured', 'unconfigured');
+  if (!authservConfigured(env)) return fail('authserv_unconfigured', 'unconfigured');
   if (!headers || !(mode === 'ar' ? headers.ar : headers.arc)) return fail('no_authentication_results', 'absent');
   const sel = selectTrusted(headers, env.AUTHSERV_ID, mode);
   if (sel.kind === 'foreign') return fail('authserv_id_not_found', 'foreign');
@@ -82,10 +98,11 @@ export function carrierFromHeaders(headers: AuthHeaders | undefined, env: Authse
   // EVERY dkim=pass counts (a message can carry several signatures); the one aligned with the From organisation wins, else the first passing one.
   const dkimOrg = fromOrg && proof.dkimPassOrgs.includes(fromOrg) ? fromOrg : proof.dkimPassOrgs[0] ?? null;
   if (!from || !fromOrg) return fail('from_invalid', 'present', { dkimOrg });
-  const via: Carrier['via'] = proof.dkimAligned(fromOrg) ? 'dkim' : proof.dmarcAligned(fromOrg) ? 'dmarc' : null;
+  // A TLS report must carry a valid DKIM signature by the reporting domain (RFC 8460 section 3): a DMARC pass that may rest on SPF alone does not prove it.
+  const via: Carrier['via'] = proof.dkimAligned(fromOrg) ? 'dkim' : kind === 'dmarc' && proof.dmarcAligned(fromOrg) ? 'dmarc' : null;
   if (!via) return fail('not_authenticated', 'present', { dkimOrg });
-  const candidates = registryCandidates(dkimOrg, from, env);
-  return { class: candidates.length ? 'registry' : 'authenticated', authenticated: true, reason: null, presence: 'present', from, fromOrg, dkimOrg, via, candidates };
+  const candidates = registryCandidates(dkimOrg, from, env, kind);
+  return { kind, class: candidates.length ? 'registry' : 'authenticated', authenticated: true, reason: null, presence: 'present', from, fromOrg, dkimOrg, via, candidates };
 }
 
 /**
@@ -119,7 +136,7 @@ export interface TierDecision {
   /** Did report_metadata/email match the matching registry entry's accepted set (null: no entry matched the carrier)? */
   emailMatched: boolean | null;
   /** Why the report is not counted (null when counted). */
-  reason: 'registry_email_not_accepted' | 'not_in_registry' | 'inconsistent_identity' | AuthFailure | null;
+  reason: 'registry_email_not_accepted' | 'not_in_registry' | 'inconsistent_identity' | 'submitter_mismatch' | AuthFailure | null;
   /** Stored value for reporter_auth: pass | fail | none. */
   auth: 'pass' | 'fail' | 'none';
 }
@@ -134,15 +151,20 @@ export const UNAUTH_IDENTITY = '~unauth';
  *                    identity: stored and visible, not counted: drift is never silently trusted)
  *   unauthenticated  everything else
  */
-export function decideTier(carrier: Carrier, report: { email?: string | null }): TierDecision {
+export function decideTier(carrier: Carrier, report: { email?: string | null; /** TLS-Report-Submitter values (TLS reports) */ submitters?: readonly string[] }): TierDecision {
   const auth: TierDecision['auth'] = carrier.authenticated ? 'pass' : carrier.reason === 'authserv_unconfigured' || carrier.reason === 'no_authentication_results' ? 'none' : 'fail';
   if (!carrier.authenticated) return { tier: 'unauthenticated', identity: UNAUTH_IDENTITY, knownAs: null, emailMatched: null, reason: carrier.reason, auth };
-  const entry = carrier.candidates.find((e) => reportEmailAccepted(e, report.email));
-  if (entry) return { tier: 'counted', identity: entry.id, knownAs: entry.label, emailMatched: true, reason: null, auth };
+  // TLS-RPT (RFC 8460 section 5.3): the reporting domain is the signing organisation, and both the Submitter header and the contact-info domain say the same one.
+  const tlsConsistent = carrier.kind !== 'tls' || (!!carrier.dkimOrg && org(report.email?.includes('@') ? domainOf(report.email.trim().toLowerCase()) : null) === carrier.dkimOrg
+    && (report.submitters ?? []).length <= 1 && (report.submitters ?? []).every((s) => org(s) === carrier.dkimOrg));
+  const entry = carrier.candidates.find((e) => reportEmailAccepted(e, report.email, carrier.kind));
+  if (entry && tlsConsistent) return { tier: 'counted', identity: entry.id, knownAs: entry.label, emailMatched: true, reason: null, auth };
+  // Signed by the registry's organisation but the report says another reporting domain: stored, not counted, and under the plain organisation (not the registry id), so it can never take a real report's id.
+  if (entry) return { tier: 'unknown', identity: carrier.dkimOrg ?? entry.id, knownAs: null, emailMatched: true, reason: 'submitter_mismatch', auth };
   if (carrier.candidates.length) return { tier: 'unknown', identity: carrier.candidates[0].id, knownAs: null, emailMatched: false, reason: 'registry_email_not_accepted', auth };
   const identityOrg = carrier.dkimOrg ?? (carrier.via === 'dmarc' ? carrier.fromOrg : null);
   const emailOrg = report.email?.includes('@') ? org(domainOf(report.email.trim().toLowerCase())) : null;
-  if (identityOrg && identityOrg === carrier.fromOrg && emailOrg && (emailOrg === identityOrg || emailOrg === carrier.fromOrg)) {
+  if (identityOrg && identityOrg === carrier.fromOrg && emailOrg && (emailOrg === identityOrg || emailOrg === carrier.fromOrg) && tlsConsistent) {
     return { tier: 'unknown', identity: identityOrg, knownAs: null, emailMatched: null, reason: 'not_in_registry', auth };
   }
   return { tier: 'unauthenticated', identity: UNAUTH_IDENTITY, knownAs: null, emailMatched: null, reason: 'inconsistent_identity', auth: 'fail' };

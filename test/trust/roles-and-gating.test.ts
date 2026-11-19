@@ -165,22 +165,22 @@ describe('the hosted service switches off the self-host-only account endpoints',
     expect(ok.status).toBe(200);
   });
 
-  it('MTA-STS: hosted refuses a domain without hosted records and writes nothing; self-host still routes it', async () => {
+  it('MTA-STS: hosted without policy hosting configured refuses to turn it on and writes nothing (the capability check, not a blanket 404); self-host still routes it', async () => {
     const hdb = createMigratedD1();
     const hosted = makeEnv(hdb, { MODE: 'saas', SAAS_ENABLED: '1' });
     const { signupVerified } = await import('../auth/helpers');
     const token = await signupVerified(hosted, 'a@example.com');
     const ws = hdb.sqlite.prepare('SELECT workspace_id FROM memberships').get().workspace_id as string;
     hdb.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, ?, 'a-corp.com', '', 'txt')").run(ws);
-    for (const m of ['POST', 'PATCH', 'DELETE']) {
-      const res = await call(hosted, m, '/api/domains/1/mta-sts', { key: token, body: m === 'PATCH' ? { mode: 'enforce' } : {} });
-      expect(res.status, m).toBe(404);
-      expect((await json(res)).error, m).toMatch(/not available on the hosted service/);
-    }
+    const post = await call(hosted, 'POST', '/api/domains/1/mta-sts', { key: token, body: {} });
+    expect(post.status).toBe(403);
+    expect(await json(post)).toMatchObject({ code: 'mta_sts_unavailable', reason: 'not_configured' });
+    expect((await call(hosted, 'PATCH', '/api/domains/1/mta-sts', { key: token, body: { mode: 'enforce' } })).status).toBe(404); // nothing to change
+    expect((await call(hosted, 'DELETE', '/api/domains/1/mta-sts', { key: token, body: {} })).status).toBe(204); // nothing to remove
     expect(hdb.sqlite.prepare('SELECT COUNT(*) AS n FROM mta_sts_config').get().n).toBe(0);
     const read = await call(hosted, 'GET', '/api/domains/1/mta-sts', { key: token });
     expect(read.status).toBe(200);
-    expect((await json(read)).available).toBe(false); // the dashboard offers no card
+    expect(await json(read)).toMatchObject({ available: false, unavailable_reason: 'not_configured' }); // the card says why
 
     const w = await team();
     w.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address, verified_via) VALUES (1, 'ws_default', 'a-corp.com', '', 'txt')").run();

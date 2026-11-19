@@ -105,7 +105,7 @@ _Avoid_: recommendation, guidance, to-do
 
 **Report** (aggregate):
 A DMARC aggregate (RUA) report a mailbox provider sends about one domain for one day; TLS-RPT reports are separate.
-_Avoid_: digest (that is our weekly email), PDF (that is the export)
+_Avoid_: digest (the self-host Monday email; the hosted service sends the weekly summary instead), PDF (that is the export)
 Home: parsing `src/dmarc/`, storing `packages/db`.
 
 **Report address** — **four forms**:
@@ -115,6 +115,16 @@ Where a domain's DMARC record sends reports (`rua=mailto:…`).
 3. **Self-host:** `rua@<reports domain>`, the install's own reports domain. Built inline in `src/domains/service.ts`, `src/domains/bulk.ts`, `src/api/router.ts`, `src/onboarding/plan.ts` and `src/digest/weekly.ts`.
 4. **Agent and public report:** `dmarc@<domain>`, the domain's own mailbox, never ours. Proposed by `enforcedDmarc` and the fix values in `packages/report/src/fixes.ts`, and by the report catalog and renderer (`packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/render-md.ts`).
 _Avoid_: RUA email, inbox
+
+**TLS report**:
+A TLS-RPT (RFC 8460) JSON report a sending mail server sends about one domain: how many sessions used TLS, how many failed and why, per policy type. It is the evidence that MTA-STS works, but only a **counted** one: RFC 8460 requires a valid DKIM signature by the reporting domain, so a report counts when its mail is authenticated and from a known reporter (the registry's TLS identity of Google or Microsoft, decided by the same rule as DMARC reports: `decideTier` in `src/dmarc/reporter-auth.ts`); every other report is stored and shown, labelled, and never moves the enforce decision. It is evidence because the Worker cannot open a connection to a customer's mail server (no outbound port 25). On the hosted service the address is `tls-rpt@<INTAKE_DOMAIN>`, built by `tlsReportAddress` in `src/hosted/fixed-address.ts`, routed by `policies[].policy.policy-domain` to the proven owner whose MTA-STS is on (`peekTlsPolicyDomain` and `attributeTlsReport` in `src/hosted/tls-intake.ts`); self-host: `tls-rpt@<reports domain>`. Each stored report keeps the sessions of MTA-STS policies apart (`stsStats` in `src/email/tls-rpt.ts`).
+_Avoid_: DMARC report (those are the aggregate reports above)
+Home: `handleTlsRptReport` in `src/email/tls-rpt.ts`; the numbers `reports.tlsSummary` and `reports.tlsEvidence` (counted reports only) in `packages/db`.
+
+**Policy host**:
+The hostname `mta-sts.<domain>` that serves a domain's MTA-STS policy over HTTPS from this Worker, and how it gets a certificate a sender trusts (RFC 8461 section 3.3): `worker_route` (a proxied CNAME in the same Cloudflare account) or `saas_hostname` (a DNS-only CNAME and a Cloudflare for SaaS custom hostname in the operator's zone; every policy host is reached through the ONE route the hosted deploy config declares). It answers one request, the policy file; everything else on it is a 404. It is **served** only when Ready Set Mail has fetched the policy address and got the exact policy (`fetchPolicyProof` in `src/mta-sts/reconcile.ts`); it is **retired** (served as `mode: none` until senders' cached policy has expired) when its domain is removed, loses proof or is evicted (`src/mta-sts/retire.ts`). The word "policy server" in older code comments means this.
+_Avoid_: MTA-STS server, policy endpoint
+Home: `strategyFor` and `OperatorZone` in `src/mta-sts/policy-host.ts`; serving `src/mta-sts/serve.ts`; which workspace owns a name `resolvePolicyHost`, also in `src/mta-sts/serve.ts` (there is one `policy-host.ts`, in `src/mta-sts/`). Decision: ADR 0026.
 
 **Connect reports** and **review**:
 The action that files a hosted domain's reports here: it sets the domain's report address (`connectReports`) and, where a Cloudflare connection reaches the zone, adds our address to its DMARC record. A review is what that write would do to the record in the zone now (`reviewReportRecord`: the record now, the record after, a hash of the live value); the Apply carries the reviewed hash and the person's choice, never a record, and is refused (`record_changed`) when the live record is not the one reviewed.
@@ -146,6 +156,13 @@ Home: `src/product-analytics/` (`capture.ts` the one sender, `events.ts` the all
 `settings.analytics_id`: one random UUID per workspace, made by the Worker (`crypto.randomUUID()`, never derived from an email, a domain, a user or a workspace id and never chosen by a link), used as the `distinct_id` of every event about the workspace. A sign-up by email code mints it with the pending attempt and the new workspace adopts it. The once-only markers (`analytics:live:<domain id>`, `analytics:applied:<domain id>`) are rows in the same `settings` table.
 _Avoid_: visitor id, user id, person id (events are personless)
 Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`, `claimMarker`).
+
+## Email
+
+**Lifecycle email**:
+An email the hosted service sends an account holder because a stored fact about their domain became true (or verifiably did not happen by a deadline measured from one): records live, first report, no reports yet, the weekly summary and tips. Never on a bare timer. Each is claimed in `lifecycle_sends` before it is sent, so a second run sends nothing. Records live, first report and no reports yet are account notices (no unsubscribe); the weekly summary and the tips are optional (one-click off, per person and workspace, in Settings). The first-report email is the one that also exists on self-host.
+_Avoid_: drip, campaign, newsletter, the onboarding sequence (the free-check follow-up emails, deleted, ADR 0025), digest
+Home: `src/lifecycle/email/run.ts` (the job), `src/lifecycle/email/copy.ts` (the words), `src/lifecycle/email/analysis.ts` (what a week says), `src/lifecycle/email/preferences.ts` (who gets what), `src/lifecycle/email/routes.ts` (the off link and the Settings API); `src/notifications/first-report.ts`; `docs/hosted.md#lifecycle-emails`.
 
 ## Selling and agents
 

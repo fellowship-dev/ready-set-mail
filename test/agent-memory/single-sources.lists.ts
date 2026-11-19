@@ -56,6 +56,7 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  { concept: 'MTA-STS policy host (Cloudflare for SaaS custom hostnames and Worker routes in the operator\'s zone)', signature: /custom_hostnames/, owners: ['src/mta-sts/policy-host.ts'] },
   {
     concept: 'SPF flattening (resolving a stored original into a flat record)',
     // the names of the old and the new walkers: a second flattener that resolves includes into ip4:/ip6: terms would reuse or reinvent them
@@ -198,8 +199,8 @@ export const MUST_NOT_GROW: Duplicate[] = [
   },
   {
     concept: 'Report address construction',
-    // `rua@…`, `dmarc@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
-    signature: /(?<![\w.+-])(?:rua|dmarc)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
+    // `rua@…`, `dmarc@…`, `tls-rpt@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
+    signature: /(?<![\w.+-])(?:rua|dmarc|tls-rpt)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc|tls-rpt)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
     authoritative: 'src/hosted/fixed-address.ts',
     sites: [
       'packages/report/src/catalog/dmarc-missing.ts', 'packages/report/src/catalog/dmarc-p-none-no-rua.ts', 'packages/report/src/fixes.ts', 'packages/report/src/render-md.ts',
@@ -220,7 +221,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
     authoritative: 'packages/ui/src/components/status.tsx',
     sites: [
       'packages/ui/src/components/status.tsx', 'src/email/html-templates.ts', 'web/src/components/wizard/SeverityBadge.tsx', 'web/src/lib/reports.ts',
-      'web/src/pages/leads/LeadsPage.tsx', 'web/src/pages/wizards/setup/RoutingStep.tsx',
+      'web/src/pages/wizards/setup/RoutingStep.tsx',
     ],
   },
   {
@@ -233,7 +234,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
     concept: 'Fix-offer scope promising reject (contradicts ADR 0013)',
     signature: /moved to reject|move DMARC from none/,
     authoritative: 'src/billing/offer.ts',
-    sites: ['src/billing/offer.ts', 'src/funnel/copy.ts'],
+    sites: ['src/billing/offer.ts'],
   },
 ];
 

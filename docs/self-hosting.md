@@ -114,9 +114,9 @@ The Worker runs four cron triggers (times in UTC). They start when it is deploye
 
 | Cron | When | What |
 |---|---|---|
-| `0 8 * * *` | daily 08:00 | Re-reads each domain's DNS (SPF lookup count, DMARC policy), runs monitor checks and change alerts, rollout regression checks, MTA-STS MX refresh |
+| `0 8 * * *` | daily 08:00 | Re-reads each domain's DNS (SPF lookup count, DMARC policy), runs monitor checks and change alerts, rollout regression checks, the MTA-STS refresh ([docs/mta-sts.md](mta-sts.md)) |
 | `0 9 * * 1` | Mondays 09:00 | Weekly DMARC digest email |
-| `0 11 * * *` | daily 11:00 | SPF flattening refresh: re-resolves every flattened record from the original you had and rewrites it only when your providers' addresses changed (an address that left a provider stays until a second check, four hours later at the earliest, sees the same: [spf-flattening.md](spf-flattening.md)). It writes only for a domain whose owner turned flattening on; nothing is written for the others. Nothing else on a self-hosted installation (the hosted service's product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)). Older installations also list `0 10 * * *`: it runs the same refresh and can be removed |
+| `0 11 * * *` | daily 11:00 | SPF flattening refresh: re-resolves every flattened record from the original you had and rewrites it only when your providers' addresses changed (an address that left a provider stays until a second check, four hours later at the earliest, sees the same: [spf-flattening.md](spf-flattening.md)). It writes only for a domain whose owner turned flattening on; nothing is written for the others. Nothing else on a self-hosted installation (the hosted service's lifecycle emails and product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)). Older installations also list `0 10 * * *`: it runs the same refresh and can be removed |
 | `0 4 * * *` | daily 04:00 | Data lifecycle: retries failed Cloudflare revocations, then deletes data past its retention period ([data retention](data-retention.md)) |
 
 ## Upgrade
@@ -126,6 +126,8 @@ git pull && npm install && npm run deploy
 ```
 
 `npm run deploy` builds the dashboard, applies new migrations, then deploys, using your `wrangler.local.jsonc`. Until the migrations are applied the Worker answers 503 and inbound report mail is refused for the sender to retry, so do not deploy without them. Back up the database first if you want a rollback point: `npm run wrangler -- d1 export DB --remote --output backup.sql`. Details and rollback: [packages/db/UPGRADING.md](../packages/db/UPGRADING.md).
+
+**After this MTA-STS change** (migration `0024`): `wrangler.jsonc`'s assets routing is unchanged, so there is nothing to change in your `wrangler.local.jsonc` for it. **Enforce now needs `AUTHSERV_ID` and `AUTHSERV_HEADER`** (the same receiver-authentication setting DMARC reports use): TLS reports must carry a valid DKIM signature by the reporting domain (RFC 8460), and without those two settings none can be verified, so no domain can switch to enforce. On Workers Free also set `SUBREQUEST_LIMIT=50` (a Workers invocation may make 50 subrequests there, 10,000 on Paid, [limits](https://developers.cloudflare.com/workers/platform/limits/)). Details: [mta-sts.md](mta-sts.md#self-host).
 
 Coming from 1.x (v1.2.0 or earlier)? That is a new install next to the old one, not an upgrade: see [CHANGELOG.md](../CHANGELOG.md#upgrading-from-1x).
 

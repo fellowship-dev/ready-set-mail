@@ -275,9 +275,9 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const { spfOff, mtaOff } = useDnsToolsOff(domain.id); // the one predicate (web/src/lib/hosted.ts): SPF flattening is off where the workspace has not got the add-on
+	const { spfOff } = useDnsToolsOff(domain.id); // the one predicate (web/src/lib/hosted.ts): SPF flattening is off where the workspace has not got the add-on
 	const spfTool = useSpfFlatten(domain.id, !spfOff);
-	const mtaTool = useMtaSts(domain.id, !mtaOff);
+	const mtaTool = useMtaSts(domain.id);
 	const { canWrite } = useSession();
 	// Hosted, before report intake: no reports can arrive (see ReportsNotConnected).
 	const reportsOff = useReportsNotConnected(domain);
@@ -358,7 +358,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	const selectors = onboarding.data?.dkim.selectors.length;
 	// A record receivers do not apply as written (an invalid sp=) is not enforcing, whatever its p= says.
 	const enforcing = rollout.data && (rollout.data.current_policy === 'quarantine' || rollout.data.current_policy === 'reject') && !dmarcRecordProblem(rollout.data.current_record ?? null, `_dmarc.${domain.domain}`);
-	const toolsShown = !((spfOff || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && (mtaOff || (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config)));
+	const toolsShown = !((spfOff || (spfTool.isSuccess && !spfTool.data.available && !spfTool.data.config)) && (mtaTool.isSuccess && !mtaTool.data.available && !mtaTool.data.config));
 	const failing = sources.data?.sources.length ?? 0;
 	const oneCheck = sources.data?.one_check.sources ?? 0;
 	const unrecorded = sources.data?.not_recorded.sources ?? 0;
@@ -577,7 +577,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 				)}
 
 				{toolsShown ? (
-					<Disclosure title="DNS tools" summary={spfOff ? 'Optional tool that changes your DNS for you: MTA-STS.' : mtaOff ? 'Optional tool that changes your DNS for you: SPF flattening.' : 'Optional tools that change your DNS for you: SPF flattening and MTA-STS.'}>
+					<Disclosure title="DNS tools" summary={spfOff ? 'Optional tool that changes your DNS for you: MTA-STS.' : 'Optional tools that change your DNS for you: SPF flattening and MTA-STS.'}>
 						<DnsTools domainId={domain.id} />
 					</Disclosure>
 				) : null}

@@ -120,6 +120,18 @@ describe('DomainSettingsPage', () => {
 		expect(screen.getByRole('button', { name: /Download CSV/ })).toBeEnabled();
 	});
 
+	it('removal says in one sentence what senders may still do when MTA-STS was enforcing, and nothing about it otherwise', async () => {
+		const mta = (mode: 'testing' | 'enforce') => ({ available: true, config: { enabled: 1, mode }, max_age: mode === 'enforce' ? 604800 : 86400 });
+		const enforcing = page({ routes: routes({ 'GET /api/domains/1/mta-sts': mta('enforce') }) });
+		await userEvent.click(await screen.findByRole('button', { name: /Remove domain/ }));
+		expect(await within(await screen.findByRole('dialog')).findByText(/MTA-STS is enforcing: senders that already fetched the policy may refuse to deliver to mail servers that are not in it for up to 7 days\./)).toBeInTheDocument();
+		enforcing.unmount();
+		page({ routes: routes({ 'GET /api/domains/1/mta-sts': mta('testing') }) });
+		await userEvent.click(await screen.findByRole('button', { name: /Remove domain/ }));
+		await screen.findByRole('dialog');
+		expect(within(screen.getByRole('dialog')).queryByText(/MTA-STS is enforcing/)).toBeNull();
+	});
+
 	it('removal takes two steps and only then calls DELETE', async () => {
 		const { calls } = page({ routes: routes({ 'DELETE /api/domains/1': { ok: true } }) });
 		const remove = await screen.findByRole('button', { name: /Remove domain/ });

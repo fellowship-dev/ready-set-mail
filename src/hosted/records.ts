@@ -12,7 +12,6 @@
 //   <id>._dmarc.h.<zone>        TXT   v=DMARC1; p=…; rua=mailto:rua+<token>@<intake>
 //   <id>._spf.h.<zone>          TXT   flattened SPF (customers add include:<id>._spf.h.<zone>)
 //   <id>._tlsrpt.h.<zone>       TXT   v=TLSRPTv1; rua=mailto:tls-rpt+<token>@<intake>
-//   mta-sts.<id>.h.<zone>       TXT   v=STSv1; id=…     and a proxied AAAA so the Worker serves the policy
 
 import { CfClient, CfNotConfiguredError, type CfDnsRecord, type CfDnsRecordInput, type CfZone } from '../tenancy/cf-client';
 import { assertHostedDnsWrite } from '../dns/write-policy';

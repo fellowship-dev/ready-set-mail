@@ -4,10 +4,10 @@
  * it turns a token (from an inbound address) or a hosted id (from a policy hostname) into the
  * workspace and domain it belongs to, and returns nothing else.
  */
-import { and, count, eq, inArray, isNull, ne, gt, lt, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, ne, gt, lt, lte, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { batchStatements, getDb, type DbLike } from '../client';
-import { aggregateReports, domains, hostedDomains, intakeTokens, intakeUsage } from '../schema';
+import { aggregateReports, domains, hostedDomains, intakeTokens, intakeUsage, mtaStsConfig, mtaStsRetiring } from '../schema';
 
 /** How long the previous token keeps working after a rotation (receivers cache the rua address). */
 export const TOKEN_ROTATION_GRACE_SECONDS = 72 * 3600;
@@ -310,7 +310,7 @@ export function hostedQueries(db: Db, workspaceId: string) {
 			return db.update(hostedDomains).set(ids).where(forDomain(domainId)).run();
 		},
 
-		setPointers(domainId: number, p: { dmarc_pointer: PointerStatus; spf_pointer: PointerStatus; mta_sts_pointer: PointerStatus; tls_rpt_pointer: PointerStatus }, nowSeconds: number) {
+		setPointers(domainId: number, p: { dmarc_pointer: PointerStatus; spf_pointer: PointerStatus; mta_sts_pointer?: PointerStatus; tls_rpt_pointer: PointerStatus }, nowSeconds: number) {
 			return db.update(hostedDomains).set({ ...p, pointers_checked_at: nowSeconds }).where(forDomain(domainId)).run();
 		},
 
@@ -321,6 +321,33 @@ export function hostedQueries(db: Db, workspaceId: string) {
 }
 
 export interface IntakeTarget { workspace_id: string; domain_id: number; domain: string }
+
+/**
+ * The live, PROVEN rows among `candidates` (a report's domain and its parents) and the most specific of them, the owner. Proven means verified
+ * by TXT, Cloudflare or self-host, or by 'parent' only while a proven parent of the same workspace is still live (a subdomain admitted through a
+ * parent that has since gone proves nothing). A row whose proof lapsed is 'legacy' and never counts. Names are globally unique.
+ */
+async function provenOwners(db: Db, candidates: string[]) {
+	if (candidates.length === 0) return { live: [], owner: undefined };
+	const rows = await db
+		.select({ workspace_id: domains.workspace_id, domain_id: domains.id, domain: domains.domain, rua_address: domains.rua_address, verified_via: domains.verified_via })
+		.from(domains)
+		.where(
+			/* workspace-scope-exempt: domains.domain is globally unique and identifies the workspace */
+			and(inArray(domains.domain, candidates), isNull(domains.evicted_at), ne(domains.verified_via, 'legacy')),
+		)
+		.all();
+	rows.sort((a, b) => b.domain.length - a.domain.length);
+	// Every parent of a candidate is a candidate, so a 'parent' row's parents are all in `rows` (shortest last).
+	const proven = new Set<string>();
+	for (const r of [...rows].reverse()) {
+		const direct = r.verified_via !== 'parent';
+		const viaParent = rows.some((p) => p.workspace_id === r.workspace_id && proven.has(p.domain) && r.domain.endsWith(`.${p.domain}`));
+		if (direct || viaParent) proven.add(r.domain);
+	}
+	const live = rows.filter((r) => proven.has(r.domain));
+	return { live, owner: live[0] };
+}
 
 export function intakeLookups(dbLike: DbLike) {
 	const db = getDb(dbLike);
@@ -372,49 +399,78 @@ export function intakeLookups(dbLike: DbLike) {
 		 * is. Another workspace's parent never receives them. Names are globally unique.
 		 */
 		async connectedForReport(candidates: string[], address: string): Promise<IntakeTarget | null> {
-			if (candidates.length === 0) return null;
-			const rows = await db
-				.select({ workspace_id: domains.workspace_id, domain_id: domains.id, domain: domains.domain, rua_address: domains.rua_address, verified_via: domains.verified_via })
-				.from(domains)
-				.where(
-					/* workspace-scope-exempt: domains.domain is globally unique and identifies the workspace */
-					and(inArray(domains.domain, candidates), isNull(domains.evicted_at), ne(domains.verified_via, 'legacy')),
-				)
-				.all();
-			rows.sort((a, b) => b.domain.length - a.domain.length);
-			// Every parent of a candidate is a candidate, so a 'parent' row's parents are all in `rows` (shortest last).
-			const proven = new Set<string>();
-			for (const r of [...rows].reverse()) {
-				const direct = r.verified_via !== 'parent';
-				const viaParent = rows.some((p) => p.workspace_id === r.workspace_id && proven.has(p.domain) && r.domain.endsWith(`.${p.domain}`));
-				if (direct || viaParent) proven.add(r.domain);
-			}
-			const live = rows.filter((r) => proven.has(r.domain));
-			const owner = live[0];
+			const { live, owner } = await provenOwners(db, candidates);
 			if (!owner) return null;
 			const hit = live.find((r) => r.workspace_id === owner.workspace_id && (r.rua_address ?? '').trim().toLowerCase() === address.toLowerCase());
 			return hit ? { workspace_id: hit.workspace_id, domain_id: hit.domain_id, domain: hit.domain } : null;
 		},
 
-		/** The domain behind an opaque hosted id (the label in `mta-sts.<id>.h.<zone>`). */
-		hostedById: (hostedId: string): Promise<IntakeTarget | null> =>
-			db
-				.select({ workspace_id: hostedDomains.workspace_id, domain_id: hostedDomains.domain_id, domain: domains.domain })
-				.from(hostedDomains)
-				.innerJoin(domains, and(eq(domains.id, hostedDomains.domain_id), isNull(domains.evicted_at)))
-				.where(/* workspace-scope-exempt: the hosted id identifies the workspace */ eq(hostedDomains.hosted_id, hostedId))
-				.get()
-				.then((r) => r ?? null),
+		/**
+		 * The same owner rule for a TLS report on the fixed address: the most specific live, PROVEN domain among `candidates` owns it, and
+		 * the target is that domain when MTA-STS is on for it, else the nearest proven parent of the SAME workspace that has it on.
+		 */
+		async mtaStsForReport(candidates: string[]): Promise<IntakeTarget | null> {
+			const { live, owner } = await provenOwners(db, candidates);
+			if (!owner) return null;
+			const ids = live.filter((r) => r.workspace_id === owner.workspace_id).map((r) => r.domain_id);
+			if (ids.length === 0) return null;
+			const on = new Set(
+				(await db.select({ id: mtaStsConfig.domain_id }).from(mtaStsConfig)
+					.where(/* workspace-scope-exempt: the owner's workspace was decided by the proven-owner rule above */ and(eq(mtaStsConfig.workspace_id, owner.workspace_id), inArray(mtaStsConfig.domain_id, ids), eq(mtaStsConfig.enabled, 1))).all()).map((r) => r.id),
+			);
+			const hit = live.find((r) => r.workspace_id === owner.workspace_id && on.has(r.domain_id));
+			return hit ? { workspace_id: hit.workspace_id, domain_id: hit.domain_id, domain: hit.domain } : null;
+		},
 
-		/** The hosted domain for a customer hostname, for policy hosts served under the customer's own name. */
-		hostedByDomain: (domain: string): Promise<IntakeTarget | null> =>
-			db
-				.select({ workspace_id: hostedDomains.workspace_id, domain_id: hostedDomains.domain_id, domain: domains.domain })
-				.from(hostedDomains)
-				.innerJoin(domains, and(eq(domains.id, hostedDomains.domain_id), isNull(domains.evicted_at)))
-				.where(/* workspace-scope-exempt: domains.domain is globally unique and identifies the workspace */ eq(domains.domain, domain))
-				.get()
-				.then((r) => r ?? null),
+		/** The live, proven row that owns exactly `domain` (names are globally unique): who may serve its MTA-STS policy. Null when it is not proven or not live. */
+		async provenOwnerOf(domain: string, candidates: string[]): Promise<IntakeTarget | null> {
+			const { owner } = await provenOwners(db, candidates);
+			return owner && owner.domain === domain ? { workspace_id: owner.workspace_id, domain_id: owner.domain_id, domain: owner.domain } : null;
+		},
+
+		/** Custom hostnames the hosted service holds at Cloudflare right now (enabled saas_hostname configs, and those of policies still retiring; every workspace): the ceiling's count. */
+		async saasHostnameCount(): Promise<number> {
+			const r = await db.select({ n: count() }).from(mtaStsConfig)
+				.where(/* workspace-scope-exempt: an instance-wide count of enabled policy hosts */ and(eq(mtaStsConfig.policy_host, 'saas_hostname'), eq(mtaStsConfig.enabled, 1))).get();
+			const t = await db.select({ n: count() }).from(mtaStsRetiring)
+				.where(/* workspace-scope-exempt: an instance-wide count of policy hosts still retiring */ and(eq(mtaStsRetiring.policy_host, 'saas_hostname'), isNotNull(mtaStsRetiring.ch_id))).get();
+			return (r?.n ?? 0) + (t?.n ?? 0);
+		},
+
+		/**
+		 * The policy being retired for exactly `domain`, whoever's it was, or null: a retiring policy is served by name and needs no proof (a `none` policy can only stop senders
+		 * from refusing). The latest entry wins when two workspaces retired the same name in turn.
+		 */
+		async retiringPolicy(domain: string): Promise<{ workspace_id: string; domain: string; mx_hosts: string } | null> {
+			const r = await db.select({ workspace_id: mtaStsRetiring.workspace_id, domain: mtaStsRetiring.domain, mx_hosts: mtaStsRetiring.mx_hosts }).from(mtaStsRetiring)
+				.where(/* workspace-scope-exempt: served by name for any workspace; a none policy needs no proof */ eq(mtaStsRetiring.domain, domain.toLowerCase())).orderBy(desc(mtaStsRetiring.created_at)).limit(1).get();
+			return r ?? null;
+		},
+
+		/** Retiring policies whose time is up, every workspace, oldest first: the daily job finishes them. */
+		dueRetiring: (nowSeconds: number, limit: number) =>
+			db.select().from(mtaStsRetiring).where(/* workspace-scope-exempt: the daily job finishes every workspace's retired policies */ lte(mtaStsRetiring.retire_after, nowSeconds)).orderBy(mtaStsRetiring.retire_after).limit(limit).all(),
+
+		/** Another workspace (or this one) turns MTA-STS on for `domain` while a policy of that name retires: the new owner takes the policy host over, so the entries go without touching it. */
+		async dropRetiring(domain: string): Promise<void> {
+			await db.delete(mtaStsRetiring).where(/* workspace-scope-exempt: a new owner of the name takes the policy host over */ eq(mtaStsRetiring.domain, domain.toLowerCase())).run();
+		},
+
+		/** Workspaces with MTA-STS rows due for the daily refresh, never-checked first then the longest since a check, at most `limit` rows. */
+		dueMtaSts: (limit: number): Promise<{ workspace_id: string; domain_id: number }[]> =>
+			db.select({ workspace_id: mtaStsConfig.workspace_id, domain_id: mtaStsConfig.domain_id }).from(mtaStsConfig)
+				.where(/* workspace-scope-exempt: the daily job visits every workspace's enabled MTA-STS rows, oldest check first */ eq(mtaStsConfig.enabled, 1))
+				.orderBy(sql`${mtaStsConfig.last_checked_at} IS NOT NULL`, mtaStsConfig.last_checked_at).limit(limit).all(),
+
+		/** Names that have MTA-STS enabled on any workspace (as hostnames `mta-sts.<name>`): what the operator-side reconcile keeps. */
+		async mtaStsDomainNames(opts: { retiring?: boolean } = {}): Promise<Set<string>> {
+			const rows = await db.select({ domain: domains.domain }).from(mtaStsConfig)
+				.innerJoin(domains, eq(domains.id, mtaStsConfig.domain_id))
+				.where(/* workspace-scope-exempt: names are global; the reconcile keeps every enabled one */ and(eq(mtaStsConfig.enabled, 1), isNull(domains.evicted_at))).all();
+			if (opts.retiring === false) return new Set(rows.map((r) => r.domain.toLowerCase()));
+			const retiring = await db.select({ domain: mtaStsRetiring.domain }).from(mtaStsRetiring).where(/* workspace-scope-exempt: names are global; the reconcile keeps every retiring one until its time is up */ sql`1 = 1`).all();
+			return new Set([...rows.map((r) => r.domain.toLowerCase()), ...retiring.map((r) => r.domain)]);
+		},
 
 		/** Every hosted domain, for the daily zone diff (operator-wide, not tenant-facing). */
 		allHosted: (): Promise<HostedDomainRow[]> =>

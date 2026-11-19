@@ -123,7 +123,7 @@ describe('two concurrent requests for different workspaces in one isolate', () =
     expect(a.settings.fromEmail).toBe('noreply@reports.a-corp.com');
     expect(b.settings.fromEmail).toBe('noreply@reports.b-corp.org');
 
-    const params = { domain: 'x.com', changes: [], reportsDomain: 'reports.x.com' };
+    const params = { domain: 'x.com', changes: [], openUrl: null };
     const htmlA = buildDnsAlertHtml({ ...params, brand: a.brand });
     const htmlB = buildDnsAlertHtml({ ...params, brand: b.brand });
     expect(htmlA).toContain('#ff0000');

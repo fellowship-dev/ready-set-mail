@@ -2,7 +2,6 @@
 //
 //   _dmarc.customer.com      CNAME  <id>._dmarc.h.<zone>
 //   customer.com             TXT    v=spf1 … include:<id>._spf.h.<zone> …
-//   _mta-sts.customer.com    CNAME  mta-sts.<id>.h.<zone>
 //   _smtp._tls.customer.com  CNAME  <id>._tlsrpt.h.<zone>
 //
 // Checked over DNS-over-HTTPS with @ready-set-mail/dns-checks, whose four-way answer (ok / nodata / nxdomain /
@@ -19,7 +18,6 @@ import { hostedNames } from './records';
 export interface PointerReport {
   dmarc: PointerStatus;
   spf: PointerStatus;
-  mta_sts: PointerStatus;
   tls_rpt: PointerStatus;
 }
 
@@ -57,44 +55,38 @@ export async function verifyPointers(
 ): Promise<PointerReport> {
   const names = hostedNames(hostedId, apex);
   const d = normalizeName(domain);
-  const [dmarc, spf, mta_sts, tls_rpt] = await Promise.all([
+  const [dmarc, spf, tls_rpt] = await Promise.all([
     checkCname(resolver, `_dmarc.${d}`, names.dmarc),
     checkSpfInclude(resolver, d, names.spf),
-    checkCname(resolver, `_mta-sts.${d}`, names.mtaSts),
     checkCname(resolver, `_smtp._tls.${d}`, names.tlsRpt),
   ]);
-  return { dmarc, spf, mta_sts, tls_rpt };
+  return { dmarc, spf, tls_rpt };
 }
 
 /**
  * What the pointer status means for the domain's Level (Delivering → Authenticated → Protected):
  * a hosted record only counts as published once the customer's pointer to it is in place.
  */
-export function levelInputs(p: { dmarc: PointerStatus | null; spf: PointerStatus | null; mta_sts: PointerStatus | null }) {
+export function levelInputs(p: { dmarc: PointerStatus | null; spf: PointerStatus | null }) {
   return {
     dmarc_published: p.dmarc === 'ok',
     spf_published: p.spf === 'ok',
-    mta_sts_published: p.mta_sts === 'ok',
   };
 }
 
 /** The records the customer has to add, for the dashboard and the docs. */
-export function customerPointers(domain: string, hostedId: string, apex: string, opts: { mtaSts: boolean }) {
+export function customerPointers(domain: string, hostedId: string, apex: string) {
   const names = hostedNames(hostedId, apex);
   const d = normalizeName(domain);
   return [
     { purpose: 'dmarc', type: 'CNAME', name: `_dmarc.${d}`, value: names.dmarc },
     { purpose: 'spf', type: 'TXT', name: d, value: `include:${names.spf}`, note: 'add this include to your existing v=spf1 record; do not publish a second SPF record' },
     { purpose: 'tls_rpt', type: 'CNAME', name: `_smtp._tls.${d}`, value: names.tlsRpt },
-    ...(opts.mtaSts ? [
-      { purpose: 'mta_sts', type: 'CNAME', name: `_mta-sts.${d}`, value: names.mtaSts },
-      { purpose: 'mta_sts_host', type: 'CNAME', name: `mta-sts.${d}`, value: names.mtaSts },
-    ] : []),
   ];
 }
 
-type HostedRow = { dmarc_pointer: string | null; spf_pointer: string | null; mta_sts_pointer: string | null; tls_rpt_pointer: string | null };
-type Stored = { dmarc_pointer: PointerStatus; spf_pointer: PointerStatus; mta_sts_pointer: PointerStatus; tls_rpt_pointer: PointerStatus };
+type HostedRow = { dmarc_pointer: string | null; spf_pointer: string | null; tls_rpt_pointer: string | null };
+type Stored = { dmarc_pointer: PointerStatus; spf_pointer: PointerStatus; tls_rpt_pointer: PointerStatus };
 
 /** What to store after a check: the new answers, except that a failed lookup keeps the previous status. */
 export function mergePointerReport(prev: HostedRow, r: PointerReport): Stored {
@@ -102,7 +94,6 @@ export function mergePointerReport(prev: HostedRow, r: PointerReport): Stored {
   return {
     dmarc_pointer: keep(r.dmarc, prev.dmarc_pointer),
     spf_pointer: keep(r.spf, prev.spf_pointer),
-    mta_sts_pointer: keep(r.mta_sts, prev.mta_sts_pointer),
     tls_rpt_pointer: keep(r.tls_rpt, prev.tls_rpt_pointer),
   };
 }
