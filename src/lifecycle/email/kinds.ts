@@ -74,5 +74,11 @@ export const LIVE_EMAIL_MAX_AGE_SECONDS = 7 * 86400;
  * send a second one; before it, no first-report email could have been sent, so the daily catch-up sends it once (no upper time window: the claim ends it). Self-host is unaffected: the catch-up runs on hosted only.
  */
 export const FIRST_REPORT_EMAIL_LEGACY_UNTIL = Date.UTC(2026, 10, 16, 12, 6, 0) / 1000;
+/**
+ * The first ISO week (the `period` of a summary claim, `isoWeekId`) the weekly summary covers: it never summarises a week that ended before the
+ * summary shipped, so the catch-up of a missed Monday cannot send "Week of 9–15 Nov" on Fri 20 Nov, next to the first-report catch-up that
+ * already told the owner about the same report. The first summary is 16–22 Nov, sent by Monday 23 Nov's `0 11 * * *` run.
+ */
+export const SUMMARY_FIRST_WEEK = '2026-W47';
 /** A tip names a source only when it sent at least this many messages that did not pass. */
 export const TIP_MIN_MESSAGES = 10;

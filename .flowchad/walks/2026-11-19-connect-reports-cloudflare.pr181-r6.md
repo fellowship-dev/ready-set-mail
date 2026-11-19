@@ -1,0 +1,40 @@
+# Walk record: connect-reports-cloudflare
+
+- **Flow:** A hosted owner connects a verified domain's reports through Cloudflare
+- **Value moment:** Reports connected, waiting for the first report - the live DMARC record lists the shared report address and the domain is connected (GET /api/domains/:id/report-address says waiting); only for a workspace HOSTED_CONNECT_REPORTS admits
+- **Walked:** 2026-11-19T20:49:34.728Z
+- **Target:** http://127.0.0.1:8951 (local-copy)
+- **Commit:** 25ce01b5181d11f18342497a02c06ecdae25032a
+- **Kind:** screens
+- **Gate:** PASS
+- **Rules:** 0.5.0
+
+_Redacted best-effort (emails, numbers, tokens, URL query strings). Review before committing._
+
+Ready to hand to a human tester. Known rough edges are listed below; tell the tester about them first.
+
+### Known rough edges (1)
+
+- **NOISE-01** (should-fix) Everything visible serves the step — step 1: besides what the step needs: policy badge; Analytics and Settings buttons; the Do this next list (a DKIM item, and a second Connect reports item); the same chrome sits around steps 2 and 3
+
+### Measures
+
+| Measure | Previous | Now | Change |
+|---|---|---|---|
+| `screens_to_value` | — | 3 |  |
+| `decisions_to_value` | — | 2 |  |
+| `fields_to_value` | — | 0 |  |
+| `clicks_to_value` | — | 2 |  |
+| `words_to_value` | — | 688 |  |
+| `reading_time_to_value_s` | — | 173 |  |
+| `max_scroll_before_primary_vh` | — | 375: 0 · 1440: 0 |  |
+| `non_task_elements_to_value` | — | 10 |  |
+| `waits` | — | 0 |  |
+| `longest_wait_ms` | — | 867 |  |
+| `dead_ends` | — | 0 |  |
+| `loops` | — | 0 |  |
+| `time_to_value_ms` | — | 2753 |  |
+
+### Notes
+
+- staleness not checked: no deploy time given and no deploy check configured for the target

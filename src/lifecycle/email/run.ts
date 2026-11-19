@@ -34,7 +34,7 @@ import {
 import * as copy from './copy';
 import type { Mail, Footer, Who } from './copy';
 import {
-  FIRST_REPORT_EMAIL_LEGACY_UNTIL, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
+  FIRST_REPORT_EMAIL_LEGACY_UNTIL, SUMMARY_FIRST_WEEK, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
   MAX_LIVE_READS_PER_WORKSPACE, MAX_PER_RECIPIENT_PER_RUN, NO_REPORT_AFTER_SECONDS, stopped, switchOf, TIP_INTERVAL_SECONDS, tipsEnabled, type LifecycleKind,
 } from './kinds';
 import { markRecordsLive } from './milestones';
@@ -69,6 +69,10 @@ export interface LifecycleDeps {
   from?: string;
   /** Default: a live DNS-over-HTTPS read. */
   readDmarc?: (domain: string) => Promise<DmarcLookup>;
+  /** Tests only: where the first-report catch-up ends (default `FIRST_REPORT_EMAIL_LEGACY_UNTIL`). */
+  firstReportLegacyUntil?: number;
+  /** Tests only: the first week the summary covers (default `SUMMARY_FIRST_WEEK`). */
+  summaryFirstWeek?: string;
 }
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
@@ -259,7 +263,7 @@ async function sendFirstReports(w: W, only?: { domainId: number; reportId: numbe
   // The catch-up: a domain whose first counted report was stored before PR 182's real-time email went live (it could not be mailed, and no claim says
   // it was) and that has no first_report claim. No upper window: the claim ends it. A first report stored later was mailed by the real-time path,
   // which claims at store time (`only`), so the daily run never looks at it.
-  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : await w.q.reports.firstCountedBefore(FIRST_REPORT_EMAIL_LEGACY_UNTIL);
+  const found = only ? [{ domain_id: only.domainId, report_id: only.reportId }] : await w.q.reports.firstCountedBefore(w.deps.firstReportLegacyUntil ?? FIRST_REPORT_EMAIL_LEGACY_UNTIL);
   const items: Item<copy.FirstReportData>[] = [];
   for (const f of found) {
     const d = w.domains.find((x) => x.id === f.domain_id);
@@ -352,6 +356,7 @@ function tableRows(items: Array<{ domain: string; messages: number; passed: numb
 async function sendSummaries(w: W): Promise<void> {
   const week = lastCompleteWeek(w.now);
   const period = isoWeekId(week.start);
+  if (period < (w.deps.summaryFirstWeek ?? SUMMARY_FIRST_WEEK)) return; // a week that ended before the summary shipped: no claim, no send
   const due = preferenceRecipients(w.people, w.prefs, 'summary').filter((r) => !hasClaim(w, r.userId, 0, 'summary', period));
   if (due.length === 0 || stopped(w.env, 'summary') || !w.base) return;
   const data = await loadWeeks(w);

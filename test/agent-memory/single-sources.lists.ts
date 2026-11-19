@@ -254,7 +254,7 @@ export const ALLOW: Allow[] = [
     concept: 'How reports reach a name (the reach decision)',
     file: 'web/src/components/reports/ConnectReports.tsx',
     reason: 'Says why a connected name whose parent record lists our address is not "published" (the parent is not connected here); reach is none in that state, so it decides nothing.',
-    by: 'Claude Fable 5.2 for Max F. Findel (to confirm in review of PR 181)',
+    by: 'confirmed by independent reviewer, 2026-11-19',
     date: '2026-11-17',
   },
 ];

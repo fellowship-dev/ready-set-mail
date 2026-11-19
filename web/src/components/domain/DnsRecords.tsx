@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { errorMessage } from '../../lib/api';
 import { useApplyDmarc } from '../../lib/apply-dmarc';
-import { useReportAddress, useReportIntakeEnabled } from '../../lib/report-address';
+import { applyOffered, reportsArrive, useReportAddress, useReportIntakeEnabled } from '../../lib/report-address';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 import { isRevokedDkimKey } from '../../lib/dkim';
 import { DKIM_WILDCARD_LABEL, dkimWildcardSummary } from '../../lib/dkim-wildcard';
@@ -78,9 +78,14 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const reportsAddr = useReportAddress(domain.id, intakeOn);
 	// The record that applies to this name (its organizational domain's) already lists our address: its reports arrive (`reach`), so nothing is offered to publish.
 	const reachKind = reportsAddr.data?.available === true ? reportsAddr.data.reach.kind : null;
-	const inheritedReports = reachKind === 'inherited_record' || reachKind === 'via_parent';
+	const inheritedReports = (reachKind === 'inherited_record' || reachKind === 'via_parent') && reportsArrive(reportsAddr.data) === true;
 	const reportsLoading = intakeOn && reportsAddr.isLoading;
 	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && reportsAddr.data.reach.kind === 'none' && !reportsAddr.data.managed_by;
+	const pointerSentence = canConnect
+		? 'The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.'
+		: reportsAddr.data?.available && reportsAddr.data.address && applyOffered(reportsAddr.data)
+			? 'The record does not list the report address yet. Review the change in the DMARC reports panel on this page and press Apply.'
+			: null;
 	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
 	// enforces, and nothing is offered while the policy that applies is unknown. Never weaker than the effective policy.
@@ -208,13 +213,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
 					{holdOffer ? null : !upToDate && cfAvailable && intakeOn && ruaReady ? (
 						// Hosted with report intake: our address is written only by the Connect reports panel (ADR 0020), which reads the record as it is now. Said only where that panel's action is on the page.
-						<p className="text-ink-2">
-							{canConnect
-								? 'The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.'
-								: reportsAddr.data?.available && reportsAddr.data.address
-									? 'The record does not list the report address yet. Review the change in the DMARC reports panel on this page and press Apply.'
-									: null}
-						</p>
+						pointerSentence ? <p className="text-ink-2">{pointerSentence}</p> : null
 					) : !upToDate ? (
 						<>
 							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
