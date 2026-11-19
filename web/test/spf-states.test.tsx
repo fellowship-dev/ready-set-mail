@@ -15,6 +15,7 @@ import { DeleteButton } from '../src/pages/settings/WorkspaceSection';
 import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import type { SpfFlatStatus } from '../src/lib/types';
 import { me, renderApp, type Handler } from './render';
+import { noReach } from './reach';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const now = () => Math.floor(Date.now() / 1000);
@@ -23,14 +24,14 @@ const FLAT = 'v=spf1 ip4:192.0.2.1 ip4:192.0.2.2 ~all';
 const AT = Date.UTC(2026, 10, 16, 15, 20) / 1000;
 const pending = (over: Record<string, unknown> = {}) => ({ removed: { '_spf.foxtrot-help.net': ['ip4:198.51.100.0/28', 'ip4:198.51.100.64/28'] }, providers: ['_spf.foxtrot-help.net'], since: AT - 4 * 3600, confirm_after: AT, additions_written: true, ...over });
 const config = (over: Record<string, unknown> = {}) => ({ enabled: true, original_record: ORIGINAL, flattened_record: FLAT, previous_record: null, ip_count: 2, lookups_before: 14, lookups_after: 3, last_changed_at: now() - 7200, last_refreshed_at: now() - 7200, problem: null, pending: null, ...over });
-const status = (cfg: unknown, over: Record<string, unknown> = {}) => ({ available: true, access: { allowed: true }, config: cfg, lookup_count: 14, ...over });
+const status = (cfg: unknown, over: Record<string, unknown> = {}) => ({ available: true, reach: noReach, access: { allowed: true }, config: cfg, lookup_count: 14, ...over });
 const asStatus = (cfg: unknown) => status(cfg) as unknown as SpfFlatStatus;
 const preview = (over: Record<string, unknown> = {}) => ({ original: ORIGINAL, within_limits: false, live: null, problem: null, flat: { record: FLAT, bytes: 38, ip_count: 2, inlined: ['a.example', 'b.example'], kept_includes: [], lookups_before: 14, lookups_after: 3 }, ...over });
 const wizardUi = (<Routes><Route path="/domains/:id/spf-flatten" element={<SpfFlattenPage />} /></Routes>);
 const card = (spf: unknown, extra: Record<string, unknown | Handler> = {}) => renderApp(<DnsTools domainId={3} />, { route: '/domains/3', routes: { 'GET /api/domains/3/spf-flatten': spf, 'GET /api/domains/3/mta-sts': { available: false, config: null, summary: null }, ...extra } });
 const page = (spf: unknown, extra: Record<string, unknown | Handler> = {}, route = '/domains/3/spf-flatten') => renderApp(wizardUi, { route, routes: { 'GET /api/domains/3/spf-flatten': spf, 'GET /api/domains/3/spf-flatten/preview': preview(), ...extra } });
 
-describe('a removal that waits (docs/adr/0025)', () => {
+describe('a removal that waits (docs/adr/0029)', () => {
   const sentence = 'Waiting to confirm a change: _spf.foxtrot-help.net no longer lists 2 addresses. We kept them in your record and will take them out only if the next check, after 15:20 UTC on 16 Nov, sees the same. Anything new from your providers is already in your record.';
   it('the words: provider, how many held, when, and whether the additions were written', () => {
     expect(heldCount(['ip4:1.1.1.1', 'ip6:2001:db8::/32', 'a:v.test'])).toBe('2 addresses and 1 other term');
@@ -192,13 +193,13 @@ describe('deleting a domain that has a flattened record', () => {
 
 describe('deleting a workspace', () => {
   it('its confirm says that flattened records are put back first and that nothing is deleted if one cannot be', async () => {
-    renderApp(<DeleteButton id="ws_1" name="Acme" then={() => {}} />, { routes: { 'GET /api/domains': { domains: [{ id: 1, domain: 'a.test', rua_address: '', created_at: 1, is_default: 0, alerts_enabled: 1 }] } } });
+    renderApp(<DeleteButton id="ws_1" name="Acme" only={false} canCreate={true} then={() => {}} />, { routes: { 'GET /api/domains': { domains: [{ id: 1, domain: 'a.test', rua_address: '', created_at: 1, is_default: 0, alerts_enabled: 1 }] } } });
     await userEvent.click(await screen.findByRole('button', { name: 'Delete workspace' }));
     expect(await screen.findByText(/A domain with SPF flattening on gets its original SPF record put back in Cloudflare first; if one cannot be put back, nothing is deleted\./)).toBeInTheDocument();
   });
   it('a stop shows each original to copy, and Delete anyway says what stays', async () => {
     const body = { error: 'x', code: 'spf_restore_failed', domains: [{ domain: 'a.test', reason: 'We could not put your original record back in Cloudflare.', original: ORIGINAL }], leave_param: 'leave_spf_record=1' };
-    const { calls } = renderApp(<DeleteButton id="ws_1" name="Acme" then={() => {}} />, { routes: {
+    const { calls } = renderApp(<DeleteButton id="ws_1" name="Acme" only={false} canCreate={true} then={() => {}} />, { routes: {
       'GET /api/domains': { domains: [{ id: 1, domain: 'a.test', rua_address: '', created_at: 1, is_default: 0, alerts_enabled: 1 }] },
       'DELETE /api/workspaces/ws_1?confirm=Acme': () => ({ __status: 409, body }),
       'DELETE /api/workspaces/ws_1?confirm=Acme&leave_spf_record=1': { ok: true },
@@ -225,7 +226,7 @@ describe('the domain page: "Do this next" and the status line', () => {
   });
   const summary = { domain_id: 1, domain: 'example.com', dmarc_policy: 'quarantine', spf_record: 'v=spf1 include:a.example -all', dns_checked_at: now() - 60, dns_check_attempted_at: now() - 60, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 99, fail_messages: 1, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 11, dmarc_pct: 100, dmarc_p: 'quarantine', dmarc_sp: null, dmarc_rua: 1 };
   const routes = (over: Record<string, unknown> = {}) => ({
-    'GET /api/domains': { domains: [domain] }, 'GET /api/domains/1/check-summary': summary, 'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] }, 'GET /api/domains/1/sources': { sources: [] },
+    'GET /api/domains': { domains: [domain] }, 'GET /api/domains/1/check-summary': summary, 'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] }, 'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
     'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' }, 'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: current, cf_managed: true },
     'GET /api/domains/1/onboarding-status': onboarding({}), 'GET /api/domains/1/rollout-next': { current_policy: 'quarantine', current_pct: 100, current_testing: false, current_record: current, current_step_index: 1, total_steps: 5, next_step: null, next_step_note: null, dns_preview: null, pass_rate: 99, blocked: true, block_reason: 'x', has_unknown_senders: false, behind_schedule: false, recommended_policy: null, recommended_pct: null },
     'GET /api/domains/1/spf-flatten': status(null, { lookup_count: 11 }), 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, ...over,

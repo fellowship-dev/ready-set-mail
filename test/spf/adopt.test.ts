@@ -70,7 +70,7 @@ describe('use my edit as the new original', () => {
   });
 });
 
-describe('use my edit does not skip the removal rule (ADR 0025)', () => {
+describe('use my edit does not skip the removal rule (ADR 0029)', () => {
   const T0 = 1_800_000_000_000; // ms
   const H = 3600_000;
   const S0 = T0 / 1000;

@@ -217,7 +217,7 @@ export interface SpfFlatConfig {
   last_changed_at: number | null;
   last_refreshed_at: number | null;
   problem: { kind: SpfProblemKind; message: string | null; since: number | null } | null;
-  /** A removal waiting for its second look (docs/adr/0025); absent or null when none is. */
+  /** A removal waiting for its second look (docs/adr/0029); absent or null when none is. */
   pending?: SpfPending | null;
 }
 

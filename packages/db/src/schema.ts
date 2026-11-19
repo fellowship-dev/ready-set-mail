@@ -317,7 +317,7 @@ export const spfFlattenConfig = sqliteTable(
 		inline_mode: text('inline_mode').notNull().default('fewest'),
 		/** JSON: what the published record authorises for each inlined include, by include (entries: ip4:/ip6: terms and kept lookup terms). */
 		provider_state: text('provider_state'),
-		/** JSON, same shape: addresses a check saw leave a provider and did not take out of the record yet (ADR 0025). Null: nothing is waiting. */
+		/** JSON, same shape: addresses a check saw leave a provider and did not take out of the record yet (ADR 0029). Null: nothing is waiting. */
 		pending_removed: text('pending_removed'),
 		/** When that removal was first seen; a later check at least SPF_PENDING_CONFIRM_SECONDS after it confirms it. */
 		pending_since: integer('pending_since'),
@@ -645,7 +645,7 @@ export const hostedDomains = sqliteTable(
 		tls_rpt_record_id: text('tls_rpt_record_id'),
 		/** The customer's own SPF record at enable time: what the hosted (flattened) record is built from. */
 		spf_source: text('spf_source'),
-		/** JSON: what the published hosted SPF record authorises per inlined include and a removal that waits for a second look (the rule of ADR 0025, decideSpfWrite in src/spf/refresh.ts). */
+		/** JSON: what the published hosted SPF record authorises per inlined include and a removal that waits for a second look (the rule of ADR 0029, decideSpfWrite in src/spf/refresh.ts). */
 		spf_state: text('spf_state'),
 		dmarc_pointer: text('dmarc_pointer'),
 		spf_pointer: text('spf_pointer'),

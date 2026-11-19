@@ -51,7 +51,7 @@ describe('SPF flattening routes', () => {
 
     w.cf.doh['mail.test'] = ['v=spf1 ip4:192.0.2.50 ~all'];
     const check = await w.send('POST', '/api/domains/1/spf-flatten/refresh', {});
-    // the new address is written at once; the old one waits for a second look (ADR 0025)
+    // the new address is written at once; the old one waits for a second look (ADR 0029)
     expect(await check.json()).toMatchObject({ ok: true, outcome: 'changed', config: { previous_record: 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 -all', flattened_record: 'v=spf1 ip4:192.0.2.50 ip4:198.51.100.0/28 ip4:203.0.113.9 -all', pending: { providers: ['mail.test'], additions_written: true } } });
     expect(w.db.sqlite.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'spf_flatten.update'").get().n).toBe(1);
 

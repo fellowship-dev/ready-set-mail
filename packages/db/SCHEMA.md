@@ -17,7 +17,7 @@ Every workspace-owned table has `workspace_id TEXT NOT NULL DEFAULT 'ws_default'
 | `users` | global | one person may belong to several workspaces |
 | `domains` | ✔ | `domain` UNIQUE; one `is_default` per workspace (`idx_domains_is_default` on `workspace_id`) |
 | `aggregate_reports`, `report_records`, `tls_reports` | ✔ | `workspace_id` denormalised onto `report_records` so every query has a direct predicate |
-| `spf_flatten_config`, `mta_sts_config` | ✔ | keyed by `domain_id`; `spf_flatten_config.revision` is the compare-and-set version (0022) |
+| `spf_flatten_config`, `mta_sts_config` | ✔ | keyed by `domain_id`; `spf_flatten_config.revision` is the compare-and-set version (0025) |
 | `monitor_subscriptions` | ✔ | `UNIQUE(workspace_id, email, domain)` |
 | `settings` | ✔ | PK `(workspace_id, key)` |
 | `invites`, `audit_log` | ✔ | |
