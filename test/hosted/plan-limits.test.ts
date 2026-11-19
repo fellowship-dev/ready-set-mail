@@ -321,7 +321,7 @@ describe('mayUseMtaSts', () => {
     const env = { MODE: 'saas', BOOKING_URL: 'https://example.com/help' };
     const a = mayUseMtaSts(env, { ...facts, configured: false, reportsAdmitted: false, hostsInUse: 500 });
     expect(a).toMatchObject({ allowed: false, reason: 'not_configured', body: { code: 'mta_sts_unavailable', reason: 'not_configured', help_url: 'https://example.com/help' } });
-    expect((a as any).body.error).toBe('MTA-STS is not available on this service yet: the operator has not set up policy hosting.');
+    expect((a as any).body.error).toBe('MTA-STS is not available on this service: the operator has not set up policy hosting.');
     const b = mayUseMtaSts(env, { ...facts, reportsAdmitted: false, hostsInUse: 500 });
     expect(b).toMatchObject({ allowed: false, reason: 'not_allowed' });
     expect((b as any).body.error).toBe('MTA-STS is not open to this workspace yet: its TLS reports could not be received.');

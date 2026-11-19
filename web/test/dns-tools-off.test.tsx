@@ -44,9 +44,9 @@ describe('DNS tool routes where the tool is off', () => {
 	it('hosted where policy hosting is not set up: the page says why, in the server\'s own sentence, and offers no action', async () => {
 		renderApp(mtaRoute, {
 			...hosted, route: '/domains/3/mta-sts',
-			routes: { 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/3/mta-sts': { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', config: null, summary: null, records: [], reports: [] } },
+			routes: { 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/3/mta-sts': { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service: the operator has not set up policy hosting.', config: null, summary: null, records: [], reports: [] } },
 		});
-		expect(await screen.findByText('MTA-STS is not available on this service yet: the operator has not set up policy hosting.')).toBeInTheDocument();
+		expect(await screen.findByText('MTA-STS is not available on this service: the operator has not set up policy hosting.')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Turn on/ })).not.toBeInTheDocument();
 	});
 

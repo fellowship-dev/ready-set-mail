@@ -164,8 +164,8 @@ for (const width of [375, 1440]) {
 test('not available: the server\'s sentence and no button', async ({ page }) => {
 	await signIn(page);
 	const id = await ensureDomain(page, DOMAIN);
-	await page.route(`**/api/domains/${id}/mta-sts`, (r) => r.fulfill({ json: { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', via: null, policy_host: null, mx_preview: { status: 'ok', hosts: [], error: null }, records: [], records_problem: null, config: null, policy_host_status: null, summary: null, reports: [], enforce: null, disable: null, max_age: 86400 } }));
+	await page.route(`**/api/domains/${id}/mta-sts`, (r) => r.fulfill({ json: { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service: the operator has not set up policy hosting.', via: null, policy_host: null, mx_preview: { status: 'ok', hosts: [], error: null }, records: [], records_problem: null, config: null, policy_host_status: null, summary: null, reports: [], enforce: null, disable: null, max_age: 86400 } }));
 	await page.goto(`/#/domains/${id}/mta-sts`);
-	await expect(page.getByText('MTA-STS is not available on this service yet: the operator has not set up policy hosting.')).toBeVisible();
+	await expect(page.getByText('MTA-STS is not available on this service: the operator has not set up policy hosting.')).toBeVisible();
 	await expect(page.getByRole('button', { name: /Turn on/ })).toHaveCount(0);
 });

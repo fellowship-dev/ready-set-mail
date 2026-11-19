@@ -29,7 +29,7 @@ export const policyUrl = (domain: string): string => `https://mta-sts.${domain}/
 
 /** The reason, short enough for a card. The page shows the server's own sentence. */
 export const SHORT_REASON: Record<MtaStsUnavailable, string> = {
-	not_configured: 'not set up on this service yet',
+	not_configured: 'not set up on this service',
 	not_allowed: 'not open to this workspace yet',
 	ceiling: 'this service is full',
 	hosted_records: 'this domain uses hosted records',

@@ -61,8 +61,8 @@ function page(status: MtaStsStatus | (() => unknown), extra: Record<string, unkn
 
 describe('MTA-STS page: not available', () => {
 	it('says the server\'s own sentence, offers no button', async () => {
-		page(base({ available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', via: null, records: [] }));
-		expect(await screen.findByText('MTA-STS is not available on this service yet: the operator has not set up policy hosting.')).toBeInTheDocument();
+		page(base({ available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service: the operator has not set up policy hosting.', via: null, records: [] }));
+		expect(await screen.findByText('MTA-STS is not available on this service: the operator has not set up policy hosting.')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'MTA-STS is not available for example.com' })).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: /Turn on/ })).not.toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'Back to the domain' })).toHaveAttribute('href', '/domains/1');

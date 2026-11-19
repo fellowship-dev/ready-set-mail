@@ -33,7 +33,7 @@ const baseRoutes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/domains/dns-host': { provider: null, nameservers: [], status: 'unknown' },
 	'GET /api/cloudflare/connections': { connections: [], accounts: [], oauth: null, token_paste: false },
 	// MTA-STS is asked everywhere; a hosted service without policy hosting set up answers that it is not available, so the tools section stays hidden.
-	'GET /api/domains/1/mta-sts': { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.', config: null, summary: null, records: [], reports: [] },
+	'GET /api/domains/1/mta-sts': { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service: the operator has not set up policy hosting.', config: null, summary: null, records: [], reports: [] },
 	...over,
 });
 const detail = (routes: Record<string, unknown>, opts: Parameters<typeof renderApp>[1] = {}) =>

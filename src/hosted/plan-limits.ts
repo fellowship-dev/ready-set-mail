@@ -104,7 +104,7 @@ export type MtaStsGate =
   | { allowed: false; reason: MtaStsRefusal; body: { error: string; code: 'mta_sts_unavailable'; reason: MtaStsRefusal; limit?: { kind: 'policy_hosts'; max: number }; help_url: string | null } };
 
 const MTA_STS_SENTENCE: Readonly<Record<MtaStsRefusal, (max: number) => string>> = Object.freeze({
-  not_configured: () => 'MTA-STS is not available on this service yet: the operator has not set up policy hosting.',
+  not_configured: () => 'MTA-STS is not available on this service: the operator has not set up policy hosting.',
   not_allowed: () => 'MTA-STS is not open to this workspace yet: its TLS reports could not be received.',
   ceiling: (max) => `This service has reached its limit of ${max} MTA-STS policy ${max === 1 ? 'host' : 'hosts'}.`,
 });
