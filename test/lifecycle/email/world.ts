@@ -68,8 +68,10 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
     return { ...base, status: 'found', record: parseDmarcRecord(v), foundAt: `_dmarc.${domain}` };
   };
   // The first-report catch-up is off unless a test asks for it (`catchUp()`): most fixtures store reports before the legacy instant of the real rule.
-  const deps: LifecycleDeps = { now: () => clock.now * 1000, mailer, readDmarc, firstReportLegacyUntil: 0 };
+  const deps: LifecycleDeps = { now: () => clock.now * 1000, mailer, readDmarc, firstReportLegacyUntil: 0, summaryFirstWeek: '0000-W00' };
   const catchUp = () => { deps.firstReportLegacyUntil = undefined; };
+  /** The real rule for the weekly summary's first week (SUMMARY_FIRST_WEEK); the other fixtures predate it and summarise 9–15 Nov. */
+  const realSummaryStart = () => { deps.summaryFirstWeek = undefined; };
 
   const tenant = (workspaceId: string = WS) => new TenantContext({ env, workspaceId, mode: 'saas', settings: {} });
   let budget: Budget = newBudget();
@@ -129,7 +131,7 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
   };
 
   return {
-    db, sql, env, rows, clock, mailer, dns, reads, deps, tenant, run, realtimeFirstReport, catchUp, at, addUser, addDomain, addWorkspace, addReport, dana, ctx: ctxFake,
+    db, sql, env, rows, clock, mailer, dns, reads, deps, tenant, run, realtimeFirstReport, catchUp, realSummaryStart, at, addUser, addDomain, addWorkspace, addReport, dana, ctx: ctxFake,
     get budget() { return budget; },
     sends: () => rows('SELECT user_id, domain_id, kind, period, state FROM lifecycle_sends ORDER BY created_at, kind, domain_id'),
     /** Everything sent so far as (day offset from Mon 16 Nov, kind-ish, subject), for the walk tests. */

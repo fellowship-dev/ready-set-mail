@@ -23,6 +23,7 @@ const setNow = (w: World, t: number) => { w.clock.now = t; vi.setSystemTime(t * 
 async function owner(milestone: 'seen-by-app' | 'seen-by-job' | 'none') {
   const w = await lifecycleWorld();
   w.catchUp();
+  w.realSummaryStart();
   setNow(w, T0);
   const id = w.addDomain({ domain: D, createdAt: T0 - 3 * DAY, connectedAt: T0 - 3 * DAY });
   w.addReport({ domain: D, day: T0 - 9 * DAY, tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: T0 - 8 * DAY, records: [google] });
@@ -61,7 +62,7 @@ describe.each(['seen-by-app', 'seen-by-job', 'none'] as const)('first-report cat
     const { w } = await owner(milestone);
     await w.run();
     for (let day = 1; day <= 40; day++) { setNow(w, w.clock.now + DAY); await w.run(); }
-    // (The weekly summaries are another matter: the daily run sends those too.)
+    // (40 days on, the Monday weekly summaries are due and are another matter; the single run of test (a) below does not filter them.)
     expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report') && !s.startsWith('Week of'))).toEqual([]);
     expect((w.rows("SELECT kind FROM lifecycle_sends WHERE kind != 'summary'") as Array<{ kind: string }>).map((r) => r.kind)).toEqual(['first_report']);
   });
@@ -103,6 +104,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
   async function story(storedAt: number | null, runDays: number[], claimed = false) {
     const w = await lifecycleWorld();
     w.catchUp();
+    w.realSummaryStart();
     w.clock.now = storedAt ?? utc(16, 10);
     const id = w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
     const reportId = storedAt === null ? 0 : w.addReport({ domain: D, day: utc(15, 0), storedAt, records: [google, sendgrid] });
@@ -118,7 +120,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
     expect(firstReports(w)[0].to).toBe('dana@brightwave-mail.com');
     expect(claim(w)).toHaveLength(1);
     // Only that: no records-live and no no-reports email for this owner.
-    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report') && !s.startsWith('Week of'))).toEqual([]);
+    expect(w.mailer.sent.map((m) => m.subject).filter((s) => !s.startsWith('First DMARC report'))).toEqual([]);
   });
 
   it('(b) the next day\'s run and 40 more daily runs send nothing more', async () => {
@@ -152,6 +154,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
     expect(firstReports(w)).toEqual([]);
     const un = await lifecycleWorld();
     un.catchUp();
+    un.realSummaryStart();
     un.clock.now = utc(16, 10);
     un.addDomain({ domain: D });
     un.addReport({ domain: D, day: utc(15, 0), tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: utc(16, 10), records: [google] });
@@ -164,6 +167,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
   it('the report\'s own date does not matter, only when it was stored', async () => {
     const w = await lifecycleWorld();
     w.catchUp();
+    w.realSummaryStart();
     w.clock.now = utc(16, 10, 52);
     w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
     w.addReport({ domain: D, day: utc(1, 0), storedAt: utc(16, 10, 52), records: [google] });

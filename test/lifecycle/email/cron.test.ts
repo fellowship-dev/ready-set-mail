@@ -13,6 +13,8 @@ import { sendWeeklyDigests } from '../../../src/digest/weekly';
 import { MAX_LIVE_READS_PER_RUN, MAX_LIVE_READS_PER_WORKSPACE } from '../../../src/lifecycle/email/kinds';
 import { newBudget, runLifecycleForWorkspace } from '../../../src/lifecycle/email/run';
 import { DAY, MON_16_NOV, WEEK_9_NOV, WS, lifecycleWorld, recordNamingUs, type RecordSpec, type World } from './world';
+const WEEK_16_NOV = WEEK_9_NOV + 7 * DAY; // 2026-W47, the first week the weekly summary covers (SUMMARY_FIRST_WEEK)
+const MON_23_NOV = MON_16_NOV + 7 * DAY;
 
 const D = 'brightwave-mail.com';
 const ok = (count = 100): RecordSpec => ({ ip: '192.0.2.10', count, spf: ['pass', D], dkim: ['pass', D], org: 'Google Workspace' });
@@ -51,7 +53,7 @@ describe('which cron runs what', () => {
     const w = await lifecycleWorld({ LIFECYCLE_EMAILS_ON: 'tips', ...extra });
     w.pref(w.dana, 'tips', true);
     w.addDomain({ domain: D });
-    for (let i = 0; i < 7; i++) w.addReport({ domain: D, day: WEEK_9_NOV + i * DAY, storedAt: WEEK_9_NOV + i * DAY + 3600, records: [ok(100), { ip: '198.51.100.7', count: 3, spf: ['pass', 'sendgrid.net'], dkim: ['pass', 'sendgrid.net'], org: 'SendGrid' }] });
+    for (let i = 0; i < 7; i++) w.addReport({ domain: D, day: WEEK_16_NOV + i * DAY, storedAt: WEEK_16_NOV + i * DAY + 3600, records: [ok(100), { ip: '198.51.100.7', count: 3, spf: ['pass', 'sendgrid.net'], dkim: ['pass', 'sendgrid.net'], org: 'SendGrid' }] });
     w.addDomain({ domain: 'new.example' });
     return w;
   }
@@ -62,13 +64,13 @@ describe('which cron runs what', () => {
     w.sql.prepare("INSERT INTO lifecycle_sends (workspace_id, user_id, domain_id, kind, period, state) VALUES (?, ?, 1, 'first_report', 'once', 'sent')").run(WS, w.dana);
     const sent = bindMail(w);
     stubDns((d) => (d === 'new.example' ? recordNamingUs() : null));
-    setNow(w, MON_16_NOV);
+    setNow(w, MON_23_NOV);
     await cron(w, DAILY);
     const subjects = sent.map((m) => m.subject);
     expect(subjects).toHaveLength(3);
     expect(subjects).toContain('One service sending as brightwave-mail.com needs SPF or DKIM');
     expect(subjects).toContain('new.example is set up: reports are on their way');
-    expect(subjects.filter((x) => /^Week of 9–15 Nov: /.test(x))).toHaveLength(1);
+    expect(subjects.filter((x) => /^Week of 16–22 Nov: /.test(x))).toHaveLength(1);
     expect(w.rows('SELECT kind FROM lifecycle_sends ORDER BY kind').map((r) => r.kind)).toEqual(['first_report', 'records_live', 'summary', 'tip_fix']);
   });
 
@@ -76,7 +78,7 @@ describe('which cron runs what', () => {
     const w = await due({ LIFECYCLE_EMAILS_ON: undefined });
     const sent = bindMail(w);
     stubDns();
-    setNow(w, MON_16_NOV);
+    setNow(w, MON_23_NOV);
     await cron(w, DAILY);
     expect(sent.map((m) => m.subject).some((s) => /needs SPF or DKIM/.test(s))).toBe(false);
     expect(sent.some((m) => m.subject.startsWith('Week of'))).toBe(true);

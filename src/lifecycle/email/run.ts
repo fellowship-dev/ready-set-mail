@@ -34,7 +34,7 @@ import {
 import * as copy from './copy';
 import type { Mail, Footer, Who } from './copy';
 import {
-  FIRST_REPORT_EMAIL_LEGACY_UNTIL, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
+  FIRST_REPORT_EMAIL_LEGACY_UNTIL, SUMMARY_FIRST_WEEK, LIVE_EMAIL_MAX_AGE_SECONDS, LIVE_WATCH_SECONDS, MAX_LIFECYCLE_SENDS_PER_RUN, MAX_LIVE_READS_PER_RUN,
   MAX_LIVE_READS_PER_WORKSPACE, MAX_PER_RECIPIENT_PER_RUN, NO_REPORT_AFTER_SECONDS, stopped, switchOf, TIP_INTERVAL_SECONDS, tipsEnabled, type LifecycleKind,
 } from './kinds';
 import { markRecordsLive } from './milestones';
@@ -71,6 +71,8 @@ export interface LifecycleDeps {
   readDmarc?: (domain: string) => Promise<DmarcLookup>;
   /** Tests only: where the first-report catch-up ends (default `FIRST_REPORT_EMAIL_LEGACY_UNTIL`). */
   firstReportLegacyUntil?: number;
+  /** Tests only: the first week the summary covers (default `SUMMARY_FIRST_WEEK`). */
+  summaryFirstWeek?: string;
 }
 
 type Ctx = Pick<ExecutionContext, 'waitUntil'> | undefined;
@@ -354,6 +356,7 @@ function tableRows(items: Array<{ domain: string; messages: number; passed: numb
 async function sendSummaries(w: W): Promise<void> {
   const week = lastCompleteWeek(w.now);
   const period = isoWeekId(week.start);
+  if (period < (w.deps.summaryFirstWeek ?? SUMMARY_FIRST_WEEK)) return; // a week that ended before the summary shipped: no claim, no send
   const due = preferenceRecipients(w.people, w.prefs, 'summary').filter((r) => !hasClaim(w, r.userId, 0, 'summary', period));
   if (due.length === 0 || stopped(w.env, 'summary') || !w.base) return;
   const data = await loadWeeks(w);
