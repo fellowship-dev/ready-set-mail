@@ -910,6 +910,9 @@ export const WORKSPACE_OWNED_TABLES = [
 	'reporter_candidate_days',
 	'billing_orders',
 	'billing_checkout_sessions',
+	'domain_milestones',
+	'email_preferences',
+	'lifecycle_sends',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1199,5 +1202,77 @@ export const refreshRotations = sqliteTable(
 	(t) => [
 		index('idx_refresh_rotations_first_used').on(t.first_used_at),
 		check('refresh_rotations_state_check', sql`${t.state} IN ('pending', 'done')`),
+	],
+);
+
+// ── Lifecycle emails (0023) ─────────────────────────────────
+
+/** The kinds of email a person can turn off (src/lifecycle/email/preferences.ts). */
+export const EMAIL_PREFERENCE_KINDS = ['summary', 'tips'] as const;
+export type EmailPreferenceKind = (typeof EMAIL_PREFERENCE_KINDS)[number];
+
+/** Who first saw a domain's records live: a person on the dashboard (`app`), or the daily job (`job`). */
+export const LIVE_SEEN_BY = ['app', 'job'] as const;
+export type LiveSeenBy = (typeof LIVE_SEEN_BY)[number];
+
+export const LIFECYCLE_SEND_STATES = ['claimed', 'sent', 'failed'] as const;
+export type LifecycleSendState = (typeof LIFECYCLE_SEND_STATES)[number];
+
+/** One row per domain: when its DMARC record was first seen naming the reports address, and by whom. Written whatever PostHog is doing. */
+export const domainMilestones = sqliteTable(
+	'domain_milestones',
+	{
+		domain_id: integer('domain_id').primaryKey().references(() => domains.id, { onDelete: 'cascade' }),
+		workspace_id: text('workspace_id').notNull(),
+		records_live_at: integer('records_live_at'),
+		live_seen_by: text('live_seen_by', { enum: LIVE_SEEN_BY }),
+		/** The DMARC policy last observed for the domain (an opaque key) and when it was first seen at that value. */
+		policy_seen: text('policy_seen'),
+		policy_seen_at: integer('policy_seen_at'),
+		/** When the lifecycle job last read the domain's DMARC record in public DNS: the order of its read budget, least recently read first. */
+		dns_read_at: integer('dns_read_at'),
+	},
+	(t) => [
+		index('idx_domain_milestones_workspace').on(t.workspace_id),
+		check('domain_milestones_seen_by_check', sql`${t.live_seen_by} IN ('app', 'job')`),
+	],
+);
+
+/** A person's choice for one kind of email in one workspace. No row: the default for their role (src/lifecycle/email/preferences.ts). */
+export const emailPreferences = sqliteTable(
+	'email_preferences',
+	{
+		user_id: text('user_id').notNull(),
+		workspace_id: text('workspace_id').notNull(),
+		kind: text('kind', { enum: EMAIL_PREFERENCE_KINDS }).notNull(),
+		enabled: integer('enabled').notNull(),
+		updated_at: integer('updated_at').notNull().default(now),
+	},
+	(t) => [
+		primaryKey({ columns: [t.user_id, t.workspace_id, t.kind] }),
+		index('idx_email_preferences_workspace').on(t.workspace_id),
+		check('email_preferences_kind_check', sql`${t.kind} IN ('summary', 'tips')`),
+	],
+);
+
+/**
+ * Every lifecycle email, claimed before it is sent (INSERT OR IGNORE: the run whose insert changed a row is the one that sends). `domain_id` 0:
+ * not about one domain. `period` says which occurrence: `once`, an ISO week, a source, a policy state.
+ */
+export const lifecycleSends = sqliteTable(
+	'lifecycle_sends',
+	{
+		workspace_id: text('workspace_id').notNull(),
+		user_id: text('user_id').notNull(),
+		domain_id: integer('domain_id').notNull().default(0),
+		kind: text('kind').notNull(),
+		period: text('period').notNull(),
+		state: text('state', { enum: LIFECYCLE_SEND_STATES }).notNull(),
+		created_at: integer('created_at').notNull().default(now),
+	},
+	(t) => [
+		primaryKey({ columns: [t.workspace_id, t.user_id, t.domain_id, t.kind, t.period] }),
+		index('idx_lifecycle_sends_user').on(t.user_id, t.created_at),
+		check('lifecycle_sends_state_check', sql`${t.state} IN ('claimed', 'sent', 'failed')`),
 	],
 );

@@ -279,13 +279,10 @@ describe('closing: help line, truthful retention, configured site link', () => {
     { auth: makeAuth({ dmarcResult: 'fail' }), dns: makeDns({ dmarcPolicy: 'quarantine' }) },
   ];
 
-  it('ends with the help line, enrolled or not, in every status', () => {
+  it('ends with the help line in every status', () => {
     for (const { auth, dns } of cases()) {
       const summary = buildSummary('example.com', auth, dns);
       expect(formatCheckReport('a@example.com', summary, auth, dns).trimEnd().endsWith(HELP)).toBe(true);
-      const enrolled = formatCheckReport('a@example.com', summary, auth, dns, { enrolled: { text: 'We will send you 5 short emails.', unsubscribeUrl: 'https://w.example/u?t=1' } });
-      expect(enrolled.trimEnd().endsWith(HELP)).toBe(true);
-      expect(enrolled).toContain('Unsubscribe: https://w.example/u?t=1');
     }
   });
 
@@ -297,31 +294,10 @@ describe('closing: help line, truthful retention, configured site link', () => {
     }
   });
 
-  it('not enrolled: states the configured check-result retention (default 30 days)', () => {
+  it('states the configured check-result retention (default 30 days)', () => {
     const summary = buildSummary('example.com', null, exposedDns);
     expect(formatCheckReport('a@example.com', summary, null, exposedDns)).toContain('We keep your address and this result for 30 days, then delete them.');
     expect(formatCheckReport('a@example.com', summary, null, exposedDns, { retentionDays: 7 })).toContain('for 7 days, then delete them.');
-  });
-
-  it('enrolled: result deleted after N days; address used until unsubscribe, then kept only on a do-not-contact list', () => {
-    const summary = buildSummary('example.com', null, exposedDns);
-    const text = formatCheckReport('a@example.com', summary, null, exposedDns, { enrolled: { text: 'x', unsubscribeUrl: 'https://w.example/u' }, retentionDays: 14 });
-    expect(text).toContain('We keep your address and a summary of this result for our follow-up emails until you unsubscribe (or 12 months after your last check); after you unsubscribe we keep only your address, on a do-not-contact list. The full result is deleted after 14 days.');
-    expect(text).not.toContain('delete them when you unsubscribe');
-  });
-
-  it('already known but no longer receiving follow-ups: kept up to 12 months after the last check', () => {
-    const summary = buildSummary('example.com', null, exposedDns);
-    const text = formatCheckReport('a@example.com', summary, null, exposedDns, { lead: 'inactive' });
-    expect(text).toContain('We keep your address and a summary of this result for up to 12 months after your last check, then delete them.');
-    expect(text).not.toContain('for 30 days');
-  });
-
-  it('on the do-not-contact list: says it stays there, and when the result goes', () => {
-    const summary = buildSummary('example.com', null, exposedDns);
-    const text = formatCheckReport('a@example.com', summary, null, exposedDns, { lead: 'suppressed', retentionDays: 30 });
-    expect(text).toContain('Your address is on our do-not-contact list and stays there, so you get no follow-up emails. We delete this result after 30 days.');
-    expect(text).not.toContain('then delete them');
   });
 
   it('links the configured site URL, and no site at all when it is unset', () => {

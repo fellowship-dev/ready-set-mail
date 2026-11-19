@@ -10,7 +10,7 @@ import { transactionalMailer } from '../mail/mailer';
 import { keyedHash, signToken } from '../mail/tokens';
 import { funnelSender, publicBaseUrl } from './config';
 import { MONITOR_CONFIRM_WINDOW_SECONDS } from './cron';
-import { normaliseEmail } from './enroll';
+import { normaliseEmail } from './unsubscribe';
 
 /** Confirmation emails one address may be sent per day, however many domains or sessions ask. */
 export const CONFIRMATIONS_PER_ADDRESS_PER_DAY = 3;

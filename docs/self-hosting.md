@@ -117,7 +117,7 @@ The Worker runs five cron triggers (times in UTC). They start when it is deploye
 | `0 8 * * *` | daily 08:00 | Re-reads each domain's DNS (SPF lookup count, DMARC policy), runs monitor checks and change alerts, rollout regression checks, the MTA-STS refresh ([docs/mta-sts.md](mta-sts.md)) |
 | `0 9 * * 1` | Mondays 09:00 | Weekly DMARC digest email |
 | `0 10 * * *` | daily 10:00 | SPF flattening refresh, only for domains that turned flattening on |
-| `0 11 * * *` | daily 11:00 | Nothing on a self-hosted installation (the hosted service's product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)) |
+| `0 11 * * *` | daily 11:00 | Nothing on a self-hosted installation (the hosted service's lifecycle emails and product analytics; a self-hosted installation sends no usage statistics or analytics, see [analytics.md](analytics.md)) |
 | `0 4 * * *` | daily 04:00 | Data lifecycle: retries failed Cloudflare revocations, then deletes data past its retention period ([data retention](data-retention.md)) |
 
 ## Upgrade

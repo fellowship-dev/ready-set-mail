@@ -209,7 +209,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
     authoritative: 'packages/ui/src/components/status.tsx',
     sites: [
       'packages/ui/src/components/status.tsx', 'src/email/html-templates.ts', 'web/src/components/wizard/SeverityBadge.tsx', 'web/src/lib/reports.ts',
-      'web/src/pages/leads/LeadsPage.tsx', 'web/src/pages/wizards/setup/RoutingStep.tsx',
+      'web/src/pages/wizards/setup/RoutingStep.tsx',
     ],
   },
   {
@@ -222,7 +222,7 @@ export const MUST_NOT_GROW: Duplicate[] = [
     concept: 'Fix-offer scope promising reject (contradicts ADR 0013)',
     signature: /moved to reject|move DMARC from none/,
     authoritative: 'src/billing/offer.ts',
-    sites: ['src/billing/offer.ts', 'src/funnel/copy.ts'],
+    sites: ['src/billing/offer.ts'],
   },
 ];
 

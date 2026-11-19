@@ -52,22 +52,37 @@ describe('signed tokens', () => {
 describe('GET|POST /api/unsubscribe', () => {
   async function seeded() {
     const w = funnelWorld();
-    await w.enroll('a@acme.com');
+    w.seedLead('a@acme.com');
     w.db.sqlite.prepare("INSERT INTO monitor_subscriptions (email, domain, workspace_id) VALUES ('a@acme.com', 'acme.com', 'ws_default')").run();
     const link = (await unsubscribeUrl(w.env, 'A@acme.com'))!;
     return { w, link, path: link.replace('https://app.readysetmail.com', '') };
   }
 
-  it('the link in the email body unsubscribes: suppression hash kept, lead and subscriptions deleted at once, no login needed', async () => {
+  it('GET shows a confirm page and changes nothing (a link scanner must not unsubscribe anyone); the button POST unsubscribes, no login needed', async () => {
     const { w, path } = await seeded();
     const res = await get(w.env, path);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
-    expect(await res.text()).toContain('You are unsubscribed');
+    const html = await res.text();
+    expect(html).toContain('<form method="post" action="/api/unsubscribe?t=');
+    expect(html).not.toContain('You are unsubscribed');
+    expect(w.rows('SELECT * FROM leads')).toHaveLength(1);
+    expect(w.rows('SELECT * FROM monitor_subscriptions')).toHaveLength(1);
+    expect(w.rows('SELECT * FROM suppression')).toEqual([]);
+
+    const post = await get(w.env, path, 'POST');
+    expect(post.status).toBe(200);
     expect(w.rows('SELECT * FROM leads')).toEqual([]);
     expect(w.rows('SELECT * FROM monitor_subscriptions')).toEqual([]);
     expect(w.rows('SELECT * FROM suppression')).toEqual([{ email_hash: await hashEmail('a@acme.com'), reason: 'unsubscribe', created_at: expect.any(Number) }]);
     expect(JSON.stringify(w.rows('SELECT * FROM suppression'))).not.toContain('a@acme.com');
+  });
+
+  it('POST with the RFC 8058 body unsubscribes the same way', async () => {
+    const { w, path } = await seeded();
+    const res = await handleApi(new Request(`https://app.readysetmail.com${path}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'cf-connecting-ip': '9.9.9.9' }, body: 'List-Unsubscribe=One-Click' }), w.env, ctx);
+    expect(res.status).toBe(200);
+    expect(w.rows('SELECT * FROM suppression')).toHaveLength(1);
   });
 
   it('the RFC 8058 one-click POST works too, and repeating it is harmless', async () => {
@@ -129,11 +144,13 @@ describe('change alerts (non-transactional)', () => {
     const w = funnelWorld(); // a Resend key is configured: owner-facing alerts must still use the binding
     const resendFetch = vi.fn();
     vi.stubGlobal('fetch', resendFetch);
+    w.db.sqlite.prepare("INSERT OR REPLACE INTO settings (workspace_id, key, value) VALUES ('ws_default', 'from_email', 'noreply@app.readysetmail.com')").run();
     const send = vi.fn().mockResolvedValue({ messageId: 'm' });
-    const tenant = makeTenant({ db: w.db, env: { ...w.env, SEND_EMAIL: { send } as any } });
+    const tenant = makeTenant({ db: w.db, env: { ...w.env, LIFECYCLE_EMAILS_ON: 'change_alerts', SEND_EMAIL: { send } as any } });
     await sendChangeNotification('a@acme.com', 'acme.com', [change], tenant);
     expect(send).toHaveBeenCalledOnce();
     const arg = send.mock.calls[0][0];
+    expect(arg.from.email).toBe('noreply@app.readysetmail.com'); // hosted: the platform sender
     expect(arg.headers['List-Unsubscribe']).toMatch(/^<https:\/\/app\.readysetmail\.com\/api\/unsubscribe\?t=.+>$/);
     expect(arg.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
     expect(arg.text).toContain('Unsubscribe: https://app.readysetmail.com/api/unsubscribe');

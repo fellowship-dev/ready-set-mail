@@ -306,6 +306,19 @@ CREATE TABLE `domain_claims` (
 --> statement-breakpoint
 CREATE INDEX `idx_domain_claims_domain` ON `domain_claims` (`domain`);--> statement-breakpoint
 CREATE UNIQUE INDEX `domain_claims_workspace_id_domain_unique` ON `domain_claims` (`workspace_id`,`domain`);--> statement-breakpoint
+CREATE TABLE `domain_milestones` (
+	`domain_id` integer PRIMARY KEY NOT NULL,
+	`workspace_id` text NOT NULL,
+	`records_live_at` integer,
+	`live_seen_by` text,
+	`policy_seen` text,
+	`policy_seen_at` integer,
+	`dns_read_at` integer,
+	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "domain_milestones_seen_by_check" CHECK("domain_milestones"."live_seen_by" IN ('app', 'job'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_domain_milestones_workspace` ON `domain_milestones` (`workspace_id`);--> statement-breakpoint
 CREATE TABLE `domains` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`domain` text NOT NULL,
@@ -359,6 +372,17 @@ CREATE INDEX `idx_domains_parent` ON `domains` (`parent_id`);--> statement-break
 CREATE INDEX `idx_domains_evicted` ON `domains` (`evicted_at`) WHERE "domains"."evicted_at" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX `idx_domains_workspace` ON `domains` (`workspace_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `idx_domains_is_default` ON `domains` (`workspace_id`) WHERE "domains"."is_default" = 1;--> statement-breakpoint
+CREATE TABLE `email_preferences` (
+	`user_id` text NOT NULL,
+	`workspace_id` text NOT NULL,
+	`kind` text NOT NULL,
+	`enabled` integer NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
+	PRIMARY KEY(`user_id`, `workspace_id`, `kind`),
+	CONSTRAINT "email_preferences_kind_check" CHECK("email_preferences"."kind" IN ('summary', 'tips'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_email_preferences_workspace` ON `email_preferences` (`workspace_id`);--> statement-breakpoint
 CREATE TABLE `google_postmaster_connections` (
 	`id` text PRIMARY KEY NOT NULL,
 	`workspace_id` text NOT NULL,
@@ -511,6 +535,19 @@ CREATE TABLE `leads` (
 CREATE UNIQUE INDEX `leads_email_unique` ON `leads` (`email`);--> statement-breakpoint
 CREATE INDEX `idx_leads_due` ON `leads` (`status`,`next_send_at`);--> statement-breakpoint
 CREATE INDEX `idx_leads_activity` ON `leads` (`last_activity_at`);--> statement-breakpoint
+CREATE TABLE `lifecycle_sends` (
+	`workspace_id` text NOT NULL,
+	`user_id` text NOT NULL,
+	`domain_id` integer DEFAULT 0 NOT NULL,
+	`kind` text NOT NULL,
+	`period` text NOT NULL,
+	`state` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	PRIMARY KEY(`workspace_id`, `user_id`, `domain_id`, `kind`, `period`),
+	CONSTRAINT "lifecycle_sends_state_check" CHECK("lifecycle_sends"."state" IN ('claimed', 'sent', 'failed'))
+);
+--> statement-breakpoint
+CREATE INDEX `idx_lifecycle_sends_user` ON `lifecycle_sends` (`user_id`,`created_at`);--> statement-breakpoint
 CREATE TABLE `memberships` (
 	`workspace_id` text NOT NULL,
 	`user_id` text NOT NULL,

@@ -13,6 +13,7 @@ import { sendNonTransactional } from '../mail/compliance';
 import { ownerMailer } from '../mail/mailer';
 import { checkForUpdate, type UpdateInfo } from '../update-check';
 import { uncountedNotice } from '../reports/visibility';
+import { hostedEnabled } from '../hosted/config';
 
 /** The update line of a digest: only when a newer published release exists (src/update-check.ts). */
 export type DigestUpdate = Pick<UpdateInfo, 'current' | 'latest' | 'release_url' | 'upgrade_url'>;
@@ -138,6 +139,12 @@ async function sendDigest(
 // ── Main ──────────────────────────────────────────────────────
 
 export async function sendWeeklyDigests(tenant: TenantContext, now = Date.now()): Promise<void> {
+  // The hosted service has no digest: its address (rua@<reports domain>), its sender and its "fix it" link are the self-host forms, and none of them
+  // exists per workspace there. Account holders get the weekly summary instead (src/lifecycle/email/run.ts, under this same cron, `0 9 * * 1`).
+  if (hostedEnabled(tenant.env)) {
+    console.log('[digest] hosted: skipped, the weekly summary replaces the digest');
+    return;
+  }
   const since = Math.floor(now / 1000) - 7 * 24 * 60 * 60; // 7 days ago in Unix seconds
   const weekLabel = new Date(since * 1000).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',

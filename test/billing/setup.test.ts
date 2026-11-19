@@ -62,8 +62,8 @@ describe('preflight', () => {
 describe('migration 0016 and the schema', () => {
   const db = createMigratedD1().sqlite;
   const info = (t: string) => db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string; notnull: number }>;
-  it('is not older than the newest migration the Worker requires', () => {
-    expect(REQUIRED_MIGRATION).toBe('0024_mta_sts_hosted.sql'); // 0016 (billing), 0021 and 0022 are applied before it
+  it('is required by the Worker (the newest migration it needs is this one or a later one)', () => {
+    expect(REQUIRED_MIGRATION >= '0016_billing.sql').toBe(true);
   });
   it('is additive: one nullable column on workspaces, new tables, nothing dropped', () => {
     const sql = readFileSync(join(import.meta.dirname, '../../migrations/0016_billing.sql'), 'utf8');
@@ -91,10 +91,10 @@ describe('migration 0016 and the schema', () => {
 
 describe('who may read orders across workspaces', () => {
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => { const p = join(dir, f); return statSync(p).isDirectory() ? walk(p) : p.endsWith('.ts') ? [p] : []; });
-  it('only the webhook, the routes, reconcile, notify, price and sync code use billingLookups', () => {
+  it('only the webhook, the routes, reconcile, notify, price and sync code use billingLookups (and the lifecycle emails, to read the cached price: a global table, no order)', () => {
     const root = join(import.meta.dirname, '../..');
     const users = walk(join(root, 'src')).filter((f) => /\bbillingLookups\b/.test(readFileSync(f, 'utf8'))).map((f) => relative(root, f)).sort();
-    expect(users).toEqual(['src/billing/notify.ts', 'src/billing/price.ts', 'src/billing/reconcile.ts', 'src/billing/routes.ts', 'src/billing/sync.ts', 'src/billing/webhook.ts']);
+    expect(users).toEqual(['src/billing/notify.ts', 'src/billing/price.ts', 'src/billing/reconcile.ts', 'src/billing/routes.ts', 'src/billing/sync.ts', 'src/billing/webhook.ts', 'src/lifecycle/email/offer.ts']);
   });
   it('the Worker keeps no billing state between requests (nothing module-level is mutable)', () => {
     const root = join(import.meta.dirname, '../../src/billing');

@@ -32,8 +32,6 @@ import { rawXmlRetentionDays } from '../lifecycle/config';
 import { rawTooLarge, REASONS, type Outcome, type ReasonCode } from '../hosted/reasons';
 
 export interface ReportOptions {
-  /** Keeps the first-report email alive after the handler returns. */
-  ctx?: Pick<ExecutionContext, 'waitUntil'>;
   /** Cap on the decompressed report (default MAX_REPORT_BYTES, which also bounds zip/gzip bombs in self-host). */
   maxBytes?: number;
   /** Refuse reports with more records than this, before any per-record work. */
@@ -69,6 +67,8 @@ export interface ReportOptions {
    * domain must be exactly this, or the report is refused and nothing is stored.
    */
   expectedDomain?: string;
+  /** The delivery's execution context, so the first-report email finishes after the answer (ctx.waitUntil). */
+  ctx?: Pick<ExecutionContext, 'waitUntil'>;
 }
 
 export interface ReportResult {

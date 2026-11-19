@@ -1,10 +1,10 @@
-// Signed, login-free tokens for links in email: unsubscribe and double opt-in confirmation.
+// Signed, login-free tokens for links in email: unsubscribe, turning off one lifecycle email, and double opt-in confirmation.
 //
 // The payload (which holds the address) is encrypted, so the address is not readable in the URL, in request logs or in a
 // forwarded email; the whole token is authenticated (encrypt-then-MAC):
 //   token = base64url(iv ‖ AES-256-GCM(payload)) . base64url(HMAC-SHA256(ciphertext part))
 // Both keys are derived from the instance's auth secret with purpose labels, so a session secret never signs these and
-// these never validate as anything else. Unsubscribe tokens do not expire (a link in an old email must work);
+// these never validate as anything else. Unsubscribe and preference tokens do not expire (a link in an old email must work);
 // confirmation tokens carry `x`.
 
 import { authSecret } from '../auth/secret';
@@ -12,6 +12,8 @@ import type { AuthEnv } from '../auth/config';
 
 export type TokenPayload =
   | { p: 'unsub'; e: string }
+  // One person, one workspace, one preference (src/lifecycle/email/preferences.ts). Never expires, like `unsub`.
+  | { p: 'pref'; u: string; w: string; k: 'summary' | 'tips' }
   | { p: 'confirm'; e: string; w: string; s: number; x: number };
 
 const enc = new TextEncoder();
@@ -48,6 +50,7 @@ export async function verifyToken(env: AuthEnv, token: string, nowSeconds = Math
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, await aesKey(env), raw.slice(12));
     const p = JSON.parse(new TextDecoder().decode(plain)) as TokenPayload;
     if (p.p === 'unsub' && typeof p.e === 'string') return p;
+    if (p.p === 'pref' && typeof p.u === 'string' && p.u && typeof p.w === 'string' && p.w && (p.k === 'summary' || p.k === 'tips')) return p;
     if (p.p === 'confirm' && typeof p.e === 'string' && typeof p.w === 'string' && typeof p.s === 'number' && typeof p.x === 'number' && p.x > nowSeconds) return p;
     return null;
   } catch {

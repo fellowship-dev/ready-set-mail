@@ -1,0 +1,784 @@
+// The state machine: each email is sent once, at the right state, never when the state is false, never twice, and within the caps.
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MAX_LIVE_READS_PER_WORKSPACE } from '../../../src/lifecycle/email/kinds';
+import { newBudget, runLifecycleForWorkspace, sendFirstReportNow } from '../../../src/lifecycle/email/run';
+import { recordsSeenLive } from '../../../src/product-analytics/steps';
+import { POSTHOG_HOST, POSTHOG_KEY } from '../../product-analytics/walk';
+import { DAY, MON_16_NOV, RUA, WEEK_9_NOV, WS, lifecycleWorld, recordNamingUs, type RecordSpec, type World } from './world';
+
+afterEach(() => vi.restoreAllMocks());
+const D = 'brightwave-mail.com';
+const ok = (count = 100): RecordSpec => ({ ip: '192.0.2.10', count, spf: ['pass', D], dkim: ['pass', D], org: 'Google Workspace' });
+const bad = (count: number, over: Partial<RecordSpec> = {}): RecordSpec => ({ ip: '198.51.100.7', count, spf: ['pass', 'sendgrid.net'], dkim: ['pass', 'sendgrid.net'], org: 'SendGrid', ...over });
+const subjects = (w: World) => w.mailer.sent.map((m) => m.subject);
+const kinds = (w: World) => (w.rows('SELECT kind FROM lifecycle_sends ORDER BY rowid') as Array<{ kind: string }>).map((r) => r.kind);
+/** A report for each of the 7 days of the week starting at `monday`. */
+const week = (w: World, monday: number, records: RecordSpec[], domain = D) => { for (let i = 0; i < 7; i++) w.addReport({ domain, day: monday + i * DAY, storedAt: monday + i * DAY + 3600, records }); };
+const LAST_WEEK = WEEK_9_NOV; // the week of Mon 9 Nov: the one the job on Mon 16 Nov is about
+
+describe('records live (b)', () => {
+  it('is sent once, when the daily job first sees the record name the reports address, with the time it was seen', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(0); // the record does not name us yet
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    expect(subjects(w)).toEqual(['brightwave-mail.com is set up: reports are on their way']);
+    expect(w.mailer.sent[0].text).toContain('We saw it in public DNS on Mon 16 Nov at 11:00 UTC.');
+    expect(w.rows('SELECT live_seen_by, records_live_at FROM domain_milestones')).toEqual([{ live_seen_by: 'job', records_live_at: MON_16_NOV }]);
+    await w.run();
+    w.at(1); await w.run();
+    expect(w.mailer.sent).toHaveLength(1);
+    expect(w.sends()).toEqual([{ user_id: 'u_dana', domain_id: 1, kind: 'records_live', period: 'once', state: 'sent' }]);
+  });
+
+  it('is not sent when the app saw the records live first (the person was on the page), whatever PostHog is doing', async () => {
+    const w = await lifecycleWorld(); // no POSTHOG_KEY: the milestone is written anyway
+    const id = w.addDomain({ domain: D });
+    const tenant = w.tenant();
+    recordsSeenLive(tenant, w.ctx, (await tenant.scope.domains.getById(id))!, 'domain_page');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(w.rows('SELECT live_seen_by FROM domain_milestones')).toEqual([{ live_seen_by: 'app' }]);
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(0);
+    expect(w.reads).toEqual([]); // a milestone exists: no DNS read for it
+  });
+
+  it('the setup read and the daily read are recorded by who made them, the first sight winning', async () => {
+    const w = await lifecycleWorld();
+    const a = w.addDomain({ domain: D });
+    const b = w.addDomain({ domain: 'news.brightwave-mail.com' });
+    const tenant = w.tenant();
+    for (const [id, by] of [[a, 'setup'], [a, 'daily'], [b, 'daily'], [b, 'setup']] as const) recordsSeenLive(tenant, w.ctx, (await tenant.scope.domains.getById(id))!, by);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(w.rows('SELECT domain_id, live_seen_by FROM domain_milestones ORDER BY domain_id')).toEqual([{ domain_id: a, live_seen_by: 'app' }, { domain_id: b, live_seen_by: 'job' }]);
+  });
+
+  it('is not sent for a domain that already has reports, is not connected, is not proven, or was added more than 30 days ago', async () => {
+    const w = await lifecycleWorld();
+    const withReports = w.addDomain({ domain: D });
+    w.addReport({ domain: D, day: MON_16_NOV - 3 * DAY, records: [ok()] });
+    w.addDomain({ domain: 'unconnected.example', rua: '' });
+    w.addDomain({ domain: 'legacy.example', via: 'legacy' });
+    w.addDomain({ domain: 'old.example', createdAt: MON_16_NOV - 31 * DAY });
+    for (const d of [D, 'unconnected.example', 'legacy.example', 'old.example']) w.dns.set(d, recordNamingUs());
+    await w.run();
+    expect(w.mailer.sent.filter((m) => m.subject.includes('is set up'))).toHaveLength(0); // the domain with reports is not waiting for anything…
+    expect(w.reads).toEqual([D]); // …it was read (and its milestone written), the others are not watched
+    expect(w.rows('SELECT domain_id FROM domain_milestones WHERE dns_read_at IS NOT NULL')).toEqual([{ domain_id: withReports }]);
+  });
+
+  it(`reads at most ${MAX_LIVE_READS_PER_WORKSPACE} domains per workspace per run, the least recently read first, so the rest are read on the next runs`, async () => {
+    const w = await lifecycleWorld();
+    for (let i = 0; i < 12; i++) { w.addDomain({ domain: `d${i}.example` }); w.dns.set(`d${i}.example`, 'error'); }
+    const seen = new Set<string>();
+    for (const day of [0, 1]) {
+      w.at(day); w.reads.length = 0;
+      await w.run();
+      expect(w.reads, `day ${day}`).toHaveLength(5);
+      for (const r of w.reads) { expect(seen.has(r), `${r} read again before the others`).toBe(false); seen.add(r); }
+    }
+    // Day 2: the two never read come first, then the three read longest ago.
+    w.at(2); w.reads.length = 0;
+    await w.run();
+    expect(w.reads).toEqual(['d10.example', 'd11.example', 'd0.example', 'd1.example', 'd2.example']);
+    for (const r of w.reads) seen.add(r);
+    expect(seen.size).toBe(12);
+    // Day 3: the oldest reads again (day 0, then day 1).
+    w.at(3); w.reads.length = 0;
+    await w.run();
+    expect(w.reads).toEqual(['d3.example', 'd4.example', 'd5.example', 'd6.example', 'd7.example']);
+    expect(w.sql.prepare('SELECT COUNT(*) AS n FROM domain_milestones WHERE dns_read_at IS NOT NULL').get()).toEqual({ n: 12 });
+  });
+
+  it('several domains going live in one run: one email lists each; claims are per domain, so none is mailed twice', async () => {
+    const w = await lifecycleWorld();
+    for (const d of [D, 'news.brightwave-mail.com']) { w.addDomain({ domain: d }); w.dns.set(d, recordNamingUs()); }
+    await w.run();
+    expect(subjects(w)).toEqual(['2 domains are set up: reports are on their way']);
+    expect(w.mailer.sent[0].text).toContain('brightwave-mail.com: Mon 16 Nov at 11:00 UTC');
+    expect(w.mailer.sent[0].text).toContain('news.brightwave-mail.com: Mon 16 Nov at 11:00 UTC');
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(1);
+    expect(kinds(w)).toEqual(['records_live', 'records_live']);
+  });
+
+  it('is not sent when the milestone is older than a week (a switch turned back on later does not announce old news)', async () => {
+    const w = await lifecycleWorld({ LIFECYCLE_EMAILS_OFF: 'records_live' });
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(0);
+    expect(w.sends()).toEqual([]); // nothing claimed while the switch is off
+    w.at(8);
+    (w.env as any).LIFECYCLE_EMAILS_OFF = '';
+    await w.run();
+    expect(w.mailer.sent.filter((m) => m.subject.includes('is set up'))).toHaveLength(0);
+  });
+});
+
+describe('first report (c)', () => {
+  it('real time: sent once when the first counted report is stored; the daily catch-up then sends nothing', async () => {
+    const w = await lifecycleWorld();
+    const id = w.addDomain({ domain: D });
+    const rid = w.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, records: [ok(14)] });
+    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, w.deps);
+    expect(subjects(w)).toEqual(['First DMARC report for brightwave-mail.com: 14 messages, all passed']);
+    await sendFirstReportNow(w.tenant(), w.ctx, id, rid, w.deps);
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('First DMARC'))).toHaveLength(1);
+  });
+
+  it('catch-up: the daily job sends it when the claim is missing and the first counted report is under 3 days old, not when older', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.addReport({ domain: D, day: MON_16_NOV - 3 * DAY, storedAt: MON_16_NOV - 2 * DAY - 3600, records: [ok(20)] });
+    await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('First DMARC'))).toHaveLength(1);
+    const old = await lifecycleWorld();
+    old.addDomain({ domain: D });
+    old.addReport({ domain: D, day: MON_16_NOV - 6 * DAY, storedAt: MON_16_NOV - 3 * DAY - 60, records: [ok(20)] });
+    await old.run();
+    expect(old.mailer.sent.filter((m) => m.subject.startsWith('First DMARC'))).toHaveLength(0);
+  });
+
+  it('is about COUNTED reports: an uncounted one is not a first report, and the next counted one is', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, tier: 'unauthenticated', records: [ok(5)] });
+    await w.run();
+    expect(w.mailer.sent.filter((m) => m.subject.startsWith('First DMARC'))).toHaveLength(0);
+    w.addReport({ domain: D, day: MON_16_NOV - DAY, records: [ok(7)] });
+    await w.run();
+    expect(w.mailer.sent.filter((m) => m.subject.startsWith('First DMARC'))).toHaveLength(1);
+  });
+
+  it('says which source did not pass, and what it passed for, when the report has one', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.addReport({ domain: D, day: MON_16_NOV - DAY, records: [ok(11), bad(3, { dkim: ['pass', 'sendgrid.net'] })] });
+    await w.run();
+    const m = w.mailer.sent.find((x) => x.subject.startsWith('First DMARC'))!;
+    expect(m.subject).toBe('First DMARC report for brightwave-mail.com: 14 messages, 11 passed');
+    expect(m.text).toContain('Worth a look: 3 messages from SendGrid (198.51.100.7) did not pass DMARC. They passed DKIM for sendgrid.net, but not for brightwave-mail.com.');
+  });
+
+  it('goes to the owners and to the admin who added the domain, not to another admin or a member, and not to an unverified address', async () => {
+    const w = await lifecycleWorld();
+    const adder = w.addUser({ id: 'u_adder', email: 'adder@brightwave-mail.com', name: 'Ada Adder', role: 'admin' });
+    w.addUser({ id: 'u_other', email: 'other@brightwave-mail.com', name: 'Other', role: 'admin' });
+    w.addUser({ id: 'u_member', email: 'member@brightwave-mail.com', name: 'Mem', role: 'member' });
+    w.addUser({ id: 'u_unverified', email: 'owner2@brightwave-mail.com', name: 'Two', role: 'owner', verified: false });
+    w.addDomain({ domain: D, addedBy: adder });
+    w.addReport({ domain: D, day: MON_16_NOV - DAY, records: [ok(9)] });
+    await w.run();
+    expect(w.mailer.sent.filter((m) => m.subject.startsWith('First DMARC')).map((m) => m.to).sort()).toEqual(['adder@brightwave-mail.com', 'dana@brightwave-mail.com']);
+    const adderMail = w.mailer.sent.find((m) => m.to === 'adder@brightwave-mail.com' && m.subject.startsWith('First DMARC'))!;
+    expect(adderMail.text).toContain('Hi Ada,');
+    expect(adderMail.text).toContain('You get this because you added brightwave-mail.com to Brightwave Studio on Ready Set Mail.');
+  });
+
+  it('when the audit log recorded nobody, the owners get it', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D, addedBy: null });
+    w.addReport({ domain: D, day: MON_16_NOV - DAY, records: [ok(9)] });
+    await w.run();
+    expect(w.mailer.sent.map((m) => m.to)).toContain('dana@brightwave-mail.com');
+  });
+});
+
+describe('no reports yet (d)', () => {
+  async function liveFor(days: number, policy = 'none') {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D, createdAt: MON_16_NOV - 20 * DAY, policy });
+    w.dns.set(D, recordNamingUs(policy));
+    w.at(-days);
+    await w.run(); // seen live `days` days ago
+    w.mailer.sent.length = 0;
+    w.at(0);
+    return w;
+  }
+
+  it('is sent once, 3 days after the records went live, when no report has arrived, after a live read of the record', async () => {
+    const w = await liveFor(3);
+    await w.run();
+    expect(subjects(w)).toEqual(['No DMARC reports yet for brightwave-mail.com']);
+    expect(w.mailer.sent[0].text).toContain('It still names Ready Set Mail. Nothing needs changing');
+    await w.run(); w.at(1); await w.run();
+    expect(w.mailer.sent).toHaveLength(1);
+  });
+
+  it('is not sent before the 3 days are over', async () => {
+    const w = await liveFor(2);
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(0);
+  });
+
+  it('is not sent when a counted report arrived since, and not when an uncounted one did (the domain is receiving reports)', async () => {
+    const counted = await liveFor(4);
+    counted.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, records: [ok(3)] });
+    await counted.run();
+    expect(counted.mailer.sent.filter((m) => m.subject.startsWith('No DMARC'))).toHaveLength(0);
+    const uncounted = await liveFor(4);
+    uncounted.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, tier: 'unknown', records: [ok(3)] });
+    await uncounted.run();
+    expect(uncounted.mailer.sent.filter((m) => m.subject.startsWith('No DMARC'))).toHaveLength(0);
+    expect(uncounted.reads).toEqual([D].slice(0, 0).concat(uncounted.reads.filter((r) => r === D).slice(0, 1))); // only the watch read of day -4, none for the check
+  });
+
+  it('tells what the live read found: no longer naming us (with the record), no record at all, and a read that failed', async () => {
+    const dropped = await liveFor(3);
+    dropped.dns.set(D, 'v=DMARC1; p=none; rua=mailto:someone@elsewhere.example');
+    await dropped.run();
+    expect(dropped.mailer.sent[0].text).toContain('It no longer names Ready Set Mail. Today it reads:');
+    expect(dropped.mailer.sent[0].text).toContain('v=DMARC1; p=none; rua=mailto:someone@elsewhere.example');
+    expect(dropped.mailer.sent[0].text).toContain(`Add rua=mailto:${RUA} back to it, or set it again from the domain page.`);
+    const none = await liveFor(3);
+    none.dns.set(D, null);
+    await none.run();
+    expect(none.mailer.sent[0].text).toContain('public DNS shows no DMARC record for brightwave-mail.com');
+    const failed = await liveFor(3);
+    failed.dns.set(D, 'error');
+    await failed.run();
+    expect(failed.mailer.sent[0].text).toContain('We could not read it just now. The domain page checks it again when you open it.');
+  });
+
+  it('offers the email check only when CANARY_DOMAIN is configured', async () => {
+    const w = await liveFor(3);
+    await w.run();
+    expect(w.mailer.sent[0].text).toContain('send any email from brightwave-mail.com to the email check on the dashboard');
+    const none = await lifecycleWorld({ CANARY_DOMAIN: undefined });
+    none.addDomain({ domain: D, createdAt: MON_16_NOV - 20 * DAY });
+    none.dns.set(D, recordNamingUs());
+    none.at(-3); await none.run(); none.mailer.sent.length = 0; none.at(0); await none.run();
+    expect(none.mailer.sent[0].subject).toBe('No DMARC reports yet for brightwave-mail.com');
+    expect(none.mailer.sent[0].text).not.toContain('email check');
+  });
+});
+
+describe('weekly summary (e)', () => {
+  it('is sent on the first run after the week ended, keyed by that ISO week, and never twice', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]);
+    await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('Week of'))).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed']);
+    expect(w.rows("SELECT period FROM lifecycle_sends WHERE kind = 'summary'")).toEqual([{ period: '2026-W46' }]);
+    await w.run(); w.at(1); await w.run(); w.at(6); await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('Week of'))).toHaveLength(1);
+  });
+
+  it('a missed day only delays it: the first run of the week can be on Wednesday', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]);
+    w.at(2);
+    await w.run();
+    expect(subjects(w).filter((s) => s.startsWith('Week of'))).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed']);
+  });
+
+  it('is NOT sent when the workspace had no reports and nothing changed, and nothing is claimed', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(0);
+    expect(w.sends()).toEqual([]);
+  });
+
+  it('is sent without numbers when a domain that had reports last week had none this week: "no reports"', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK - 7 * DAY, [ok(100)]); // the week of 2 Nov, nothing in the week of 9 Nov
+    await w.run();
+    expect(subjects(w)).toEqual(['Week of 9–15 Nov: brightwave-mail.com, no reports']);
+    expect(w.mailer.sent[0].text).toContain('brightwave-mail.com had reports last week and none this week.');
+    expect(w.mailer.sent[0].text).toContain('brightwave-mail.com got no reports this week. Check that its DMARC record still names Ready Set Mail.');
+  });
+
+  it('names a source that started failing as the one thing to do, a new failing source as "new this week", and says nothing alarming', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK - 7 * DAY, [ok(100), bad(30, { dkim: ['pass', D] })]); // SendGrid passed last week
+    week(w, LAST_WEEK, [ok(100), bad(30)]); // and fails this week
+    await w.run();
+    const t = w.mailer.sent[0].text;
+    expect(t).toContain('SendGrid on brightwave-mail.com started failing: 210 of 210 messages did not pass DMARC.');
+    expect(t).toContain('Look at SendGrid on brightwave-mail.com: 210 of its messages did not pass DMARC this week.');
+    const n = await lifecycleWorld();
+    n.addDomain({ domain: D });
+    week(n, LAST_WEEK - 7 * DAY, [ok(100)]);
+    week(n, LAST_WEEK, [ok(100), bad(30)]);
+    await n.run();
+    expect(n.mailer.sent[0].text).toContain('Look at SendGrid on brightwave-mail.com (new this week): 210 of its messages did not pass DMARC this week.');
+  });
+
+  it('lists subdomains under their registrable domain', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: 'news.brightwave-mail.com' });
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(10)], D);
+    week(w, LAST_WEEK, [{ ...ok(5), spf: ['pass', 'news.brightwave-mail.com'], dkim: ['pass', 'news.brightwave-mail.com'], from: 'news.brightwave-mail.com' }], 'news.brightwave-mail.com');
+    await w.run();
+    expect(w.mailer.sent[0].subject).toBe('Week of 9–15 Nov: 2 domains, 105 messages, 100% passed');
+    const rows = w.mailer.sent[0].text.split('\n').filter((l) => /brightwave-mail\.com\s+\d/.test(l));
+    expect(rows.map((r) => r.replace(/\s+/g, ' ').trim())).toEqual(['brightwave-mail.com 70 70 100% p=none', 'news.brightwave-mail.com 35 35 100% p=none'].map((r) => r.replace(/^news/, '  news').trim()));
+    expect(w.mailer.sent[0].text).toMatch(/\n  news\.brightwave-mail\.com/);
+  });
+
+  it('puts the uncounted reports in one neutral line', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(10)]);
+    w.addReport({ domain: D, day: LAST_WEEK, tier: 'unknown', records: [ok(4)] });
+    await w.run();
+    expect(w.mailer.sent[0].text).toContain('1 report from a sender we do not recognise is not counted.');
+  });
+});
+
+describe('tips (f)', () => {
+  /** The key the milestone table keeps for a stored policy (run.ts `policyKey`). */
+  const KEY = (p: string, pct = 100) => `p=${p};sp=;pct=${pct}`;
+  const observed = (w: World) => w.rows('SELECT policy_seen, policy_seen_at FROM domain_milestones ORDER BY domain_id');
+  const sawPolicy = (w: World, domainId: number, key: string, at: number) =>
+    w.sql.prepare('INSERT INTO domain_milestones (domain_id, workspace_id, policy_seen, policy_seen_at) VALUES (?, ?, ?, ?) ON CONFLICT (domain_id) DO UPDATE SET policy_seen = excluded.policy_seen, policy_seen_at = excluded.policy_seen_at').run(domainId, WS, key, at);
+  /** Tips are off by default: this world is an instance that sends them (LIFECYCLE_EMAILS_ON) to a person who asked for them. */
+  const tipsWorld = async (extra: Record<string, unknown> = {}) => {
+    const w = await lifecycleWorld({ LIFECYCLE_EMAILS_ON: 'tips', ...extra });
+    w.pref(w.dana, 'tips', true);
+    return w;
+  };
+  /** Two clean weeks (2 Nov and 9 Nov), the policy as given and seen at that value since before them, and the live record the same. */
+  async function clean(policy: string, pct = 100) {
+    const w = await tipsWorld();
+    const id = w.addDomain({ domain: D, policy, pct });
+    w.dns.set(D, recordNamingUs(policy, pct < 100 ? `; pct=${pct}` : ''));
+    week(w, LAST_WEEK - 7 * DAY, [ok(50)]);
+    week(w, LAST_WEEK, [ok(50)]);
+    sawPolicy(w, id, KEY(policy, pct), LAST_WEEK - 8 * DAY);
+    w.sql.prepare("INSERT INTO lifecycle_sends (workspace_id, user_id, domain_id, kind, period, state) VALUES (?, 'u_dana', 0, 'summary', '2026-W46', 'sent')").run(WS); // the summary is not what this is about
+    return w;
+  }
+  const tips = (w: World) => subjects(w).filter((s) => /every message passed|needs SPF or DKIM/.test(s));
+  const tipRows = (w: World) => w.rows("SELECT kind, period FROM lifecycle_sends WHERE kind LIKE 'tip_%' ORDER BY rowid").map((r) => `${r.kind} ${r.period}`);
+
+  it('tip_next: p=none, two clean weeks since the policy was first seen: sent once per policy state, with the record from the rule module', async () => {
+    const w = await clean('none');
+    await w.run();
+    expect(tips(w)).toEqual(['brightwave-mail.com: every message passed DMARC for two weeks']);
+    expect(w.mailer.sent[0].text).toContain(`The record this change publishes, at _dmarc.brightwave-mail.com:\n\n    v=DMARC1; p=quarantine; rua=mailto:${RUA}`);
+    w.at(8); await w.run(); w.at(30); await w.run();
+    expect(tips(w)).toHaveLength(1);
+    expect(tipRows(w)).toEqual(['tip_next policy:none:100']);
+  });
+
+  it('tip_next: quarantine -> reject says the move is done in stages; a pct below 100 is its own state', async () => {
+    const q = await clean('quarantine');
+    await q.run();
+    expect(q.mailer.sent[0].text).toContain(`v=DMARC1; p=reject; rua=mailto:${RUA}`);
+    expect(q.mailer.sent[0].text).toContain('Moving to p=reject is done in stages');
+    const pct = await clean('quarantine', 50);
+    await pct.run();
+    expect(tipRows(pct)).toEqual(['tip_next policy:quarantine:50']);
+    expect(pct.mailer.sent[0].text).toContain('pct');
+  });
+
+  it('tip_next: not when one message failed in either week, nor when a week had no reports', async () => {
+    const w = await clean('none');
+    w.sql.prepare('UPDATE aggregate_reports SET pass_count = total_count - 1, fail_count = 1 WHERE id = 3').run(); // one message failed
+    await w.run();
+    expect(tips(w)).toEqual([]);
+    const gap = await tipsWorld();
+    const id = gap.addDomain({ domain: D, policy: 'none' });
+    gap.dns.set(D, recordNamingUs());
+    sawPolicy(gap, id, KEY('none'), LAST_WEEK - 8 * DAY);
+    week(gap, LAST_WEEK, [ok(50)]);
+    await gap.run();
+    expect(tips(gap)).toEqual([]);
+  });
+
+  it('tip_next: a policy first seen now has no known history: two clean weeks of reports are not enough; two full weeks later the tip comes, once', async () => {
+    const w = await tipsWorld();
+    w.addDomain({ domain: D, policy: 'none' });
+    w.dns.set(D, recordNamingUs());
+    // Clean reports for every week from 2 Nov to 13 Dec: the weeks before the first run are clean, but nobody knows what the policy was then.
+    for (let k = -2; k <= 4; k++) week(w, LAST_WEEK + k * 7 * DAY, [ok(50)]);
+    const sentDays: number[] = [];
+    for (let d = 0; d <= 26; d++) {
+      w.at(d);
+      const before = tips(w).length;
+      await w.run();
+      if (tips(w).length > before) sentDays.push(d);
+      if (d === 0) expect(observed(w)).toEqual([{ policy_seen: KEY('none'), policy_seen_at: MON_16_NOV }]); // first seen now
+    }
+    // First seen Mon 16 Nov 11:00. The earlier of the two weeks must start after that: Mon 23 Nov, so the weeks 23 Nov - 6 Dec, and the tip on Mon 7 Dec (day 21).
+    expect(sentDays).toEqual([21]);
+    expect(tipRows(w)).toEqual(['tip_next policy:none:100']);
+    expect(observed(w)).toEqual([{ policy_seen: KEY('none'), policy_seen_at: MON_16_NOV }]); // unchanged by later runs
+  }, 60_000);
+
+  it('tip_next: a stricter policy starts the two weeks again; the next tip comes two full weeks after the run that first saw it, with its own period', async () => {
+    const w = await tipsWorld();
+    w.addDomain({ domain: D, policy: 'none' });
+    w.dns.set(D, recordNamingUs());
+    for (let k = -2; k <= 7; k++) week(w, LAST_WEEK + k * 7 * DAY, [ok(50)]);
+    const sentDays: number[] = [];
+    for (let d = 0; d <= 45; d++) {
+      w.at(d);
+      if (d === 22) { // Dana acted on the tip of day 21 (Tue 8 Dec)
+        w.dns.set(D, recordNamingUs('quarantine'));
+        w.sql.prepare("UPDATE domains SET dmarc_policy = 'quarantine', dmarc_p = 'quarantine' WHERE domain = ?").run(D);
+      }
+      const before = tips(w).length;
+      await w.run();
+      if (tips(w).length > before) sentDays.push(d);
+    }
+    // Seen as quarantine at Tue 8 Dec 11:00: the earlier of the two weeks must start after that, so Mon 14 Dec; the weeks 14-27 Dec, the tip on Mon 28 Dec (day 42).
+    expect(sentDays).toEqual([21, 42]);
+    expect(tipRows(w)).toEqual(['tip_next policy:none:100', 'tip_next policy:quarantine:100']);
+    expect(w.mailer.sent.at(-1)!.text).toContain(`v=DMARC1; p=reject; rua=mailto:${RUA}`);
+  }, 60_000);
+
+  it('tip_next: a live read that differs from the observed policy sends nothing and starts the two weeks again from now', async () => {
+    const w = await clean('none');
+    w.dns.set(D, recordNamingUs('quarantine')); // stored and observed: none (the daily refresh is not running); live: already quarantine
+    await w.run();
+    expect(tips(w)).toEqual([]);
+    expect(w.rows("SELECT * FROM lifecycle_sends WHERE kind LIKE 'tip_%'")).toEqual([]);
+    expect(observed(w)).toEqual([{ policy_seen: KEY('quarantine'), policy_seen_at: MON_16_NOV }]);
+    // Later runs, even with the stored policy refreshed, wait for two full weeks after that moment.
+    w.sql.prepare("UPDATE domains SET dmarc_policy = 'quarantine', dmarc_p = 'quarantine'").run();
+    w.at(1); await w.run(); w.at(8); await w.run();
+    expect(tips(w)).toEqual([]);
+    const failed = await clean('none');
+    failed.dns.set(D, 'error'); // cannot read it: nothing is said, nothing is reset
+    await failed.run();
+    expect(tips(failed)).toEqual([]);
+    expect(observed(failed)).toEqual([{ policy_seen: KEY('none'), policy_seen_at: LAST_WEEK - 8 * DAY }]);
+  });
+
+  it('a stored policy that differs from the observed one (it changed since the last run) is observed first and nothing is sent that day', async () => {
+    const w = await clean('none');
+    w.sql.prepare("UPDATE domains SET dmarc_policy = 'quarantine', dmarc_p = 'quarantine'").run();
+    w.dns.set(D, recordNamingUs('quarantine'));
+    await w.run();
+    expect(tips(w)).toEqual([]);
+    expect(observed(w)).toEqual([{ policy_seen: KEY('quarantine'), policy_seen_at: MON_16_NOV }]);
+  });
+
+  it('reject at pct 100: there is nothing to say, ever (no "nothing to do" tip)', async () => {
+    const w = await clean('reject');
+    await w.run();
+    for (let d = 1; d <= 40; d++) { w.at(d); await w.run(); }
+    expect(tips(w)).toEqual([]);
+    expect(subjects(w).filter((s) => /nothing to do/.test(s))).toEqual([]);
+    expect(tipRows(w)).toEqual([]);
+  });
+
+  it('every run records the stored policy of every proven domain, from the stored row: no DNS read', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D, policy: 'quarantine', pct: 50 });
+    w.addDomain({ domain: 'noreply.example', policy: null });
+    w.addDomain({ domain: 'legacy.example', via: 'legacy' });
+    await w.run();
+    expect(w.rows('SELECT domain_id, policy_seen FROM domain_milestones WHERE policy_seen IS NOT NULL ORDER BY domain_id')).toEqual([{ domain_id: 1, policy_seen: KEY('quarantine', 50) }, { domain_id: 2, policy_seen: 'none' }]); // a domain with no record is recorded as such; not proven: not at all
+    w.at(3); await w.run();
+    expect(w.rows('SELECT policy_seen_at FROM domain_milestones WHERE domain_id = 1')).toEqual([{ policy_seen_at: MON_16_NOV }]); // first seen at this value: kept
+  });
+
+  it('tip_fix: a service whose DKIM passed for another domain and fails for this one, 10 messages or more; once per source; never after it passes', async () => {
+    const w = await tipsWorld();
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    week(w, LAST_WEEK, [ok(100), bad(3, { dkim: ['pass', 'sendgrid.net'] })]); // 21 failing messages
+    await w.run();
+    expect(tips(w)).toEqual(['One service sending as brightwave-mail.com needs SPF or DKIM']);
+    expect(w.mailer.sent.find((m) => m.subject.startsWith('One service'))!.text).toContain('Last week 21 messages came from SendGrid (198.51.100.7). They passed DKIM for sendgrid.net, but not for brightwave-mail.com, so they did not pass DMARC.');
+    // Same source the week after: not again, even after the 7 days.
+    week(w, LAST_WEEK + 7 * DAY, [ok(100), bad(3, { dkim: ['pass', 'sendgrid.net'] })]);
+    w.at(7); await w.run(); w.at(14); await w.run();
+    expect(tips(w)).toHaveLength(1);
+    // Fewer than 10 failing messages is not a tip; neither is a source that passed nothing for another domain.
+    const few = await tipsWorld();
+    few.addDomain({ domain: D });
+    week(few, LAST_WEEK, [ok(100), bad(1, { dkim: ['pass', 'sendgrid.net'] })]); // 7
+    await few.run();
+    expect(tips(few)).toEqual([]);
+    const nothing = await tipsWorld();
+    nothing.addDomain({ domain: D });
+    week(nothing, LAST_WEEK, [ok(100), bad(3, { spf: ['fail', null], dkim: ['none', null] })]);
+    await nothing.run();
+    expect(tips(nothing)).toEqual([]);
+  });
+
+  it('tip_fix: only with evidence that the owner uses the service; a source that passed SPF for an unrelated domain gets no tip and no offer (the spoof-only scenario)', async () => {
+    const billing = { STRIPE_SECRET_KEY: 'rk_test_abc123', STRIPE_WEBHOOK_SECRET: 'whsec_abc123' };
+    // Billing on, price cached, postal address set: everything that would make the offer paragraph appear.
+    const world = async (source: RecordSpec) => {
+      const w = await tipsWorld(billing);
+      w.addDomain({ domain: D });
+      w.dns.set(D, recordNamingUs());
+      w.sql.prepare("INSERT INTO billing_price_cache (lookup_key, price_id, amount, currency, fetched_at) VALUES ('rsm_fix_one_domain', 'price_1', 14900, 'usd', 1)").run();
+      week(w, LAST_WEEK, [ok(100), source]);
+      await w.run();
+      return w;
+    };
+    const spoof = await world({ ip: '203.0.113.9', count: 3, spf: ['pass', 'bulk-sender.example'], dkim: ['none', null], org: 'Acme Hosting' });
+    expect(subjects(spoof).filter((s) => /needs SPF or DKIM/.test(s))).toEqual([]);
+    expect(spoof.mailer.sent.some((m) => m.text.includes('Prefer we do it?') || m.html?.includes('Prefer we do it?'))).toBe(false);
+    expect(tipRows(spoof)).toEqual([]);
+    // DKIM that passed for a domain nobody knows is not evidence either, and neither is SPF for a known service (a shared service passes SPF for everyone).
+    const dkimUnknown = await world({ ip: '203.0.113.9', count: 3, spf: ['fail', null], dkim: ['pass', 'bulk-sender.example'], org: 'Acme Hosting' });
+    expect(tipRows(dkimUnknown)).toEqual([]);
+    const spfKnown = await world({ ip: '203.0.113.9', count: 3, spf: ['pass', 'sendgrid.net'], dkim: ['none', null], org: 'Acme Hosting' });
+    expect(tipRows(spfKnown)).toEqual([]);
+    // The same volume from a known service's DKIM is the qualifying case, and then the offer shows.
+    const real = await world(bad(3, { dkim: ['pass', 'sendgrid.net'] }));
+    expect(tipRows(real)).toEqual(['tip_fix src:sendgrid']);
+    expect(real.mailer.sent.find((m) => m.subject.startsWith('One service'))!.text).toContain('Prefer we do it?');
+  });
+
+  it('tip_fix: not once the source passes DMARC in a later week', async () => {
+    const w = await tipsWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100), bad(3, { dkim: ['pass', 'sendgrid.net'] })]);
+    week(w, LAST_WEEK + 7 * DAY, [ok(100), bad(3, { dkim: ['pass', D] })]); // set up since
+    w.at(7);
+    await w.run();
+    expect(tips(w)).toEqual([]);
+  });
+
+  it('at most one tip per recipient in 7 days: the second waits for the seven days to pass', async () => {
+    const w = await tipsWorld();
+    const id = w.addDomain({ domain: D, policy: 'none' });
+    w.dns.set(D, recordNamingUs());
+    week(w, LAST_WEEK - 7 * DAY, [ok(50)]);
+    week(w, LAST_WEEK, [ok(50), bad(3, { dkim: ['pass', 'sendgrid.net'] })]); // a fix tip now, a next tip impossible: one message in 10 failed
+    sawPolicy(w, id, KEY('none'), LAST_WEEK - 8 * DAY);
+    await w.run();
+    expect(tips(w)).toEqual(['One service sending as brightwave-mail.com needs SPF or DKIM']);
+    w.sql.prepare("INSERT INTO lifecycle_sends (workspace_id, user_id, domain_id, kind, period, state, created_at) VALUES (?, 'u_dana', 1, 'tip_next', 'policy:other', 'sent', ?)").run(WS, MON_16_NOV - 2 * DAY); // an unrelated earlier tip, still inside the window
+    w.at(1); await w.run();
+    expect(tips(w)).toHaveLength(1);
+  });
+
+  it('the offer paragraph: only with billing on, a cached price, a postal address and no order on the domain', async () => {
+    const env = { STRIPE_SECRET_KEY: 'rk_test_abc123', STRIPE_WEBHOOK_SECRET: 'whsec_abc123' };
+    const build = async (extra: Record<string, unknown> = {}, orderStatus?: string, cache = true) => {
+      const w = await tipsWorld({ ...env, ...extra });
+      w.addDomain({ domain: D });
+      week(w, LAST_WEEK, [ok(100), bad(3, { dkim: ['pass', 'sendgrid.net'] })]);
+      if (cache) w.sql.prepare("INSERT INTO billing_price_cache (lookup_key, price_id, amount, currency, fetched_at) VALUES ('rsm_fix_one_domain', 'price_1', 14900, 'usd', 1)").run();
+      if (orderStatus) w.sql.prepare("INSERT INTO billing_orders (id, workspace_id, workspace_name, domain_id, domain_name, offer, stripe_price_id, amount, currency, status) VALUES ('o1', ?, 'Brightwave Studio', 1, ?, 'fix-one-domain', 'price_1', 14900, 'usd', ?)").run(WS, D, orderStatus);
+      await w.run();
+      return w.mailer.sent.find((m) => m.subject.startsWith('One service'))!.text;
+    };
+    expect(await build()).toContain('Prefer we do it? Fix one domain, $149 USD per domain: We find every service that sends email as your domain');
+    expect(await build()).toContain('Until we send the written note that the domain is done, you can ask for the full fee back.');
+    for (const text of [await build({ STRIPE_SECRET_KEY: undefined, STRIPE_WEBHOOK_SECRET: undefined }), await build({ POSTAL_ADDRESS: undefined }), await build({}, 'paid'), await build({}, 'pending'), await build({}, 'done'), await build({}, undefined, false)]) {
+      expect(text).not.toContain('Prefer we do it?');
+      expect(text).toContain('What to do: in that service');
+    }
+    expect(await build({}, 'refunded')).toContain('Prefer we do it?'); // a closed order is not an order on the domain
+  });
+});
+
+describe('weekly summary and schedule (D)', () => {
+  const summaries = (w: World) => w.mailer.sent.filter((m) => m.subject.startsWith('Week of'));
+  const periods = (w: World) => w.rows("SELECT period FROM lifecycle_sends WHERE kind = 'summary' ORDER BY rowid").map((r) => r.period);
+
+  it('one daily run does everything: the milestones, the summary and (enabled) a tip', async () => {
+    const w = await lifecycleWorld({ LIFECYCLE_EMAILS_ON: 'tips' });
+    w.pref(w.dana, 'tips', true);
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100), bad(3, { dkim: ['pass', 'sendgrid.net'] })]);
+    w.addDomain({ domain: 'new.example' });
+    w.dns.set('new.example', recordNamingUs());
+    await w.run();
+    expect(subjects(w).sort()).toEqual(['One service sending as brightwave-mail.com needs SPF or DKIM', 'Week of 9–15 Nov: 2 domains, 721 messages, 97% passed', 'new.example is set up: reports are on their way']);
+  });
+
+  it('Monday\'s run sends the summary of the week that just ended, claimed by that ISO week; the following Monday reports the following week', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]);
+    week(w, LAST_WEEK + 7 * DAY, [ok(50)]);
+    await w.run(); await w.run();
+    expect(summaries(w).map((m) => m.subject)).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed']);
+    for (let d = 1; d <= 6; d++) { w.at(d); await w.run(); }
+    expect(summaries(w)).toHaveLength(1);
+    w.at(7); await w.run(); await w.run();
+    expect(summaries(w).map((m) => m.subject)).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed', 'Week of 16–22 Nov: brightwave-mail.com, 350 messages, 100% passed']);
+    expect(periods(w)).toEqual(['2026-W46', '2026-W47']);
+  });
+
+  it('a Monday that did not run: any later daily run of the same ISO week sends it once, and never again', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(100)]);
+    w.at(3); await w.run(); // Thursday 19 Nov: Monday and the two days after it did not run
+    expect(summaries(w).map((m) => m.subject)).toEqual(['Week of 9–15 Nov: brightwave-mail.com, 700 messages, 100% passed']);
+    for (let d = 4; d <= 6; d++) { w.at(d); await w.run(); await w.run(); }
+    expect(summaries(w)).toHaveLength(1);
+    expect(periods(w)).toEqual(['2026-W46']);
+  });
+
+  it('the first summary of a workspace is a baseline: no "New source ... all passed" for sources that were simply there; a later week reports a source that was absent', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    const mailchimp: RecordSpec = { ip: '198.51.100.40', count: 5, spf: ['pass', D], dkim: ['pass', D], org: 'Mailchimp' };
+    week(w, LAST_WEEK, [ok(100), mailchimp]); // first week of reports ever: every source is "new"
+    await w.run();
+    expect(summaries(w)).toHaveLength(1);
+    expect(summaries(w)[0].text).not.toMatch(/new source|\(new this week\)/i);
+    expect(summaries(w)[0].text).not.toContain('New source');
+    week(w, LAST_WEEK + 7 * DAY, [ok(100), mailchimp]); // nothing new
+    w.at(7); await w.run();
+    expect(summaries(w)[1].text).not.toContain('New source');
+    const postmark: RecordSpec = { ip: '198.51.100.50', count: 4, spf: ['pass', D], dkim: ['pass', D], org: 'Postmark' };
+    week(w, LAST_WEEK + 14 * DAY, [ok(100), mailchimp, postmark]); // a source that had no reports the weeks before, all passing
+    w.at(14); await w.run();
+    expect(summaries(w)).toHaveLength(3);
+    expect(summaries(w)[2].text).toContain('New source');
+    expect(summaries(w)[2].text).toContain('Postmark');
+  });
+});
+
+describe('claims, retries and caps', () => {
+  it('a retryable failure (configuration, no provider, suppressed) gives the claim back so a later run can send; an unknown outcome never retries', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    w.mailer.next.push({ ok: false, kind: 'config', error: 'bad sender' });
+    await w.run();
+    expect(w.sends()).toEqual([]);
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(2); // the first attempt failed, the second delivered
+    expect(w.sends().map((s) => s.state)).toEqual(['sent']);
+
+    const t = await lifecycleWorld();
+    t.addDomain({ domain: D });
+    t.dns.set(D, recordNamingUs());
+    t.mailer.next.push({ ok: false, kind: 'transient', error: 'timeout' });
+    await t.run();
+    expect(t.sends().map((s) => s.state)).toEqual(['failed']);
+    await t.run(); t.at(1); await t.run();
+    expect(t.mailer.sent).toHaveLength(1); // at most once
+
+    const none = await lifecycleWorld();
+    none.addDomain({ domain: D });
+    none.dns.set(D, recordNamingUs());
+    const deps = { ...none.deps, mailer: null };
+    await runLifecycleForWorkspace(none.tenant(), none.ctx, newBudget(), deps);
+    expect(none.sends()).toEqual([]);
+    await none.run();
+    expect(none.mailer.sent).toHaveLength(1);
+  });
+
+  it('a provider that refuses the address is never retried either', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    w.mailer.next.push({ ok: false, kind: 'recipient', error: 'refused' });
+    await w.run(); await w.run();
+    expect(w.mailer.sent).toHaveLength(1);
+    expect(w.sends().map((s) => s.state)).toEqual(['failed']);
+  });
+
+  it('two runs at once send once: only the run whose INSERT OR IGNORE changed a row sends', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    await Promise.all([w.run(), w.run()]);
+    expect(w.mailer.sent).toHaveLength(1);
+  });
+
+  it('at most 3 lifecycle emails per recipient per run; the rest on the next run', async () => {
+    const w = await lifecycleWorld();
+    w.addDomain({ domain: D });
+    w.addDomain({ domain: 'a.example', createdAt: MON_16_NOV - 20 * DAY });
+    w.addDomain({ domain: 'b.example', createdAt: MON_16_NOV - 20 * DAY });
+    w.dns.set(D, recordNamingUs()); // records live (1)
+    w.addReport({ domain: 'a.example', day: MON_16_NOV - DAY, records: [{ ...ok(5), spf: ['pass', 'a.example'], dkim: ['pass', 'a.example'], from: 'a.example' }] }); // first report (2)
+    w.sql.prepare("INSERT INTO domain_milestones (domain_id, workspace_id, records_live_at, live_seen_by) VALUES (3, ?, ?, 'job')").run(WS, MON_16_NOV - 4 * DAY); // no reports yet (3)
+    w.dns.set('b.example', recordNamingUs());
+    week(w, LAST_WEEK, [ok(10)]); // the summary (4)
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(3);
+    expect(w.mailer.sent.every((m) => !m.subject.startsWith('Week of'))).toBe(true); // the milestones go first
+    await w.run();
+    expect(w.mailer.sent).toHaveLength(4);
+    expect(w.mailer.sent[3].subject.startsWith('Week of')).toBe(true);
+  });
+
+  it('at most MAX_LIFECYCLE_SENDS_PER_RUN per invocation over every workspace; the rest on the next run', async () => {
+    const w = await lifecycleWorld();
+    w.addUser({ id: 'u_two', email: 'two@brightwave-mail.com', name: 'Two', role: 'owner' });
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    const small = { ...newBudget(), sends: 1 };
+    await w.run({ budget: small });
+    expect(w.mailer.sent).toHaveLength(1);
+    expect(small.sends).toBe(0);
+    await w.run();
+    expect(w.mailer.sent.map((m) => m.to).sort()).toEqual(['dana@brightwave-mail.com', 'two@brightwave-mail.com']);
+  });
+
+  it('LIFECYCLE_EMAILS_OFF stops the named kinds only', async () => {
+    const w = await lifecycleWorld({ LIFECYCLE_EMAILS_OFF: 'summary, no_reports' });
+    w.addDomain({ domain: D });
+    week(w, LAST_WEEK, [ok(10)]); // a summary is due (and switched off)
+    w.addDomain({ domain: 'new.example' });
+    w.dns.set('new.example', recordNamingUs());
+    await w.run();
+    expect(subjects(w)).toEqual(['new.example is set up: reports are on their way']);
+    const all = await lifecycleWorld({ LIFECYCLE_EMAILS_OFF: 'all' });
+    all.addDomain({ domain: D });
+    all.dns.set(D, recordNamingUs());
+    await all.run();
+    expect(all.mailer.sent).toHaveLength(0);
+    expect(all.reads.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('records the analytics event with the kind only, when analytics is on', async () => {
+    const sent: any[] = [];
+    vi.stubGlobal('fetch', async (_u: unknown, init: any) => { sent.push(JSON.parse(init.body)); return new Response('{}'); });
+    const w = await lifecycleWorld({ POSTHOG_KEY, POSTHOG_HOST });
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    await new Promise((r) => setTimeout(r, 20));
+    const events = sent.flatMap((b) => b.batch).filter((e) => e.event === 'Lifecycle Email Sent');
+    expect(events).toHaveLength(1);
+    expect(events[0].properties.kind).toBe('records_live');
+    expect(JSON.stringify(events[0])).not.toMatch(/brightwave|dana|@/);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('zero rows and other modes', () => {
+  it('a workspace with no domains, domains with no reports, and a database with nothing in it: nothing is sent and nothing throws', async () => {
+    const w = await lifecycleWorld();
+    await expect(w.run()).resolves.toBeUndefined();
+    w.addDomain({ domain: D });
+    await expect(w.run()).resolves.toBeUndefined();
+    expect(w.mailer.sent).toEqual([]);
+    const empty = await lifecycleWorld();
+    empty.sql.prepare('DELETE FROM memberships').run();
+    empty.addDomain({ domain: D, addedBy: null });
+    empty.dns.set(D, recordNamingUs());
+    await expect(empty.run()).resolves.toBeUndefined();
+    expect(empty.mailer.sent).toEqual([]);
+  });
+
+  it('does nothing when the instance is not hosted', async () => {
+    const w = await lifecycleWorld({ MODE: 'selfhost', SAAS_ENABLED: undefined });
+    w.addDomain({ domain: D });
+    w.dns.set(D, recordNamingUs());
+    await w.run();
+    expect(w.mailer.sent).toEqual([]);
+    expect(w.reads).toEqual([]);
+  });
+});
