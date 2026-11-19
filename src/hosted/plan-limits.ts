@@ -74,6 +74,23 @@ export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, held: 
   return { ...body, error: `This workspace can hold ${state} (${names}). Use Remove on ${waiting.length === 1 ? 'its' : 'their'} card to free ${waiting.length === 1 ? 'the place' : 'the places'}.`, waiting };
 }
 
+/**
+ * The hosted plan "pay as you go" (src/billing/plan.ts), when the free place is full and the workspace has no card: the refusal says what a card is for,
+ * names the claims waiting for proof (they count), and tells a non-owner who can add the card. HTTP 402, code `card_required`.
+ */
+export function cardRequiredBody(env: Partial<LimitEnv>, max: number, held: number, waiting: string[], canManage: boolean) {
+  const base = planLimitWaitingBody(env, max, held, waiting);
+  const first = 'Your free plan covers one domain, and a domain waiting for proof counts.';
+  const names = waiting.length === 0 ? '' : ` Waiting for proof: ${waiting.length <= 3 ? waiting.join(', ') : `${waiting.slice(0, 3).join(', ')} and ${waiting.length - 3} more`}; Remove on a card frees its place.`;
+  const error = canManage
+    ? `${first} To add more, add a card in Settings → Billing: each extra domain is $50 a year (or $5 a month), charged only once it is proven.${names}`
+    : `${first}${names} Ask the workspace owner to add a card in Settings → Billing.`;
+  return { ...base, error, code: 'card_required' as const, can_manage: canManage, prices: { month: 'USD 5', year: 'USD 50' } };
+}
+
+/** The HTTP status of a refusal body: 402 for `card_required`, 403 for a cap that is reached. */
+export const planRefusalStatus = (body: { code?: string }): 402 | 403 => (body.code === 'card_required' ? 402 : 403);
+
 /** HTTP 403 for a cap that is reached. */
 export function planLimitResponse(env: Partial<LimitEnv>, kind: PlanLimitKind, max: number): Response {
   return Response.json(planLimitBody(env, kind, max), { status: 403 });

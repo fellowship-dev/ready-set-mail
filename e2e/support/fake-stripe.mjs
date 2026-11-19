@@ -82,7 +82,7 @@ export function createFakeStripe(opts = {}) {
   const state = {
     customers: new Map(), sessions: new Map(), setupIntents: new Map(), paymentMethods: new Map(), invoices: new Map(),
     invoiceItems: new Map(), paymentIntents: new Map(), charges: new Map(), refunds: new Map(), portalSessions: new Map(),
-    prices: new Map(), events: new Map(),
+    prices: new Map(), events: new Map(), subscriptions: new Map(), subscriptionItems: new Map(),
   };
   const behaviors = new Map(); // payment method id -> 'ok'|'decline'|'requires_action'
   const delivered = new Set();
@@ -491,6 +491,34 @@ export function createFakeStripe(opts = {}) {
       ps.url = `${fake.publicBase}/portal/${ps.id}`;
       state.portalSessions.set(ps.id, ps);
       return ok(clone(ps));
+    }
+
+    // ---- subscriptions (the hosted plan: one subscription, items with a quantity) ----
+    if (path === '/v1/subscriptions' && method === 'POST') {
+      const cid = need(form, 'customer'); customerOf(cid);
+      const wanted = asArray(form.items);
+      if (!wanted.length) throw new ApiError(400, { type: 'invalid_request_error', param: 'items', message: 'Missing required param: items.' });
+      const sub = base('sub', 'subscription', { customer: cid, status: 'active', metadata: { ...(form.metadata ?? {}) }, proration_behavior: form.proration_behavior ?? null, items: { object: 'list', data: [], has_more: false } });
+      for (const it of wanted) {
+        const price = state.prices.get(it.price);
+        if (!price) throw missing('price', it.price);
+        const item = base('si', 'subscription_item', { subscription: sub.id, price: clone(price), quantity: Number(it.quantity ?? 1) });
+        state.subscriptionItems.set(item.id, item);
+        sub.items.data.push(item);
+      }
+      state.subscriptions.set(sub.id, sub);
+      return ok(clone(sub));
+    }
+    if ((m = path.match(/^\/v1\/subscriptions\/([^/]+)$/)) && method === 'GET') {
+      const sub = state.subscriptions.get(m[1]);
+      if (!sub) throw missing('subscription', m[1]);
+      return ok(clone(sub));
+    }
+    if ((m = path.match(/^\/v1\/subscription_items\/([^/]+)$/)) && method === 'POST') {
+      const item = state.subscriptionItems.get(m[1]);
+      if (!item) throw missing('subscription_item', m[1]);
+      if (form.quantity !== undefined) item.quantity = Number(form.quantity);
+      return ok(clone(item));
     }
 
     throw new ApiError(404, { type: 'invalid_request_error', code: 'resource_missing', message: `Unrecognized request URL (${method}: ${path}).` });

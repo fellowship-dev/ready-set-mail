@@ -18,6 +18,7 @@ import { NEXT_STEPS, OFFER_ID, OFFER_NAME, OFFER_SCOPE, REFUND_RULE } from './of
 import { operatorView, orderView, predecessorsOf, STAMP, type OperatorOrderView } from './orders';
 import { appLocation, BILLING_PATH, safeReturnPath } from './paths';
 import { completeSetupSession, offerPrice, purchase, readCard, readOrder, startCardSession, startPortalSession, type Actor, type Ws } from './service';
+import { billedQuantity, FREE_DOMAINS, hostedPlanOn, planPrices, syncPlan, syncPlanSoon, type PlanView } from './plan';
 import { handleStripeWebhook } from './webhook';
 import { offerViewed } from '../product-analytics/steps';
 
@@ -87,6 +88,15 @@ function links(env: BoundEnv) {
   return { terms_url: origin ? `${origin}/terms` : null, refund_policy_url: origin ? `${origin}/refund-policy` : null };
 }
 
+/** The plan block of GET /api/billing (hosted plan on only). Card facts are the caller's own `cardFields`, so a non-owner learns only whether there is a card. */
+async function planView(d: BillingDeps, workspaceId: string, view: Awaited<ReturnType<typeof readCard>>): Promise<PlanView> {
+  const row = await billingQueries(d.db, workspaceId).plan.get();
+  return {
+    free_domains: FREE_DOMAINS, interval: row?.interval ?? 'year', prices: await planPrices(d),
+    billed_domains: await billedQuantity(d.db, workspaceId), card_on_file: !!view.card, started: !!row?.stripe_subscription_id,
+  };
+}
+
 /** What the viewer may know of the workspace's card: the owner sees it and the billing email; everyone else only whether there is one. */
 function cardFields(isOwner: boolean, view: Awaited<ReturnType<typeof readCard>>) {
   const card_on_file = !!view.card;
@@ -123,8 +133,9 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
   if (path === '/api/billing' && method === 'GET') {
     const [view, { offer, offer_problem }] = await Promise.all([readCard(d, me.ws, isOwner ? me.email : null), offerView(d)]);
     const orders = await scope.billing.orders.list(50);
+    const plan = hostedPlanOn(env) ? await planView(d, me.ws.id, view) : null;
     return json({
-      enabled: true, role: me.role, can_manage: isOwner,
+      enabled: true, plan, role: me.role, can_manage: isOwner,
       ...cardFields(isOwner, view), has_customer: view.customer, ...(view.unavailable ? { card_unavailable: true } : {}),
       offer, offer_problem, orders: orders.map(orderView), ...links(env),
     });
@@ -165,6 +176,17 @@ async function workspaceRoutes(request: Request, env: BoundEnv, ctx: ExecutionCo
     const returnPath = safeReturnPath(b.return_path) ?? BILLING_PATH;
     return json(await startCardSession(d, me.ws, me.actor, returnPath, publicOrigin(env, request)));
   }
+  if (path === '/api/billing/plan') {
+    if (!hostedPlanOn(env)) return json({ error: 'not found' }, 404);
+    if (!isOwner) return OWNER_ONLY();
+    const b = await body(request);
+    if (b instanceof Response) return b;
+    if (b.interval !== 'month' && b.interval !== 'year') return fail(400, 'invalid_interval', 'interval must be "month" or "year".');
+    // The interval is the owner's choice until the first extra domain is billed: once a subscription exists it stays.
+    if (!(await scope.billing.plan.choose(b.interval))) return fail(409, 'plan_started', 'Billing has started, so the interval can no longer be changed here.');
+    await syncPlan(env, env.DB, me.ws.id, opts);
+    return json({ ok: true, interval: b.interval });
+  }
   if (path === '/api/billing/portal-session') {
     if (!isOwner) return OWNER_ONLY();
     return json(await startPortalSession(d, me.ws, me.actor, publicOrigin(env, request)));
@@ -201,6 +223,7 @@ async function checkoutReturn(request: Request, env: BoundEnv, ctx: ExecutionCon
   try {
     const r = await completeSetupSession(d, row);
     outcome = r === 'completed' ? 'added' : r === 'incomplete' ? 'canceled' : 'error';
+    if (outcome === 'added') await syncPlanSoon(env, row.workspace_id, ctx); // a card now on file: extra domains already proven can be billed
   } catch (e) {
     console.error(`[billing] card return failed: ${(e as Error)?.name ?? 'error'}`);
   }

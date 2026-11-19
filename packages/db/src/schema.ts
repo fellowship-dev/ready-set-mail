@@ -851,6 +851,7 @@ export const WORKSPACE_OWNED_TABLES = [
 	'reporter_candidate_days',
 	'billing_orders',
 	'billing_checkout_sessions',
+	'workspace_plans',
 ] as const;
 
 // ── Trust hardening (0004) ──────────────────────────────────
@@ -1117,6 +1118,17 @@ export const billingCheckoutSessions = sqliteTable(
 		index('idx_billing_checkout_workspace').on(t.workspace_id),
 	],
 );
+
+/** The hosted plan of a workspace (0026): the interval its extra domains are billed at and the one Stripe subscription that bills them (src/billing/plan.ts). */
+export const workspacePlans = sqliteTable('workspace_plans', {
+	workspace_id: text('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
+	interval: text('interval', { enum: ['month', 'year'] }).notNull().default('year'),
+	stripe_subscription_id: text('stripe_subscription_id'),
+	stripe_item_id: text('stripe_item_id'),
+	quantity: integer('quantity').notNull().default(0),
+	synced_at: integer('synced_at'),
+	sync_error: text('sync_error'),
+});
 
 /** The Stripe price an offer resolves to by lookup key. */
 export const billingPriceCache = sqliteTable('billing_price_cache', {

@@ -10,6 +10,7 @@ import { billingDeps } from './deps';
 import { emailOwnerPaid } from './notify';
 import { RECONCILE_AFTER_SECONDS } from './service';
 import { reconcileOrder } from './sync';
+import { hostedPlanOn, syncPlan } from './plan';
 
 export const RECONCILE_BATCH = 25;
 export const NOTICE_BATCH = 20;
@@ -31,6 +32,7 @@ export async function runBillingJob(env: BoundEnv, ctx?: ExecutionContext, opts:
   for (const order of await lookups.unnotified(NOTICE_BATCH)) {
     if (await emailOwnerPaid(env, order)) { await lookups.markNotified(order.workspace_id, order.id); report.notified++; }
   }
+  if (hostedPlanOn(env)) for (const id of await lookups.planWorkspaces()) await syncPlan(env, env.DB, id, opts); // the hosted plan: every workspace with a plan row says again what it is billed (a failed sync is retried here)
   report.purged_events = await lookups.events.purgeBefore(now - EVENT_RETENTION_DAYS * 86400);
   report.purged_sessions = await lookups.purgeSessions(now);
   report.purged_orders = await lookups.purgeOrdersBefore(now - ORDER_RETENTION_YEARS * 365 * 86400);

@@ -124,6 +124,8 @@ import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal'
 import { autoVerifyClaims } from '../connections/import';
 import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, refusedInsertBody, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
+import { syncPlanSoon } from '../billing/plan';
+import { planRefusalStatus } from '../hosted/plan-limits';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
 import { claimPreviewResponse } from '../domains/claim-preview';
@@ -399,6 +401,7 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   }
 
   await tenant.scope.domains.delete(id);
+  await syncPlanSoon(tenant.env as Env, tenant.workspaceId, ctx); // one fewer billed domain
   // Cloudflare auto-import does not add a removed name back; it is offered as a suggestion instead (src/connections/import.ts).
   await tenant.scope.removals.remember(domain.domain);
   // Subdomains admitted only through this domain are no longer proven by anything (src/domains/ownership.ts).
@@ -861,7 +864,7 @@ async function _handleApi(
       // SaaS: the hub domain is a claim like any other until its owner is proven.
       const admission = await admitDomain(tenant, domain);
       if (admission.kind === 'taken') return err('this domain is already registered in another workspace', 409);
-      if (admission.kind === 'limit') return json(claimLimitBody(tenant, admission), 403);
+      if (admission.kind === 'limit') { const b = claimLimitBody(tenant, admission); return json(b, planRefusalStatus(b)); }
       if (admission.kind === 'pending') {
         domainAdded(tenant, ctx, { source: 'typed', added: 1, needsProof: true, domain, claimId: admission.claim.id }); // once per claim (docs/analytics.md)
         return json({ ok: false, pending: true, claim: claimView(admission.claim), domain }, 202);
@@ -897,10 +900,10 @@ async function _handleApi(
         if (own?.verified_via === 'legacy' && admission.via !== 'existing') await restoreInPlace(tenant, own, admission.via, { id: userBySession?.id, email: userBySession?.email });
         created = own
           ? null
-          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+          : await tenant.scope.baseDomain.apply({ domain, rua_address: ruaAddress, verified_via: admission.via, proof: proofColumns(tenant, domain, admission.via), settings }, { maxDomains: await domainCap(tenant), freeing: freeingFor(tenant, domain) });
       } catch (e: any) {
         if (e instanceof ProofIncompleteError) return json(proofIncomplete(domain).body, 409);
-        if (e instanceof PlanLimitError) return json(await refusedInsertBody(tenant, e.max), 403);
+        if (e instanceof PlanLimitError) { const b = await refusedInsertBody(tenant, e.max); return json(b, planRefusalStatus(b)); }
         if (e?.message?.includes('UNIQUE')) return err('this domain is already registered in another workspace', 409);
         throw e;
       }

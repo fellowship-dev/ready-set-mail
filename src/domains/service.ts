@@ -1,12 +1,14 @@
 import { PlanLimitError, ProofIncompleteError, claimLookups, type DomainRow } from '@ready-set-mail/db';
 import { authorizeResource } from '../access/resolve';
 import type { TenantContext } from '../tenancy/context';
-import { EVICTED_KEEP_DAYS, admitDomain, claimLimitBody, claimView, freeingFor, proofColumns, refusedInsertBody, restoreInPlace, roomRefusal, settleClaims, type VerifiedVia } from './ownership';
+import { EVICTED_KEEP_DAYS, admitDomain, claimLimitBody, claimView, domainCap, freeingFor, proofColumns, refusedInsertBody, restoreInPlace, roomRefusal, settleClaims, type VerifiedVia } from './ownership';
 import { logAudit } from '../audit/log';
 import { ownershipVerified } from '../product-analytics/steps';
 import { lookupSpf, lookupDmarc } from '../email/dns-check';
 import { isClaimProof, recordFirstDnsCheck } from './first-check';
-import { planLimits, type DomainUse } from '../hosted/plan-limits';
+import { planRefusalStatus, type DomainUse } from '../hosted/plan-limits';
+import { syncPlanSoon } from '../billing/plan';
+import type { BoundEnv } from '../index';
 import { INVALID_DOMAIN_MESSAGE, normalizeDomainName, specialUseMessage, type DomainNameResult } from '@ready-set-mail/dns-checks';
 
 export class DomainServiceError extends Error {
@@ -32,19 +34,19 @@ export function requireDomainName(raw: string): string {
 // cap holds exactly (margin 0) for direct inserts. The check before a claim is created is advisory only: it keeps people from
 // publishing a TXT record for a domain that cannot be added, but two requests may both pass it; the INSERT is what enforces.
 
-/** The cap in force for this tenant (hosted only), or undefined. */
-export const domainCap = (tenant: TenantContext): number | undefined => planLimits(tenant.env)?.domainsPerWorkspace;
+/** The cap in force for this tenant (hosted only), or undefined: `domainCap` in ownership.ts, the one cap (it asks for a card under the hosted plan). */
+export { domainCap };
 
 /** The refusal for an insert the database turned down at the domain cap, as an error the callers turn into the 403 body (it names the claims waiting for proof, like `assertDomainRoom`). */
 export async function planLimitError(tenant: TenantContext, max: number): Promise<DomainServiceError> {
   const body = await refusedInsertBody(tenant, max);
-  return new DomainServiceError(body.error, 403, body);
+  return new DomainServiceError(body.error, planRefusalStatus(body), body);
 }
 
 /** Early, non-atomic: has the workspace room for `name` (the one room rule, `domainRoom`)? Throws the refusal when not. A name it already holds, or has a claim for, needs none. */
 export async function assertDomainRoom(tenant: TenantContext, name: string, use?: DomainUse): Promise<void> {
   const refusal = await roomRefusal(tenant, name, use);
-  if (refusal) throw new DomainServiceError(refusal.error, 403, refusal);
+  if (refusal) throw new DomainServiceError(refusal.error, planRefusalStatus(refusal), refusal);
 }
 
 /** What the holder of a name that another workspace proved is told (by the email, and by "prove again" on the old row): the new holder keeps it, the history stays read-only. */
@@ -102,7 +104,7 @@ export async function enrollDomain(tenant: TenantContext, input: string, userEma
   if (admission.kind === 'taken') throw new DomainServiceError('domain already registered in another workspace', 409);
   if (admission.kind === 'limit') {
     const body = claimLimitBody(tenant, admission);
-    throw new DomainServiceError(body.error, 403, body);
+    throw new DomainServiceError(body.error, planRefusalStatus(body), body);
   }
   if (admission.kind === 'pending') return { pending: true as const, claim: claimView(admission.claim), domain: null };
   return commitVerifiedDomain(tenant, domain, admission.via, userEmail, ctx, actorId, options);
@@ -127,6 +129,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
     await assertExistingProductMapping(tenant, existing, options);
     // Unproven and now proven again: restored in place, its report history intact (not a new row, not a plain "already added").
     const restored = existing.verified_via === 'legacy' ? await restoreInPlace(tenant, existing, via, { id: actorId, email: userEmail }).catch((e) => { throw e instanceof ProofIncompleteError ? proofIncomplete(domain) : e; }) : null;
+    if (restored) await syncPlanSoon(tenant.env as BoundEnv, tenant.workspaceId, ctx ?? options.analyticsCtx); // proven again: billed from now (docs/billing.md)
     return { ...enrollmentView(restored ?? existing, rdomain), resumed: true, ...(restored ? { restored: true } : {}) };
   }
 
@@ -136,7 +139,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
   // Insert domain row — no DNS writes here; all DNS changes require explicit user action
   let domainId: number;
   try {
-    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via, proof: proofColumns(tenant, domain, via) }, options.productId, { maxDomains: domainCap(tenant), freeing: freeingFor(tenant, domain) });
+    const result = await tenant.scope.domains.insert({ domain, rua_address: ruaAddress, verified_via: via, proof: proofColumns(tenant, domain, via) }, options.productId, { maxDomains: await domainCap(tenant), freeing: freeingFor(tenant, domain) });
     domainId = result.meta.last_row_id as number;
   } catch (e: any) {
     if (e instanceof PlanLimitError) {
@@ -158,6 +161,7 @@ export async function commitVerifiedDomain(tenant: TenantContext, domain: string
     throw e;
   }
   await settleClaims(tenant, domain);
+  await syncPlanSoon(tenant.env as BoundEnv, tenant.workspaceId, ctx ?? options.analyticsCtx); // a proven domain: the plan's quantity follows (never blocks the add)
 
   ownershipVerified(tenant, ctx ?? options.analyticsCtx, domain, via); // docs/analytics.md
 

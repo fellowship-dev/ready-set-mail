@@ -34,7 +34,7 @@ export interface BulkImportResult {
   status: BulkImportStatus;
   error?: string;
   /** 'plan_limit': the workspace is at its hosted domain cap; this row and every row after it were not attempted. */
-  code?: 'plan_limit';
+  code?: 'plan_limit' | 'card_required';
   /** With code 'plan_limit': where to ask for more (https only), or null. */
   help_url?: string | null;
   dns_record_id?: string | null;
@@ -45,8 +45,8 @@ export interface BulkImportResult {
   dns_checked?: boolean;
 }
 
-function atCapRow(domain: string, body: { error: string; help_url: string | null }): BulkImportResult {
-  return { domain, status: 'error', error: body.error, code: 'plan_limit', help_url: body.help_url };
+function atCapRow(domain: string, body: { error: string; help_url: string | null; code?: string }): BulkImportResult {
+  return { domain, status: 'error', error: body.error, code: body.code === 'card_required' ? 'card_required' : 'plan_limit', help_url: body.help_url };
 }
 
 export function validateDomain(domain: string): boolean {
@@ -91,10 +91,10 @@ export async function bulkInsertDomains(
   const ruaAddress = rdomain ? `rua@${rdomain}` : '';
   const batch = domains.slice(0, BATCH_LIMIT);
   const results: BulkImportResult[] = [];
-  const cap = domainCap(tenant);
+  const use: DomainUse = hosted ? await domainUse(tenant) : { domains: [], waiting: [] };
+  const cap = await domainCap(tenant, use);
   // One read up front, then a local tally (the places this import takes). It is advisory: the capped INSERT below is what enforces the cap,
   // so a stale tally can only send a row to that insert, never past the cap.
-  const use: DomainUse = cap === undefined ? { domains: [], waiting: [] } : await domainUse(tenant);
   const toCheck: { id: number; domain: string; row: BulkImportResult }[] = [];
 
   for (const typed of batch) {
@@ -118,7 +118,7 @@ export async function bulkInsertDomains(
 
     const admission = await admitDomain(tenant, domain);
     if (admission.kind === 'taken') { results.push({ domain, status: 'duplicate', error: 'already registered in another workspace' }); continue; }
-    if (admission.kind === 'limit') { const { error, help_url } = claimLimitBody(tenant, admission); results.push({ domain, status: 'error', error, code: 'plan_limit', help_url }); continue; }
+    if (admission.kind === 'limit') { results.push(atCapRow(domain, claimLimitBody(tenant, admission))); continue; }
     if (admission.kind === 'pending') { use.waiting.push(domain); results.push({ domain, status: 'pending', claim: claimView(admission.claim) }); continue; }
 
     let domainId: number;

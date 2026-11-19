@@ -129,6 +129,20 @@ export class StripeClient {
     return this.#call<{ data: StripeObject[] }>('GET', '/v1/prices', { lookup_keys: [lookupKey], active: true, limit: 2 });
   }
 
+  // ── Subscriptions (the hosted plan: one subscription per workspace, an item per billed thing) ──
+  createSubscription(p: { workspaceId: string; customerId: string; items: { price: string; quantity: number }[]; revision: string }) {
+    return this.#call('POST', '/v1/subscriptions', {
+      customer: p.customerId,
+      items: p.items.map((i) => ({ price: i.price, quantity: i.quantity })),
+      proration_behavior: 'create_prorations',
+      collection_method: 'charge_automatically',
+      metadata: { workspace_id: p.workspaceId },
+    }, `rsm-plan-${p.workspaceId}-${p.revision}`);
+  }
+  updateSubscriptionItem(p: { workspaceId: string; itemId: string; quantity: number; revision: string }) {
+    return this.#call('POST', `/v1/subscription_items/${enc(p.itemId)}`, { quantity: p.quantity, proration_behavior: 'create_prorations' }, `rsm-plan-${p.workspaceId}-item-${p.itemId}-${p.revision}`);
+  }
+
   // ── Invoices (the charge) ───────────────────────────────────
   createInvoice(p: { orderId: string; workspaceId: string; customerId: string; currency: string; domain: string; offer: string; description: string }) {
     return this.#call('POST', '/v1/invoices', {

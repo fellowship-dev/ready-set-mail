@@ -8,6 +8,7 @@ export interface BillingEnv {
   STRIPE_SECRET_KEY?: string;       // secret: a RESTRICTED key (rk_live_ / rk_test_); a full sk_ key is refused
   STRIPE_WEBHOOK_SECRET?: string;   // secret: whsec_… signing secret of the webhook endpoint
   STRIPE_PRICE_LOOKUP_KEY?: string; // lookup key of the one-time price (default rsm_fix_one_domain)
+  HOSTED_PLAN?: string;             // 'pay_as_you_go' turns on the hosted plan (src/billing/plan.ts); anything else is off
   STRIPE_API_BASE?: string;         // testing only: http://127.0.0.1:<port> or http://localhost:<port> (a local fake Stripe); anything else is ignored
 }
 

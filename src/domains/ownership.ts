@@ -22,7 +22,9 @@ import { removeAuthRecord, removeHostedRecords } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
-import { domainRoom, planLimits, planLimitWaitingBody, type DomainUse } from '../hosted/plan-limits';
+import type { BoundEnv } from '../index';
+import { cardRequiredBody, domainRoom, planLimits, planLimitWaitingBody, type DomainUse } from '../hosted/plan-limits';
+import { FREE_DOMAINS, hostedPlanOn, planCap, syncPlanSoon } from '../billing/plan';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
 
@@ -327,6 +329,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
   }
   const owners = (await evicted.scope.team.list()).filter(m => m.role === 'owner').map(m => m.email);
   await sendEvictionNotice(tenant.env, owners, domain, EVICTED_KEEP_DAYS);
+  await syncPlanSoon(tenant.env as BoundEnv, holderWorkspaceId); // the evicted workspace has fewer billed domains
 }
 
 /**
@@ -379,18 +382,39 @@ async function nameClientWorkspace(tenant: TenantContext, domain: string): Promi
 }
 
 /** The 403 body (code `plan_limit`) for a name that cannot be added because the workspace's places are full: names the claims waiting for proof and where to remove them. */
-export const claimLimitBody = (tenant: TenantContext, a: { cap: number; held: number; waiting: string[] }) => planLimitWaitingBody(tenant.env, a.cap, a.held, a.waiting);
+export const claimLimitBody = (tenant: TenantContext, a: { cap: number; held: number; waiting: string[] }) =>
+  // Under the hosted plan a cap of the free place (below the plan's own maximum) means "no card yet": the refusal asks for one (HTTP 402, `planRefusalStatus`).
+  hostedPlanOn(tenant.env) && a.cap === FREE_DOMAINS && a.cap < (planLimits(tenant.env)?.domainsPerWorkspace ?? 0)
+    ? cardRequiredBody(tenant.env, a.cap, a.held, a.waiting, tenant.role === 'owner')
+    : planLimitWaitingBody(tenant.env, a.cap, a.held, a.waiting);
 
 /** What the workspace has used of its places: its live domains and its open claims (a claim is a domain waiting for proof). */
 export async function domainUse(tenant: TenantContext): Promise<DomainUse> {
   return { domains: (await tenant.scope.domains.list()).map(d => d.domain), waiting: (await tenant.scope.claims.list()).map(c => c.domain) };
 }
 
+/**
+ * The number of places this workspace has (hosted only; undefined on a self-hosted instance): the plan's maximum, or, when the hosted plan is on and
+ * the free place is used, the free place alone unless a card is on file (src/billing/plan.ts `planCap`; Stripe is asked only then). The one cap
+ * the room rule and the atomic inserts take. `use`: what the caller already read.
+ */
+export async function domainCap(tenant: TenantContext, use?: DomainUse): Promise<number | undefined> {
+  const limits = planLimits(tenant.env);
+  if (!limits) return undefined;
+  if (!hostedPlanOn(tenant.env)) return limits.domainsPerWorkspace;
+  const u = use ?? await domainUse(tenant);
+  const held = new Set(u.domains);
+  const places = held.size + u.waiting.filter((n) => !held.has(n)).length;
+  return planCap(tenant.env as BoundEnv, tenant.workspaceId, places, limits.domainsPerWorkspace);
+}
+
 /** The refusal for `name` under the hosted cap (src/hosted/plan-limits.ts `domainRoom`, the one room rule), or null when it fits, always on a self-hosted instance. */
 export async function roomRefusal(tenant: TenantContext, name: string, use?: DomainUse) {
-  const cap = planLimits(tenant.env)?.domainsPerWorkspace;
+  if (!planLimits(tenant.env)) return null;
+  const u = use ?? await domainUse(tenant);
+  const cap = await domainCap(tenant, u);
   if (cap === undefined) return null;
-  const room = domainRoom(cap, use ?? await domainUse(tenant), name);
+  const room = domainRoom(cap, u, name);
   return room.ok ? null : claimLimitBody(tenant, room);
 }
 
@@ -420,9 +444,9 @@ async function admitDomainInner(tenant: TenantContext, domain: string): Promise<
     else return { kind: 'pending', claim: existing };
   }
   // A claim is a domain waiting for proof: it takes one of the workspace's places like a domain does (domainRoom). A row already held needs none.
-  const cap = planLimits(tenant.env)?.domainsPerWorkspace;
-  if (cap !== undefined) {
+  if (planLimits(tenant.env)) {
     const use = await domainUse(tenant);
+    const cap = (await domainCap(tenant, use))!;
     const room = domainRoom(cap, use, domain);
     if (!room.ok) return { kind: 'limit', cap: room.cap, held: room.held, waiting: room.waiting };
   }

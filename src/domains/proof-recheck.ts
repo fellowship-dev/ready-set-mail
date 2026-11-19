@@ -30,6 +30,7 @@
 import { claimLookups, type ZoneHolder } from '@ready-set-mail/db';
 import { isPublicSuffix, normalizeName, type Resolver } from '@ready-set-mail/dns-checks';
 import { logAudit } from '../audit/log';
+import { syncPlanSoon } from '../billing/plan';
 import { sendProofLostNotice } from '../auth/mail';
 import { mapLimit } from '../cron';
 import { confirmResolverFor, resolverFor } from '../dns/resolver';
@@ -156,6 +157,7 @@ export async function withdrawProof(env: BoundEnv, holder: ZoneHolder, why: Laps
   if (!(await claimLookups(env.DB).markProofLost(holder.id, Math.floor(Date.now() / 1000)))) return false;
   const tenant = await loadTenant(env, { workspaceId: holder.workspace_id });
   await demoteOrphanedSubdomains(tenant);
+  await syncPlanSoon(env, holder.workspace_id); // an unproven domain is not billed
   logAudit(tenant, {
     actor_type: 'system', action: 'domain.proof_lost', resource_type: 'domain', resource_id: String(holder.id), resource_name: holder.domain,
     meta: { reason: why === 'delegation' ? 'public DNS no longer delegates the zone to the name servers recorded at the proof' : 'Cloudflare no longer serves the zone, active and full, in the account that proved it', zone: holder.cf_zone_name, name_servers: parseServers(holder.cf_name_servers) },
