@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-11-16
-decided-by: the coordinator approved the plan on 2026-11-16; the owner's words behind it are in ADR 0028
+decided-by: the coordinator approved the plan on 2026-11-16; the owner's words behind it are in ADR 0027
 ---
 # SPF flattening has one refresh engine, and it resolves the stored original
 
@@ -17,4 +17,4 @@ SPF flattening is resolved by `flattenFromSource` in `packages/dns-checks/src/sp
 - Writes are claim-first compare-and-set (`spf_flatten_config.revision`, migration 0025): two runs, or a run during turning off, never write twice or resurrect a turned-off row.
 - The job runs on `0 11 * * *` in both modes (it was `0 10`; an older `0 10` trigger is answered by the same function). **Basis (wiki L-080): the hosted service runs `0 4` and `0 11` because they "write no DNS". That stays true while `HOSTED_SPF_FLATTENING` is off (the default): the job finds no workspace it may refresh. The owner turning it on for a workspace is what makes `0 11` write DNS on hosted.** The alternative, turning on the held `0 10` for this job alone, is a one-line change in `src/cron.ts`.
 - This narrows the automatic-write bullet of ADR 0004 (the flattened record, now at 11:00 UTC); it adds no new kind of automatic write (a record a person turned on).
-- The rule for what may be written (a removal waits, ADR 0029) is one function, `decideSpfWrite` in `src/spf/refresh.ts`, used by the customer's refresh and by the hosted records' refresh (`src/hosted/cron.ts`, state in `hosted_domains.spf_state`); the original is rewritten only by the owner's choice after an outside edit ([ADR 0030](0030-the-owner-may-adopt-an-outside-edit-as-the-new-original.md)). Two guards fail a second flattener: one by name (`test/agent-memory/single-sources.lists.ts`, "SPF flattening") and one by what a module does (`test/agent-memory/single-sources.behaviour.test.ts`). A removal is held for a second look: [ADR 0029](0029-a-refresh-never-removes-an-address-on-first-sighting.md). Details, limits and the job: `docs/spf-flattening.md`.
+- The rule for what may be written (a removal waits, ADR 0028) is one function, `decideSpfWrite` in `src/spf/refresh.ts`, used by the customer's refresh and by the hosted records' refresh (`src/hosted/cron.ts`, state in `hosted_domains.spf_state`); the original is rewritten only by the owner's choice after an outside edit ([ADR 0029](0029-the-owner-may-adopt-an-outside-edit-as-the-new-original.md)). Two guards fail a second flattener: one by name (`test/agent-memory/single-sources.lists.ts`, "SPF flattening") and one by what a module does (`test/agent-memory/single-sources.behaviour.test.ts`). A removal is held for a second look: [ADR 0028](0028-a-refresh-never-removes-an-address-on-first-sighting.md). Details, limits and the job: `docs/spf-flattening.md`.

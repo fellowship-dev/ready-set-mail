@@ -108,7 +108,7 @@ export async function verifyAllPointers(env: BoundEnv, opts: { resolver?: Resolv
 /**
  * Re-flatten every hosted SPF from its stored source and update the record when the result changed.
  * A source that can't be fully resolved today leaves yesterday's record in place (a partial one would drop senders). The same rule as every other flattened
- * record (decideSpfWrite, docs/adr/0029): an address that left a provider is kept in the record until a second look, four hours later at the earliest, sees the same.
+ * record (decideSpfWrite, docs/adr/0028): an address that left a provider is kept in the record until a second look, four hours later at the earliest, sees the same.
  */
 export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fetch; resolver?: Resolver; now?: () => number } = {}): Promise<{ updated: number; failed: number }> {
   const apex = hostedApex(hostedConfig(env));

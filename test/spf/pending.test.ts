@@ -1,4 +1,4 @@
-// ADR 0029: a refresh never removes an authorised address on its first sighting. A removal waits for a second look at least four hours later;
+// ADR 0028: a refresh never removes an authorised address on its first sighting. A removal waits for a second look at least four hours later;
 // additions are written at once, together with the addresses whose removal is pending; if both together do not fit, nothing is written.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -32,7 +32,7 @@ async function check(w: ReturnType<typeof world>, afterMs: number, extra: Record
 const DAY = 24 * H;
 const BEFORE = 'v=spf1 ip4:198.51.100.0/28 ip4:203.0.113.9 -all';
 
-describe('a removal waits (ADR 0029)', () => {
+describe('a removal waits (ADR 0028)', () => {
   it('an include that now answers v=spf1 -all writes nothing that removes it: the last good record stays, the removal is marked pending', async () => {
     const w = await on();
     expect(published(w)).toBe(BEFORE);

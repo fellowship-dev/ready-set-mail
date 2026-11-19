@@ -7,7 +7,7 @@ Short records of decisions already made, with who made them. A change that contr
 | 0001 | [Hosted sign-in is a password plus a 6-digit emailed code, limited by daily caps](0001-sign-in-password-and-emailed-code.md) | accepted |
 | 0002 | [A domain in an active zone of a connected Cloudflare account is owned by that fact](0002-cloudflare-zone-proves-ownership.md) | accepted |
 | 0003 | [Connecting Cloudflare imports every proven zone and writes nothing to the importer's DNS](0003-cloudflare-import-adds-all-active-zones-and-writes-nothing.md) | accepted, superseded in part by 0014 |
-| 0004 | [A domain's own DNS records change only when a person asks](0004-dns-writes-need-an-explicit-apply.md) | accepted, SPF refresh narrowed by 0027 |
+| 0004 | [A domain's own DNS records change only when a person asks](0004-dns-writes-need-an-explicit-apply.md) | accepted, SPF refresh narrowed by 0026 |
 | 0005 | [A workspace can hold several Cloudflare connections, shown by account](0005-several-cloudflare-accounts-per-workspace.md) | accepted |
 | 0006 | [Hosted customers that connect reports publish one shared report address](0006-one-shared-hosted-report-address.md) | accepted, owner sign-off not recorded |
 | 0007 | [Billing: one card per workspace, Stripe-hosted pages, Stripe decides paid](0007-billing-one-card-per-workspace-stripe-hosted.md) | accepted |
@@ -24,9 +24,9 @@ Short records of decisions already made, with who made them. A change that contr
 | 0023 | [A subdomain is part of its domain, never a sibling; a domain with all its subdomains counts as one domain](0023-a-subdomain-is-part-of-its-domain.md) | decided, not yet implemented in the data model |
 | 0024 | [A person removed from, leaving, or left by a deleted workspace keeps their account](0024-removed-or-leaving-keeps-the-account.md) | accepted |
 | 0025 | [Remove the leads follow-up sequence](0025-remove-the-leads-follow-up-sequence.md) | accepted |
-| 0027 | [SPF flattening has one refresh engine, and it resolves the stored original](0027-one-spf-flattening-refresh-engine.md) | accepted, "never rewritten" narrowed by 0030 |
-| 0028 | [SPF flattening is an add-on, per domain; its price is open](0028-spf-flattening-is-an-add-on-per-domain-price-open.md) | accepted, price open |
-| 0029 | [A refresh never removes an authorised address on its first sighting; a removal waits four hours](0029-a-refresh-never-removes-an-address-on-first-sighting.md) | accepted |
-| 0030 | [After an edit made outside the app, the owner chooses: use it as the new original, or discard it](0030-the-owner-may-adopt-an-outside-edit-as-the-new-original.md) | accepted |
+| 0026 | [SPF flattening has one refresh engine, and it resolves the stored original](0026-one-spf-flattening-refresh-engine.md) | accepted, "never rewritten" narrowed by 0029 |
+| 0027 | [SPF flattening is an add-on, per domain; its price is open](0027-spf-flattening-is-an-add-on-per-domain-price-open.md) | accepted, price open |
+| 0028 | [A refresh never removes an authorised address on its first sighting; a removal waits four hours](0028-a-refresh-never-removes-an-address-on-first-sighting.md) | accepted |
+| 0029 | [After an edit made outside the app, the owner chooses: use it as the new original, or discard it](0029-the-owner-may-adopt-an-outside-edit-as-the-new-original.md) | accepted |
 
 Format: [Matt Pocock's ADR format](https://github.com/mattpocock/skills/blob/main/skills/engineering/domain-modeling/ADR-FORMAT.md) (title, one to three sentences, consequences), plus `status`, `date` and `decided-by`.

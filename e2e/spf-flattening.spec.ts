@@ -138,7 +138,7 @@ test('turn on, a provider changes its addresses, the job follows it, an outside 
     expect(audits(inst, 'spf_flatten.enable')).toBe(1);
 
     // The provider changes the address of the include we inlined (same size, so the choice of which include to inline does not move). The new address is written at once;
-    // the old one stays until a second look, at least four hours later, sees the same (ADR 0029).
+    // the old one stays until a second look, at least four hours later, sees the same (ADR 0028).
     await cf(inst, 'PATCH', `/zones/${providerZone}/dns_records/${ids[0]}`, { content: 'v=spf1 ip4:203.0.113.77 -all' });
     await runDailyJob(inst);
     const held = (await apex(inst)).content;
