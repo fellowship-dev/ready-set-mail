@@ -100,6 +100,16 @@ describe('state (b): cf-bounce.app. has no DMARC record of its own and the recor
     expect(text()).not.toContain('To receive reports here, publish the record below');
     expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
   });
+  it('step 4, parent at p=none (the state after Fix one domain): no "does not send reports", no rua= to add, whatever the policy', async () => {
+    const none = `v=DMARC1; p=none; rua=mailto:${FIXED}`;
+    const r = routes(B, bReach, false) as Record<string, unknown>;
+    r['GET /api/domains/1/onboarding-status'] = { ...onboarding(B, false), dmarc: { found: false, has_our_rua: true, current_record: null, effective: { policy: 'none', inherited_from: 'example.net', issue: null, record: none } } };
+    wizard(4, r);
+    expect(await screen.findByText(B_HEAD)).toBeInTheDocument();
+    await screen.findByText('DMARC policy');
+    expect(text()).not.toContain('does not send reports to Ready Set Mail');
+    expect(text()).not.toContain('To receive reports here, publish the record below');
+  });
   it('step 5 says it', async () => {
     wizard(5, routes(B, bReach, false));
     expect(await screen.findByText(B_HEAD)).toBeInTheDocument();

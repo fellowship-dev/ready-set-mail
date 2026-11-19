@@ -12,7 +12,7 @@ const sql = readFileSync(join(ROOT, 'migrations/0022_report_alignment.sql'), 'ut
 describe('migration 0022_report_alignment', () => {
   const db = createMigratedD1().sqlite;
   const info = (t: string) => db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string; notnull: number; dflt_value: unknown }>;
-  it('is applied before the Worker serves: the migration it requires is this one or a later one', () => expect(REQUIRED_MIGRATION >= '0022_report_alignment.sql').toBe(true));
+  it('is required by the Worker (the newest migration it needs is this one or a later one)', () => expect(REQUIRED_MIGRATION >= '0022_report_alignment.sql').toBe(true));
   it('is additive: four ADD COLUMN statements, nothing dropped, rewritten or deleted', () => {
     const statements = sql.split('\n').filter((l) => !l.startsWith('--') && l.trim()).join(' ').split(';').map((s) => s.trim()).filter(Boolean);
     expect(statements).toHaveLength(4);

@@ -14,6 +14,7 @@ const GOOD = { ip: '192.0.2.10', count: 30, spf: ['pass', DOMAIN] as [string, st
 /** A domain whose last two complete weeks (2-15 Nov) had reports with one failing third-party source in the later week: a summary and a tip are due on Mon 16 Nov. */
 async function weeklyWorld(extra: Record<string, unknown> = {}) {
   const w = await lifecycleWorld(extra);
+  w.catchUp();
   vi.restoreAllMocks();
   w.addDomain({ domain: DOMAIN });
   w.addReport({ domain: DOMAIN, day: WEEK_9_NOV, total: 50, passed: 30, records: [GOOD, SENDGRID] });
@@ -95,6 +96,7 @@ describe('milestone emails', () => {
 
   it('first report: no List-Unsubscribe headers, a reason line and a link to the email settings', async () => {
     const w = await lifecycleWorld(); vi.restoreAllMocks();
+    w.catchUp();
     w.addDomain({ domain: DOMAIN });
     w.addReport({ domain: DOMAIN, day: w.clock.now - DAY - (w.clock.now % DAY) });
     await w.run();

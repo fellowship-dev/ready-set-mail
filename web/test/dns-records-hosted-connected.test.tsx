@@ -16,9 +16,10 @@ const onboarding = {
 	dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' },
 	routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 };
-const connectedView = { available: true, reach: noReach, domain_id: 7, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: ADDR, connected_at: 1, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_published', dns: null, apply_via_cloudflare: true, review: null, parent: null };
-const routes = (cf: boolean) => ({
-	'GET /api/domains/7/report-address': connectedView,
+const connectedView = { available: true, reach: noReach, domain_id: 7, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: ADDR, connected_at: 1, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_published', dns: null, apply_via_cloudflare: true, parent: null,
+	review: { source: 'cloudflare', name: '_dmarc.example.com', address: ADDR, now: current, inherited: null, hash: 'h1', outcome: { kind: 'write', action: 'update', after: `${current} rua=mailto:${ADDR}`, reason: '' } } };
+const routes = (cf: boolean, view: unknown = connectedView) => ({
+	'GET /api/domains/7/report-address': view,
 	'GET /api/hosted/config': { enabled: true, reports: true, records: false },
 	'GET /api/domains/7/dns-check': { found: true, has_rua: false, current_record: current, cf_managed: cf },
 	'GET /api/domains/7/onboarding-status': { ...onboarding, cf_available: cf },
@@ -33,6 +34,21 @@ describe('DNS records row on hosted, connected, record lacks our address', () =>
 		expect(screen.queryByRole('button', { name: /Apply to Cloudflare/ })).not.toBeInTheDocument();
 		expect(screen.queryByText('Recommended record')).not.toBeInTheDocument();
 	});
+
+	// The sentence names a button only where the panel shows it (`applyOffered`, web/src/lib/report-address.ts).
+	for (const [what, view] of [
+		['Cloudflare linked but not this zone (apply_via_cloudflare false)', { ...connectedView, apply_via_cloudflare: false, review: null }],
+		['written to Cloudflare, public DNS not showing it yet', { ...connectedView, state: 'written' }],
+	] as const) {
+		it(`${what}: no Apply on the page, so no "press Apply" sentence and no empty paragraph`, async () => {
+			const { container } = renderApp(<DnsRecords domain={domain as never} />, { status: { mode: 'saas', configured: true, base_domain: null } as never, routes: routes(true, view) });
+			await screen.findByText('DNS records');
+			await new Promise((r) => setTimeout(r, 300));
+			expect(screen.queryAllByRole('button', { name: /^Apply/ })).toHaveLength(0);
+			expect(document.body.textContent).not.toMatch(/press Apply/);
+			expect(container.querySelectorAll('p:empty')).toHaveLength(0);
+		});
+	}
 
 	it('without Cloudflare: the record to paste is still shown', async () => {
 		renderApp(<DnsRecords domain={domain as never} />, { status: { mode: 'saas', configured: true, base_domain: null } as never, routes: routes(false) });

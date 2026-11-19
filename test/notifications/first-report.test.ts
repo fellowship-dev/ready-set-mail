@@ -31,8 +31,8 @@ function selfHost(o: { owner?: boolean; customDomain?: string | null; sendEmail?
 function addReport(db: ReturnType<typeof createMigratedD1>, over: { total?: number; passed?: number } = {}) {
   const total = over.total ?? 150, passed = over.passed ?? 140;
   db.sqlite.prepare("INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, reporter_known_as) VALUES (1, 1, 'google.com', 'r1', 1718236800, 1718323199, ?, ?, ?, 'Google')").run(total, passed, total - passed);
-  db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org) VALUES (1, '192.0.2.10', ?, 'none', 'pass', 'acme.com', 'pass', 'acme.com', 'acme.com', 'Acme Mail')").run(passed);
-  if (total > passed) db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org) VALUES (1, '198.51.100.7', ?, 'none', 'pass', 'sendgrid.net', 'fail', null, 'acme.com', 'SendGrid')").run(total - passed);
+  db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org, spf_aligned, dkim_aligned) VALUES (1, '192.0.2.10', ?, 'none', 'pass', 'acme.com', 'pass', 'acme.com', 'acme.com', 'Acme Mail', 1, 1)").run(passed);
+  if (total > passed) db.sqlite.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, org, spf_aligned, dkim_aligned) VALUES (1, '198.51.100.7', ?, 'none', 'pass', 'sendgrid.net', 'fail', null, 'acme.com', 'SendGrid', 0, 0)").run(total - passed);
 }
 
 describe('sendFirstReportNotification (self-host)', () => {
