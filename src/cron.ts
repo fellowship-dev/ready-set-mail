@@ -8,6 +8,7 @@ import { lifecycleReadOrder } from '@ready-set-mail/db';
 import { hostedEnabled } from './hosted/config';
 import type { BoundEnv } from './index';
 import { loadTenant } from './tenancy/load';
+import { reportsAddressVia } from './hosted/report-address';
 import type { TenantContext } from './tenancy/context';
 import { listCronWorkspaces, type ResolvedWorkspace } from './tenancy/resolver';
 import { checkSubscription, detectRollbackRisk } from './monitor/check';
@@ -18,8 +19,10 @@ import { dailyAnalytics, dnsChecked } from './product-analytics/steps';
 import { newBudget, runLifecycleForWorkspace, type Budget } from './lifecycle/email/run';
 import { flattenSpf } from './email/spf-flattener';
 import { snapshotDns } from './email/dns-snapshot';
+import { backfillVerdicts } from './lifecycle/verdict-backfill';
 import { runRetention } from './lifecycle/retention';
 import { retryRevocations } from './lifecycle/revoke';
+import { sweepAgentClients } from './auth/mcp-issuer';
 import { expireUnconfirmedMonitors, runFunnelCron } from './funnel/cron';
 import { discoverMxHosts, generatePolicyId, updateMtaStsTxtRecord } from './email/mta-sts';
 
@@ -69,7 +72,11 @@ export const LIFECYCLE_CRON = '0 4 * * *';
 export async function runDataLifecycle(env: BoundEnv): Promise<void> {
   // Revocations first: they are few, and leaving a grant live matters more than a late sweep.
   try { await retryRevocations(env); } catch (e) { console.error('[lifecycle] revocation retry failed:', e); }
+  // Before retention: it reads raw XML, which retention clears.
+  try { await backfillVerdicts(env); } catch (e) { console.error('[lifecycle] verdict backfill failed:', e); }
   try { await runRetention(env); } catch (e) { console.error('[retention] failed:', e); }
+  // Agent storage: apps that registered and were never approved, connections that ended, used refresh tokens (src/auth/mcp-issuer.ts); a no-op without agent storage.
+  try { const swept = await sweepAgentClients(env); if (swept && (swept.deleted || swept.truncated || swept.ended.removed || swept.ended.truncated || swept.rotationsPurged)) console.log(JSON.stringify({ job: 'agent_client_sweep', ...swept })); } catch (e) { console.error('[lifecycle] agent client sweep failed:', e); }
 }
 
 /** One cron tick for one workspace. */
@@ -136,7 +143,7 @@ async function runCron(event: ScheduledController, tenant: TenantContext, ctx: E
     const found = await snapshotDns(d.domain); // one lookup after the other, so the pool stays at SPF_REFRESH_CONCURRENCY requests
     try {
       if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(d.id, found.spf_lookup_count);
-      await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });
+      await tenant.scope.domains.recordDnsCheck(d.id, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000), reports_address: await reportsAddressVia(tenant, d) });
       dnsChecked(tenant, ctx, d, found.dmarc, 'daily'); // the row it has: no query unless the read shows the records live
     } catch (e) {
       console.warn(`[monitor] storing DNS check failed for ${d.domain}:`, e);

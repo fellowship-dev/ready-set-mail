@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { cloudflareConnections, domains, productDomains } from '../schema';
+import { nearestListedAncestorId } from './parent';
 import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
 
 export type DomainRow = typeof domains.$inferSelect;
@@ -62,17 +63,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * throws PlanLimitError and writes nothing (the product mapping, if any, selects the new row and so inserts nothing either).
 		 */
 		async insert(d: { domain: string; rua_address: string; verified_via?: string; proof?: ZoneProofColumns }, productId?: string, opts: { maxDomains?: number; freeing?: number } = {}) {
-			// Auto-detect parent: strip the leftmost label and check if the apex exists
-			const parts = d.domain.split('.');
-			let parentId: number | null = null;
-			if (parts.length > 2) {
-				const parent = await db
-					.select({ id: domains.id })
-					.from(domains)
-					.where(and(mine, live, eq(domains.domain, parts.slice(1).join('.'))))
-					.get();
-				if (parent) parentId = parent.id;
-			}
+			// The nearest listed ancestor, up to the organizational domain (a middle label with no row of its own is skipped).
+			const parentId = await nearestListedAncestorId(db, workspaceId, d.domain);
 			const pv = proofValues(d.domain, d.verified_via, d.proof); // before anything is written: a zone proof without its servers is refused
 			try {
 				const max = opts.maxDomains;
@@ -155,7 +147,11 @@ export function domainQueries(db: Db, workspaceId: string) {
 		 * The attempt itself is always recorded: 'failed' when either lookup got no answer, 'nxdomain' when the domain
 		 * does not exist, else 'ok'.
 		 */
-		recordDnsCheck(id: number, r: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean; at: number }) {
+		/**
+		 * `reports_address`: the address this name's reports arrive at when the row has none of its own (they arrive through its connected
+		 * parent, `reportsViaParent` in src/hosted/report-address.ts); the governing record is then compared with it.
+		 */
+		recordDnsCheck(id: number, r: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean; at: number; reports_address?: string | null }) {
 			const complete = r.spf_record !== undefined && r.dmarc !== undefined;
 			const set: Partial<typeof domains.$inferInsert> = {
 				dns_check_attempted_at: r.at,
@@ -173,7 +169,8 @@ export function domainQueries(db: Db, workspaceId: string) {
 					// Only whether the governing record sends reports to this domain's own address is kept, compared in SQL
 					// against the row's rua_address (an empty address never matches).
 					const list = `,${(r.dmarc.rua ?? []).map((a) => a.trim().toLowerCase()).join(',')},`;
-					set.dmarc_rua = sql`CASE WHEN TRIM(COALESCE(${domains.rua_address}, '')) <> '' AND INSTR(${list}, ',' || LOWER(TRIM(${domains.rua_address})) || ',') > 0 THEN 1 ELSE 0 END` as any;
+					const mine = sql`COALESCE(NULLIF(TRIM(COALESCE(${domains.rua_address}, '')), ''), ${(r.reports_address ?? '').trim()})`;
+					set.dmarc_rua = sql`CASE WHEN ${mine} <> '' AND INSTR(${list}, ',' || LOWER(${mine}) || ',') > 0 THEN 1 ELSE 0 END` as any;
 				}
 			}
 			if (complete) {

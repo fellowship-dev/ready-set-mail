@@ -1,6 +1,6 @@
 import { ConnectCloudflareLink } from '../../../components/ConnectCloudflareLink';
 import { Alert, CheckResult, CheckResultList, RecordBlock, StatusDot, toast } from '@ready-set-mail/ui';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
@@ -11,23 +11,18 @@ import { PublicDnsLive } from '../../../components/domain/PublicDnsLive';
 import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepCard } from '../../../components/wizard/StepCard';
 import { StepNav } from '../../../components/wizard/StepNav';
-import { api, errorMessage } from '../../../lib/api';
+import { errorMessage } from '../../../lib/api';
+import { useApplyDmarc, type ApplyDmarcResponse } from '../../../lib/apply-dmarc';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
+import { reachWords, reportsArrive, useReportAddress, useReportIntakeEnabled } from '../../../lib/report-address';
+import { ReachStatement } from '../../../components/reports/ReachStatement';
 import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
 import { NextDmarcStep } from '../../../components/domain/NextDmarcStep';
 import type { StepProps } from './SpfStep';
 import { dmarcSeverity, dnsErrorDetail, dnsErrorsFor } from './steps';
-
-interface ApplyDmarcResponse {
-	ok: boolean;
-	record: string;
-	created: boolean;
-	/** Hosted: what writing the record did about the domain's reports. */
-	reports?: { state: 'connected' | 'limit' | 'refused' | 'unavailable'; address?: string; reason?: string };
-}
 
 export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const qc = useQueryClient();
@@ -40,17 +35,25 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	const [authProvisioned, setAuthProvisioned] = useState(false);
 
 	// The report address is top-level in the status, and empty when the domain was added without a reports domain (or, hosted, is not connected yet).
-	// Hosted and not connected: the address Apply via Cloudflare would write and connect in one step is offered apart. A record to paste never gets
-	// it: reports sent for a domain that was never connected are refused.
-	const rua = hasReportAddress(status.rua_address) ? status.rua_address : cf_available && hasReportAddress(status.offered_rua_address) ? status.offered_rua_address! : null;
+	// Hosted with report intake: our address is written into a record only by Connect reports (the panel below, ADR 0020), which reads the record as it is
+	// now, so this step never builds a record that carries it and never sends one to apply-dmarc.
+	const reportsPanel = useReportIntakeEnabled();
+	const rua = hasReportAddress(status.rua_address) ? status.rua_address : null;
 	const lookupSeverity = dmarcSeverity(dmarc, dmarcFailed.length > 0);
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
-	const hostedNoReports = useHosted() && !rua;
+	const hostedMode = useHosted();
+	// Whether reports reach this name, and how, is the server's one answer (`reach`: its own connection, through its parent, or through the record that
+	// applies): this step says what the panel says. Before that is known (or without hosted intake) only the stored address is left.
+	const reach = useReportAddress(status.domain_id, hostedMode && reportsPanel);
+	const reachSaid = reachWords(reach.data);
+	const hostedNoReports = hostedMode && !(reportsArrive(reach.data) ?? !!rua);
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
-	const severity = hostedNoReports
+	// The record that applies to this name (its organizational domain's) already sends reports here: nothing is missing, whatever the name's own lookup shows.
+	const inheritedReports = reach.data?.available === true && reach.data.reach.kind === 'inherited_record' && coverage.kind === 'inherited';
+	const severity = hostedNoReports || inheritedReports
 		? coverage.kind === 'unknown'
 			? 'unknown'
 			: coverage.kind === 'own'
@@ -79,37 +82,41 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 			? offeredDmarcRecord(null, coverage, null)
 			: null;
 
+	// Whether the Connect reports panel is on this step (the block below that offers the record through it).
+	const panelShown = (severity === 'error' || severity === 'warning') && !!recommended && !applied && reportsPanel && !!rua;
+
 	const patch = (fn: (s: OnboardingStatus) => OnboardingStatus) => qc.setQueryData<OnboardingStatus>(setupKeys.status(status.domain_id), (s) => (s ? fn(s) : s));
 
-	const apply = useMutation({
-		mutationFn: () => api<ApplyDmarcResponse>(`/api/domains/${status.domain_id}/apply-dmarc`, { body: { record: recommended } }),
-		onSuccess: (res) => {
-			setApplied(true);
-			setWritten(res);
-			const note = res.reports?.state === 'connected' ? 'Reports are connected.' : res.reports?.reason;
-			toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: `Waiting to show in public DNS. ${note ?? ''}`.trim() });
-			patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: res.reports?.state === 'connected', current_record: res.record } }));
-		},
-	});
+	const apply = useApplyDmarc(status.domain_id);
+	const applyRecord = () =>
+		apply.mutate(recommended, {
+			onSuccess: (res) => {
+				setApplied(true);
+				setWritten(res);
+				toast({ variant: 'success', title: 'DMARC record written to Cloudflare', description: 'Waiting to show in public DNS.' });
+				patch((s) => ({ ...s, dmarc: { ...s.dmarc, found: true, has_our_rua: false, current_record: res.record } }));
+			},
+		});
 
 	// Re-applying the current record makes the server create the cross-domain authorization record as a side effect.
-	const provision = useMutation({
-		mutationFn: () => api<ApplyDmarcResponse>(`/api/domains/${status.domain_id}/apply-dmarc`, { body: { record: dmarc.current_record } }),
-		onSuccess: () => {
-			setAuthProvisioned(true);
-			toast({ variant: 'success', title: 'Authorization record created' });
-			patch((s) => ({ ...s, dmarc: { ...s.dmarc, auth_record: s.dmarc.auth_record ? { ...s.dmarc.auth_record, found: true } : s.dmarc.auth_record } }));
-		},
-	});
+	const provision = useApplyDmarc(status.domain_id);
+	const provisionAuth = () =>
+		provision.mutate(dmarc.current_record ?? null, {
+			onSuccess: () => {
+				setAuthProvisioned(true);
+				toast({ variant: 'success', title: 'Authorization record created' });
+				patch((s) => ({ ...s, dmarc: { ...s.dmarc, auth_record: s.dmarc.auth_record ? { ...s.dmarc.auth_record, found: true } : s.dmarc.auth_record } }));
+			},
+		});
 
 	const auth = dmarc.auth_record;
 	const authFound = auth?.found || authProvisioned;
 
 	return (
 		<StepCard title="DMARC policy" badge={<SeverityBadge severity={applied ? 'info' : recordProblem ? 'error' : severity} />}>
-			<DnsHostLine domain={status.domain} />
 			{dmarcFailed.length > 0 ? (
 				<>
+					<DnsHostLine domain={status.domain} />
 					<CheckResultList>
 						<CheckResult
 							status="error"
@@ -130,6 +137,43 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							No DMARC record found for <strong className="text-ink-1">_dmarc.{status.domain}</strong>.
 						</p>
 					)}
+					{/* The Connect reports panel below says the state of a connected name itself (its state line): said once, never twice. */}
+					{reachSaid && !(panelShown && reach.data?.available === true && !!reach.data.address) ? <ReachStatement words={reachSaid} /> : null}
+					{hostedNoReports ? (
+						<>
+							<div className="space-y-1">
+								<StatusDot status="unknown" label="Reports not connected yet" className="font-medium" />
+								<p className="text-sm text-ink-2">No reports reach Ready Set Mail for this name, so nobody can confirm yet that every service sending as it passes.</p>
+								{/* Why reports cannot be connected here, in the connect panel's own words (nothing when this deployment takes no hosted reports). */}
+								<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
+							</div>
+						</>
+					) : null}
+					{/* The record to publish comes first (FOLD-01, FOLD-02): where to add it and the sentences about it follow. */}
+					{(severity === 'error' || severity === 'warning') && recommended && !applied && reportsPanel && rua ? (
+						<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
+					) : (severity === 'error' || severity === 'warning') && recommended && !applied ? (
+						<div className="space-y-3">
+							{/* Apply writes this record itself: nothing to copy. Without Cloudflare it is the record to paste. */}
+							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
+							<div className="flex flex-col gap-2 sm:flex-row">
+								{cf_available ? (
+									<WriteButton loading={apply.isPending} onClick={applyRecord}>
+										Apply via Cloudflare
+									</WriteButton>
+								) : (
+									<CopyButton text={recommended} />
+								)}
+							</div>
+							{!cf_available ? <ConnectCloudflareLink /> : null}
+							{apply.isError ? (
+								<Alert variant="danger" title="Could not apply the record">
+									{errorMessage(apply.error)}
+								</Alert>
+							) : null}
+						</div>
+					) : null}
+					<DnsHostLine domain={status.domain} />
 					{hostedNoReports ? (
 						<>
 							{coverage.kind === 'none' ? (
@@ -146,12 +190,6 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 									{applied ? 'The record was written to Cloudflare. Public DNS can take a few minutes to show it.' : recordProblem ?? 'Your DMARC record is published, read from public DNS.'}
 								</p>
 							)}
-							<div className="space-y-1">
-								<StatusDot status="unknown" label="Reports not connected yet" className="font-medium" />
-								<p className="text-sm text-ink-2">No reports reach Ready Set Mail for this name, so nobody can confirm yet that every service sending as it passes.</p>
-								{/* Why reports cannot be connected here, in the connect panel's own words (nothing when this deployment takes no hosted reports). */}
-								<ConnectReports domain={{ id: status.domain_id, domain: status.domain }} bare />
-							</div>
 						</>
 					) : null}
 					{!rua && !applied && !hostedNoReports ? (
@@ -163,7 +201,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 						// Every mode says which policy is in force for this name before anything is offered.
 						<p className="text-sm text-ink-2">
 							{inheritedSentence(status.domain, coverage)}
-							{rua && floor ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
+							{rua && floor && !reachSaid && !reach.isLoading ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
 						</p>
 					) : null}
 					{rua && !applied && coverage.kind === 'unknown' && !dmarc.found ? (
@@ -189,13 +227,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 					{applied && written ? (
 						<Alert variant="success" title="DMARC record written to Cloudflare">
 							<PublicDnsLive domain={status.domain} record={written.record} />
-							<p className="mt-2">
-								{written.reports?.state === 'connected'
-									? 'Reports are connected: nothing is left to set up. They start arriving within 24 hours of the record showing in public DNS.'
-									: written.reports?.reason ?? 'Reports are not connected for this name.'}
-							</p>
+							<p className="mt-2">Reports are not connected for this name.</p>
 						</Alert>
-					) : (severity === 'info' && !hostedNoReports && !recordProblem) ? (
+					) : (severity === 'info' && !hostedNoReports && !recordProblem && !reachSaid) ? (
 						<Alert variant="info" title="Reports are configured">
 							Reports will start arriving within 24 hours. Once there is data, the dashboard guides you from <code className="font-mono">p=none</code> to{' '}
 							<code className="font-mono">p=reject</code> safely.
@@ -205,32 +239,12 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 					{dmarc.found && dmarc.current_record && !applied && ((severity !== 'error' && severity !== 'warning') || recordProblem) ? (
 						<NextDmarcStep domain={{ id: status.domain_id, domain: status.domain, rua_address: status.rua_address }} />
 					) : null}
-					{(severity === 'error' || severity === 'warning') && recommended && !applied ? (
-						<div className="space-y-3">
-							{/* Apply writes this record itself: nothing to copy. Without Cloudflare it is the record to paste. */}
-							<TxtRecord title={cf_available ? 'The record Ready Set Mail will write' : 'Recommended record'} name="_dmarc" value={recommended} copyable={!cf_available} />
-							<div className="flex flex-col gap-2 sm:flex-row">
-								{cf_available ? (
-									<WriteButton loading={apply.isPending} onClick={() => apply.mutate()}>
-										Apply via Cloudflare
-									</WriteButton>
-								) : (
-									<CopyButton text={recommended} />
-								)}
-							</div>
-							{!cf_available ? <ConnectCloudflareLink /> : null}
-							{apply.isError ? (
-								<Alert variant="danger" title="Could not apply the record">
-									{errorMessage(apply.error)}
-								</Alert>
-							) : null}
-						</div>
-					) : null}
 				</>
 			)}
 
-			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. */}
-			{auth && !hostedNoReports && (dmarc.found || !!recommended) ? (
+			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. Hosted: every domain
+			    reports to the shared address, whose own domain authorizes any policy domain (RFC 9990 section 4), so there is nothing per domain to check. */}
+			{auth && !hostedMode && !hostedNoReports && (dmarc.found || !!recommended) ? (
 				<section aria-label="Report authorization record" className="space-y-2">
 					<h3 className="text-sm font-semibold text-ink-1">Report authorization record</h3>
 					<CheckResultList>
@@ -261,7 +275,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 									<div className="mt-2 space-y-3">
 										<RecordBlock title="Required record" record={{ type: 'TXT', name: auth.record_name, value: 'v=DMARC1;' }} />
 										{cf_available && dmarc.current_record ? (
-											<WriteButton loading={provision.isPending} onClick={() => provision.mutate()}>
+											<WriteButton loading={provision.isPending} onClick={() => provisionAuth()}>
 												Create via Cloudflare
 											</WriteButton>
 										) : null}

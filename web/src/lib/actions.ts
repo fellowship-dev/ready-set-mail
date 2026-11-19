@@ -7,6 +7,7 @@ import { recordAlignment } from './dmarc-coverage';
 import { stepLink, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import type { DnsCheck, OnboardingResult } from './domain-queries';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { NO_SPF_NEXT_SHORT, noSpfWhyShort, spfNotNeededAtName } from '@ready-set-mail/dns-checks/spf-identity';
 import { didNotResolve, type HostedLevelInput } from './levels';
 import type { Domain, DomainCheckSummary, FailingSource } from './types';
 import { WHO, dmarcStepsFor, exactRate, totalsFromSummary } from './verdict';
@@ -35,6 +36,8 @@ export interface DomainAction {
 	writes?: boolean;
 	/** For lookups that failed: run them again. */
 	retry?: boolean;
+	/** Connect reports: the action is the reports panel on this page, which the link takes the person to. */
+	connectReports?: boolean;
 	/** The exact record this step offers to publish, and where. */
 	record?: string;
 	recordAt?: string;
@@ -60,6 +63,8 @@ export interface ActionInput {
 	suffixParent?: string | null;
 	/** False: this workspace cannot connect reports (hosted plan), so connecting is not a step for anyone here. */
 	reportsRefusal?: ReportsRefusal | null;
+	/** The hosted service: SPF flattening is not offered there, so no step links to it. */
+	hostedMode?: boolean;
 }
 
 const MAX = 3;
@@ -94,6 +99,7 @@ function fromStep(step: DmarcStep, page: string, parentId: number | undefined, s
 		...(to ? { to, cta: step.where === 'parent' ? (parentId !== undefined ? `Open ${step.at}` : undefined) : CTA[step.where] } : {}),
 		...(step.where === 'dmarc-wizard' || step.where === 'dmarc-setup' ? { writes: true } : {}),
 		...(step.where === 'recheck' || step.where === 'reload-reports' ? { retry: true } : {}),
+		...(step.where === 'connect-reports' ? { connectReports: true, cta: CTA['connect-reports'] } : {}),
 		...(step.record ? { record: step.record, recordAt: step.recordAt } : {}),
 	};
 }
@@ -121,10 +127,11 @@ export function domainActions(input: ActionInput): DomainAction[] {
 	// SPF, from the live read.
 	if (onboarding && !spfFailed) {
 		const spf = onboarding.spf;
+		// A missing record at the name is a step only if the reports do not show that no message used it as its SPF domain (spfNotNeededAtName).
 		if (!spf.record) {
-			out.push({ key: 'spf-missing', status: 'attention', do: 'Publish an SPF record that lists the services that send your mail', why: `Without it, receivers cannot tell which servers may send as ${name}.`, who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
+			if (!(summary && spfNotNeededAtName(summary))) out.push({ key: 'spf-missing', status: 'attention', do: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), why: noSpfWhyShort(name), who: WHO.dns, to: `${page}/setup/2`, cta: 'Open the SPF step', writes: true });
 		} else if (spf.lookup_count !== null && spfLookupJudgement(spf.lookup_count).level === 'over') {
-			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true });
+			out.push({ key: 'spf-lookups', status: 'attention', do: `Bring SPF down to ${SPF_LOOKUP_LIMIT} DNS lookups or fewer`, why: `It needs ${spf.lookup_count}. Past ${SPF_LOOKUP_LIMIT}, receivers treat SPF as an error, so it stops vouching for your mail.`, who: WHO.dns, ...(input.hostedMode ? {} : { to: `${page}/spf-flatten`, cta: 'Open SPF flattening', writes: true }) });
 		}
 	}
 

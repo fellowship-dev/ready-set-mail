@@ -20,6 +20,7 @@ const source = (over: Record<string, unknown> = {}) => ({
 	total: 10,
 	spf_pass: 0,
 	dkim_pass: 0,
+	verdict: 'failed',
 	first_seen: '2026-01-01',
 	last_seen: today,
 	base_domain: null,
@@ -46,7 +47,7 @@ describe('ExplorePage', () => {
 	it('filters to anomalies and refetches when the window changes', async () => {
 		const user = userEvent.setup();
 		const { calls } = page(<ExplorePage />, '/domains/:id/explore', '/domains/1/explore', {
-			'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [source({ org: 'Bad Co' }), source({ source_ip: '2.2.2.2', org: 'Good Co', spf_pass: 1, dkim_pass: 1 })] },
+			'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [source({ org: 'Bad Co' }), source({ source_ip: '2.2.2.2', org: 'Good Co', spf_pass: 1, dkim_pass: 1, verdict: 'passed', spf_aligned: 1, dkim_aligned: 1 })] },
 		});
 		expect(await screen.findByText('Good Co')).toBeInTheDocument();
 		expect(screen.getByText('SPF + DKIM fail')).toBeInTheDocument();
@@ -67,7 +68,7 @@ describe('ExplorePage', () => {
 describe('AnomaliesPage', () => {
 	it('shows the all-clear empty state', async () => {
 		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', { 'GET /api/domains/1/anomalies': { days: 30, domain: 'example.com', anomalies: [] } });
-		expect(await screen.findByText('No failing sources in the last 30 days')).toBeInTheDocument();
+		expect(await screen.findByText('No source failed DMARC in the last 30 days')).toBeInTheDocument();
 		// No reassurance without evidence: with no anomalies it cannot tell "all pass" from "no reports", so it says so.
 		expect(screen.getByText(/If no reports arrived, there is nothing to judge yet/)).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'See received reports' })).toHaveAttribute('href', '/domains/1/reports');
@@ -136,6 +137,63 @@ describe('ReportBrowserPage', () => {
 	});
 });
 
+describe('what is neither failed nor passed on both checks', () => {
+	it('the anomalies page lists failed rows in Active/Older, the one-check rows in a quieter section, and counts the unrecorded in one line', async () => {
+		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
+			'GET /api/domains/1/anomalies': {
+				days: 30, domain: 'example.com', unrecorded_reports: 2,
+				anomalies: [
+					source({ org: 'Bad Co' }),
+					source({ source_ip: '3.3.3.3', org: 'Half Co', spf_pass: 1, dkim_pass: 1, verdict: 'passed-one', spf_aligned: 1, dkim_aligned: 0 }),
+					source({ source_ip: '4.4.4.4', org: 'Old Co', total: 7, verdict: 'not-recorded' }),
+					source({ source_ip: '4.4.4.4', org: 'Old Co', total: 5, verdict: 'not-recorded', spf_domain: 'x.example' }),
+				],
+			},
+		});
+		expect(await screen.findByRole('region', { name: 'Active anomalies' })).toHaveTextContent('Bad Co');
+		expect(screen.getByRole('heading', { name: 'Passed, but one check failed' })).toBeInTheDocument();
+		expect(screen.getByText('Passed on one check')).toBeInTheDocument();
+		expect(screen.getByText('DMARC passed on SPF alone')).toBeInTheDocument();
+		// the page leads with how much has no recorded verdict, and what failed among the rest (the day's report page says the same, from the same function)
+		expect(screen.getByText(/^2 reports have no recorded verdict \(1 source, 12 messages\); among the rest, 1 source failed \(/)).toBeInTheDocument();
+		expect(screen.queryByText('Verdict not recorded')).toBeNull();
+	});
+	it('the anomalies page with unrecorded rows and nothing failing in the rest says exactly that, never "No source failed DMARC"', async () => {
+		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
+			'GET /api/domains/1/anomalies': { days: 30, domain: 'example.com', unrecorded_reports: 3, anomalies: [source({ source_ip: '4.4.4.4', total: 9, verdict: 'not-recorded' })] },
+		});
+		expect(await screen.findByText('3 reports have no recorded verdict (1 source, 9 messages); among the rest, no source failed')).toBeInTheDocument();
+		expect(screen.queryByText(/^No source failed DMARC/)).toBeNull();
+	});
+	it('the anomalies page with only a one-check row is not an all-clear of failures, and has no empty state', async () => {
+		page(<AnomaliesPage />, '/domains/:id/anomalies', '/domains/1/anomalies', {
+			'GET /api/domains/1/anomalies': { days: 30, domain: 'example.com', anomalies: [source({ org: 'Half Co', verdict: 'passed-one', spf_aligned: 0, dkim_aligned: 1 })] },
+		});
+		expect(await screen.findByRole('heading', { name: 'Passed, but one check failed' })).toBeInTheDocument();
+		expect(screen.queryByText(/No source failed DMARC/)).toBeNull();
+	});
+	it('the report page: the hero follows the report totals, one-check cards sit in their own section, unrecorded rows say so', async () => {
+		page(<ReportDetailPage />, '/domains/:id/reports/:date', '/domains/1/reports/2026-10-01', {
+			'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=reject', cf_managed: false },
+			'GET /api/domains/1/reports': {
+				date: '2026-10-01', domain: 'example.com', summary: { total: 30, passed: 30, failed: 0 },
+				sources: [
+					{ source_ip: '5.5.5.5', header_from: 'example.com', spf_domain: 'esp.example', dkim_domain: 'example.com', count: 20, spf_pass: 0, dkim_pass: 1, spf_aligned: 0, dkim_aligned: 1, verdict: 'passed-one', disposition: 'none', reporters: 'google.com', base_domain: null, org: 'Half Co' },
+					{ source_ip: '6.6.6.6', header_from: 'example.com', spf_domain: null, dkim_domain: null, count: 10, spf_pass: 1, dkim_pass: 0, spf_aligned: null, dkim_aligned: null, verdict: 'not-recorded', disposition: 'none', reporters: 'yahoo.com', base_domain: null, org: 'Old Co' },
+				],
+			},
+		});
+		// "everything passed" would be untrue: 10 of the messages have no recorded verdict
+		expect(await screen.findByText('30 messages analyzed. 1 report has no recorded verdict (1 source, 10 messages); among the rest, no source failed.')).toBeInTheDocument();
+		expect(screen.queryByText(/everything passed/)).toBeNull();
+		expect(screen.getByRole('heading', { name: 'Passed, but one check failed' })).toBeInTheDocument();
+		expect(screen.getByText(/passed DMARC as "example\.com" on DKIM alone/)).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Verdict not recorded' })).toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'Needs attention' })).toBeNull();
+		expect(screen.queryByRole('heading', { name: 'Passing sources' })).toBeNull();
+	});
+});
+
 describe('ReportDetailPage', () => {
 	it('splits failing from passing sources and expands passing rows', async () => {
 		const user = userEvent.setup();
@@ -146,14 +204,14 @@ describe('ReportDetailPage', () => {
 				domain: 'example.com',
 				summary: { total: 30, passed: 20, failed: 10 },
 				sources: [
-					{ source_ip: '1.1.1.1', header_from: 'example.com', spf_domain: 'mailchimp.com', dkim_domain: null, count: 10, spf_pass: 0, dkim_pass: 1, disposition: 'none', reporters: 'google.com', base_domain: null, org: 'Mailchimp' },
-					{ source_ip: '2.2.2.2', header_from: 'example.com', spf_domain: 'example.com', dkim_domain: 'example.com', count: 20, spf_pass: 1, dkim_pass: 1, disposition: 'none', reporters: 'yahoo.com', base_domain: null, org: 'Fastmail' },
+					{ source_ip: '1.1.1.1', header_from: 'example.com', spf_domain: 'mailchimp.com', dkim_domain: null, count: 10, spf_pass: 0, dkim_pass: 0, verdict: 'failed', disposition: 'none', reporters: 'google.com', base_domain: null, org: 'Mailchimp' },
+					{ source_ip: '2.2.2.2', header_from: 'example.com', spf_domain: 'example.com', dkim_domain: 'example.com', count: 20, spf_pass: 1, dkim_pass: 1, verdict: 'passed', spf_aligned: 1, dkim_aligned: 1, disposition: 'none', reporters: 'yahoo.com', base_domain: null, org: 'Fastmail' },
 				],
 			},
 		});
-		expect(await screen.findByText('30 messages analyzed — 10 need attention.')).toBeInTheDocument();
+		expect(await screen.findByText('30 messages analyzed — 10 failed DMARC.')).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Needs attention' })).toBeInTheDocument();
-		expect(screen.getByText(/Add include:mailchimp.com to your SPF record/)).toBeInTheDocument();
+		expect(screen.getByText(/mailchimp\.com has no authorization to send as "example\.com"/)).toBeInTheDocument();
 		const row = screen.getByRole('button', { name: /Fastmail/ });
 		expect(row).toHaveAttribute('aria-expanded', 'false');
 		await user.click(row);
@@ -168,7 +226,7 @@ describe('ReportDetailPage', () => {
 				date: '2026-10-01',
 				domain: 'example.com',
 				summary: { total: 5, passed: 0, failed: 5 },
-				sources: [{ source_ip: '9.9.9.9', header_from: 'example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
+				sources: [{ source_ip: '9.9.9.9', header_from: 'example.com', spf_domain: null, dkim_domain: null, count: 5, spf_pass: 0, dkim_pass: 0, verdict: 'failed', disposition: 'none', reporters: 'google.com', base_domain: null, org: null }],
 			},
 		});
 		expect(await screen.findByText(/p=none, so receivers still deliver it/)).toBeInTheDocument();

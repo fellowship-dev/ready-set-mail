@@ -3,7 +3,9 @@
 // reported as a failed lookup (never as "no record").
 
 import { COMMON_DKIM_SELECTORS, SPF_LOOKUP_LIMIT, SPF_VOID_LIMIT } from '@ready-set-mail/dns-checks';
-import { checkDkim, checkDmarc, checkSpf, domainExists } from './check';
+import { nameExists } from '@ready-set-mail/dns-checks';
+import { checkDkim, checkDmarc, checkSpf } from './check';
+import { createToolsResolver } from './resolver';
 import { inertDeep } from './text';
 import type { DkimResult, DmarcResult, SpfResult } from './types';
 
@@ -31,7 +33,7 @@ const SLOW = 'The lookup took too long';
 
 function timedOut(tool: ReportTool, domain: string): DmarcResult | SpfResult | DkimResult {
   const base = { state: 'lookup-failed' as const, domain, complete: false, findings: [], reason: SLOW };
-  if (tool === 'dmarc') return { ...base, source: null, recordDomain: null, organizationalDomain: null, inherited: false, record: null, tags: null, grade: 'unknown' };
+  if (tool === 'dmarc') return { ...base, source: null, recordDomain: null, organizationalDomain: null, inherited: false, record: null, effective: null, tags: null, grade: 'unknown' };
   if (tool === 'spf') return { ...base, record: null, recordLength: 0, verdict: null, totalLookups: 0, lookupLimit: SPF_LOOKUP_LIMIT, voidLookups: 0, voidLimit: SPF_VOID_LIMIT, includes: [], usesPtr: false, permError: null, issues: [] };
   return { ...base, mode: 'scan', scanned: COMMON_DKIM_SELECTORS.length, foundCount: 0, failedCount: 0, selectors: [] };
 }
@@ -67,7 +69,7 @@ export async function buildReport(domain: string, source: ReportTool, now: Date 
     settle(checkDmarc(domain), () => timedOut('dmarc', domain) as DmarcResult),
     settle(checkSpf(domain), () => timedOut('spf', domain) as SpfResult),
     settle(checkDkim(domain), () => timedOut('dkim', domain) as DkimResult),
-    settle(domainExists(domain), () => null),
+    settle(nameExists(createToolsResolver(), domain), () => null),
   ]);
   if (timer !== undefined) clearTimeout(timer);
 

@@ -64,12 +64,51 @@ export interface AddDomainResult {
   resumed?: boolean;
 }
 
+/** A source whose mail failed DMARC in the window; `total` counts the failed messages. */
 export interface FailingSource {
   source_ip: string;
   total: number;
   header_from: string | null;
+  spf_domain: string | null;
+  dkim_domain: string | null;
+  spf_pass: number;
+  dkim_pass: number;
+  reverse_dns: string | null;
   base_domain: string | null;
   org: string | null;
+  /** Whose failure it is (packages/dns-checks/src/sender-providers.ts `classifySource`). */
+  source_class: 'yours' | 'service_not_set_up' | 'not_yours';
+  /** `source_class === 'not_yours'`. */
+  likely_not_yours: boolean;
+}
+
+/** Sources and messages in one verdict class (`GET /api/domains/:id/sources`). */
+export interface VerdictCount { sources: number; messages: number }
+
+/** GET /api/domains/:id/sources: the sources that failed DMARC, and how many passed on one check only or have no recorded verdict. */
+export interface FailingSources {
+  sources: FailingSource[];
+  one_check: VerdictCount;
+  not_recorded: VerdictCount;
+}
+
+/** GET /api/domains/:id/names: a subdomain seen sending as the domain, with the policy that applies to it and where it comes from. */
+export interface NameSeen {
+  name: string;
+  roles: Array<'from' | 'return-path'>;
+  messages: number;
+  passed: number;
+  failed: number;
+  failed_service: number;
+  failed_not_yours: number;
+  /** The policy of THIS name (packages/dns-checks/src/effective-policy.ts); null: not read (over the limit, or only a return-path). */
+  effective: { status: 'applies' | 'none' | 'multiple' | 'broken' | 'error'; policy: 'none' | 'quarantine' | 'reject' | null; tag: 'p' | 'sp' | 'np' | null; at: string | null; source: 'own' | 'organizational' | null; exists: boolean | null; pct: number | null } | null;
+  /** The policy and where it comes from, in one sentence. */
+  source: string | null;
+  /** The one thing to fix; null: nothing. */
+  fix: string | null;
+  /** A service sending as this name that is not set up for it: one thing to look at; null: none. */
+  look: string | null;
 }
 
 export interface ReportSource {
@@ -80,6 +119,16 @@ export interface ReportSource {
   count: number;
   spf_pass: number;
   dkim_pass: number;
+  /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
+  spf_aligned?: number | null;
+  dkim_aligned?: number | null;
+  /** The receiver's DMARC verdict of these records: failed (neither aligned), passed, passed-one (one aligned), not-recorded (stored before it was kept). */
+  verdict?: 'failed' | 'passed' | 'passed-one' | 'not-recorded';
+  /** 1 when `verdict` is failed. */
+  dmarc_fail?: number;
+  /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
+  aspf?: string | null;
+  adkim?: string | null;
   disposition: string;
   reporters: string;
   base_domain: string | null;
@@ -94,6 +143,16 @@ export interface AnomalySource {
   total: number;
   spf_pass: number;
   dkim_pass: number;
+  /** The receiver's own alignment verdict (policy_evaluated), 1 if any record aligned; null: reports stored before it was kept. */
+  spf_aligned?: number | null;
+  dkim_aligned?: number | null;
+  /** The receiver's DMARC verdict of these records: failed (neither aligned), passed, passed-one (one aligned), not-recorded (stored before it was kept). */
+  verdict?: 'failed' | 'passed' | 'passed-one' | 'not-recorded';
+  /** 1 when `verdict` is failed. */
+  dmarc_fail?: number;
+  /** The alignment modes the receiver applied ('r' relaxed, 's' strict). */
+  aspf?: string | null;
+  adkim?: string | null;
   first_seen: string; // YYYY-MM-DD
   last_seen: string;  // YYYY-MM-DD
   base_domain: string | null;
@@ -203,6 +262,8 @@ export interface DayReport {
   domain: string;
   summary: { total: number; passed: number; failed: number };
   sources: ReportSource[];
+  /** Reports of the day holding a record whose verdict is not recorded (the count the Anomalies page uses too). */
+  unrecorded_reports?: number;
 }
 
 
@@ -210,8 +271,6 @@ export interface OnboardingStatus {
   domain_id: number;
   domain: string;
   rua_address: string;
-  /** Hosted, reports not connected yet: the address Apply via Cloudflare would write AND connect. Never shown for a record to paste: pasted by hand, its reports would be refused. */
-  offered_rua_address?: string | null;
   cf_available: boolean;
   dmarc: {
     found: boolean;
@@ -278,11 +337,23 @@ export interface DomainCheckSummary extends ReportVisibilityFields {
   dns_last_good_status: string | null;
   total_messages: number;
   pass_messages: number;
+  /** Of the failing messages, those from servers that are not a known sending service and passed SPF or DKIM for no name of this domain (likelyNotYours). */
+  failed_not_yours?: number;
+  /** Of the failing messages, those from a service sending as the domain without being set up for it (`classifySource`), and the From names they sent as. */
+  failed_service?: number;
+  failed_service_names?: string[];
+  /** Of the failing messages, those in reports stored before the receiver's verdict was kept: whose they are is not recorded. */
+  failed_unrecorded?: number;
   fail_messages: number;
   dkim_total: number;
   dkim_pass: number;
   spf_total: number;
   spf_pass: number;
+  /** What the reports say about the mail sent AS this domain (0022): messages, DKIM-aligned, SPF domain equal to the name, and unjudged. */
+  from_messages?: number;
+  from_dkim_aligned?: number;
+  from_spf_at_name?: number;
+  from_unjudged?: number;
   mta_sts_enabled: number; // 0 | 1
   mta_sts_mode: string | null;
   /** SPF DNS lookups at the last refresh; null: not counted. */
@@ -372,6 +443,10 @@ export interface ApiKey {
 export interface AgentStatus {
   available: boolean;
   server_url: string | null;
+  /** Apps can register themselves (the owner turned it on): Cursor and older assistants need this. */
+  dynamic_registration: boolean;
+  /** Apps that publish a client ID metadata document can connect: Claude, ChatGPT, VS Code. */
+  metadata_documents: boolean;
 }
 
 /** GET /api/instance/preflight (instance owner only): configuration problems by setting name, never a value. */

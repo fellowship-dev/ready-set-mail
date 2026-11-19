@@ -13,12 +13,17 @@
 // so never a pending or lost claim (those live in domain_claims), never an evicted row, and never a row whose
 // ownership was not proven ('legacy', from before ownership checks).
 
-import { createResolver, lookupDmarc, planReportAddress, recordHasAddress, ruaEntries, withoutReportAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import { domainAncestry, lookupDmarc, planReportAddress, REACH_WINDOW_DAYS, type ReportReach, recordHasAddress, ruaEntries, ruaEntryAddress, type InheritedPlan, type ReportAddressPlan, type Resolver } from '@ready-set-mail/dns-checks';
+import type { CfClient, CfDnsRecord } from '../tenancy/cf-client';
+import { dmarcRecordProblem, findDmarcRecord, writeDmarcRecord } from '../dmarc/dns-record';
+import { plainCloudflareError } from '../onboarding/errors';
+import { planDmarc, readInherited, type InheritedRead } from '../onboarding/dmarc-plan';
+import { resolverFor } from '../dns/resolver';
 import type { TenantContext } from '../tenancy/context';
 import { logAudit } from '../audit/log';
 import { reportVisibility, type ReportVisibility } from '../reports/visibility';
 import { hostedConfig, hostedEnabled } from './config';
-import { fixedReportAddress, isFixedReportAddress, workspaceMayConnectReports } from './fixed-address';
+import { attributeReport, fixedReportAddress, isFixedReportAddress, workspaceMayConnectReports } from './fixed-address';
 import { isDomainProven, provenDomainIds } from '../domains/ownership';
 import type { BoundEnv } from '../index';
 import { hashToken, intakeAddress, isTokenShaped, parseRecipient } from './tokens';
@@ -40,11 +45,12 @@ type Actor = { id?: string | null; email?: string | null };
 
 /**
  * not_connected: reports are not connected. not_published: connected, but the live DMARC record does not list the
- * address. waiting: listed, no COUNTED report since connecting. receiving: listed AND at least one COUNTED report (an authenticated
- * registry reporter, reporter_tier 'counted') stored since connecting. unknown: connected, but the DNS lookup failed, so nothing can
+ * address. written: connected, and Cloudflare's record lists the address but public DNS does not show it yet (a write that has not
+ * propagated). waiting: listed, and no COUNTED report for this name at all. receiving: listed AND at least one COUNTED report (an authenticated
+ * registry reporter, reporter_tier 'counted') stored for this name, before or since connecting (the address is the same). unknown: connected, but the DNS lookup failed, so nothing can
  * be said about the record. Uncounted reports never make a domain "received"; they are counted apart and named.
  */
-export type ReportAddressState = 'not_connected' | 'not_published' | 'waiting' | 'receiving' | 'unknown';
+export type ReportAddressState = 'not_connected' | 'not_published' | 'written' | 'waiting' | 'receiving' | 'unknown';
 
 export interface ReportAddressView {
   /** Report intake is configured on this deployment (MODE=saas, SAAS_ENABLED=1, INTAKE_DOMAIN). */
@@ -60,7 +66,7 @@ export interface ReportAddressView {
   address: string | null;
   /** When the current connection began (null for an older token address). */
   connected_at: number | null;
-  /** The newest COUNTED report stored since the connection began; how many counted, and all reports (counted or not), since then; reports before it apart. */
+  /** The newest COUNTED report stored for this row at any time (`reach.last_report_at`); how many counted, and all reports (counted or not), since the connection began; reports before it apart. */
   last_report_at: number | null;
   counted_since_connect: number;
   reports_since_connect: number;
@@ -70,8 +76,32 @@ export interface ReportAddressView {
   state: ReportAddressState;
   /** The live DMARC check, made only when connected. `plan` is null when the lookup failed. */
   dns: { checked_at: number; error: string | null; plan: ReportAddressPlan | InheritedPlan | null } | null;
+  /**
+   * Whether "Apply" can write this domain's DMARC record: a Cloudflare connection reaches its zone (the test onboarding-status uses).
+   * False when reports cannot be connected for the domain.
+   */
+  apply_via_cloudflare: boolean;
+  /**
+   * Apply reaches the zone: the live record as Cloudflare holds it, what Apply would do about it and the hash the apply must carry
+   * (`reviewReportRecord`). Null without Cloudflare: a record carrying the address is not offered to paste before the domain is connected
+   * (the intake refuses reports for a domain that never was).
+   */
+  review: ReportRecordReview | null;
   /** When the domain follows its organizational domain's record: that domain, if this workspace has it, and whether its reports are connected. */
   parent: { domain_id: number; domain: string; connected: boolean } | null;
+  /**
+   * This name has no connection of its own, yet the intake files reports that name it as their policy domain under THIS row, through
+   * the connection of the nearest connected, proven parent of this workspace (`attributeReport` then the gate in
+   * src/email/dmarc-report.ts, which prefers a proven row of the subdomain). `not_connected` stays the truth about the row's own
+   * address; this says reports about it still arrive. Mail from this name that a receiver lists inside the parent's own report stays
+   * with the parent.
+   */
+  via_parent: { domain_id: number; domain: string } | null;
+  /**
+   * The ONE answer to "do reports reach this name, and how" (`reportReachOf`): every surface (the panel, the wizard's steps, the domain page,
+   * the agent) reads its words from this, never from a computation of its own. `via_parent` above is the same decision, kept for the routes.
+   */
+  reach: ReportReach;
 }
 
 export type ReportIntakeStatus = { available: false } | ReportAddressView;
@@ -100,8 +130,8 @@ async function refusalFrom(domain: ProofFacts, proven: () => boolean | Promise<b
 }
 
 /** Why this domain's reports cannot be connected, with its kind, or null. Hosted records are handled by the callers. */
-async function refusalOf(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<Refusal | null> {
-  return refusalFrom(domain, () => isDomainProven(tenant, domain), () => workspaceMay ?? workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId));
+async function refusalOf(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean, proven?: boolean): Promise<Refusal | null> {
+  return refusalFrom(domain, () => proven ?? isDomainProven(tenant, domain), () => workspaceMay ?? workspaceMayConnectReports(tenant.env as BoundEnv, tenant.workspaceId));
 }
 
 /** The connect answer once the hosted-records fact and the refusal are known (shared by the one-domain and the page paths). */
@@ -128,11 +158,11 @@ export interface ReportConnect {
  * domain page decide each row from this. Null on an instance without hosted report intake (self-host: the deployment's
  * reports address is the one to publish). `workspaceMay`: HOSTED_CONNECT_REPORTS's answer for the workspace, when known.
  */
-export async function reportConnectFor(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean): Promise<ReportConnect | null> {
+export async function reportConnectFor(tenant: TenantContext, domain: DomainRow, workspaceMay?: boolean, proven?: boolean): Promise<ReportConnect | null> {
   if (!hostedEnabled(tenant.env)) return null;
   if (!reportIntakeDomain(tenant.env)) return unavailable();
   if (await tenant.scope.hosted.get(domain.id)) return connectAnswer(true, null);
-  return connectAnswer(false, await refusalOf(tenant, domain, workspaceMay));
+  return connectAnswer(false, await refusalOf(tenant, domain, workspaceMay, proven));
 }
 
 /**
@@ -171,6 +201,121 @@ async function connectedAddress(tenant: TenantContext, domain: DomainRow, intake
   return token && (await hashToken(rcpt.tag)) === token.token_hash ? intakeAddress('rua', rcpt.tag, intakeDomain) : null;
 }
 
+/**
+ * The connected parent this row's reports arrive through, or null. Exactly what the intake decides for a report about this name: who owns it
+ * (`attributeReport`), then whether this row takes it from them (the gate in src/email/dmarc-report.ts prefers a proven row of the subdomain).
+ * Call it only for a row with no connection of its own that is not refused (`refusalOf`) and not hosted.
+ */
+export async function reportsViaParent(tenant: TenantContext, domain: DomainRow, intakeDomain: string): Promise<{ domain_id: number; domain: string } | null> {
+  const target = await attributeReport(tenant.env as BoundEnv & { DB: D1Database }, intakeDomain, domain.domain);
+  if (!target || target.workspace_id !== tenant.workspaceId || target.domain_id === domain.id) return null;
+  const row = await tenant.scope.domains.getById(target.domain_id);
+  return row ? { domain_id: row.id, domain: row.domain } : null;
+}
+
+/** The DMARC facts `reportReachOf` refines with: the plan of the name's live record against our address (`planReportAddress`), when it was read. */
+type ReachPlan = ReportAddressPlan | InheritedPlan | null;
+
+/**
+ * THE decision of how reports reach a name, read by every surface (the panel, the setup steps, the domain page, the overview's rows, the DNS
+ * records, the agent). The kinds, in this order:
+ *  - none: nothing arrives for it: hosted records, a refusal, or (no connection of its own) nothing files under it. The connection, if any, is the answer to give.
+ *  - own: the name is connected and its own record lists the address.
+ *  - inherited_record: the name has no DMARC record of its own, and the record that APPLIES to it (`lookupDmarc(...).effective`, the organizational
+ *    domain's) lists our address and belongs to a domain connected here: its mail is counted in that domain's reports. `plan` is needed to say so.
+ *  - via_parent: no connection of its own, but the intake files the reports that name it under THIS row through a connected parent (`reportsViaParent`).
+ * `counts`: the COUNTED reports filed under this row (the last 30 days, and the newest ever), for the words (one query).
+ * Without `plan` (a list of rows, no DNS read) the kinds are the structural ones: own/none by connection, via_parent by the intake's own rule.
+ */
+export async function reportReachOf(
+  tenant: TenantContext, domain: DomainRow, intakeDomain: string,
+  facts: { address: string | null; blocked: boolean; plan?: ReachPlan; counts?: { now: number } },
+): Promise<ReportReach> {
+  const none = (through: ReportReach['through'] = null): ReportReach => ({ kind: 'none', through, reports: 0, messages: 0, last_report_at: null, days: REACH_WINDOW_DAYS });
+  if (facts.blocked) return none();
+  const counted = async (r: ReportReach): Promise<ReportReach> => {
+    if (!facts.counts) return r;
+    const c = await tenant.scope.reports.reachCounts(domain.id, facts.counts.now - REACH_WINDOW_DAYS * 86400);
+    return { ...r, reports: c.reports, messages: c.messages, last_report_at: c.last_report_at };
+  };
+  const plan = facts.plan ?? null;
+  const holder = async (from: string) => {
+    const row = await tenant.scope.domains.getByName(from);
+    return row && (await connectedAddress(tenant, row, intakeDomain)) ? { domain_id: row.id, domain: row.domain } : null;
+  };
+  if (facts.address) {
+    if (plan?.kind === 'published') return counted({ ...none(), kind: 'own' });
+    if (plan?.kind === 'inherited' && plan.parent_has_address) {
+      const h = await holder(plan.from);
+      if (h) return counted({ ...none(h), kind: 'inherited_record' });
+    }
+    return counted(none());
+  }
+  if (plan?.kind === 'inherited' && plan.parent_has_address) {
+    const h = await holder(plan.from);
+    if (h) return counted({ ...none(h), kind: 'inherited_record' });
+  }
+  const via = await reportsViaParent(tenant, domain, intakeDomain);
+  return via ? counted({ ...none(via), kind: 'via_parent' }) : counted(none());
+}
+
+/**
+ * The address a row's reports arrive at when it has none of its own (through its connected parent), else null: what its DNS record is compared with.
+ * `known.proven`: the caller has just proved the row (a bulk import), so its proof is not read again from the workspace's whole domain list.
+ */
+export async function reportsAddressVia(tenant: TenantContext, domain: DomainRow, known: { proven?: boolean } = {}): Promise<string | null> {
+  const intakeDomain = reportIntakeDomain(tenant.env);
+  if (!intakeDomain || domain.rua_address?.trim() || domainAncestry(domain.domain).length < 2) return null;
+  const blocked = !(await reportConnectFor(tenant, domain, undefined, known.proven))?.can_connect;
+  return (await reportReachOf(tenant, domain, intakeDomain, { address: null, blocked })).kind === 'via_parent' ? fixedReportAddress(intakeDomain) : null;
+}
+
+/**
+ * The domain rows as the dashboard lists them. A row with no connection of its own whose reports arrive through its connected parent
+ * (`reportsViaParent`) carries that connection's address as its `rua_address` and `reports_via`, so every page that asks "do reports reach
+ * this name?" (the verdict, its next step, the DNS records) answers what the intake does (`reportReachOf`), never "not connected" while reports arrive.
+ */
+export async function withReportsVia<R extends DomainRow>(tenant: TenantContext, rows: R[]): Promise<Array<R & { reports_via?: { domain_id: number; domain: string } }>> {
+  const intakeDomain = reportIntakeDomain(tenant.env);
+  const wanted = rows.filter((r) => !r.rua_address?.trim() && domainAncestry(r.domain).length > 1);
+  if (!intakeDomain || wanted.length === 0) return rows;
+  const connectFor = await reportConnectForPage(tenant);
+  const via = new Map<number, { domain_id: number; domain: string }>();
+  for (const r of wanted) {
+    // refused (unproven, not admitted) or hosted records: nothing arrives here
+    const reach = await reportReachOf(tenant, r, intakeDomain, { address: null, blocked: !connectFor(r.id)?.can_connect });
+    if (reach.kind === 'via_parent') via.set(r.id, reach.through!);
+  }
+  return rows.map((r) => (via.has(r.id) ? { ...r, rua_address: fixedReportAddress(intakeDomain), reports_via: via.get(r.id)! } : r));
+}
+
+/**
+ * The live DMARC read and the reach of one name: the record is read for a connected name, and for a subdomain with no connection of its own (whether
+ * the record that applies to it already sends reports here). The view and the agent's report both ask this.
+ */
+async function reachState(
+  tenant: TenantContext, domain: DomainRow, intakeDomain: string, deps: ReportAddressDeps, known: { blocked: boolean; address: string | null },
+): Promise<{ reach: ReportReach; lookup: Awaited<ReturnType<typeof lookupDmarc>> | null; plan: ReachPlan }> {
+  const now = Math.floor((deps.now?.() ?? Date.now()) / 1000);
+  let lookup: Awaited<ReturnType<typeof lookupDmarc>> | null = null;
+  let plan: ReachPlan = null;
+  if (!known.blocked && (known.address || domainAncestry(domain.domain).length > 1)) {
+    lookup = await lookupDmarc(deps.resolver ?? resolverFor(tenant.env), domain.domain);
+    plan = planReportAddress(lookup, known.address ?? fixedReportAddress(intakeDomain));
+  }
+  return { reach: await reportReachOf(tenant, domain, intakeDomain, { ...known, plan, counts: { now } }), lookup, plan };
+}
+
+/** How reports reach this name (`reportReachOf`), from the same facts as the report-address view: null when this deployment takes no hosted reports. */
+export async function reportReachFor(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps = {}): Promise<ReportReach | null> {
+  const intakeDomain = reportIntakeDomain(tenant.env);
+  if (!intakeDomain) return null;
+  const managed = !!(await tenant.scope.hosted.get(domain.id));
+  const blocked = managed || !!(await refusalFor(tenant, domain));
+  const address = blocked ? null : await connectedAddress(tenant, domain, intakeDomain);
+  return (await reachState(tenant, domain, intakeDomain, deps, { blocked, address })).reach;
+}
+
 export async function reportAddressStatus(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps = {}): Promise<ReportIntakeStatus> {
   const intakeDomain = reportIntakeDomain(tenant.env);
   if (!intakeDomain) return { available: false };
@@ -184,32 +329,38 @@ export async function reportAddressStatus(tenant: TenantContext, domain: DomainR
   let counts = { since: 0, counted_since: 0, last_counted_since: null as number | null, before: 0 };
   let dns: ReportAddressView['dns'] = null;
   let visibility: ReportVisibility | null = null;
+  const write = managed_by || refusal ? null : await reach(tenant, domain);
+  const review = write ? await reviewOf(await readLive(tenant, domain, deps, write), domain, fixedReportAddress(intakeDomain)) : null;
+  const apply_via_cloudflare = !!review;
+  const now = Math.floor((deps.now?.() ?? Date.now()) / 1000);
+  const { reach: reachOf, lookup, plan } = await reachState(tenant, domain, intakeDomain, deps, { blocked: !!(managed_by || refusal), address });
+  if (address && lookup) dns = { checked_at: now, error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan };
   if (address) {
     counts = await tenant.scope.intake.reportsAround(domain.id, connected_at);
     // Since the connection began, by when we RECEIVED the reports: a report covers the previous day, so its period starts before the connection.
     visibility = await reportVisibility(tenant, domain.id, connected_at ?? 0, undefined, 'received');
-    const lookup = await lookupDmarc(deps.resolver ?? createResolver(), domain.domain);
-    const checked_at = Math.floor((deps.now?.() ?? Date.now()) / 1000);
-    dns = { checked_at, error: lookup.status === 'error' ? (lookup.error ?? 'DNS lookup failed') : null, plan: planReportAddress(lookup, address) };
   }
+  const via_parent = reachOf.kind === 'via_parent' ? reachOf.through : null;
   let parent: ReportAddressView['parent'] = null;
   if (dns?.plan?.kind === 'inherited') {
     const row = await tenant.scope.domains.getByName(dns.plan.from);
     if (row) parent = { domain_id: row.id, domain: row.domain, connected: !!(await connectedAddress(tenant, row, intakeDomain)) };
   }
 
-  // Evidence only: received means published in live DNS AND a COUNTED report stored since this connection began.
+  // Evidence only: received means published in live DNS AND a COUNTED report stored for this name (any time: reports filed under the same fixed
+  // address before the connection count, so a name that has counted reports is never "waiting for the first report").
   let state: ReportAddressState = 'not_connected';
   if (address) {
+    const sends = dns?.plan?.kind === 'published' || reachOf.kind === 'inherited_record';
     if (!dns?.plan) state = 'unknown';
-    else if (dns.plan.kind !== 'published') state = 'not_published';
-    else state = counts.counted_since > 0 ? 'receiving' : 'waiting';
+    else if (!sends) state = review?.outcome.kind === 'present' ? 'written' : 'not_published';
+    else state = reachOf.last_report_at !== null ? 'receiving' : 'waiting';
   }
 
   return {
     available: true, domain_id: domain.id, domain: domain.domain, managed_by, can_connect: !refusal, refusal, address,
-    connected_at, last_report_at: counts.last_counted_since, counted_since_connect: counts.counted_since, reports_since_connect: counts.since,
-    reports_before_connect: counts.before, visibility, state, dns, parent,
+    connected_at, last_report_at: reachOf.last_report_at, counted_since_connect: counts.counted_since, reports_since_connect: counts.since,
+    reports_before_connect: counts.before, visibility, state, dns, apply_via_cloudflare, review, parent, via_parent, reach: reachOf,
   };
 }
 
@@ -274,22 +425,208 @@ export async function reportAddressForWrite(tenant: TenantContext, domain: Domai
   return { kind: 'ready', address: current ?? fixedReportAddress(intakeDomain), connected: !!current };
 }
 
-export type ReportMerge = 'present' | 'added' | 'limit';
+// ── The one function that writes our report address into a DMARC record ───────────────────────────────
+//
+// Both entry points call it: the domain page's Connect reports panel (POST /api/domains/:id/report-address/apply) and the first-run
+// review (`dns-apply`, step dmarc: src/onboarding/plan.ts builds its hosted DMARC write from `reviewReportRecord`, src/onboarding/routes.ts
+// applies it through `applyReportRecord`). Nothing else puts our address into a record: the policy routes (apply-dmarc, PATCH dmarc) refuse
+// to (`reportAddressChangeIn`, `policyWriteRua`). ADR 0020.
+//
+//  - The record comes from the LIVE record and the person's explicit choice, never from a record a browser sends: every tag stays byte for
+//    byte except the rua= list; every address stays exactly as published except the one the person chose to replace; the policy never changes.
+//  - Live is the domain's Cloudflare zone when a connection reaches it, public DNS otherwise (the first read of a name with no record of its
+//    own is the policy it inherits, as the first-run plan reads it).
+//  - The review carries the live value and its hash; the apply carries the reviewed hash and the choice, reads live again and refuses
+//    (409 `record_changed`, with the fresh review) when it differs. Nothing is connected or written on that refusal.
+//  - Address count (RFC 7489 §6.2, ADR 0020): ours is only ever the first or second address. Fewer than two published: ours goes after them. Two or
+//    more: the person picks which of the first two it replaces, or leaves the record as it is.
+//  - Before it connects or writes it asks the same questions as connectReports (hosted intake on, not hosted records, ownership proven,
+//    workspace admitted by HOSTED_CONNECT_REPORTS). It connects the domain BEFORE it writes the record that carries our address.
+
+/** What the person decided: add ours after the addresses there, or replace one of the first two (`address` as published, `mailto:` included). */
+export type ReportChoice = { kind: 'add' } | { kind: 'replace'; address: string };
+
+/** Where the live record was read: the domain's Cloudflare zone, or public DNS when no connection reaches the zone. */
+export type ReportSource = 'cloudflare' | 'public_dns';
+
+export type ReportRecordOutcome =
+  /** Apply writes `after` (create, or update of the record that is there). */
+  | { kind: 'write'; action: 'create' | 'update'; after: string; reason: string }
+  /** The record already lists our address: Apply only connects the domain. */
+  | { kind: 'present'; reason: string }
+  /** Two or more addresses: one of the first two must be chosen. `reason` is the rule in words. */
+  | { kind: 'choose'; existing: string[]; options: { replaces: string; after: string }[]; reason: string }
+  /** Nothing can be written, and why (several records, an invalid p=, a failed read, a record that would not stay valid). */
+  | { kind: 'blocked'; reason: string };
+
+export interface ReportRecordReview {
+  source: ReportSource;
+  /** `_dmarc.<domain>`. */
+  name: string;
+  /** The address Apply adds. */
+  address: string;
+  /** The domain's own record as read, null when it has none (or when it has several: see `outcome`). */
+  now: string | null;
+  /** No own record: the record of the organizational domain that applies today. */
+  inherited: { from: string; record: string } | null;
+  /** Of the live value and its source: the apply must carry it. */
+  hash: string;
+  outcome: ReportRecordOutcome;
+}
+
+interface LiveDmarc {
+  source: ReportSource;
+  /** The DMARC TXT records at `_dmarc.<domain>`, as published. */
+  own: string[];
+  existing: CfDnsRecord | null;
+  inherited: InheritedRead;
+  /** Set when a Cloudflare connection reaches the zone: where a write goes. */
+  write: { cf: CfClient; zoneId: string } | null;
+  /** The read itself failed: no decision can be made. */
+  failure: string | null;
+}
+
+async function digest(value: unknown): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))));
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The Cloudflare client and zone that reach this domain, or null when no connection does (the test `applyViaCloudflare` makes, with the zone). */
+async function reach(tenant: TenantContext, domain: Pick<DomainRow, 'domain'>): Promise<LiveDmarc['write']> {
+  if (!tenant.hasCloudflare()) return null;
+  try {
+    const cf = await tenant.cfFor(domain.domain);
+    return { cf, zoneId: (await cf.zoneFor(domain.domain)).id };
+  } catch { return null; }
+}
+
+async function readLive(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps, write: LiveDmarc['write']): Promise<LiveDmarc> {
+  const resolver = deps.resolver ?? resolverFor(tenant.env);
+  if (write) {
+    try {
+      const live = await findDmarcRecord(write.cf, write.zoneId, `_dmarc.${domain.domain}`);
+      const own = live.kind === 'one' ? [live.content] : live.kind === 'many' ? live.contents : [];
+      return { source: 'cloudflare', own, existing: live.kind === 'one' ? live.record : null, inherited: own.length ? { kind: 'none' } : await readInherited(resolver, domain.domain), write, failure: null };
+    } catch (e) {
+      const failure = plainCloudflareError(e);
+      return { source: 'cloudflare', own: [], existing: null, inherited: { kind: 'unknown', reason: failure }, write, failure: `Could not read the DMARC record from Cloudflare: ${failure}` };
+    }
+  }
+  const r = await lookupDmarc(resolver, domain.domain);
+  const none: InheritedRead = { kind: 'none' };
+  const base = { source: 'public_dns' as const, existing: null, write: null, failure: null };
+  if (r.status === 'error') return { ...base, own: [], inherited: { kind: 'unknown', reason: r.error ?? 'lookup failed' }, failure: `Could not read the DMARC record from public DNS: ${r.error ?? 'lookup failed'}` };
+  if (r.status === 'none') return { ...base, own: [], inherited: none };
+  if (r.status === 'multiple') return r.inherited ? { ...base, own: [], inherited: { kind: 'unknown', reason: `${r.foundAt?.replace(/^_dmarc\./, '')} has several DMARC records` } } : { ...base, own: r.rawRecords ?? [], inherited: none };
+  if (!r.inherited) return { ...base, own: [r.record!.raw], inherited: none };
+  return { ...base, own: [], inherited: { kind: 'inherited', parent: r.organizationalDomain ?? r.foundAt!.replace(/^_dmarc\./, ''), record: r.record!.raw } };
+}
+
+/** The decision for the live record: from the one builder (planDmarc), hosted rules on. */
+function outcomeOf(live: LiveDmarc, address: string): ReportRecordOutcome {
+  if (live.failure) return { kind: 'blocked', reason: live.failure };
+  const d = planDmarc({ ownRecords: live.own, inherited: live.inherited, rua: address, ruaLimit: true });
+  if (d.action === 'skip') return { kind: 'blocked', reason: d.reason };
+  if (d.action === 'none') return { kind: 'present', reason: d.reason };
+  if (d.action === 'choose') return { kind: 'choose', existing: d.existing, options: d.options.map((o) => ({ replaces: o.replaces, after: o.record })), reason: d.reason };
+  const problem = dmarcRecordProblem(d.record);
+  if (problem) return { kind: 'blocked', reason: `The DMARC record with the report address added would not be valid (${problem}), so it is not written. Fix the record at your DNS provider first.` };
+  return { kind: 'write', action: d.action, after: d.record, reason: d.reason };
+}
+
+async function reviewOf(live: LiveDmarc, domain: DomainRow, address: string): Promise<ReportRecordReview> {
+  const inherited = live.inherited.kind === 'inherited' ? { from: live.inherited.parent, record: live.inherited.record } : null;
+  return {
+    source: live.source, name: `_dmarc.${domain.domain}`, address,
+    now: live.own.length === 1 ? live.own[0]! : null, inherited,
+    hash: await digest({ source: live.source, own: live.own, inherited, failure: live.failure }),
+    outcome: outcomeOf(live, address),
+  };
+}
+
+/** What Apply would do for this domain now, read from the live record (see the module comment above). Reads only. */
+export async function reviewReportRecord(tenant: TenantContext, domain: DomainRow, deps: ReportAddressDeps = {}): Promise<ReportRecordReview> {
+  const address = fixedReportAddress(requireIntake(tenant));
+  await assertNotHosted(tenant, domain);
+  const refusal = await refusalFor(tenant, domain);
+  if (refusal) throw new ReportAddressError(refusal, 403);
+  return reviewOf(await readLive(tenant, domain, deps, await reach(tenant, domain)), domain, address);
+}
+
+/** The apply's refusal when the live record is not the reviewed one: 409 `record_changed`, with the fresh review to show. */
+export class ReportRecordChanged extends ReportAddressError {
+  constructor(readonly review: ReportRecordReview) {
+    super('The record changed since you looked. Review it again before anything is written.', 409);
+    this.name = 'ReportRecordChanged';
+  }
+}
 
 /**
- * `record` with `address` in its rua= list, by the existing rule (planReportAddress): ours is added beside the addresses already there and
- * nothing else changes (never a weaker policy; nobody's address is dropped). A record that already lists two addresses never gets a third:
- * it is left as it is and the answer is `limit` (the person chooses what to replace in the reports panel). `liveRecord` is what is published
- * now: a record that lists ours already is `present`, and one that grew past two with ours only because the caller appended it is cut back.
+ * Connect the domain and write our address into its DMARC record, as reviewed. `reviewed` is the hash of the review the person saw. Throws
+ * ReportAddressError (403 refused, 409 blocked or no Cloudflare, 400 a choice that does not fit the record) or ReportRecordChanged (409);
+ * a failed Cloudflare write after the domain was connected throws as it is: the domain stays connected and the status says what is true.
  */
-export function mergeReportAddress(domain: string, record: string, address: string, liveRecord?: string | null): { record: string; outcome: ReportMerge } {
-  if (recordHasAddress(record, address)) {
-    const grewHere = !(liveRecord && recordHasAddress(liveRecord, address));
-    if (grewHere && ruaEntries(record).length > 2) return { record: withoutReportAddress(record, address), outcome: 'limit' };
-    return { record, outcome: 'present' };
+export async function applyReportRecord(
+  tenant: TenantContext, domain: DomainRow, input: { reviewed: string; choice: ReportChoice }, deps: ReportAddressDeps = {}, actor?: Actor, ctx?: ExecutionContext,
+): Promise<{ wrote: boolean }> {
+  const address = fixedReportAddress(requireIntake(tenant));
+  await assertNotHosted(tenant, domain);
+  const refusal = await refusalFor(tenant, domain);
+  if (refusal) throw new ReportAddressError(refusal, 403);
+  const write = await reach(tenant, domain);
+  if (!write) throw new ReportAddressError(`No Cloudflare connection reaches the zone of ${domain.domain}, so Ready Set Mail cannot write its DMARC record. Add the report address at your DNS provider.`, 409);
+  const live = await readLive(tenant, domain, deps, write);
+  const review = await reviewOf(live, domain, address);
+  if (review.hash !== input.reviewed) throw new ReportRecordChanged(review);
+
+  const o = review.outcome;
+  let record: string | null = null;
+  if (o.kind === 'blocked') throw new ReportAddressError(o.reason, 409);
+  if (o.kind === 'choose') {
+    const { choice } = input;
+    const picked = choice.kind === 'replace' ? o.options.find((x) => x.replaces === choice.address) : undefined;
+    if (!picked) throw new ReportAddressError(o.reason, 400);
+    record = picked.after;
+  } else if (input.choice.kind !== 'add') {
+    throw new ReportAddressError('There is no address to replace in this record: it lists fewer than two.', 400);
+  } else if (o.kind === 'write') record = o.after;
+
+  // The domain is connected BEFORE the record that carries our address is written: that address never reaches DNS for a domain intake would refuse.
+  await connectReports(tenant, domain, deps, actor, ctx);
+  if (record) {
+    const written = await writeDmarcRecord(write.cf, write.zoneId, domain.domain, live.existing, record);
+    logAudit(tenant, {
+      actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user',
+      action: live.existing ? 'dns.update' : 'dns.create', resource_type: 'dns_record', resource_id: written?.id ?? '', resource_name: review.name,
+      before_value: live.existing ? { type: 'TXT', name: review.name, content: review.now } : null,
+      after_value: { type: 'TXT', name: review.name, content: record },
+    }, ctx);
   }
-  const plan = planReportAddress({ status: 'found', domain, record: { raw: record, valid: true, issues: [], subdomainPolicy: '' }, foundAt: null, inherited: false, organizationalDomain: null }, address);
-  if (plan?.kind === 'add') return { record: plan.record, outcome: 'added' };
-  if (plan?.kind === 'published') return { record: plan.record, outcome: 'present' };
-  return { record, outcome: 'limit' };
+  return { wrote: record !== null };
+}
+
+/**
+ * Hosted: the report address a DMARC record carries when a policy route (apply-dmarc, PATCH dmarc) rewrites it. Never one of ours: an address
+ * at the intake domain (shared or token) is written only by applyReportRecord, so a workspace that is not admitted, or a domain that is not
+ * proven, can never get it through another route. Self-host: the stored address, as ever.
+ */
+export function policyWriteRua(tenant: TenantContext, storedAddress: string | null | undefined): string | null {
+  const intake = reportIntakeDomain(tenant.env);
+  const host = (storedAddress ?? '').trim().toLowerCase().split('@').pop();
+  return intake && host === intake.toLowerCase() ? null : storedAddress ?? null;
+}
+
+/**
+ * Hosted: a record the policy routes are asked to write that adds our address or drops a report address published now. Returns the plain
+ * sentence, or null when the record is fine. `live` is the record published now (null: none).
+ */
+export function reportAddressChangeIn(tenant: TenantContext, live: string | null, record: string): string | null {
+  if (!hostedEnabled(tenant.env)) return null;
+  const intake = reportIntakeDomain(tenant.env);
+  if (intake && recordHasAddress(record, fixedReportAddress(intake)) && !(live && recordHasAddress(live, fixedReportAddress(intake)))) {
+    return 'This record adds the Ready Set Mail report address. Use Connect reports on the domain page for that: it shows the record as it is now and connects the domain before it writes.';
+  }
+  const kept = new Set(ruaEntries(record).map(ruaEntryAddress));
+  const dropped = live ? ruaEntries(live).filter((e) => !kept.has(ruaEntryAddress(e))) : [];
+  return dropped.length ? `This record would remove ${dropped.join(', ')}, a report address published now. Keep it in the record, or remove it at your DNS provider.` : null;
 }

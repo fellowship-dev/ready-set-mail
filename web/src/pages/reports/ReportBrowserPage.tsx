@@ -7,6 +7,8 @@ import { BackLink, ReporterAuthBadge, Segmented, useRouteDomainId } from '../../
 import { ListSkeleton, LoadError } from '../../components/states';
 import { api } from '../../lib/api';
 import { useDomain, useDomains } from '../../lib/queries';
+import { useReachWords } from '../../lib/report-address';
+import { ReachStatement } from '../../components/reports/ReachStatement';
 import { formatDayWithRelative, isoDay, passRate, plural, rateTone, type RateTone } from '../../lib/reports';
 import type { AggregateReport } from '../../lib/types';
 import { countingBasisNote, emptyReportsMessage, emptyReportsState, type ReportCounting } from '../../lib/uncounted';
@@ -39,6 +41,7 @@ export function ReportBrowserPage() {
 	const domainOff = useReportsNotConnected(domain);
 	const workspaceOff = useWorkspaceReportsNotConnected();
 	const reportsOff = scope === 'domain' ? domainOff : workspaceOff;
+	const reached = useReachWords(id);
 	// An empty list is "no reports" only when none arrived: reports dropped for storage, not processed or not counted are
 	// said as such (the server's visibility fields: this domain's summary, or for all domains any domain's).
 	const summary = useCheckSummary(id, scope === 'domain' && !Number.isNaN(id));
@@ -75,6 +78,8 @@ export function ReportBrowserPage() {
 				<LoadError error={q.error} onRetry={() => void q.refetch()} title="Could not load reports" />
 			) : visible.length === 0 && lost ? (
 				<EmptyState title={filterName ? `No counted reports for ${filterName}` : 'No counted reports'} description={lost.replace(/\.?$/, '.')} />
+			) : visible.length === 0 && scope === 'domain' && reached ? (
+				<ReachStatement words={reached} />
 			) : visible.length === 0 ? (
 				<EmptyState
 					title={filterName ? `No reports for ${filterName} yet` : 'No reports yet'}

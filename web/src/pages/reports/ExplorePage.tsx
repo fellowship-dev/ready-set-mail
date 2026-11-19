@@ -75,8 +75,8 @@ export function ExplorePage() {
 			) : visible.length === 0 ? (
 				filter === 'anomalies' && sources.length > 0 ? (
 					<EmptyState
-						title={`No failing sources in the last ${days} days`}
-						description={`None of the ${sources.length} sources in the reports for this window failed SPF or DKIM. The full list is under All.`}
+						title={`No source failed DMARC in the last ${days} days`}
+						description={`None of the ${sources.length} sources in the reports for this window failed DMARC. The full list is under All.`}
 						action={
 							<Button variant="secondary" onClick={() => setFilter('all')}>
 								Show all sources

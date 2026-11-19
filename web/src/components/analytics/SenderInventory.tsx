@@ -22,7 +22,7 @@ function Rate({ pct, label }: { pct: number; label: string }) {
 }
 
 /** Every source that sent as this domain: who it is, how much, whether SPF and DKIM line up, and when it appeared. */
-export function SenderInventory({ senders, showDomains, alignment }: { senders: Sender[]; showDomains?: boolean; alignment?: Alignment }) {
+export function SenderInventory({ senders, alignment }: { senders: Sender[]; alignment?: Alignment }) {
 	if (senders.length === 0) {
 		return <EmptyState title="No senders in this window" description="Senders appear once receivers report mail sent as your domain." />;
 	}
@@ -62,7 +62,7 @@ export function SenderInventory({ senders, showDomains, alignment }: { senders: 
 									<code className="font-mono text-xs text-ink-2">{s.source_ip}</code>
 									{s.provider ? null : s.reverse_dns || s.org ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
 									{s.provider && (s.reverse_dns || s.org) ? <span className="text-xs text-ink-2 [overflow-wrap:anywhere]">{[s.reverse_dns, s.org].filter(Boolean).join(' · ')}</span> : null}
-									{showDomains ? <span className="text-xs text-ink-2">as {s.domains.join(', ')}</span> : null}
+									<span className="text-xs text-ink-2">as {s.from_domains.join(', ')}</span>
 								</span>
 							</TableCell>
 							<TableCell className="text-right tabular-nums">
@@ -80,7 +80,7 @@ export function SenderInventory({ senders, showDomains, alignment }: { senders: 
 				</TableBody>
 			</ScrollCueTable>
 			<p className="text-xs text-ink-2">
-				<strong className="font-semibold">These alignment figures are estimates.</strong> Reports keep each message's raw SPF and DKIM results, not the receiver's DMARC verdict, so we work alignment out from the domains they authenticated. Mail signed twice (by the sender's domain and by yours) can read as failing here although DMARC passed it.{' '}
+				<strong className="font-semibold">These alignment figures are estimates.</strong> Reports carry each receiver's DMARC verdict, but these per-sender figures are worked out from the domains SPF and DKIM authenticated (only the first SPF and DKIM result of each record is kept), so mail signed twice (by the sender's domain and by yours) can read as failing here although DMARC passed it.{' '}
 				{alignment ? (alignment.spf === 'strict' || alignment.dkim === 'strict' ? `Checked with ${alignment.spf} SPF and ${alignment.dkim} DKIM alignment, from your published DMARC record.` : alignment.basis === 'dns' ? 'Checked with relaxed alignment, as your published DMARC record asks.' : 'Checked with relaxed alignment only: we could not read your record, so adkim=s / aspf=s would not be applied.') : 'Checked with relaxed alignment only: adkim=s / aspf=s are not applied.'}{' '}
 				The pass-rate trend and totals come from the reports' own DMARC results and are exact. "First seen" looks back at most 180 days.
 			</p>

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from './api';
-import type { DomainCheckSummary, DomainClaim, DomainStats, FailingSource, MtaStsStatus, OnboardingStatus, SpfFlatStatus, WizardState } from './types';
+import type { DomainCheckSummary, DomainClaim, DomainStats, FailingSources, MtaStsStatus, NameSeen, OnboardingStatus, SpfFlatStatus, WizardState } from './types';
 
 /** GET /api/domains/:id/dns-check. `error` is set when the lookup itself failed: that is not "no record". */
 export interface DnsCheck {
@@ -78,6 +78,9 @@ export const domainKeys = {
 	zones: ['zones'] as const,
 };
 
+/** The setup wizard's live DNS status for a domain (GET onboarding-status). The wizard patches it in place after its own writes, so it is refreshed only where a screen asks. */
+export const setupStatusKey = (id: number) => ['onboarding-status', id] as const;
+
 export const fetchSummary = (id: number) => api<DomainCheckSummary>(`/api/domains/${id}/check-summary`);
 
 /** GET /api/domains/summaries: every domain's summary, a page at a time. */
@@ -116,13 +119,21 @@ export const useStats = (id: number, days: number) =>
 	useQuery({ queryKey: domainKeys.stats(id, days), queryFn: () => fetchStats(id, days), placeholderData: (prev) => prev });
 export const useWizardState = (id: number) => useQuery({ queryKey: domainKeys.wizard(id), queryFn: () => api<WizardState>(`/api/domains/${id}/wizard-state`) });
 export const useFailingSources = (id: number) =>
-	useQuery({ queryKey: domainKeys.sources(id), queryFn: () => api<{ sources: FailingSource[] }>(`/api/domains/${id}/sources?days=7`).then((r) => r.sources) });
+	useQuery({ queryKey: domainKeys.sources(id), queryFn: () => api<FailingSources>(`/api/domains/${id}/sources?days=7`) });
+/** The names seen sending as this domain (its subdomains in the reports), 30 days. */
+export const useNames = (id: number, enabled = true) =>
+	useQuery({ queryKey: [...domainKeys.all(id), 'names'] as const, queryFn: () => api<{ names: NameSeen[] }>(`/api/domains/${id}/names?days=30`).then((r) => r.names), enabled });
 export const useDnsCheck = (id: number) => useQuery({ queryKey: domainKeys.dnsCheck(id), queryFn: () => api<DnsCheck>(`/api/domains/${id}/dns-check`) });
 export const useOnboardingStatus = (id: number) =>
 	useQuery({ queryKey: domainKeys.onboarding(id), queryFn: () => api<OnboardingResult>(`/api/domains/${id}/onboarding-status`) });
-export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`) });
-export const useSpfFlatten = (id: number) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`) });
-export const useMtaSts = (id: number) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`) });
+/**
+ * Two screens read this (the domain page's Rollout section exists only while it is enforcing or errored). An errored query
+ * that refetched on mount goes back to pending, which unmounts that section, which errors again, which mounts it: a request
+ * every few milliseconds for as long as the read keeps failing. A failed read is retried by its Retry button.
+ */
+export const useRolloutNext = (id: number) => useQuery({ queryKey: domainKeys.rollout(id), queryFn: () => api<RolloutNext>(`/api/domains/${id}/rollout-next`), retryOnMount: false });
+export const useSpfFlatten = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.spf(id), queryFn: () => api<SpfFlatStatus>(`/api/domains/${id}/spf-flatten`), enabled });
+export const useMtaSts = (id: number, enabled = true) => useQuery({ queryKey: domainKeys.mta(id), queryFn: () => api<MtaStsStatus>(`/api/domains/${id}/mta-sts`), enabled });
 export const useMonitorSubs = (id: number) =>
 	useQuery({ queryKey: domainKeys.monitorSubs(id), queryFn: () => api<{ subs: MonitorSub[] }>(`/api/domains/${id}/monitor-subs`).then((r) => r.subs) });
 

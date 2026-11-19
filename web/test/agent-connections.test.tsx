@@ -215,6 +215,73 @@ describe('access keys for scripts and services', () => {
 		await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/mcp/connections/a1')).toBe(true));
 	});
 
+	it('shows the endpoint and points to Agents for the steps: no second copy of them, no plugin', async () => {
+		for (const [hosted, label] of [[false, "This installation's MCP endpoint"], [true, 'Agent address']] as const) {
+			const { unmount } = renderApp(<AgentConnectionsSection />, { status: hosted ? { mode: 'saas' } : undefined, routes: connections });
+			expect(await screen.findByLabelText(label)).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/agents');
+			expect(document.body.textContent).toContain('How to connect Claude, ChatGPT, Cursor or VS Code');
+			expect(document.body.textContent).not.toMatch(/plugin|Reload your client|Restart the agent|Call whoami/i);
+			expect(document.querySelector('ol')).toBeNull();
+			unmount();
+		}
+	});
+
+	it('lists each approved app by name, with what it can reach, when it was approved and last used, and whether it is verified', async () => {
+		const day = 1_700_000_000;
+		renderApp(<AgentConnectionsSection />, {
+			role: 'admin',
+			routes: {
+				'GET /api/mcp/connections': {
+					connections: [
+						{ principalId: 'a1', name: 'Cursor', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 7 * 86400, lastUsedAt: day + 3600, verified: false, access: { workspaces: ['Acme'], domains: ['a.example', 'b.example', 'c.example', 'd.example', 'e.example', 'f.example', 'g.example'], products: ['Receipts'], actions: ['resources:read', 'reports:read'] } },
+						{ principalId: 'a2', name: 'Document assistant', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, lastUsedAt: null, verified: true, verifiedHost: 'cimd.example', access: { workspaces: ['Acme'], domains: ['a.example'], products: [], actions: ['diagnostics:run'] } },
+						{ principalId: 'a3', name: 'Old one', workspaceId: 'ws_default', createdAt: day, expiresAt: day + 86400, revoked: true },
+					],
+				},
+			},
+		});
+		const cursor = (await screen.findByText('Cursor')).closest('li')!;
+		expect(within(cursor).getByText('Not verified')).toBeInTheDocument();
+		expect(within(cursor).getByText('a.example, b.example, c.example, d.example, e.example and 2 more (groups: Receipts)')).toBeInTheDocument();
+		expect(within(cursor).getByText('See its domains, Read email health reports')).toBeInTheDocument();
+		expect(within(cursor).getByText('Acme')).toBeInTheDocument();
+		expect(within(cursor).queryByText('Not used yet')).not.toBeInTheDocument();
+		const doc = screen.getByText('Document assistant').closest('li')!;
+		expect(within(doc).queryByText('Not verified')).not.toBeInTheDocument();
+		expect(within(doc).getByText('cimd.example')).toBeInTheDocument();
+		expect(within(doc).getByText('Run live DNS checks')).toBeInTheDocument();
+		expect(within(doc).getByText('Not used yet')).toBeInTheDocument();
+		const old = screen.getByText('Old one').closest('li')!;
+		expect(within(old).getByText('Revoked')).toBeInTheDocument();
+		expect(within(old).queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument();
+	});
+
+	it('leads with the address the app sends you back to; the name it chose is shown as what it calls itself', async () => {
+		const day = 1_700_000_000;
+		renderApp(<AgentConnectionsSection />, {
+			role: 'admin',
+			routes: {
+				'GET /api/mcp/connections': {
+					connections: [
+						{ principalId: 'a1', name: 'evil.example', calledItself: 'Claude', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+						{ principalId: 'a4', name: 'famous.example', nameWithheld: true, workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+						{ principalId: 'a2', name: 'An app on this computer', workspaceId: 'ws_default', workspaceName: 'Acme', createdAt: day, expiresAt: day + 86400, verified: false },
+					],
+				},
+			},
+		});
+		const row = (await screen.findByText('evil.example')).closest('li')!;
+		expect(within(row).getByText('Not verified')).toBeInTheDocument();
+		expect(within(row).getByText('\u201cClaude\u201d (its own word for itself)')).toBeInTheDocument();
+		expect(within(row).getByText('Calls itself')).toBeInTheDocument();
+		const local = screen.getByText('An app on this computer').closest('li')!;
+		expect(within(local).queryByText('Calls itself')).not.toBeInTheDocument();
+		expect(within(local).queryByText(/well-known app/)).not.toBeInTheDocument();
+		const famous = screen.getByText('famous.example').closest('li')!;
+		expect(within(famous).getByText('It used the name of a well-known app, so the name is not shown: only the address above is known.')).toBeInTheDocument();
+	});
+
 	it('shows unconfigured Google as unavailable and disables consent and sync controls', async () => {
 		renderApp(<MetricConnectionsSection />, {
 			routes: { 'GET /api/metrics/google/connections': { configured: false, connections: [{ domainId: 7, domain: 'mail.example.com', status: 'not_connected' }] } },

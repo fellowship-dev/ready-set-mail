@@ -1,6 +1,7 @@
 import { metricQueries } from './metrics';
 import { accessQueries } from './access-grants';
 export * from './access-grants';
+export * from './in-list';
 import { getDb, type DbLike } from '../client';
 import { IMPLICIT_WORKSPACE_ID } from '../schema';
 import { apiKeyQueries } from './api-keys';
@@ -23,6 +24,7 @@ import { settingsQueries } from './settings';
 import { teamQueries } from './team';
 
 export * from './reports';
+export { verdictSql, type DmarcVerdict } from './verdict';
 export { counted, type CountingMode } from './counting';
 export type { DomainClaimRow, ZoneHolder } from './claims';
 export { claimLookups, isUnprovenRow } from './claims';

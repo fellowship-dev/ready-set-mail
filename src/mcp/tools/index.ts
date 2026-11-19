@@ -1,8 +1,8 @@
 import { forWorkspace } from '@ready-set-mail/db';
-import { checkDomain, createResolver, DOH_ENDPOINTS } from '@ready-set-mail/dns-checks';
+import { checkDomain, createResolver, DOH_ENDPOINTS, reportReachWords, type ReportReach } from '@ready-set-mail/dns-checks';
 import { dmarcSteps, policyInForce, publicSuffixParent } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { dmarcEvidenceFor, type ReportConnectFacts, type VisibilityFacts } from '@ready-set-mail/dns-checks/dmarc-evidence';
-import { reportConnectFor } from '../../hosted/report-address';
+import { reportConnectFor, reportReachFor, reportsAddressVia } from '../../hosted/report-address';
 import { reportVisibility } from '../../reports/visibility';
 import type { TenantContext } from '../../tenancy/context';
 import { buildReport } from '@ready-set-mail/report';
@@ -58,13 +58,15 @@ export async function listResources(context: ToolContext, input: { workspaceId?:
  * same public-suffix note (publicSuffixParent, from the listed parent's stored facts) as the dashboard, the same evidence
  * builder (dmarcEvidenceFor), the same per-domain answer on connecting reports (reportConnectFor, as `report_connect`) and
  * the same report visibility where nothing was counted (reportVisibility), so a refused or uncounted domain reads the same.
- * `deps` replaces those two reads (tests); by default they are made on the real tenant.
+ * A name with no connection of its own whose reports arrive through its connected parent (`reportsAddressVia`, the state the dashboard's
+ * `via_parent` shows) has the reports address in its evidence, so it is not told to connect reports.
+ * `deps` replaces those reads (tests); by default they are made on the real tenant.
  */
 export async function dmarcNextStep(
  tenant: { scope: { reports: { checkSummary(id: number, since: number): Promise<any> }; domains: { getById(id: number): Promise<any> } } },
  domain: { id: number; domain: string; rua_address: string | null; parent_id?: number | null },
  now = Date.now() / 1000,
- deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
+ deps: { reportConnect?: () => Promise<ReportConnectFacts | null>; reportsVia?: () => Promise<string | null>; reach?: () => Promise<ReportReach | null>; visibility?: (since: number) => Promise<VisibilityFacts | null> } = {},
 ) {
  const since = Math.floor(now) - 30 * 86400;
  const s = await tenant.scope.reports.checkSummary(domain.id, since);
@@ -77,9 +79,13 @@ export async function dmarcNextStep(
  const reportConnect = deps.reportConnect ? await deps.reportConnect() : real ? await reportConnectFor(real, domain as any) : null;
  // Where nothing was counted, why (dropped, limited, not counted), as the dashboard's summaries carry it.
  const visibility = s.total_messages === 0 ? (deps.visibility ? await deps.visibility(since) : real ? await reportVisibility(real, domain.id, since) : null) : null;
- const evidence = dmarcEvidenceFor({ ruaAddress: domain.rua_address, offeredRua: null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect });
+ const ruaAddress = domain.rua_address?.trim() ? domain.rua_address : deps.reportsVia ? await deps.reportsVia() : real ? await reportsAddressVia(real, domain as any) : null;
+ const evidence = dmarcEvidenceFor({ ruaAddress, offeredRua: null, nameExists: s.dns_check_status === 'nxdomain' ? false : null, reports: { total: s.total_messages, passed: s.pass_messages, days: 30 }, suffixParent, visibility, reportConnect, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded });
  const steps = dmarcSteps(domain.domain, policy_in_force, evidence);
- return { policy_in_force, next_step: steps[0] ?? null, steps };
+ // How reports reach this name, from the one decision (`reportReachOf`) and the one wording the dashboard uses: a name whose reports arrive through its parent says so.
+ const reach = deps.reach ? await deps.reach() : real ? await reportReachFor(real, domain as any) : null;
+ const words = reach ? reportReachWords(domain.domain, reach, (t) => new Date(t * 1000).toISOString()) : null;
+ return { policy_in_force, next_step: steps[0] ?? null, steps, reports_reach: reach ? { ...reach, ...(words ? { summary: [`${words.headline}.`, ...words.sentences].join(' ') } : {}) } : null };
 }
 async function report(context: ToolContext, input: DomainInput, action: 'reports:read' | 'metrics:read' | 'remediation:plan' | 'resources:read', withDmarc = false) {
  const resolved = await resourceContext(context, input, action);
@@ -109,7 +115,11 @@ export async function inspectDomain(context: ToolContext, input: DomainInput) {
  const { subject, tenant } = await resourceContext(context, input, 'diagnostics:run');
  await spendDnsCheck(context.env, subject.principalId, tenant.workspaceId);
  const resolvers = context.reportOptions?.resolvers ?? (context.reportOptions?.resolver ? [context.reportOptions.resolver] : [createResolver(), createResolver({ endpoint: DOH_ENDPOINTS.google })]);
- const dns = buildReport({ runs: await Promise.all(resolvers.map(resolver => checkDomain(input.domain, { resolver }))), generatedAt: new Date((context.reportOptions?.now ?? Date.now()/1000)*1000).toISOString() });
+ const now = context.reportOptions?.now ?? Date.now() / 1000;
+ // A domain enrolled in this workspace is graded with what its own reports show (as the dashboard and get_email_report do); a name that is not enrolled has none.
+ const enrolled = await tenant.scope.domains.getByName(input.domain);
+ const from = enrolled ? await tenant.scope.reports.checkSummary(enrolled.id, Math.floor(now / 86400) * 86400 - 30 * 86400) : null;
+ const dns = buildReport({ runs: await Promise.all(resolvers.map(resolver => checkDomain(input.domain, { resolver }))), from: from ?? undefined, generatedAt: new Date(now * 1000).toISOString() });
  return result(`Public DNS inspection for ${input.domain}: ${dns.findings.length} findings. No changes applied.`, { dns });
 }
 export async function sourceStatus(context: ToolContext, input: DomainInput) {

@@ -1,13 +1,22 @@
 import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, cn } from '@ready-set-mail/ui';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { Link } from 'react-router';
-import { failLabel, isActive, isFailing } from '../../lib/reports';
+import { alignmentNote, failLabel, isActive, isFailing, isUnrecorded, verdictOf } from '../../lib/reports';
 import type { AnomalySource } from '../../lib/types';
 import { ProviderName } from './ProviderName';
 
 const mmdd = (day: string) => day.slice(5);
 
 export function SourceStatus({ src, older }: { src: AnomalySource; older: boolean }) {
+	if (isUnrecorded(src)) return <Badge variant="neutral" className="whitespace-nowrap">Verdict not recorded</Badge>;
+	if (verdictOf(src) === 'passed-one') {
+		return (
+			<span className="inline-flex flex-col items-start gap-1">
+				<Badge variant="warning" className="whitespace-nowrap">Passed on one check</Badge>
+				<span className="text-xs text-ink-2">DMARC passed on {src.spf_aligned === 1 ? 'SPF' : 'DKIM'} alone</span>
+			</span>
+		);
+	}
 	if (!isFailing(src)) {
 		return (
 			<Badge variant="success">
@@ -22,6 +31,7 @@ export function SourceStatus({ src, older }: { src: AnomalySource; older: boolea
 				<XCircle aria-hidden />
 				{failLabel(src)} fail
 			</Badge>
+			{alignmentNote(src) ? <span className="max-w-64 text-xs text-ink-2">{alignmentNote(src)}</span> : null}
 			{older ? <span className="text-xs text-ink-2">Not seen in 2+ days</span> : null}
 		</span>
 	);
@@ -62,7 +72,7 @@ export function SourceTable({ sources, domainId, label, now }: { sources: Anomal
 			</TableHeader>
 			<TableBody>
 				{sources.map((s) => (
-					<SourceRow key={`${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}`} src={s} domainId={domainId} older={isFailing(s) && !isActive(s.last_seen, now)} />
+					<SourceRow key={`${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}-${s.spf_aligned}-${s.dkim_aligned}`} src={s} domainId={domainId} older={isFailing(s) && !isActive(s.last_seen, now)} />
 				))}
 			</TableBody>
 		</Table>

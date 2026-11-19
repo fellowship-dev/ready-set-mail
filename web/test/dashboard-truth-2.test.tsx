@@ -34,7 +34,7 @@ const ONB = (dmarc: Record<string, unknown>, spf = { record: 'v=spf1 -all', look
 const pageRoutes = (o: Record<string, unknown>) => ({
 	'GET /api/domains': { domains: [dom(1, 'example.com', { rua_address: RUA })] },
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/rollout-next': { __status: 404, body: {} },
 	'GET /api/domains/1/spf-flatten': { available: false, config: null, lookup_count: null },
@@ -248,6 +248,16 @@ describe('the DMARC records row says what receivers do with a broken record', ()
 		await row(`v=DMARC1; p=Reject; rua=mailto:${RUA}`);
 		expect(await screen.findByText('Published, and aggregate reports are sent to Ready Set Mail.')).toBeInTheDocument();
 		expect(screen.queryByText('Recommended record')).toBeNull();
+	});
+	it('a rollout that cannot be read is asked for once, not again on every render of its section', async () => {
+		const api = page(pageRoutes({
+			'GET /api/domains/1/check-summary': SUM(),
+			'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: `v=DMARC1; p=none; rua=mailto:${RUA}`, cf_managed: true },
+			'GET /api/domains/1/onboarding-status': ONB({ found: true, has_our_rua: true, current_record: `v=DMARC1; p=none; rua=mailto:${RUA}` }),
+		}));
+		expect(await screen.findByText('Could not be loaded.')).toBeInTheDocument();
+		await new Promise((r) => setTimeout(r, 300));
+		expect(api.calls.filter((c) => c.path === '/api/domains/1/rollout-next').length).toBeLessThanOrEqual(2);
 	});
 	it('a TXT that is not DMARC, an invalid p= or an invalid sp= gets no offer', () => {
 		expect(offeredDmarcRecord('google-site-verification=abc', { kind: 'own' }, RUA)).toBeNull();

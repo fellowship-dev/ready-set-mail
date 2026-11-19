@@ -204,6 +204,9 @@ export const aggregateReports = sqliteTable(
 		ingest_token: text('ingest_token'),
 		/** Rows stored in report_records for this report. Null: stored before 0010. */
 		record_count: integer('record_count'),
+		/** The alignment modes of the policy the receiver applied (policy_published aspf / adkim: 'r' relaxed, 's' strict). Null: stored before 0022. */
+		aspf: text('aspf'),
+		adkim: text('adkim'),
 	},
 	(t) => [
 		unique().on(t.domain_id, t.report_id),
@@ -230,6 +233,9 @@ export const reportRecords = sqliteTable(
 		spf_result: text('spf_result'),
 		spf_domain: text('spf_domain'),
 		header_from: text('header_from'),
+		/** The receiver's own alignment verdict (policy_evaluated spf / dkim): 1 aligned, 0 not. Null: stored before 0022. A message fails DMARC when neither is 1. */
+		spf_aligned: integer('spf_aligned'),
+		dkim_aligned: integer('dkim_aligned'),
 		created_at: integer('created_at').notNull().default(now),
 		reverse_dns: text('reverse_dns'),
 		base_domain: text('base_domain'),
@@ -803,7 +809,7 @@ export const GLOBAL_TABLES = {
 	sessions: 'keyed by user; a session is resolved to a workspace through memberships',
 	auth_accounts: 'login methods of a user (password / OAuth link), keyed by user',
 	verifications: 'one-time auth tokens (password reset), keyed by identifier',
-	auth_rate_limits: 'auth endpoint rate-limit counters, keyed by IP and path',
+	auth_rate_limits: 'auth endpoint rate-limit counters, keyed by IP and path; also the apps that registered themselves and are not yet approved (key agent-client:<id>)',
 	hosted_zones: 'operator-owned: record counts of the hosted-records zone(s), not tenant data',
 	revocation_tombstones: 'failed Cloudflare revocations of deleted workspaces; the workspace row is gone by design',
 	canary_tokens: 'anonymous free-check (canary) addresses, expiring, not tied to any workspace',
@@ -812,6 +818,7 @@ export const GLOBAL_TABLES = {
 	intake_quota: 'instance-wide intake counters per scope and day; a counter, no tenant content',
 	billing_events: 'Stripe events already seen, by event id (webhook idempotency); no workspace is known when one arrives, no tenant content',
 	billing_price_cache: 'the Stripe price an offer resolves to, instance-wide',
+	refresh_rotations: 'agent refresh tokens already used once, by the hash of the token, with the answer they got (encrypted under the token): the grace window of a rotation; a grant, not a workspace',
 } as const;
 
 /** Tables that must carry an `workspace_id` column. */
@@ -1122,6 +1129,22 @@ export const billingPriceCache = sqliteTable('billing_price_cache', {
 	currency: text('currency').notNull(),
 	fetched_at: integer('fetched_at').notNull(),
 });
+
+/** A refresh token that was used to get a new one (0021): the claim of the rotation, and its answer for the grace window (src/mcp/refresh-replay.ts). */
+export const refreshRotations = sqliteTable(
+	'refresh_rotations',
+	{
+		token_hash: text('token_hash').primaryKey(),
+		grant_key: text('grant_key').notNull(),
+		first_used_at: integer('first_used_at').notNull(),
+		state: text('state', { enum: ['pending', 'done'] }).notNull(),
+		response: text('response'),
+	},
+	(t) => [
+		index('idx_refresh_rotations_first_used').on(t.first_used_at),
+		check('refresh_rotations_state_check', sql`${t.state} IN ('pending', 'done')`),
+	],
+);
 
 // ── Lifecycle emails (0018) ─────────────────────────────────
 

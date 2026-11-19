@@ -46,7 +46,7 @@ _Avoid_: integration, Cloudflare account (for the link itself)
 Home: `src/connections/`; the import is `importZones` in `src/connections/import.ts`; every call the Worker makes to the Cloudflare REST API (`api.cloudflare.com`) goes through `CfClient` in `src/tenancy/cf-client.ts` (the OAuth token exchange and Turnstile use other Cloudflare hosts).
 
 **Apply** and the other DNS writes:
-The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
+The product writes a customer's DNS only through a connection, and every record write through `CfClient` passes `assertDnsWriteAllowed` in `src/dns/write-policy.ts`. ADR 0004 lists every path that writes or deletes records and what triggers it. Most are a person pressing a button (owner or admin): onboarding Apply (`POST /api/onboarding/dns-apply` in `src/onboarding/routes.ts`), Connect reports' Apply (`POST /api/domains/:id/report-address/apply`: the one write of our report address), the domain page's DMARC, SPF, SPF-flattening and MTA-STS actions, and removing a domain. Some are side effects: a bulk add writes each domain's report-authorization record on the reports domain, taking a domain from another workspace removes that workspace's records for it, and two daily crons rewrite records the person turned on (SPF flattening, the MTA-STS policy id).
 Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 
 ## Judging a domain
@@ -57,6 +57,32 @@ Home: ADR 0004; write rules `src/dns/write-policy.ts`.
 **Level**:
 A domain's rung on the authentication ladder. **Two ladders today** (three counting the email check's protected / at risk / exposed): the dashboard's three rungs, Delivering / Authenticated / Protected (`assessDomain` in `web/src/lib/levels.ts`, names in `packages/ui/src/components/level-ladder.tsx`), and the agent report's four, Unprotected / Monitoring / Enforced / Hardened (`packages/dns-checks/src/report.ts`). Which one is canonical is an **open owner decision** (`docs/adr/OPEN.md`); do not build on either.
 _Avoid_: grade, score
+
+**Subdomain**:
+A name under a domain (`app.example.com` under `example.com`), shown inside that domain's page, never as a sibling (ADR 0023, decided; the data model still keeps each added subdomain as its own row, which a later slice changes). Its mail is reported inside its organizational domain's report unless it publishes a DMARC record of its own. The names a domain's reports show are listed on its page: `namesSeen` in `src/domains/names.ts`, `GET /api/domains/:id/names`.
+_Avoid_: sibling domain, child domain
+
+**Organizational domain**:
+The registrable name a subdomain belongs to, from the Public Suffix List with its private section (`mail.example.co.uk` is under `example.co.uk`, never `co.uk`; `alice.github.io` is its own). DMARC's relaxed alignment compares organizational domains. RFC 9989 replaces the list with a DNS tree walk; that change is not decided (`docs/adr/OPEN.md`). Not the "organisation" of a report sender or of a company (see **Organization**).
+Home: `organizationalDomain`, `sameOrganizationalDomain` and `domainAncestry` (the names from a domain up to its organizational domain: report filing and `domains.parent_id`) in `packages/dns-checks/src/org-domain.ts`.
+
+**Effective policy**:
+The DMARC policy receivers apply to mail from ONE name, and where it comes from: the name's own record's `p=`; else the organizational domain's `sp=` when the name exists or `np=` when it does not exist (NXDOMAIN), then `sp=`, then `p=` (RFC 9989 sections 4.10.1 and 4.7; an invalid `sp=` makes the record `p=none`). It is never the parent's `p=` read for a subdomain. Every level, grade and verdict for a name takes it from `DmarcLookup.effective`.
+Home: `effectivePolicy` in `packages/dns-checks/src/effective-policy.ts`, reached through `lookupDmarc` in `packages/dns-checks/src/dmarc.ts`; existence in `packages/dns-checks/src/name-exists.ts`. The dashboard's `policyInForce` in `packages/dns-checks/src/dmarc-next-step.ts` reads the stored facts built from it (`dmarcFactsFromLookup` in `src/email/dns-snapshot.ts`).
+_Avoid_: inherited policy (say which tag and which record), "the policy" without a name
+
+**Alignment**:
+Whether the domain SPF or DKIM authenticated is the same as the From domain: relaxed means the same organizational domain, strict the identical domain (RFC 9989 sections 3.2.10.1 and 3.2.10.2). The SPF identifier is the return-path (MAIL FROM) domain, never the From domain, and the DKIM identifier is the signature's `d=`. A message fails DMARC when neither identifier aligns, even if both passed. The receiver's own verdict is stored per record (`spf_aligned`, `dkim_aligned`, and the report's `aspf` and `adkim`, migration 0022); the sentence for the identifier that did not align, and the fix at the right place, is one function.
+Home: `aligned`, `alignmentVerdict`, `explainAlignment` in `packages/dns-checks/src/alignment.ts`; what a missing SPF record at a name means: `packages/dns-checks/src/spf-identity.ts`.
+
+**Failing source (whose failure it is)**:
+Every source whose mail failed DMARC is one of three, by one function: `yours` (SPF or DKIM passed for a name of the owner's organizational domain: the owner's to fix), `service_not_set_up` (a known sending service, or a source whose SPF and DKIM both passed for its own domains: a real service sending as the owner's domain without being set up for it; one thing to look at, never called spoofing) and `not_yours` (everything else: nothing to fix, outside mail). The next step, the names panel, Analytics and the agent report read the same class.
+Home: `classifySource`, `serviceNotSetUpSentence` in `packages/dns-checks/src/sender-providers.ts` (`likelyNotYours` is a reading of it); the counts: `failed_not_yours`, `failed_service` in `packages/db/src/queries/reports.ts`.
+_Avoid_: "likely mail pretending to be…" for a service that passed SPF and DKIM for its own domains
+
+**Reports reach a name**:
+How reports reach a name, as one answer (`reach` on the report-address view): `own` (connected, its own record lists our address), `via_parent` (no connection of its own; the intake files the reports that name it under its row through a connected parent), `inherited_record` (no DMARC record of its own, and the record that applies to it, its organizational domain's, already sends reports here: its mail is counted in that domain's reports) or `none`. Every surface says it in the same words with the real counts (`reportReachWords`), and none offers "Connect reports" for a name whose reports already arrive. A connected name with a counted report stored for it, before or since it was connected, is receiving, never "waiting for the first report".
+Home: `reportReachOf` in `src/hosted/report-address.ts`; words in `packages/dns-checks/src/report-reach.ts`; the web reads `reachWords` and `reportsArrive` in `web/src/lib/report-address.ts`.
 
 **Verdict**:
 The one-line judgement of a domain shown to a person (verified, needs attention, unknown…) with its reason.
@@ -79,11 +105,16 @@ Home: parsing `src/dmarc/`, storing `packages/db`.
 
 **Report address** — **four forms**:
 Where a domain's DMARC record sends reports (`rua=mailto:…`).
-1. **Hosted, shared:** `rua@<INTAKE_DOMAIN>`, the same for every customer, routed by the domain inside the report (ADR 0006). Built by `fixedReportAddress` in `src/hosted/fixed-address.ts`; used by `connectReports` and `reportAddressForWrite` in `src/hosted/report-address.ts`. Only for a proven domain of a workspace that `HOSTED_CONNECT_REPORTS` admits: by default (`owner`) only the operator's own workspaces (the account of `OWNER_EMAIL`). For any other hosted customer the DMARC record is written without our address and reports cannot be connected.
+1. **Hosted, shared:** `rua@<INTAKE_DOMAIN>`, the same for every customer, routed by the domain inside the report (ADR 0006). Built by `fixedReportAddress` in `src/hosted/fixed-address.ts`; connected by `connectReports` and written into a DMARC record only by `applyReportRecord`, both in `src/hosted/report-address.ts` (ADR 0020). Ours is only ever the first or the second address of a record, never the third. Only for a proven domain of a workspace that `HOSTED_CONNECT_REPORTS` admits: by default (`owner`) only the operator's own workspaces (the account of `OWNER_EMAIL`). For any other hosted customer the DMARC record is written without our address and reports cannot be connected.
 2. **Hosted, per token:** `rua+<token>@<INTAKE_DOMAIN>` (and `tls-rpt+<token>@…`), built by `intakeAddress` in `src/hosted/tokens.ts`. Used by hosted records (`buildHostedDmarc` in `src/hosted/records.ts`, set up by `enableHosted` and rotated by `rotateHostedToken` in `src/hosted/service.ts`), and still accepted for a domain given one before the shared address existed.
 3. **Self-host:** `rua@<reports domain>`, the install's own reports domain. Built inline in `src/domains/service.ts`, `src/domains/bulk.ts`, `src/api/router.ts`, `src/onboarding/plan.ts` and `src/digest/weekly.ts`.
 4. **Agent and public report:** `dmarc@<domain>`, the domain's own mailbox, never ours. Proposed by `enforcedDmarc` and the fix values in `packages/report/src/fixes.ts`, and by the report catalog and renderer (`packages/report/src/catalog/dmarc-missing.ts`, `packages/report/src/catalog/dmarc-p-none-no-rua.ts`, `packages/report/src/render-md.ts`).
 _Avoid_: RUA email, inbox
+
+**Connect reports** and **review**:
+The action that files a hosted domain's reports here: it sets the domain's report address (`connectReports`) and, where a Cloudflare connection reaches the zone, adds our address to its DMARC record. A review is what that write would do to the record in the zone now (`reviewReportRecord`: the record now, the record after, a hash of the live value); the Apply carries the reviewed hash and the person's choice, never a record, and is refused (`record_changed`) when the live record is not the one reviewed.
+_Avoid_: publish (for a write we make)
+Home: `src/hosted/report-address.ts`; panel `web/src/components/reports/ConnectReports.tsx`; ADR 0020.
 
 **Intake**:
 Receiving report mail: authenticating the sender, attributing the report to a workspace, applying caps, storing.
@@ -130,3 +161,8 @@ Home: `src/billing/offer.ts`, order states `src/billing/orders.ts`; `docs/billin
 An AI client acting for a person through the MCP server or the API, with finite grants the person consented to. The MCP tools never write DNS. Two change state: `add_domain` (`addDomain` in `src/mcp/tools/index.ts`: `assertAgentEnrollmentSafe` in `src/domains/service.ts` first, which refuses with 409 when another workspace holds an unproven `legacy` row for the name, because taking it over needs a signed-in person; then `enrollDomain`) and `verify_domain`. Both can, as a side effect of the ownership rule, withdraw another workspace's lapsed zone proof and email that workspace's owners (`sendProofLostNotice`), although the tool descriptions and the consent page say they send no mail.
 _Avoid_: bot, integration
 Home: `src/mcp/`, grants `src/access/`; `docs/agent-operations.md`.
+
+**App** (an agent's software) and **app registration**:
+The assistant or program an agent connection is made through (Claude, ChatGPT, Cursor, VS Code). An app introduces itself in one of two ways: it publishes a **client ID metadata document** at its own HTTPS address (the app is then **verified** by that host), or it **registers itself** with `POST /oauth/register` (dynamic client registration; off unless the operator sets `MCP_DCR_ENABLED=1`; the app is then **not verified**, its name is a claim). Registration is vetted, counted and audited, and an app nobody approves is deleted after 24 hours (ADR 0022). A person is told who an app is by what can be checked, never by the name it chose: the publisher's host for a verified app, otherwise the address it sends them back to ("an app on this computer" for loopback); the name it gave is shown as what it **calls itself**. An approved app appears in Settings → Agents under that address. Nothing is pre-ticked on its approval page, whichever way it introduced itself. A connection is **live** until it is revoked or reaches its end date; only live ones count toward the ceiling on apps and toward the limits of one person (20 live apps, 20 approvals in 24 hours) and one workspace (50 live apps) (`src/mcp/connection-limits.ts`); an ended connection's record is deleted 7 days later by the daily clean-up. A **refresh token** is used once, and used again within 30 seconds (its **grace window**) it gets the same new tokens, so two calls that refresh together keep their connection; used later, or an older one, it ends the connection (`src/mcp/refresh-replay.ts`).
+_Avoid_: client (in UI copy), plugin
+Home: `src/mcp/registration.ts`, the names an app may use and the reserved ones `src/mcp/client-names.ts`, `src/mcp/connections.ts` (`clientIdentity`); the list of assistants `web/src/lib/agent-clients.ts`; `docs/agent-operations.md`.

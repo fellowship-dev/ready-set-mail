@@ -16,6 +16,8 @@
 //
 // Token needs: Zone:Read + DNS:Edit + Email Routing:Edit (scoped to zone)
 
+import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
+
 const TOKEN  = process.env.CLOUDFLARE_EMAIL_TOKEN;
 const ZONE   = process.env.CLOUDFLARE_ZONE_ID;
 const DOMAIN = process.env.REPORTS_DOMAIN;
@@ -53,7 +55,7 @@ console.log('   ✓ Email Routing enabled');
 
 console.log('2. Reading MX records for zone apex…');
 const dnsRecords = await cf('GET', '/dns/records?type=MX') as { name: string; content: string; priority: number }[];
-const apexMx = dnsRecords.filter((r) => !r.name.includes('.') || r.name === DOMAIN?.split('.').slice(-2).join('.'));
+const apexMx = dnsRecords.filter((r) => !r.name.includes('.') || r.name === organizationalDomain(DOMAIN));
 
 if (apexMx.length === 0) {
   console.warn('   ⚠ No MX records found for zone apex — Email Routing may still be initialising.');

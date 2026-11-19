@@ -79,25 +79,27 @@ export function FirstScreen({ onDomainSet, onProgress }: { onDomainSet: (domainI
 		);
 	}
 
+	// Once the person has chosen to add records by hand, their form comes first: below the Cloudflare card it starts under the fold on a phone
+	// (FOLD-01 of the flow walk: the first input visible without scrolling), and they have already said which way they want.
+	const cloudflare = usable ? (
+		<CloudflareCard title="Cloudflare is connected" large action={<Button size="lg" onClick={() => toWizard('domains')}>Choose domains</Button>}>
+			{usable.implicit ? 'Ready Set Mail can use the Cloudflare token set on this server.' : `Connected to ${usable.cf_account_name ?? usable.label}.`} Choose the domains to set up.
+		</CloudflareCard>
+	) : (
+		<CloudflareCard title="Connect Cloudflare" large action={<Button size="lg" onClick={() => toWizard('connect')}>Connect Cloudflare</Button>}>
+			<span className="block">Ready Set Mail sets up the DNS records for you.</span>
+			<ul className="mt-3 list-disc space-y-1 pl-5">
+				{WILL_DO.map((t) => (
+					<li key={t}>{t}</li>
+				))}
+			</ul>
+		</CloudflareCard>
+	);
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
-			{usable ? (
-				<CloudflareCard title="Cloudflare is connected" large action={<Button size="lg" onClick={() => toWizard('domains')}>Choose domains</Button>}>
-					{usable.implicit ? 'Ready Set Mail can use the Cloudflare token set on this server.' : `Connected to ${usable.cf_account_name ?? usable.label}.`} Choose the domains to set up.
-				</CloudflareCard>
-			) : (
-				<CloudflareCard title="Connect Cloudflare" large action={<Button size="lg" onClick={() => toWizard('connect')}>Connect Cloudflare</Button>}>
-					<span className="block">Ready Set Mail sets up the DNS records for you.</span>
-					<ul className="mt-3 list-disc space-y-1 pl-5">
-						{WILL_DO.map((t) => (
-							<li key={t}>{t}</li>
-						))}
-					</ul>
-				</CloudflareCard>
-			)}
-			{revealed ? (
-				manual
-			) : (
+			{revealed ? manual : null}
+			{cloudflare}
+			{revealed ? null : (
 				<p>
 					<button type="button" className="text-sm text-ink-2 underline underline-offset-4 hover:text-ink-1" onClick={() => setRevealed(true)}>
 						I'll add DNS records myself

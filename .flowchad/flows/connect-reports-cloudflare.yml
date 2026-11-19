@@ -1,0 +1,40 @@
+name: A hosted owner connects a verified domain's reports through Cloudflare
+goal: A verified domain linked to Cloudflare, with no Ready Set Mail report address yet, gets the address added to its live DMARC record and its reports connected
+value_moment: Reports connected, waiting for the first report - the live DMARC record lists the shared report address and the domain is connected (GET /api/domains/:id/report-address says waiting); only for a workspace HOSTED_CONNECT_REPORTS admits
+# The screens a person sees on this flow, and the server files that implement its steps. A change to any of them needs a fresh walk record.
+covers:
+  - web/src/components/reports/*
+  - web/src/components/ReportsNotConnected.tsx
+  - web/src/lib/report-address.ts
+  - web/src/lib/apply-dmarc.ts
+  - web/src/pages/domains/DomainDetailPage.tsx
+  - web/src/pages/domains/DomainSettingsPage.tsx
+  - web/src/pages/domains/OverviewPage.tsx
+  - web/src/pages/wizards/setup/ReportsStep.tsx
+  - web/src/components/domain/DoThisNext.tsx
+  - web/src/components/domain/DnsRecords.tsx
+  - src/hosted/report-address.ts
+  - src/hosted/report-address-routes.ts
+  - src/hosted/fixed-address.ts
+  - src/api/router.ts
+url: /#/domains/1
+tags: [reports, value, protected]
+priority: P0
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: hosted
+# Local hosted instance with the repo's fakes (HOSTED_CONNECT_REPORTS=all, a verified domain linked to the Cloudflare fake, live record
+# `v=DMARC1; p=reject;`); the walk record of the change that last touched it has the measures.
+steps:
+  - action: navigate
+    url: /#/domains/1
+    expect: The first screen says the domain has no Ready Set Mail report address and has one action, Connect reports
+  - action: click
+    selector: "text=Connect reports"
+    expect: The review - the change card the first-run review (C2) uses: the record now, the record after Apply (policy and every other tag unchanged, existing addresses kept), Apply and Cancel; nothing is written yet
+  - action: click
+    selector: "text=Apply"
+    effect: write
+    expect: Report address added, and the page waits for the first report (POST /api/domains/:id/apply-dmarc connects, then writes, then the live DNS is read again)
+    first_value: true

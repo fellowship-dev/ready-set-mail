@@ -12,6 +12,10 @@
     "./spf": "./src/spf.ts",
     "./dmarc": "./src/dmarc.ts",
     "./dmarc-tags": "./src/dmarc-tags.ts",
+    "./effective-policy": "./src/effective-policy.ts",
+    "./name-exists": "./src/name-exists.ts",
+    "./alignment": "./src/alignment.ts",
+    "./spf-identity": "./src/spf-identity.ts",
     "./dmarc-rua": "./src/dmarc-rua.ts",
     "./dmarc-next-step": "./src/dmarc-next-step.ts",
     "./dmarc-problem": "./src/dmarc-problem.ts",
@@ -27,6 +31,7 @@
     "./org-domain": "./src/org-domain.ts",
     "./email-service-providers": "./src/email-service-providers.ts",
     "./sender-providers": "./src/sender-providers.ts",
+    "./report-reach": "./src/report-reach.ts",
     "./spf-record": "./src/spf-record.ts"
   },
   "files": [

@@ -90,7 +90,7 @@ export function Rollout({ domain }: { domain: Domain }) {
 				) : null}
 				<Progress r={r} />
 				{r.next_step && r.next_step_note ? <p className="text-sm text-ink-2">{r.next_step_note}</p> : null}
-				{r.blocked && r.block_reason ? (
+				{r.next_step && r.blocked && r.block_reason ? (
 					<Alert variant="warning" title="Cannot advance yet">
 						{r.block_reason}
 					</Alert>

@@ -7,12 +7,13 @@ import { fail, renderApp } from './render';
 import { uncountedReporters } from '../src/lib/uncounted';
 import { ownRecordFromInherited } from '@ready-set-mail/dns-checks/dmarc-rua';
 import { inheritedCoverage, offerEnforcement, recordFor } from '../src/lib/dmarc-coverage';
+import { inheritedReach, noReach, viaParentReach } from './reach';
 
 const ADDR = 'rua@rua.example.net';
 const domain = { id: 1, domain: 'example.com' };
 const NOW = Math.floor(Date.now() / 1000);
 const view = (over: Record<string, unknown> = {}) => ({
-	available: true,
+	available: true, reach: noReach,
 	domain_id: 1,
 	domain: 'example.com',
 	managed_by: null,
@@ -30,7 +31,8 @@ const view = (over: Record<string, unknown> = {}) => ({
 	...over,
 });
 const issued = (plan: unknown, over: Record<string, unknown> = {}) =>
-	view({ address: ADDR, state: 'not_published', dns: { checked_at: NOW, error: null, plan }, ...over });
+	// the server's `reach` of a connected name whose record lists the address (waiting / receiving) is `own`, with the last counted report
+	view({ address: ADDR, state: 'not_published', dns: { checked_at: NOW, error: null, plan }, ...(['waiting', 'receiving'].includes(over.state as string) ? { reach: { ...noReach, kind: 'own', last_report_at: (over.last_report_at as number | null) ?? null } } : {}), ...over });
 const ON = { 'GET /api/hosted/config': { enabled: true, reports: true, records: false } };
 
 const show = (routes: Record<string, unknown>, role: 'owner' | 'admin' | 'member' = 'owner') => renderApp(<ConnectReports domain={domain} />, { role, routes: { ...ON, ...routes } });
@@ -46,6 +48,42 @@ describe('ConnectReports visibility', () => {
 		const { calls } = renderApp(<ConnectReports domain={domain} />, { routes: { 'GET /api/hosted/config': fail(500) } });
 		await waitFor(() => expect(calls.some((c) => c.path === '/api/hosted/config')).toBe(true));
 		expect(screen.queryByTestId('connect-reports')).not.toBeInTheDocument();
+	});
+});
+
+describe('B7: a name with no connection of its own whose reports arrive through its connected parent', () => {
+	it('says reports arrive through the parent, with the real count and the last report, and offers nothing to connect (connecting would change nothing)', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', via_parent: { domain_id: 7, domain: 'example.com' }, reach: viaParentReach({ domain_id: 7, domain: 'example.com' }, { reports: 2, messages: 49, last_report_at: NOW - 3600 }) }) });
+		expect(await screen.findByText('Reports arrive through example.com')).toBeInTheDocument();
+		expect(screen.queryByText('Reports not connected yet')).toBeNull();
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent('2 reports (49 messages) filed for app.example.com in the last 30 days; the last arrived');
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent('Connecting app.example.com would change nothing: it uses the same report address.');
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent("stays with example.com");
+		expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
+	});
+	it('through its parent with no report yet: says none has arrived, never a count it does not have', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'app.example.com', reach: viaParentReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByTestId('reports-reach')).toHaveTextContent("None has arrived yet: receivers send them about once a day once app.example.com's DMARC record lists the report address.");
+	});
+	it('no DMARC record of its own, and the record that applies already sends reports here: says which record, and never that the record does not list the address', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ domain: 'cf-bounce.app.example.com', reach: inheritedReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByText("Reports arrive through example.com's record")).toBeInTheDocument();
+		expect(screen.getByTestId('reports-reach')).toHaveTextContent("cf-bounce.app.example.com has no DMARC record of its own. example.com's record applies to it and already sends reports here; mail sent as cf-bounce.app.example.com is counted in example.com's reports.");
+		expect(screen.queryByRole('button', { name: 'Connect reports' })).toBeNull();
+		expect(screen.queryByText(/does not list the report address/)).toBeNull();
+	});
+	it('connected, the record that applies is the parent\'s and lists the address: the same words, not "does not list the report address yet", with the optional record of its own below', async () => {
+		show({ 'GET /api/domains/1/report-address': issued(
+			{ kind: 'inherited', from: 'example.com', parent_record: 'v=DMARC1; p=reject; rua=mailto:rua@rua.example.net', policy: 'reject', policy_tag: 'p', parent_has_address: true, own: { kind: 'add', name: '_dmarc.cf-bounce.app.example.com', current: null, record: 'v=DMARC1; p=reject; rua=mailto:rua@rua.example.net', created: true } },
+			{ domain: 'cf-bounce.app.example.com', state: 'waiting', reach: inheritedReach({ domain_id: 7, domain: 'example.com' }) }) });
+		expect(await screen.findByText("Reports arrive through example.com's record")).toBeInTheDocument();
+		expect(screen.queryByText(/does not list the report address/)).toBeNull();
+		expect(screen.queryByText(/Published, waiting for the first report/)).toBeNull();
+		expect(screen.getByTestId('connect-reports')).toHaveTextContent('Or give example.com a record of its own');
+	});
+	it('without a connected parent it still says not connected', async () => {
+		show({ 'GET /api/domains/1/report-address': view({ via_parent: null }) });
+		expect(await screen.findByText('Reports not connected yet')).toBeInTheDocument();
 	});
 });
 
@@ -76,23 +114,21 @@ describe('Connect reports', () => {
 		expect(screen.getByText(/p=none asks receivers for reports and changes nothing/)).toBeInTheDocument();
 	});
 
-	it('two addresses already: no record until the person chooses which to replace, or to add a third knowingly', async () => {
+	it('two addresses already: no record until the person chooses which of the first two to replace; there is no third', async () => {
 		const options = [
 			{ replaces: 'mailto:a@x.test', record: `v=DMARC1; p=reject; rua=mailto:${ADDR},mailto:b@y.test` },
 			{ replaces: 'mailto:b@y.test', record: `v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:${ADDR}` },
-			{ replaces: null, record: `v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:b@y.test,mailto:${ADDR}` },
 		];
 		show({
 			'GET /api/domains/1/report-address': issued({ kind: 'choose', name: '_dmarc.example.com', current: 'v=DMARC1; p=reject; rua=mailto:a@x.test,mailto:b@y.test', existing: ['mailto:a@x.test', 'mailto:b@y.test'], options, created: false }),
 		});
-		expect(await screen.findByText(/already lists 2 report addresses/)).toBeInTheDocument();
+		expect(await screen.findByText(/already lists two report addresses/)).toBeInTheDocument();
 		expect(screen.getByText('Choose an option to see the record to publish.')).toBeInTheDocument();
 		for (const o of options) expect(screen.queryByText(o.record)).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole('radio', { name: /Replace mailto:b@y\.test/ }));
 		expect(screen.getByText(options[1]!.record)).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('radio', { name: /Keep both and add this address third/ }));
-		expect(screen.getByText(options[2]!.record)).toBeInTheDocument();
-		expect(screen.getByText('Some receivers may never send reports to a third address.')).toBeInTheDocument();
+		expect(screen.getAllByRole('radio')).toHaveLength(2);
+		expect(screen.queryByText(/third/)).not.toBeInTheDocument();
 	});
 
 	it('a subdomain that inherits: names the organizational domain and what its own record means', async () => {

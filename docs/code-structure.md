@@ -53,7 +53,7 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 | `0 11 * * *` | 11am UTC daily | Hosted only: the lifecycle emails of `src/lifecycle/email/` (records live, first-report catch-up, no reports yet; [hosted.md](hosted.md#lifecycle-emails)) and the product analytics' daily step ("No Report After 3 Days"; a no-op unless PostHog is configured, [analytics.md](analytics.md)) |
 | `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` (self-host; returns at once on the hosted service). Nothing in `src/lifecycle/email/` depends on it |
 | `0 10 * * *` | 10am UTC daily | SPF flatten refresh — re-flattens all enabled domains via CF DNS |
-| `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, then retention sweeps (own invocation) |
+| `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, backfill pre-0022 alignment verdicts (`src/lifecycle/verdict-backfill.ts`), then retention sweeps (own invocation) |
 | `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS MX refresh |
 
 All handlers run `assertSchemaReady(env.DB)` (from `@ready-set-mail/db`) before business logic: the Worker no longer changes the schema, it only checks that `npm run migrate` has been run. Schema, migrations and queries live in `packages/db`.
