@@ -1,6 +1,6 @@
 // F: migration 0022 follows the repo's migration rules (packages/db/SCHEMA.md "Changing the schema"): a new numbered file, additive only, the newest
 // migration the Worker requires, the columns in schema.ts, the export decision made for each, the drizzle baseline regenerated.
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { EXPORT_COLUMNS, REQUIRED_MIGRATION } from '@ready-set-mail/db';
