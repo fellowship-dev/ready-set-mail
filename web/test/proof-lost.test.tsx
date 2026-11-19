@@ -151,7 +151,7 @@ describe('domain page', () => {
 					'GET /api/domains/summaries': { summaries: [SUM(1, 'sold.com')], next_after: null, window_days: 30 },
 					'GET /api/domains/1/check-summary': REJECT(1, 'sold.com'),
 					'GET /api/domains/1/stats': { domain: 'sold.com', days: 7, stats: [] },
-					'GET /api/domains/1/sources': { sources: [] },
+					'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: false, has_rua: false, current_record: null, cf_managed: false },
 					'GET /api/domains/1/onboarding-status': { domain_id: 1, domain: 'sold.com', rua_address: '', cf_available: false, dmarc: { found: false, has_our_rua: false, current_record: null }, spf: { record: null, lookup_count: null, flattening_active: false }, dkim: { selectors: [], source: 'doh' }, routing: { mx_found: false, destination_verified: false, reports_domain: null, admin_email: null } },

@@ -14,6 +14,7 @@ import {
 } from '@ready-set-mail/dns-checks';
 import { factsOf, fill, findingsOf, type Fix } from '@ready-set-mail/report';
 import { spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { effectivePolicy } from '@ready-set-mail/dns-checks/effective-policy';
 import { RECORDS_SEPARATOR, type DnsCheckResult } from './dns-check';
 
 /** The catalog findings a free check can observe: DNS-record problems of SPF and DMARC. */
@@ -46,12 +47,13 @@ function spfOf(domain: string, dns: DnsCheckResult): SpfAnalysis {
 function dmarcOf(domain: string, dns: DnsCheckResult): DomainReport['dmarc'] {
   const inheritedFrom = dns.dmarc?.inheritedFrom;
   const base = { domain, inherited: !!inheritedFrom, organizationalDomain: inheritedFrom ? inheritedFrom.replace(/^_dmarc\./, '') : domain };
-  if (dns.errors?.dmarc) return { ...base, status: 'error', record: null, foundAt: null, error: dns.errors.dmarc };
-  if (!dns.dmarc) return { ...base, status: 'none', record: null, foundAt: null };
+  const lookup = (l: Omit<DomainReport['dmarc'], 'effective'>): DomainReport['dmarc'] => ({ ...l, effective: effectivePolicy(l) });
+  if (dns.errors?.dmarc) return lookup({ ...base, status: 'error', record: null, foundAt: null, error: dns.errors.dmarc });
+  if (!dns.dmarc) return lookup({ ...base, status: 'none', record: null, foundAt: null });
   const foundAt = inheritedFrom ?? `_dmarc.${domain}`;
   const raws = dns.dmarc.raw.split(RECORDS_SEPARATOR);
-  if (dns.problems?.dmarc && raws.length > 1) return { ...base, status: 'multiple', record: null, foundAt, rawRecords: raws };
-  return { ...base, status: 'found', record: dns.dmarc, foundAt };
+  if (dns.problems?.dmarc && raws.length > 1) return lookup({ ...base, status: 'multiple', record: null, foundAt, rawRecords: raws });
+  return lookup({ ...base, status: 'found', record: dns.dmarc, foundAt });
 }
 
 /** The package's input for one free check. `domain` is the sender's domain (the summary's, which `dns.domain` equals in production). */

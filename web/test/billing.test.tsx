@@ -36,7 +36,7 @@ const base = {
 	'GET /api/domains': { domains: [domain] },
 	'GET /api/domains/1/check-summary': summary,
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-10-20', total: 100, passed: 97, failed: 3 }] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: current, cf_managed: true },
 	'GET /api/domains/1/onboarding-status': onboarding,
@@ -64,7 +64,7 @@ const dialogOf = async () => within(await screen.findByRole('dialog'));
 const offerButton = () => screen.findByRole('button', { name: 'Have us fix this domain: $149 USD' });
 
 describe('the offer on a domain page', () => {
-	it('is a quiet secondary action below "Do this next", once, with the price from the API', async () => {
+	it('is a quiet secondary action in "Do this next", once, with the price from the API', async () => {
 		page({ routes: hostedRoutes() });
 		const button = await offerButton();
 		expect(button.className).not.toContain('bg-brand');
@@ -75,6 +75,22 @@ describe('the offer on a domain page', () => {
 		expect(screen.getAllByText(OFFER.scope)).toHaveLength(1);
 		expect(screen.getAllByRole('button', { name: /Have us fix this domain/ })).toHaveLength(1);
 		expect(document.body.textContent).not.toMatch(/limited|hurry|only \d+ left|don't miss/i);
+	});
+
+	it('comes right after the first step and before the second, so "Do this next" still leads and the offer is on the first screen', async () => {
+		// No SPF and no DMARC record: two steps.
+		const two = { ...onboarding, dmarc: { ...onboarding.dmarc, found: false, has_our_rua: false, current_record: null, effective: { policy: null, inherited_from: null, issue: null, record: null } }, spf: { record: null, lookup_count: null, flattening_active: false } };
+		page({ routes: hostedRoutes({ 'GET /api/domains/1/onboarding-status': two, 'GET /api/domains/1/dns-check': { found: false, has_rua: false, current_record: null, cf_managed: true } }) });
+		const button = await offerButton();
+		const steps = screen.getAllByRole('listitem').filter((li) => li.hasAttribute('data-status'));
+		expect(steps.length).toBeGreaterThanOrEqual(2);
+		const before = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+		expect(screen.getByRole('heading', { name: 'Do this next' }).compareDocumentPosition(steps[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(before(steps[0]!, button)).toBe(true);
+		expect(before(button, steps[1]!)).toBe(true);
+		// The numbering carries on across the offer.
+		expect(steps[0]!.textContent).toMatch(/^1/);
+		expect(steps[1]!.textContent).toMatch(/^2/);
 	});
 
 	it('the price follows the API, not the code', async () => {

@@ -224,6 +224,13 @@ describe('findUnsignedSpfProviders', () => {
   });
 });
 
+describe('Cloudflare Email Service (B10)', () => {
+  it('its DKIM selector cf-bounce is probed, and recognised when found', () => {
+    expect(getAllDkimSelectors()).toContain('cf-bounce');
+    expect(matchDkimProvider('cf-bounce._domainkey.app.example.com')?.name).toBe('Cloudflare Email Service');
+  });
+});
+
 describe('getAllDkimSelectors', () => {
   it('returns a non-empty array', () => {
     const selectors = getAllDkimSelectors();

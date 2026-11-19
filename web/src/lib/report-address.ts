@@ -5,7 +5,11 @@ import { HOSTED_CONFIG_KEY } from './hosted';
 import { reportsRefusalOf, type ReportsRefusal } from './dmarc-step';
 import { useHosted } from './session';
 import { useCheckSummary } from './domain-queries';
+import { reportReachWords, type ReachWords, type ReportReach } from '@ready-set-mail/dns-checks/report-reach';
+import { formatDateTime, timeAgo } from './format';
 import type { ReportVisibilityFields } from './uncounted';
+
+export type { ReportReach };
 
 /**
  * Connecting a domain's DMARC reports on the hosted service (GET/POST/DELETE /api/domains/:id/report-address): one
@@ -74,9 +78,50 @@ export interface ReportAddressView {
 	/** Apply reaches the zone: the record in the zone now, what Apply does about it, and the hash the apply carries. */
 	review?: ReportRecordReview | null;
 	parent?: { domain_id: number; domain: string; connected: boolean } | null;
+	/** No connection of its own, but reports that name this domain as their policy domain are filed here through this connected parent. */
+	via_parent?: { domain_id: number; domain: string } | null;
+	/** How reports reach this name (src/hosted/report-address.ts `reportReachOf`): the one answer every component's words come from (`reachWords`, `reportsArrive`). */
+	reach: ReportReach;
 }
 
 export type ReportIntakeStatus = { available: false } | ReportAddressView;
+
+/**
+ * The words for a name whose reports arrive without a connection of its own (through its connected parent, or through the record that applies to it),
+ * with the real counts and the time of the last one; null when it has a connection of its own or nothing arrives. The only place a component
+ * gets these sentences from (`reportReachWords`, packages/dns-checks/src/report-reach.ts, which the agent's report uses too).
+ */
+export function reachWords(s: ReportIntakeStatus | null | undefined): ReachWords | null {
+	return s && s.available ? reportReachWords(s.domain, s.reach, (t) => `${formatDateTime(t)} (${timeAgo(t)})`) : null;
+}
+
+/**
+ * The words for a name whose reports arrive through its parent or through the record that applies to it, for the screens that would otherwise
+ * say "no reports" (Analytics, Anomalies, the report list and a day's report); null for a name with its own connection or when nothing arrives.
+ */
+export function useReachWords(domainId: number): ReachWords | null {
+	const on = useReportIntakeEnabled();
+	const q = useReportAddress(domainId, on && Number.isInteger(domainId) && domainId > 0);
+	const s = q.data;
+	return s && s.available && (s.reach.kind === 'via_parent' || s.reach.kind === 'inherited_record') ? reachWords(s) : null;
+}
+
+/** Do reports arrive for this name? Own connection, or through its parent, or through the record that applies. undefined: not known (loading, or no hosted intake). */
+export function reportsArrive(s: ReportIntakeStatus | null | undefined): boolean | undefined {
+	return s && s.available ? !!s.address || s.reach.kind !== 'none' : undefined;
+}
+
+/** What Apply can still do for a review: write or only connect, or a choice among the first two addresses. Never a blocked review. */
+export const applyable = (review: ReportRecordReview | null | undefined): review is ReportRecordReview => !!review && review.outcome.kind !== 'blocked';
+
+/**
+ * Does the Connect reports panel show an Apply for a connected name? Cloudflare reaches this zone, the review can still be applied, and the record in the
+ * zone does not list the address yet (once written, only public DNS is being waited for). The panel and every sentence that points at its Apply use this.
+ * `review`: the one on screen (a 409's fresh review), else the status's own.
+ */
+export function applyOffered(s: ReportAddressView, review: ReportRecordReview | null | undefined = s.review): boolean {
+	return s.apply_via_cloudflare === true && applyable(review) && s.state !== 'written' && s.state !== 'waiting' && s.state !== 'receiving';
+}
 
 export const reportAddressKey = (id: number) => [...domainKeys.all(id), 'report-address'] as const;
 

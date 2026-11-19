@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e16c1100-9385-4e29-953f-61508a8ec3ca",
+  "id": "1c16eedb-424f-46d6-8705-a2a24171ae94",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "access_credentials": {
@@ -465,6 +465,20 @@
         "record_count": {
           "name": "record_count",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "aspf": {
+          "name": "aspf",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "adkim": {
+          "name": "adkim",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -4547,6 +4561,20 @@
         "header_from": {
           "name": "header_from",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "spf_aligned": {
+          "name": "spf_aligned",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dkim_aligned": {
+          "name": "dkim_aligned",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

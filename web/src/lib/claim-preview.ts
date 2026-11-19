@@ -23,6 +23,7 @@ export interface ClaimPreviewData {
 export function previewAssessment(p: ClaimPreviewData): LevelAssessment | null {
 	if (p.nxdomain || p.spf.status === 'error' || p.dmarc.status === 'error') return null;
 	return assessDomain({
+		domain: p.domain,
 		spf_record: p.spf.status === 'found' ? p.spf.record : null,
 		dmarc_policy: p.dmarc.policy,
 		dmarc_issue: p.dmarc.issue,

@@ -7,6 +7,7 @@ import { PublicDnsLive, sameRecord } from '../src/components/domain/PublicDnsLiv
 import { DoneStep } from '../src/pages/wizards/cloudflare/DoneStep';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const now = Math.floor(Date.now() / 1000);
 const ADDR = 'rua@intake.example.net';
@@ -23,7 +24,7 @@ const onboarding = (cf = true, found = false) => ({
 	dmarc: { found, has_our_rua: false, current_record: found ? RECORD : null, effective: { policy: found ? 'none' : null, inherited_from: null, issue: null, record: found ? RECORD : null } }, spf: { record: 'v=spf1 -all', lookup_count: 2, flattening_active: false },
 	dkim: { selectors: [{ name: 'g._domainkey.example.com', record: 'v=DKIM1; k=rsa; p=AAA' }], source: 'doh' }, routing: { mx_found: true, destination_verified: true, reports_domain: null, admin_email: null },
 });
-const notConnected = { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, apply_via_cloudflare: false, review: null };
+const notConnected = { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, apply_via_cloudflare: false, review: null };
 const base = (over: Record<string, unknown> = {}) => ({
 	'GET /api/domains/1/report-address': notConnected,
 	'GET /api/domains': { domains: [{ id: 1, domain: 'example.com', dmarc_policy: null, rua_address: '', parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0 }] },
@@ -84,7 +85,7 @@ describe('setup step 4 on hosted', () => {
 	it('connecting reports in the step makes the step itself say so: its own status is read again, nothing stale is left above the panel', async () => {
 		let connected = false;
 		const view = () => ({
-			available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: connected ? ADDR : null, connected_at: connected ? now : null, last_report_at: null,
+			available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: connected ? ADDR : null, connected_at: connected ? now : null, last_report_at: null,
 			counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: connected ? 'not_published' : 'not_connected',
 			dns: connected ? { checked_at: now, error: null, plan: { kind: 'add', name: '_dmarc.example.com', current: null, record: RECORD, created: true } } : null, apply_via_cloudflare: false, review: null,
 		});
@@ -136,7 +137,7 @@ describe('setup step 4 on hosted', () => {
 		step4(base({
 			'POST /api/domains/1/apply-dmarc': { ok: true, record: 'v=DMARC1; p=none', created: true },
 			'GET /api/onboarding/dns-state?names=example.com': { states: [{ name: 'example.com', resolves: true, spf: 'found', dmarc: { state: 'missing' }, mx: true }] },
-			'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: false, refusal: "On this server, only the operator's workspaces can connect reports.", address: null, state: 'not_connected' },
+			'GET /api/domains/1/report-address': { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: false, refusal: "On this server, only the operator's workspaces can connect reports.", address: null, state: 'not_connected' },
 		}));
 		expect(await screen.findByText("On this server, only the operator's workspaces can connect reports.")).toBeInTheDocument(); // before: the panel says why
 		await userEvent.click(await screen.findByRole('button', { name: 'Apply via Cloudflare' }));

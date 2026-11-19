@@ -19,6 +19,8 @@ export type RecordTuple = [
 	ip: string, count: number, disposition: string, dkimResult: string | null, dkimDomain: string | null,
 	spfResult: string | null, spfDomain: string | null, headerFrom: string | null, reverseDns: string | null,
 	baseDomain: string | null, countryCode: string | null, org: string | null,
+	/** The receiver's own verdict (policy_evaluated), 1 aligned / 0 not. Absent: not known. */
+	spfAligned?: number | null, dkimAligned?: number | null,
 ];
 
 const encoder = new TextEncoder();
@@ -52,6 +54,8 @@ export interface StoreReportInput {
 		total_count: number; pass_count: number; fail_count: number; raw_xml: string | null;
 		reporter_auth: string | null; reporter_auth_domain: string | null; reporter_auth_reason: string | null;
 		reporter_tier: string | null; reporter_known_as: string | null; reporter_identity: string | null;
+		/** policy_published aspf / adkim ('r' | 's'); absent: not reported. */
+		aspf?: string | null; adkim?: string | null;
 	};
 	records: RecordTuple[];
 	/**
@@ -84,16 +88,16 @@ export function storeStatements(i: StoreReportInput): SQL[] {
 		);
 	}
 	out.push(
-		sql`INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, raw_xml, workspace_id, reporter_auth, reporter_auth_domain, reporter_auth_reason, reporter_tier, reporter_known_as, reporter_identity, ingest_token, record_count)
-			VALUES (${i.domainId}, ${r.org_name}, ${r.report_id}, ${r.date_begin}, ${r.date_end}, ${r.total_count}, ${r.pass_count}, ${r.fail_count}, ${r.raw_xml}, ${ws}, ${r.reporter_auth}, ${r.reporter_auth_domain}, ${r.reporter_auth_reason}, ${r.reporter_tier}, ${r.reporter_known_as}, ${r.reporter_identity}, ${i.ingestToken}, ${i.records.length})
+		sql`INSERT INTO aggregate_reports (domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, raw_xml, workspace_id, reporter_auth, reporter_auth_domain, reporter_auth_reason, reporter_tier, reporter_known_as, reporter_identity, ingest_token, record_count, aspf, adkim)
+			VALUES (${i.domainId}, ${r.org_name}, ${r.report_id}, ${r.date_begin}, ${r.date_end}, ${r.total_count}, ${r.pass_count}, ${r.fail_count}, ${r.raw_xml}, ${ws}, ${r.reporter_auth}, ${r.reporter_auth_domain}, ${r.reporter_auth_reason}, ${r.reporter_tier}, ${r.reporter_known_as}, ${r.reporter_identity}, ${i.ingestToken}, ${i.records.length}, ${r.aspf ?? null}, ${r.adkim ?? null})
 			ON CONFLICT DO NOTHING`,
 	);
 	for (const chunk of chunkJson(i.records)) {
 		// The join on ingest_token yields no row when the report already existed (its token is another attempt's): a
 		// re-delivery inserts nothing.
-		out.push(sql`INSERT INTO report_records (report_id, workspace_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, reverse_dns, base_domain, country_code, org)
+		out.push(sql`INSERT INTO report_records (report_id, workspace_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, reverse_dns, base_domain, country_code, org, spf_aligned, dkim_aligned)
 			SELECT a.id, ${ws}, json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'), json_extract(j.value, '$[3]'), json_extract(j.value, '$[4]'),
-				json_extract(j.value, '$[5]'), json_extract(j.value, '$[6]'), json_extract(j.value, '$[7]'), json_extract(j.value, '$[8]'), json_extract(j.value, '$[9]'), json_extract(j.value, '$[10]'), json_extract(j.value, '$[11]')
+				json_extract(j.value, '$[5]'), json_extract(j.value, '$[6]'), json_extract(j.value, '$[7]'), json_extract(j.value, '$[8]'), json_extract(j.value, '$[9]'), json_extract(j.value, '$[10]'), json_extract(j.value, '$[11]'), json_extract(j.value, '$[12]'), json_extract(j.value, '$[13]')
 			FROM json_each(${chunk}) j JOIN (SELECT id FROM aggregate_reports WHERE workspace_id = ${ws} AND ${mine}) a`);
 	}
 	const exists = sql`EXISTS (SELECT 1 FROM aggregate_reports WHERE workspace_id = ${ws} AND ${mine})`;

@@ -9,7 +9,7 @@ export const spfMissing: CatalogFile = {
       "dns_host": "*",
       "exact": true,
       "title": "Publish an SPF record for Google Workspace",
-      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send as {domain}; without it your marketing and order emails can fail the check and be filtered as spam. Gmail requires SPF or DKIM from every sender.",
+      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send mail whose return-path (MAIL FROM) is {domain}; if any of your marketing or order email is sent that way, it can fail the check and be filtered as spam without one. If every service you use sends with its own return-path domain, no SPF record is needed here and DMARC can pass on DKIM alone. Gmail requires SPF or DKIM from every sender.",
       "records": [
         {
           "name": "{domain}",
@@ -35,7 +35,7 @@ export const spfMissing: CatalogFile = {
       "dns_host": "*",
       "exact": true,
       "title": "Publish an SPF record for Microsoft 365",
-      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send as {domain}; without it your marketing and order emails can fail the check and be filtered as spam.",
+      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send mail whose return-path (MAIL FROM) is {domain}; if any of your marketing or order email is sent that way, it can fail the check and be filtered as spam without one. If every service you use sends with its own return-path domain, no SPF record is needed here and DMARC can pass on DKIM alone.",
       "records": [
         {
           "name": "{domain}",
@@ -60,7 +60,7 @@ export const spfMissing: CatalogFile = {
       "dns_host": "*",
       "exact": false,
       "title": "Publish an SPF record",
-      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send as {domain}; without it your marketing and order emails can fail the check and be filtered as spam. Gmail requires SPF or DKIM from every sender.",
+      "why": "{domain} has no SPF record. SPF is how Gmail and Outlook check that a server is allowed to send mail whose return-path (MAIL FROM) is {domain}; if any of your marketing or order email is sent that way, it can fail the check and be filtered as spam without one. If every service you use sends with its own return-path domain, no SPF record is needed here and DMARC can pass on DKIM alone. Gmail requires SPF or DKIM from every sender.",
       "records": [
         {
           "name": "{domain}",

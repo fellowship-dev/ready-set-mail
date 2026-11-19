@@ -15,14 +15,20 @@ import type { ReportVisibilityFields } from '../../lib/uncounted';
 import { DEFAULT_WINDOW, type WindowDays } from '../../lib/reports';
 import { useDomainId } from '../../app';
 import { useDomain } from '../../lib/queries';
+import { useReachWords } from '../../lib/report-address';
+import { ReachStatement } from '../../components/reports/ReachStatement';
 import { BackLink } from '../../components/reports';
 
 type Data = WorkspaceAnalytics | DomainAnalytics;
 
 function Body({ data, days }: { data: Data; days: number }) {
 	const workspace = 'domains' in data;
+	// A name whose reports arrive through its parent or through the record that applies says so where it would otherwise show nothing.
+	const reached = useReachWords(workspace ? 0 : data.domain.id);
+	const quiet = !workspace && data.totals.messages === 0 && reached;
 	return (
 		<div className="space-y-8">
+			{quiet ? <ReachStatement words={reached} /> : null}
 			<StatGroup className="sm:grid-cols-4" aria-label={`Last ${days} days`}>
 				<Stat label="Pass rate" value={fmtPct(data.totals.pass_rate)} />
 				<Stat label="Messages" value={formatNumber(data.totals.messages)} />
@@ -73,7 +79,7 @@ function Body({ data, days }: { data: Data; days: number }) {
 			)}
 
 			<Section title="What to fix next" description="Ranked by how much of your mail each problem touches.">
-				<FixList fixes={data.fixes} messages={data.totals.messages} showDomain={workspace} visibility={data as ReportVisibilityFields} />
+				<FixList fixes={data.fixes} messages={data.totals.messages} showDomain={workspace} visibility={data as ReportVisibilityFields} reportsArrive={!!quiet} />
 			</Section>
 
 			<Section title="Pass rate trend" description={`Messages per ${days > 30 ? 'week' : 'day'}, passed and failed DMARC.`}>
@@ -81,7 +87,7 @@ function Body({ data, days }: { data: Data; days: number }) {
 			</Section>
 
 			<Section title="Sender inventory" description="Every source that sent mail as your domain.">
-				<SenderInventory senders={data.senders} showDomains={workspace} alignment={data.alignment} />
+				<SenderInventory senders={data.senders} alignment={data.alignment} />
 				{data.sender_count > data.senders.length ? <p className="text-sm text-ink-2">Showing the {data.senders.length} biggest of {formatNumber(data.sender_count)} senders.</p> : null}
 			</Section>
 		</div>

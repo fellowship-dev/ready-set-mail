@@ -52,6 +52,14 @@ describe('first screen: Cloudflare first', () => {
 		expect(JSON.parse(sessionStorage.getItem('rsm_cf_wizard:ws_default')!).step).toBe('connect');
 	});
 
+	it('once chosen, the person\'s own form comes before the Cloudflare card (the first input is not pushed under the fold on a phone)', async () => {
+		render(offer());
+		await userEvent.click(await screen.findByRole('button', { name: "I'll add DNS records myself" }));
+		const manual = screen.getByRole('heading', { name: "I'll add DNS records myself" });
+		const cloudflare = screen.getByRole('heading', { name: 'Connect Cloudflare' });
+		expect(manual.compareDocumentPosition(cloudflare) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
 	it('"I\'ll add DNS records myself" reveals the domain form, focuses it and shows the five-step bar', async () => {
 		render(offer());
 		await userEvent.click(await screen.findByRole('button', { name: "I'll add DNS records myself" }));
