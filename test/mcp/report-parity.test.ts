@@ -64,6 +64,20 @@ describe('MCP DMARC step: the same rule and inputs as the dashboard', () => {
   expect(JSON.stringify(r)).not.toContain('Connect reports so senders can be confirmed');
  });
 
+ it('a name whose reports arrive through its connected parent is not told to connect reports', async () => {
+  const { dmarcNextStep } = await import('../../src/mcp/tools/index');
+  const row = { dns_checked_at: NOW, dmarc_policy: 'none', dmarc_issue: null, dmarc_inherited_from: null, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1, total_messages: 0, pass_messages: 0 };
+  const tenant = { scope: { reports: { checkSummary: async () => row }, domains: { getById: async () => null } } };
+  const own = { id: 1, domain: 'app.example.com', rua_address: '' };
+  const none = { reportConnect: async () => null, visibility: async () => null };
+  const alone = await dmarcNextStep(tenant, own, NOW, { ...none, reportsVia: async () => null });
+  expect(alone!.next_step).toMatchObject({ key: 'connect-reports' });
+  const via = await dmarcNextStep(tenant, own, NOW, { ...none, reportsVia: async () => 'rua@reports.example.net' });
+  expect(via!.next_step).toMatchObject({ key: 'gathering' });
+  expect(JSON.stringify(via)).not.toContain('Connect reports so senders can be confirmed');
+  expect(JSON.stringify(via)).not.toContain('rua@reports.example.net');
+ });
+
  it('reports that arrived but were not counted are named, never "No reports arrived"', async () => {
   const { dmarcNextStep } = await import('../../src/mcp/tools/index');
   const row = { dns_checked_at: NOW, dmarc_policy: 'none', dmarc_issue: null, dmarc_inherited_from: null, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1, total_messages: 0, pass_messages: 0 };

@@ -72,4 +72,96 @@ describe('dmarcSteps: the same ladder for own and inherited names', () => {
 		expect(s).toMatchObject({ key: 'dmarc-missing', do: 'Publish a DMARC record at p=none', record: 'v=DMARC1; p=none; rua=mailto:r@reports.test' });
 		expect(s.why).toMatch(/gov\.uk is a public suffix, so its DMARC record does not apply to www\.gov\.uk/);
 	});
+
+	it('the sentence follows the record offered: "it starts the reports" only with a reports address in it', () => {
+		const withAddr = dmarcSteps('a.com', { kind: 'none' }, ev())[0]!;
+		expect(withAddr.record).toContain('rua=mailto:');
+		expect(withAddr.why).toContain('p=none changes no delivery; it starts the reports.');
+		const without = dmarcSteps('a.com', { kind: 'none' }, ev({ reportsAddress: false, ruaAddress: '' }))[0]!;
+		expect(without.record).toBe('v=DMARC1; p=none');
+		expect(without.why).toContain('p=none changes no delivery. Reports start once the record names a reports address: connect reports first, or add your own rua=.');
+		expect(without.why).not.toContain('it starts the reports');
+	});
+});
+
+describe('dmarcSteps: failures that are only others\' mail', () => {
+  const rep = { total: 25, passed: 17, days: 30 };
+  const steps = (policy: string, e: Partial<DmarcEvidence>) => dmarcSteps('example.test', policyInForce('example.test', stored({ dmarc_policy: policy, dmarc_p: policy }) as never), ev({ reports: rep, ...e }));
+  it('p=reject, every failure not yours: done first, no "Fix the senders"', () => {
+    const s = steps('reject', { failedNotYours: 8 });
+    expect(s[0]!.key).toBe('done');
+    expect(s.find((x) => x.key === 'not-yours')?.do).toBe('Nothing to fix');
+    expect(s.some((x) => x.do.includes('Fix the senders'))).toBe(false);
+  });
+  it('p=reject, only some failures not yours: unchanged', () => {
+    const s = steps('reject', { failedNotYours: 2 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('p=none gate keeps waiting but asks whether the senders are yours', () => {
+    const s = steps('none', { failedNotYours: 8 });
+    expect(s[0]).toMatchObject({ key: 'senders', status: 'improve', who: 'you', do: 'Check whether the failing senders are yours' });
+    expect(s[0]!.why).toContain('nothing to fix');
+    expect(s[0]!.why).toContain('95%');
+  });
+  it('p=reject, 8 recorded not-yours failures and 5 with no recorded verdict: no "Fix the senders", and the sentences say which is which', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 8, failedUnrecorded: 5 });
+    expect(s[0]!.key).toBe('done');
+    const note = s.find((x) => x.key === 'not-yours')!;
+    expect(note.do).toBe('Nothing to fix in the mail with a recorded verdict');
+    expect(note.why).toContain('Of the 13 messages that failed, 8 came from servers that are not a known sending service');
+    expect(note.why).toContain("likely mail pretending to be example.test, which p=reject asks receivers to reject. The other 5 are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.");
+    expect(s.some((x) => x.do.includes('Fix the senders'))).toBe(false);
+  });
+  it('nothing recorded as not-yours, only unrecorded failures: unchanged', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 0, failedUnrecorded: 13 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('a recorded failure that is yours keeps the senders step even with unrecorded ones', () => {
+    const s = steps('reject', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 5, failedUnrecorded: 5 });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('the gate with unrecorded failures says so too', () => {
+    const s = steps('none', { reports: { total: 42, passed: 29, days: 30 }, failedNotYours: 8, failedUnrecorded: 5 });
+    expect(s[0]!.why).toContain("The other 5 are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.");
+    expect(s[0]!.why).toContain('If none of the failing senders is a service you use, there is nothing to fix for them;');
+  });
+});
+
+describe('dmarcSteps: a service that sends as the name without being set up for it (classifySource service_not_set_up)', () => {
+  const rep = { total: 100, passed: 92, days: 30 };
+  const steps = (policy: string, e: Partial<DmarcEvidence>) => dmarcSteps('example.test', policyInForce('example.test', stored({ dmarc_policy: policy, dmarc_p: policy }) as never), ev({ reports: rep, ...e }));
+  const SERVICE = 'a service sending as rua.example.test that is not set up for it: if it is yours, set up its custom return-path and DKIM for rua.example.test; if not, nothing to do';
+  it('case 2, one unaligned real service: one thing to look at, not "Nothing to fix", and no "done" step', () => {
+    const s = steps('reject', { failedService: 8, failedServiceNames: ['rua.example.test'] });
+    expect(s[0]).toMatchObject({ key: 'service-not-set-up', status: 'improve', who: 'you', do: 'Check the service sending as rua.example.test that is not set up for it' });
+    expect(s[0]!.why).toContain(`Every message that failed came from ${SERVICE}`);
+    expect(s[0]!.why).toContain('Until then, p=reject asks receivers to reject that mail.');
+    expect(s.map((x) => x.key)).not.toContain('done');
+    expect(s.map((x) => x.do).join(' ')).not.toMatch(/Nothing to (fix|do)/);
+    expect(s.map((x) => x.why).join(' ')).not.toContain('likely mail pretending');
+  });
+  it('case 3, a mix of a spoofer and the service: the spoofer is named as needing no fix, the service as the one thing to look at', () => {
+    const s = steps('reject', { failedNotYours: 6, failedService: 2, failedServiceNames: ['rua.example.test'] });
+    expect(s[0]).toMatchObject({ key: 'service-not-set-up', do: 'Check the service sending as rua.example.test that is not set up for it' });
+    expect(s[0]!.why).toContain(`Of the 8 messages that failed, 6 came from servers that are not a known sending service and passed SPF or DKIM for no name of example.test: likely mail pretending to be example.test, which needs no fix, and 2 from ${SERVICE}`);
+    expect(s.map((x) => x.key)).not.toContain('done');
+  });
+  it('case 1, only spoofers, is unchanged: done first and nothing to fix', () => {
+    const s = steps('reject', { failedNotYours: 8 });
+    expect(s[0]!.key).toBe('done');
+    expect(s.find((x) => x.key === 'not-yours')?.do).toBe('Nothing to fix');
+  });
+  it('p=none gate: waits, names the service as the thing to look at, and says what the pass rate still needs', () => {
+    const s = steps('none', { failedService: 8, failedServiceNames: ['rua.example.test'] });
+    expect(s[0]).toMatchObject({ key: 'service-not-set-up', status: 'improve', do: 'Check the service sending as rua.example.test that is not set up for it' });
+    expect(s[0]!.why).toContain('still waits until 95% of reported messages pass');
+  });
+  it('a failure that is yours beside the service keeps "Fix the senders"', () => {
+    const s = steps('reject', { failedService: 2, failedServiceNames: ['rua.example.test'] });
+    expect(s[0]!.do).toBe('Fix the senders that fail DMARC');
+  });
+  it('falls back to the name itself when the names are not known', () => {
+    const s = steps('reject', { failedService: 8 });
+    expect(s[0]!.do).toBe('Check the service sending as example.test that is not set up for it');
+  });
 });

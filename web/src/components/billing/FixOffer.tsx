@@ -9,7 +9,7 @@ import type { Domain } from '../../lib/types';
 import { ConfirmFix } from './ConfirmFix';
 
 /**
- * Below "Do this next": the quiet offer to have Ready Set Mail fix a domain, and the state of an order once there is one. Hosted only, and only
+ * Right after the first step of "Do this next" (it is passed to that list as `afterFirst`): the quiet offer to have Ready Set Mail fix a domain, and the state of an order once there is one. Hosted only, and only
  * where billing is on (the server answers 404 otherwise and nothing is rendered). `eligible` is the page's own verdict: something to fix, never
  * a domain that is fine, still reading, unproven or not resolving. It is offered once, here, and never repeated elsewhere.
  */

@@ -468,6 +468,20 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "aspf": {
+          "name": "aspf",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "adkim": {
+          "name": "adkim",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -4830,6 +4844,20 @@
         "header_from": {
           "name": "header_from",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "spf_aligned": {
+          "name": "spf_aligned",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dkim_aligned": {
+          "name": "dkim_aligned",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

@@ -12,6 +12,7 @@ import { dmarcStepsFor, domainVerdict, totalsFromSummary } from '../src/lib/verd
 import { DomainDetailPage } from '../src/pages/domains/DomainDetailPage';
 import { DmarcWizardPage } from '../src/pages/wizards/DmarcWizardPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const now = Math.floor(Date.now() / 1000);
 const RUA = 'r@reports.test';
@@ -74,7 +75,7 @@ const routes = (c: (typeof CASES)[number], m: (typeof MODES)[number]) => {
 		'GET /api/domains/summaries': { summaries: [s], next_after: null, window_days: 30 },
 		'GET /api/domains/1/check-summary': s,
 		'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-		'GET /api/domains/1/sources': { sources: [] },
+		'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 		'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 		'GET /api/domains/1/dns-check': { found: true, has_rua: c.record.includes(RUA), current_record: c.record, cf_managed: true },
 		'GET /api/domains/1/onboarding-status': ONB(c.record, m.rua),
@@ -85,7 +86,7 @@ const routes = (c: (typeof CASES)[number], m: (typeof MODES)[number]) => {
 		'GET /api/hosted/config': { enabled: true, reports: true, records: false },
 		'GET /api/hosted/statuses': { statuses: {} },
 		'GET /api/domains/1/hosted': { enabled: false },
-		'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: false, refusal: OPERATOR.refusal, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
+		'GET /api/domains/1/report-address': { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: false, refusal: OPERATOR.refusal, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
 	};
 };
 const NEVER = ['p=reject.', 'Fully graduated', 'Fully enforced', 'Nothing more to do here', 'Wait for DMARC reports before moving', 'has no valid p= policy, so receivers ignore it', 'Published, read from public DNS'];

@@ -233,7 +233,7 @@ export function findingsOf(r: DomainReport, checkedAt: string): Finding[] {
   if (spf.status === 'none') {
     out.push(f('spf-missing', 'No SPF record', mailDomain ? 0.85 : 0.6, facts.mailboxProviders.length ? 0.95 : 0.8, 'S',
       [`TXT ${d}: no v=spf1 record ${seen}`, ...(facts.mx.hosts.length ? [`MX ${d}: ${facts.mx.hosts.slice(0, 3).join(', ')}`] : [])],
-      'Publish one SPF TXT record at the domain apex listing every service that sends your mail.'));
+      `Publish one SPF TXT record at ${d} listing every service that sends mail with ${d} as its return-path (MAIL FROM). A service that uses its own return-path domain needs no entry here.`));
   } else if (spf.status === 'permerror') {
     const issues = spf.issues.filter(i => i.code !== 'dns-error');
     if (spf.raws.length > 1 && issues.some(i => i.code === 'multiple-records' && i.domain === d)) {

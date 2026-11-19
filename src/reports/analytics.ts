@@ -80,12 +80,15 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
     const align: AlignModes = { spf: tags?.get('aspf')?.toLowerCase() === 's' ? 's' : 'r', dkim: tags?.get('adkim')?.toLowerCase() === 's' ? 's' : 'r' };
     const senders = buildSenders(inWindow(allRows, 'messages'), { now, earliest, align });
     const adviceSenders = buildSenders(inWindow(allRows, 'advice_messages'), { now, earliest, align });
-    const fixes = buildFixes({ id, domain: domain.domain, spf_record: domain.spf_record, spf_lookup_count: domain.spf_lookup_count }, adviceSenders);
+    const fixes = buildFixes({ id, domain: domain.domain, spf_record: domain.spf_record, spf_lookup_count: domain.spf_lookup_count, dmarc_policy: domain.dmarc_policy }, adviceSenders);
     const trend = fillTrend(allTrend.filter((r) => r.day >= dayOf(since)), since, now);
     const advice = sum(fillTrend(allTrend.filter((r) => r.day >= dayOf(adviceSince)), adviceSince, now));
 
     // Live record when readable; otherwise the stored policy and pct, and the response says so.
-    const state: PolicyState = live === undefined ? { policy: domain.dmarc_policy, pct: domain.dmarc_pct } : { record: live };
+    // A name with no record of its own (live null) that follows its organizational domain's policy is judged by the policy in force for it, the stored
+    // effective policy, as the overview and the workspace table judge it: never "no DMARC record" beside "inherits p=reject".
+    const inheritsStored = live === null && domain.parent_id !== null && !!domain.dmarc_policy;
+    const state: PolicyState = live === undefined || inheritsStored ? { policy: domain.dmarc_policy, pct: domain.dmarc_pct } : { record: live };
     const readiness = assessReadiness({
       state, messages: advice.messages, passed: advice.passed, daysWithReports: advice.days_with_reports, windowDays: ADVICE_DAYS,
       fixes, newSenders: adviceSenders.filter((s) => s.is_new).length, inherits: domain.parent_id !== null,
@@ -95,7 +98,7 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
     return {
       days, domain: { id, domain: domain.domain }, totals: sum(trend), trend, ...visibility,
       alignment: { spf: align.spf === 's' ? 'strict' : 'relaxed', dkim: align.dkim === 's' ? 'strict' : 'relaxed', basis: tags ? 'dns' : 'assumed', estimated: true },
-      senders: senders.slice(0, MAX_SENDERS), sender_count: senders.length, fixes, readiness: { ...readiness, policy_source: live === undefined ? 'stored' : 'dns' },
+      senders: senders.slice(0, MAX_SENDERS), sender_count: senders.length, fixes, readiness: { ...readiness, policy_source: live === undefined || inheritsStored ? 'stored' : 'dns' },
     };
   }
 
@@ -113,7 +116,7 @@ export async function getAnalytics(tenant: TenantContext, options: AnalyticsDeps
 
   const perDomain = totals.map((d) => {
     const ds = buildSenders(adviceRows.filter((r) => r.domain_id === d.domain_id), { now, earliest });
-    const fixes = buildFixes({ id: d.domain_id, domain: d.domain, spf_record: d.spf_record, spf_lookup_count: d.spf_lookup_count }, ds);
+    const fixes = buildFixes({ id: d.domain_id, domain: d.domain, spf_record: d.spf_record, spf_lookup_count: d.spf_lookup_count, dmarc_policy: d.dmarc_policy }, ds);
     // No DNS fan-out here: the stored policy and pct (pct 0 = testing mode, as rollout.ts stores it).
     const readiness: Readiness = assessReadiness({
       state: { policy: d.dmarc_policy, pct: d.dmarc_pct }, messages: d.total, passed: d.passed, daysWithReports: d.days_with_reports, windowDays: ADVICE_DAYS,

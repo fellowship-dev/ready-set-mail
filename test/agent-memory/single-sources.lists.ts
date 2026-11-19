@@ -22,6 +22,24 @@ export const LIST_FILE = 'test/agent-memory/single-sources.lists.ts';
 /** Single today: only these files or folders may contain the signature. */
 export const SINGLE: Single[] = [
   {
+    concept: 'How reports reach a name (the reach decision)',
+    // deciding it a second time: the intake's own rule (`reportsViaParent(`), or "no record of its own whose applicable record lists our address" (`kind === 'inherited'` with `parent_has_address`)
+    signature: /\breportsViaParent\s*\(|kind\s*===\s*['"]inherited['"][^\n]*parent_has_address|parent_has_address[^\n]*kind\s*===\s*['"]inherited['"]/,
+    owners: ['src/hosted/report-address.ts'],
+  },
+  {
+    concept: 'Whose failure a failing source is (the "is it yours" judgement)',
+    // a second copy: a sender identified (`identifySender(`) next to SPF / DKIM pass flags, or a function that names a "not yours" test
+    signature: /identifySender\s*\([\s\S]{0,300}?\b(?:spf_pass|dkim_pass)\b|\b(?:spf_pass|dkim_pass)\b[\s\S]{0,300}?identifySender\s*\(|(?:function\s+\w*[Nn]ot[Yy]ours\w*\s*\(|const\s+\w*[Nn]ot[Yy]ours\w*\s*=\s*(?:async\s*)?\()/,
+    owners: ['packages/dns-checks/src/sender-providers.ts'],
+  },
+  {
+    concept: 'Alignment rule (relaxed: the same organizational domain)',
+    // the rule copied: `sameOrganizationalDomain(` called, or two organizational domains compared by hand. Callers use `aligned` (alignment.ts).
+    signature: /\bsameOrganizationalDomain\s*\(|\borganizationalDomain\([^)\n]*\)\s*[!=]==?\s*organizationalDomain\(/,
+    owners: ['packages/dns-checks/src/alignment.ts', 'packages/dns-checks/src/org-domain.ts'],
+  },
+  {
     concept: 'Stripe API calls',
     // the API host, the SDKs, the client and its constants, the secret key and Stripe.js: not only a URL literal
     signature: /api\.stripe\.com|\bSTRIPE_API(?:_VERSION)?\b|\bstripeApiBase\b|new StripeClient\(|['"]Stripe-Version['"]|\.STRIPE_SECRET_KEY\b|from ['"](?:stripe|@stripe\/[^'"]+)['"]|require\(['"](?:stripe|@stripe\/)|js\.stripe\.com/,
@@ -74,6 +92,14 @@ export const SINGLE: Single[] = [
   },
   { concept: 'Ownership proof by TXT record', signature: /readysetmail-verify=/, owners: ['src/domains/ownership.ts'] },
   { concept: 'Public Suffix List (registrable domain)', signature: /(?:from|require\()\s*['"]tldts['"]/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  // Consolidated in the subdomain slice: the five sites that took the last two labels now call `organizationalDomain`.
+  { concept: 'Registrable domain (never "last two labels")', signature: /slice\(-2\)\.join\(\s*(['"`])\.\1\s*\)/, owners: ['packages/dns-checks/src/org-domain.ts'] },
+  // The DKIM selectors to probe are listed once (the registry); `COMMON_DKIM_SELECTORS` is derived from it. Two selectors only the old second list held are the signature.
+  { concept: 'DKIM selector list', signature: /['"](?:everlytickey1|scph0120)['"]/, owners: ['packages/dns-checks/src/email-service-providers.ts'] },
+  // `hasCname` is how a dangling CNAME (NXDOMAIN with a CNAME in the answer) counts as an existing name: one rule, `nameExists`.
+  { concept: 'Name existence (NXDOMAIN with a CNAME exists)', signature: /\.hasCname\b/, owners: ['packages/dns-checks/src/name-exists.ts'] },
+  // The receiver's DMARC verdict of a stored record (both identifiers not aligned = failed) is `verdictSql` (its TS twin: `dmarcVerdict`).
+  { concept: 'DMARC verdict of a stored record', signature: /spf_aligned\s*=\s*0\s+AND\s+\w*\.?dkim_aligned\s*=\s*0/, owners: ['packages/db/src/queries/verdict.ts'] },
 ];
 
 /** Still duplicated today: exactly these files. Consolidation order: docs/single-sources.md. */
@@ -95,6 +121,14 @@ export const MUST_NOT_GROW: Duplicate[] = [
     signature: /^export (const|function) (ROLLOUT_SEQUENCE|dmarcSteps|planNextStep|getNextStep)\b/m,
     authoritative: 'packages/dns-checks/src/dmarc-next-step.ts',
     sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'src/dmarc/rollout.ts'],
+  },
+  {
+    concept: 'Effective DMARC policy rule (own p=, else sp=/np=, else p=)',
+    // reading sp= or np= as a policy tag, or falling back from sp to p
+    // ... in any spelling: `sp ?? p`, `t['sp'] ?? t['p']`, `tags.get('sp') || tags.get('p')`, `sp ? sp : p`
+    signature: /tag:\s*['"](?:sp|np)['"]|(?:\bsp|['"]sp['"]\]?\)?)\s*(?:\?\?|\|\|)\s*[\w.]*\[?\(?['"]?(?:p|policy)\b|\bsp\s*\?\s*[\w.'"\[\]]+\s*:\s*[\w.'"\[\]]*\b(?:p|policy)\b/,
+    authoritative: 'packages/dns-checks/src/effective-policy.ts',
+    sites: ['packages/dns-checks/src/dmarc-next-step.ts', 'packages/dns-checks/src/dmarc-rua.ts', 'packages/dns-checks/src/effective-policy.ts', 'packages/report/src/bimi-readiness.ts', 'packages/report/src/findings.ts', 'src/dmarc/parse-aggregate.ts', 'src/dmarc/rollout.ts', 'web/src/lib/report-address.ts', 'web/src/lib/reports.ts'],
   },
   {
     concept: 'DMARC record validation',
@@ -185,12 +219,6 @@ export const MUST_NOT_GROW: Duplicate[] = [
     sites: ['packages/dns-checks/src/doh.ts', 'src/dmarc/ip-info.ts', 'src/public-reports/resolver.ts', 'tools/audit-fleet/lib/doh.ts'],
   },
   {
-    concept: 'Registrable domain by "last two labels"',
-    signature: /slice\(-2\)\.join\('\.'\)/,
-    authoritative: 'packages/dns-checks/src/org-domain.ts',
-    sites: ['scripts/setup-email-routing.mts', 'scripts/setup-email-routing.ts', 'src/dmarc/ip-info.ts', 'src/dmarc/parse-aggregate.ts', 'tools/audit-fleet/lib/checker.ts'],
-  },
-  {
     concept: 'Fix-offer scope promising reject (contradicts ADR 0013)',
     signature: /moved to reject|move DMARC from none/,
     authoritative: 'src/billing/offer.ts',
@@ -202,4 +230,12 @@ export const MUST_NOT_GROW: Duplicate[] = [
  * Reviewed exceptions. Each entry: the concept (exactly as above), the file, a reason of at least 20 characters and four words,
  * who agreed (the reviewer), and the date (YYYY-MM-DD, not in the future). Empty today.
  */
-export const ALLOW: Allow[] = [];
+export const ALLOW: Allow[] = [
+  {
+    concept: 'How reports reach a name (the reach decision)',
+    file: 'web/src/components/reports/ConnectReports.tsx',
+    reason: 'Says why a connected name whose parent record lists our address is not "published" (the parent is not connected here); reach is none in that state, so it decides nothing.',
+    by: 'Claude Fable 5.2 for Max F. Findel (to confirm in review of PR 181)',
+    date: '2026-11-17',
+  },
+];

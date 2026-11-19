@@ -10,7 +10,7 @@ Defaults apply when the variable is unset. Values are whole days; a value that i
 
 | Data | Kept for | Variable | Notes |
 |---|---|---|---|
-| Aggregate report rows and their records (`aggregate_reports`, `report_records`) | **13 months** (395 days after the report period ended) | `RETENTION_REPORTS_DAYS` | Year-over-year trends need 13 months. |
+| Aggregate report rows and their records (`aggregate_reports`, `report_records`) | **13 months** (395 days after the report period ended) | `RETENTION_REPORTS_DAYS` | Year-over-year trends need 13 months. Each record also keeps the receiver's own alignment verdict (`spf_aligned`, `dkim_aligned`) and each report the alignment modes it applied (`aspf`, `adkim`): they are columns of those rows and go with them. |
 | TLS-RPT reports | **13 months** (395 days) | `RETENTION_TLS_DAYS` | |
 | Raw report XML (and the raw JSON of TLS-RPT reports) | **30 days** self-hosted; **not stored** in hosted mode | `RAW_XML_RETENTION_DAYS` | `0` = never store. The parsed rows above are what the raw payload contained. After the window only the raw payload is removed. Hosted mode defaults to `0`. |
 | IP enrichment cache (`ip_info`: reverse DNS, ASN, organisation, country) | **30 days** | `RETENTION_IP_INFO_DAYS` | A global cache, not per workspace. |

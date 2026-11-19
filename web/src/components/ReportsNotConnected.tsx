@@ -4,7 +4,7 @@ import { hasReportAddress } from '../lib/dmarc-record';
 import { useDomains } from '../lib/queries';
 import { useDomainSummaries } from '../lib/domain-queries';
 import { reportsRefusalOf } from '../lib/dmarc-step';
-import { useReportsRefusal } from '../lib/report-address';
+import { reportsArrive, useReportAddress, useReportsRefusal } from '../lib/report-address';
 import { useHosted } from '../lib/session';
 import { HELP_PRIORITY, TalkToMax } from './TalkToMax';
 import { ConnectReports } from './reports/ConnectReports';
@@ -14,9 +14,13 @@ import { ConnectReports } from './reports/ConnectReports';
  * report intake is not connected). Report screens then say so instead of showing empty charts or "nothing failing".
  * Always false on a self-hosted instance, whose screens stay as they are.
  */
-export function useReportsNotConnected(domain: { rua_address?: string | null } | null | undefined): boolean {
+export function useReportsNotConnected(domain: { id?: number; rua_address?: string | null } | null | undefined): boolean {
 	const hosted = useHosted();
-	return hosted && !!domain && !hasReportAddress(domain.rua_address);
+	const noAddress = hosted && !!domain && !hasReportAddress(domain.rua_address);
+	// A name with no address of its own can still receive its reports through its connected parent (the intake files them under it):
+	// the server says so (`reach`: through its connected parent, or through the record that applies), and then its report screens show the reports.
+	const status = useReportAddress(domain?.id ?? 0, noAddress && domain?.id !== undefined);
+	return noAddress && !reportsArrive(status.data);
 }
 
 /** Hosted only: no domain in this workspace has a report address, so workspace-wide report views have nothing to show. */

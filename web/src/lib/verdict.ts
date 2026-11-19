@@ -1,6 +1,7 @@
 import { STATUS_RANK, statusRank, type Level, type StatusKind } from '@ready-set-mail/ui';
 import { inForceSentence, READY } from '@ready-set-mail/dns-checks/dmarc-next-step';
 import { dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
+import { spfNotNeededAtName, noSpfAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
 import { hasReportAddress } from './dmarc-record';
 import { dmarcSteps, evidenceFor, forceFor, stepLink, WHO_WORDS, type DmarcStep, type ReportsRefusal } from './dmarc-step';
 import { formatNumber, timeAgo } from './format';
@@ -239,12 +240,13 @@ function coreVerdict(
 
 	function statedVerdict(): Core {
 		// What public DNS shows that is wrong, most basic first (the setup wizard's order: SPF, then DMARC).
-		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF and no DMARC record, so receivers cannot verify mail from ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
-		if (!hasSpf) return { status: 'attention', level, sentence: `Public DNS shows no SPF record, so receivers cannot tell which servers may send for ${name}.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
+		if (!hasSpf && !policy && !issue) return { status: 'attention', level, sentence: `Public DNS shows no SPF record at ${name} and no DMARC record, so receivers get no instruction for mail from ${name} that fails.`, evidence: null, checked, next: { label: 'Publish an SPF record', who: WHO.dns, to: setup(2) } };
+		// A missing SPF record at the name is a fault only if mail is sent with it as the return-path; the reports settle it (spfNotNeededAtName).
+		if (!hasSpf && !spfNotNeededAtName(sum)) return { status: 'attention', level, sentence: `Public DNS shows ${noSpfAtName(name).replace(/^No SPF record/, 'no SPF record')}`, evidence: null, checked, next: { label: NO_SPF_NEXT_SHORT.replace(/\.$/, ''), who: WHO.dns, to: setup(2) } };
 		if (!policy) {
 			// A broken record: the one sentence every surface uses (packages/dns-checks/src/dmarc-problem.ts).
 			const broken = issue ? storedDmarcBreak(sum) : null;
-			const sentence = broken ? dmarcBreakSentence(at, broken) : 'Public DNS shows SPF but no DMARC record, so receivers get no instruction for mail that fails.';
+			const sentence = broken ? dmarcBreakSentence(at, broken) : `Public DNS shows ${hasSpf ? 'SPF but ' : ''}no DMARC record, so receivers get no instruction for mail that fails.`;
 			return { ...dmarcNext(), level, sentence, evidence: null, checked };
 		}
 		const lookups = s.spf_lookup_count ?? null;
@@ -254,7 +256,8 @@ function coreVerdict(
 
 		const force = dmarcForce();
 		const inForce = force.kind === 'own' || force.kind === 'inherited' ? inForceSentence(force) : null;
-		const sentence = inForce ? `Public DNS shows SPF. ${inForce}` : `Public DNS shows SPF and DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}.`;
+		// No SPF record here is only reached when the reports show it is not needed: never say DNS "shows SPF" then.
+		const sentence = inForce ? (hasSpf ? `Public DNS shows SPF. ${inForce}` : inForce) : `Public DNS shows ${hasSpf ? 'SPF and ' : ''}DMARC at p=${policy}${sum.dmarc_inherited_from ? `, inherited from ${sum.dmarc_inherited_from}` : ''}.`;
 		return { ...dmarcNext(), level, sentence, evidence, checked };
 	}
 
@@ -287,7 +290,7 @@ export function dmarcStepsFor(
 ): DmarcStep[] {
 	const sum = hosted ? applyHostedInputs(s, hosted).summary : s;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy: sum.dmarc_policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsRefusal }));
+	return dmarcSteps(domain.domain, force, evidenceFor(domain, reports, suffixParent, { visibility: s, alignment, reportsRefusal, nameExists: didNotResolve(s) === 'now' ? false : null, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded }));
 }
 
 /**
@@ -306,7 +309,7 @@ export function nextPolicyGate(
 	const own: DomainCheckSummary = { ...s, dmarc_policy: policy, dmarc_p: policy, dmarc_inherited_from: null, dmarc_issue: null };
 	const sum = hosted ? { ...applyHostedInputs(own, hosted).summary, dmarc_policy: policy } : own;
 	const force = forceFor(domain.domain, sum, { read: true, hosted: hosted ? { policy, reportsConnected: hasReportAddress(domain.rua_address) } : undefined });
-	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsRefusal }));
+	const steps = dmarcSteps(domain.domain, force, evidenceFor(domain, totalsFromSummary(s), null, { visibility: s, reportsRefusal, failedNotYours: s.failed_not_yours, failedService: s.failed_service, failedServiceNames: s.failed_service_names, failedUnrecorded: s.failed_unrecorded }));
 	if (steps.length === 0) return undefined;
 	if (steps.some((x) => x.key === 'tighten' && x.status === 'approval')) return { ready: true };
 	return { ready: false, step: steps[0]! };

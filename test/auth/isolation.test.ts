@@ -102,6 +102,7 @@ const ROUTES: Route[] = [
   { method: 'GET', path: '/api/domains/2/health-report', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/reports?date=2023-11-14', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/sources', kind: 'denied' },
+  { method: 'GET', path: '/api/domains/2/names', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/explore', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/anomalies', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/export', kind: 'denied' },

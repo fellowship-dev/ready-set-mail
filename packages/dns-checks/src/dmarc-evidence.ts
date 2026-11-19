@@ -91,6 +91,15 @@ export function dmarcEvidenceFor(input: {
   reportsRefusal?: ReportsRefusal | null;
   /** The ruaAddress returned in the evidence (offered records): the agent tools never return the address. */
   offeredRua?: string | null;
+  /** false: DNS says the name does not exist (NXDOMAIN), so no record is offered at it. */
+  nameExists?: boolean | null;
+  /** Failing messages from servers that are not yours (see DmarcEvidence.failedNotYours). */
+  failedNotYours?: number | null;
+  /** Failing messages from a service sending as the name without being set up for it, and the names (see DmarcEvidence.failedService). */
+  failedService?: number | null;
+  failedServiceNames?: string[] | null;
+  /** Failing messages in reports stored before the receiver's verdict was kept (see DmarcEvidence.failedUnrecorded). */
+  failedUnrecorded?: number | null;
   dropText?: DropText;
 }): DmarcEvidence {
   const { reports } = input;
@@ -103,5 +112,10 @@ export function dmarcEvidenceFor(input: {
     alignment: input.alignment ?? null,
     reportsRefusal: input.reportsRefusal !== undefined ? input.reportsRefusal : reportsRefusalOf(input.reportConnect),
     emptyReportsNote,
+    nameExists: input.nameExists ?? null,
+    ...(input.failedNotYours != null ? { failedNotYours: input.failedNotYours } : {}),
+    ...(input.failedService != null ? { failedService: input.failedService } : {}),
+    ...(input.failedServiceNames?.length ? { failedServiceNames: input.failedServiceNames } : {}),
+    ...(input.failedUnrecorded != null ? { failedUnrecorded: input.failedUnrecorded } : {}),
   };
 }

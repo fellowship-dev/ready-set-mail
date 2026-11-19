@@ -1,5 +1,6 @@
 import type { Finding, Level } from '@ready-set-mail/ui';
 import { spfLookupCount, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
+import { noSpfAtName, noSpfNeededAtName, spfNotNeededAtName, NO_SPF_NEXT_SHORT } from '@ready-set-mail/dns-checks/spf-identity';
 import { dmarcBreakLabel, dmarcBreakSentence, storedDmarcBreak } from '@ready-set-mail/dns-checks/dmarc-problem';
 import { formatPercent, timeAgo } from './format';
 import type { DomainCheckSummary } from './types';
@@ -38,7 +39,7 @@ const DKIM_HEALTHY = 0.95;
 
 const NOT_CHECKED_DETAIL = 'The overview has no stored result for this yet. The domain page reads it live from DNS.';
 
-type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dmarc_p' | 'dmarc_sp' | 'domain'>> & {
+type DnsFacts = Partial<Pick<DomainCheckSummary, 'dns_checked_at' | 'dmarc_issue' | 'dmarc_inherited_from' | 'dmarc_p' | 'dmarc_sp' | 'domain' | 'from_messages' | 'from_dkim_aligned' | 'from_spf_at_name' | 'from_unjudged'>> & {
 	/** SPF DNS lookups at the last read (RFC 7208 allows 10). */
 	spf_lookup_count?: number | null;
 	/** pct= of the DMARC record that applies at the last read (100 when the record has none). */
@@ -58,7 +59,11 @@ export function assessDomain(
 ): LevelAssessment {
 	const hasSpf = !!s.spf_record;
 	const spf = hasSpf ? spfFinding(s.spf_lookup_count) : null;
-	const spfWorks = hasSpf && !spf!.broken;
+	const spfUnknown = !hasSpf && nullMeans === 'unknown';
+	// No SPF record at this name is not a fault when the reports show none of its mail used the name as its SPF (return-path) domain
+	// (RFC 7208 section 3, RFC 9989 section 3.2.4); otherwise the ladder applies as before.
+	const spfNotNeeded = !hasSpf && !spfUnknown && spfNotNeededAtName(s);
+	const spfWorks = (hasSpf && !spf!.broken) || spfNotNeeded;
 	const policy = s.dmarc_policy;
 	const enforcing = policy === 'quarantine' || policy === 'reject';
 	// Enforcing on part of the mail (pct below 100) is not full protection. pct not recorded at the last check (null): the
@@ -66,7 +71,6 @@ export function assessDomain(
 	const pctUnknown = enforcing && s.dmarc_pct === null;
 	const partial = enforcing && typeof s.dmarc_pct === 'number' && s.dmarc_pct < 100;
 	const enforcedOnAll = enforcing && !partial;
-	const spfUnknown = !hasSpf && nullMeans === 'unknown';
 	const issue = policy ? null : (s.dmarc_issue ?? null); // a stored policy always wins over a stale issue
 	const broken = issue ? storedDmarcBreak(s) : null;
 	const dmarcUnknown = !policy && !issue && nullMeans === 'unknown';
@@ -78,8 +82,9 @@ export function assessDomain(
 
 	const findings: Finding[] = [];
 	if (spf) findings.push({ status: spf.status, label: spf.label, ...(spf.detail ? { detail: spf.detail } : {}) });
+	else if (spfNotNeeded) findings.push({ status: 'pass', label: 'No SPF record at this name, and none is needed', detail: noSpfNeededAtName(s.domain ?? 'this name', s) });
 	else if (spfUnknown) findings.push({ status: 'unknown', label: 'SPF not checked yet', detail: NOT_CHECKED_DETAIL });
-	else findings.push({ status: 'missing', label: 'SPF record', detail: 'No SPF record found. Receivers cannot tell which servers may send for you.' });
+	else findings.push({ status: 'missing', label: 'SPF record', detail: noSpfAtName(s.domain ?? 'this name') });
 
 	if (dmarcUnknown) findings.push({ status: 'unknown', label: 'DMARC not checked yet', detail: NOT_CHECKED_DETAIL });
 	else if (issue === 'multiple') findings.push({ status: 'warn', label: 'Multiple DMARC records: receivers ignore them', detail: `Keep one DMARC record at _dmarc.${s.dmarc_inherited_from ?? 'your domain'} and delete the others.` });
@@ -119,7 +124,7 @@ export function assessDomain(
 
 	let next: string | null = null;
 	if (unchecked) next = 'Open the domain to check its SPF and DMARC records in DNS.';
-	else if (!hasSpf) next = 'Publish an SPF record.';
+	else if (!hasSpf && !spfNotNeeded) next = NO_SPF_NEXT_SHORT;
 	else if (spf?.broken) next = 'Bring SPF to 10 DNS lookups or fewer: remove includes you no longer use, or flatten the record.';
 	else if (issue === 'multiple') next = 'Remove the extra DMARC records so only one remains.';
 	else if (issue === 'invalid') next = 'Fix the DMARC record so it has a valid p= policy.';

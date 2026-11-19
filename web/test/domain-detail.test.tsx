@@ -33,7 +33,7 @@ const routes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/domains': { domains: [domain] },
 	'GET /api/domains/1/check-summary': summary,
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-10-20', total: 100, passed: 97, failed: 3 }] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: current, cf_managed: true },
 	'GET /api/domains/1/onboarding-status': onboarding,
@@ -339,4 +339,24 @@ describe('DomainDetailPage: a domain added elsewhere', () => {
 		expect(await screen.findByText('Domain not found')).toBeInTheDocument();
 		expect(calls.filter((c) => c.path === '/api/domains').length).toBe(2);
 	});
+});
+
+describe('DomainDetailPage senders that did not fail DMARC', () => {
+  const failed = { source_ip: '9.9.9.9', total: 4, header_from: 'example.com', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, reverse_dns: null, base_domain: null, org: 'Bad Co', likely_not_yours: true };
+
+  it('nothing failed, some passed on one check and some are not recorded: "Senders to look at" says both, in the quiet lines', async () => {
+    page({ routes: routes({ 'GET /api/domains/1/sources': { sources: [], one_check: { sources: 2, messages: 30 }, not_recorded: { sources: 1, messages: 12 } } }) });
+    await open('Senders to look at');
+    expect(screen.queryByRole('button', { name: /^Failing senders/ })).toBeNull();
+    const line = '2 sources passed DMARC on one check only in the last 7 days: worth fixing so there is a backup.';
+    expect(screen.getAllByText((_, el) => el?.textContent?.startsWith(line) ?? false).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 source \(12 messages\) are in reports stored before Ready Set Mail kept each receiver's DMARC verdict: verdict not recorded\./).length).toBeGreaterThan(0);
+  });
+
+  it('failed sources keep the "Failing senders" wording, and the one-check line follows the table', async () => {
+    page({ routes: routes({ 'GET /api/domains/1/sources': { sources: [failed], one_check: { sources: 1, messages: 3 }, not_recorded: { sources: 0, messages: 0 } } }) });
+    await open('Failing senders');
+    expect(await screen.findByText('Bad Co')).toBeInTheDocument();
+    expect(screen.getByText(/1 source passed DMARC on one check only in the last 7 days: worth fixing so there is a backup\./)).toBeInTheDocument();
+  });
 });

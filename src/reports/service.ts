@@ -19,7 +19,9 @@ export async function getDomainReport(tenant: TenantContext, domainId: number, o
   const resolvers = options.resolvers ?? (options.resolver ? [options.resolver] : [createResolver(), createResolver({ endpoint: DOH_ENDPOINTS.google })]);
   const runs = await Promise.all(resolvers.map(resolver => checkDomain(domain.domain, { resolver })));
   const run = runs.find(r => r.dmarc.status !== 'error') ?? runs[0];
-  const dns = buildReport({ runs, generatedAt: new Date(now * 1000).toISOString() });
+  // noSpfNeededAtName says "the last 30 days": the evidence always spans exactly that, whatever window the report asks for.
+  const from = await tenant.scope.reports.checkSummary(domainId, Math.floor(now / 86400) * 86400 - 30 * 86400);
+  const dns = buildReport({ runs, from: from ?? undefined, generatedAt: new Date(now * 1000).toISOString() });
   const analytics = await getAnalytics(tenant, {
     domainId, days, now,
     lookupDmarc: async () => run.dmarc.status === 'error' ? undefined : run.dmarc.record?.raw ?? null,

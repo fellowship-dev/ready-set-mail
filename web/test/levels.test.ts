@@ -24,7 +24,7 @@ describe('assessDomain', () => {
 	it('callers that know null means absent (hosted) still get "missing" and the publish steps', () => {
 		const a = assessDomain(base, { nullMeans: 'missing' });
 		expect(statuses(a)).toEqual(['missing', 'missing']);
-		expect(a.next).toBe('Publish an SPF record.');
+		expect(a.next).toBe('Publish SPF only if mail uses this name as its return-path.');
 		expect(assessDomain({ ...base, spf_record: 'v=spf1 -all' }, { nullMeans: 'missing' }).next).toContain('DMARC record with p=none');
 	});
 

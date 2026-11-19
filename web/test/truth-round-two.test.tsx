@@ -51,7 +51,7 @@ describe('item 1: no reports address is never rendered as an empty mailto', () =
 				routes: {
 					'GET /api/domains': { domains: [noRua] },
 					'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-					'GET /api/domains/1/sources': { sources: [] },
+					'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: false, has_rua: false, current_record: null, cf_managed: false },
 				},
@@ -119,7 +119,7 @@ describe('item 10: read-only members do not get the Upgrade button', () => {
 						dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok', total_messages: 100, pass_messages: 99, fail_messages: 1,
 						dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 1, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1,
 					},
-					'GET /api/domains/1/sources': { sources: [] },
+					'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: 'v=DMARC1; p=none', cf_managed: false },
 					'GET /api/domains/1/onboarding-status': {
@@ -161,7 +161,7 @@ describe('browser-check follow-ups', () => {
 				routes: {
 					'GET /api/domains': { domains: [d] },
 					'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-					'GET /api/domains/1/sources': { sources: [] },
+					'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 					'GET /api/domains/1/dns-check': dns,
 				},
