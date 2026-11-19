@@ -155,6 +155,23 @@ describe('billing', () => {
     expect(planRow(w).stripe_subscription_id).toBeTruthy();
   });
 
+  it('a store that failed after the create, then a changed quantity: the retry finds the same subscription (one subscription, the new quantity)', async () => {
+    const w = await billingWorld(PLAN);
+    seedPrices(w);
+    w.addDomain(w.owner.workspaceId, 'acme.com');
+    w.addDomain(w.owner.workspaceId, 'two-corp.com');
+    await w.addCard(w.owner);
+    await flushBackground();
+    expect(w.fake.state.subscriptions.size).toBe(1);
+    w.db.sqlite.prepare('UPDATE workspace_plans SET stripe_subscription_id = NULL, stripe_item_id = NULL, quantity = 0 WHERE workspace_id = ?').run(w.owner.workspaceId); // the store failed
+    w.addDomain(w.owner.workspaceId, 'three-corp.com'); // the quantity changed before the retry
+    await sync(w);
+    expect(w.fake.state.subscriptions.size).toBe(1);
+    expect((w.fake.state.subscriptionItems.values().next().value as any).quantity).toBe(2);
+    expect(planRow(w)).toMatchObject({ quantity: 2, sync_error: null });
+    expect(planRow(w).stripe_subscription_id).toBeTruthy();
+  });
+
   it('plan off: syncPlan does nothing', async () => {
     const w = await billingWorld();
     w.addDomain(w.owner.workspaceId, 'acme.com');

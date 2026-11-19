@@ -107,17 +107,20 @@ export async function syncPlan(env: BoundEnv, db: D1Database, workspaceId: strin
     if (!plan.stripe_subscription_id) {
       const customerId = await q.customer.get();
       if (!customerId || !(await readCard(d, { id: workspaceId, name: '' }, null)).card) { await q.plan.failed('no card on file'); return; }
+      // The key and the parameters are stable (workspace + interval, always created at quantity 1), so a retry after a failed store replays the SAME
+      // subscription instead of making a second one; the wanted quantity is set right after, whatever the replayed subscription says.
       const items = [];
-      for (const it of planItems(quantity, [], plan.interval)) items.push({ price: (await resolvePrice(d.db, d.stripe, it.lookupKey, { fresh: true, now: () => d.now() * 1000, validate: validateRecurringPrice(plan.interval) })).price_id, quantity: it.quantity });
-      const sub = await d.stripe.createSubscription({ workspaceId, customerId, items, revision: `${plan.interval}-${quantity}` });
+      for (const it of planItems(1, [], plan.interval)) items.push({ price: (await resolvePrice(d.db, d.stripe, it.lookupKey, { fresh: true, now: () => d.now() * 1000, validate: validateRecurringPrice(plan.interval) })).price_id, quantity: it.quantity });
+      const sub = await d.stripe.createSubscription({ workspaceId, customerId, items, revision: `sub-${plan.interval}` });
       const item = ((sub.items as { data?: unknown[] } | undefined)?.data ?? [])[0];
       const itemId = idOf(item);
       if (!itemId) throw new Error('billing: subscription has no item');
-      await q.plan.attach(sub.id, itemId, quantity, d.now());
-      return;
+      const created = Number((item as { quantity?: unknown }).quantity);
+      await q.plan.attach(sub.id, itemId, created, d.now());
+      plan = (await q.plan.get())!; // always set the wanted quantity: a replayed create answers with the quantity it had when it was first made
     }
     if (!plan.stripe_item_id) throw new Error('billing: plan has no item');
-    await d.stripe.updateSubscriptionItem({ workspaceId, itemId: plan.stripe_item_id, quantity, revision: String(d.now()) });
+    await d.stripe.updateSubscriptionItem({ workspaceId, itemId: plan.stripe_item_id, quantity, revision: `${quantity}-${d.now()}` });
     await q.plan.synced(quantity, d.now());
   } catch (e) {
     console.error(`[billing] plan sync failed: ${(e as Error)?.name ?? 'error'}`);
