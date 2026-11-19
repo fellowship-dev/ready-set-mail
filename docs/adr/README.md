@@ -19,12 +19,11 @@ Short records of decisions already made, with who made them. A change that contr
 | 0013 | [Fix one domain ends at DMARC monitoring with reports, not at reject](0013-fix-one-domain-is-c1-without-reject.md) | accepted, code not aligned |
 | 0014 | [An agency's Cloudflare connection imports only the zone of the client being set up](0014-agency-connection-imports-only-the-client-zone.md) | accepted, owner to confirm |
 | 0020 | [One function writes our report address into a DMARC record](0020-one-function-writes-the-report-address.md) | accepted |
-| 0021 | unused (numbers are assigned at merge) | unused |
+| 0021 | [MTA-STS writes the customer's own records and is served from a Cloudflare for SaaS policy host](0021-mta-sts-customer-zone-records-and-saas-policy-host.md) | proposed: owner confirms |
 | 0022 | [Apps introduce themselves by a published document, or by a registration that is vetted, counted and audited](0022-apps-introduce-themselves-by-document-or-by-vetted-registration.md) | accepted |
 | 0023 | [A subdomain is part of its domain, never a sibling; a domain with all its subdomains counts as one domain](0023-a-subdomain-is-part-of-its-domain.md) | decided, not yet implemented in the data model |
 | 0024 | [A person removed from, leaving, or left by a deleted workspace keeps their account](0024-removed-or-leaving-keeps-the-account.md) | accepted |
 | 0025 | [Remove the leads follow-up sequence](0025-remove-the-leads-follow-up-sequence.md) | accepted |
-| 0026 | [MTA-STS writes the customer's own records and is served from a Cloudflare for SaaS policy host](0026-mta-sts-customer-zone-records-and-saas-policy-host.md) | proposed: owner confirms |
 | 0027 | [SPF flattening has one refresh engine, and it resolves the stored original](0027-one-spf-flattening-refresh-engine.md) | accepted, "never rewritten" narrowed by 0030 |
 | 0028 | [SPF flattening is an add-on, per domain; its price is open](0028-spf-flattening-is-an-add-on-per-domain-price-open.md) | accepted, price open |
 | 0029 | [A refresh never removes an authorised address on its first sighting; a removal waits four hours](0029-a-refresh-never-removes-an-address-on-first-sighting.md) | accepted |

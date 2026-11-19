@@ -1,6 +1,6 @@
 # MTA-STS
 
-How Ready Set Mail turns on MTA-STS for a domain, on the hosted service and on a self-hosted install, what it writes, when it lets you enforce, how it comes off again and what the operator sets up. The decision record is [ADR 0026](adr/0026-mta-sts-customer-zone-records-and-saas-policy-host.md); the API is under [MTA-STS in docs/hosted.md](hosted.md#mta-sts).
+How Ready Set Mail turns on MTA-STS for a domain, on the hosted service and on a self-hosted install, what it writes, when it lets you enforce, how it comes off again and what the operator sets up. The decision record is [ADR 0021](adr/0021-mta-sts-customer-zone-records-and-saas-policy-host.md); the API is under [MTA-STS in docs/hosted.md](hosted.md#mta-sts).
 
 ## What it is, in plain words
 

@@ -17,7 +17,7 @@ Contents: [Overview](#overview) · [Operator setup](#operator-setup) · [Custome
 | Hosted DMARC | `<id>._dmarc.h.readysetmail.com` TXT | the records zone |
 | Hosted SPF (flattened) | `<id>._spf.h.readysetmail.com` TXT | the records zone |
 | Hosted TLS-RPT | `<id>._tlsrpt.h.readysetmail.com` TXT | the records zone |
-| MTA-STS policy host | `https://mta-sts.<customer domain>/.well-known/mta-sts.txt`, served by this Worker through a Cloudflare for SaaS custom hostname and the ONE route declared in the hosted deploy config (`*/.well-known/mta-sts.txt` in `POLICY_HOST_ZONE`) ([ADR 0026](adr/0026-mta-sts-customer-zone-records-and-saas-policy-host.md)) | the operator's zone |
+| MTA-STS policy host | `https://mta-sts.<customer domain>/.well-known/mta-sts.txt`, served by this Worker through a Cloudflare for SaaS custom hostname and the ONE route declared in the hosted deploy config (`*/.well-known/mta-sts.txt` in `POLICY_HOST_ZONE`) ([ADR 0021](adr/0021-mta-sts-customer-zone-records-and-saas-policy-host.md)) | the operator's zone |
 
 `<id>` is 16 random base32 characters, stored per domain and **never derived from the customer's domain**.
 The token is 160 random bits (32 base32 characters), per domain, stored only as a SHA-256, rotatable.

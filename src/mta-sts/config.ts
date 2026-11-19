@@ -1,4 +1,4 @@
-// MTA-STS settings (ADR 0026). The hosted service serves `https://mta-sts.<customer domain>/.well-known/mta-sts.txt` from this Worker, which
+// MTA-STS settings (ADR 0021). The hosted service serves `https://mta-sts.<customer domain>/.well-known/mta-sts.txt` from this Worker, which
 // needs three operator settings besides the hosted ones (docs/hosted.md, Environment):
 //   POLICY_HOST_ZONE    the operator's Cloudflare for SaaS zone, e.g. readysetmail.com
 //   POLICY_HOST_TARGET  the hostname customers point `mta-sts.<domain>` at (a proxied, originless record in that zone, set as its fallback origin)
@@ -22,7 +22,7 @@ export interface PolicyHostEnv extends HostedEnv {
 }
 
 /**
- * What a policy file says senders may cache it for, by mode (ADR 0026). RFC 8461 section 3.2: max_age is "typically in the range of weeks or greater"
+ * What a policy file says senders may cache it for, by mode (ADR 0021). RFC 8461 section 3.2: max_age is "typically in the range of weeks or greater"
  * (a short one lets an attacker wait out the cache), and Proton serves 604800 in enforce; section 5: start in testing, where a mistake or an MX change
  * should heal within a day. `none` (the removal policy, section 8.3) is one day: "a small max_age (e.g., one day)".
  */

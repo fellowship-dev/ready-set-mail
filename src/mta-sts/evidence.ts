@@ -14,7 +14,7 @@ export const BLOCKING_FAILURE_TYPES: readonly string[] = [
 export interface EvidenceRow { date_begin: number; date_end: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; reporter_tier: string | null }
 
 /**
- * The evidence rule, in one sentence (shown on the page and decided in ADR 0026): ONE counted report is enough. A counted report is authenticated (a valid DKIM
+ * The evidence rule, in one sentence (shown on the page and decided in ADR 0021): ONE counted report is enough. A counted report is authenticated (a valid DKIM
  * signature by the reporting domain, RFC 8460 section 3) and from a known reporter (src/dmarc/known-reporters.ts: today Google or Microsoft), so it can only be
  * forged by forging that reporter's signature; a second reporter would add coverage, not authenticity, and requiring both would lock out the many small domains
  * that receive mail from only one of them.
@@ -110,7 +110,7 @@ export function enforceReadiness(cfg: Pick<MtaStsRow, 'state' | 'mode' | 'mx_hos
 }
 
 /**
- * Disable rule (ADR 0026): only in testing, and only once senders that fetched an ENFORCE policy no longer hold it: its max_age (MAX_AGE_ENFORCE, a week) after
+ * Disable rule (ADR 0021): only in testing, and only once senders that fetched an ENFORCE policy no longer hold it: its max_age (MAX_AGE_ENFORCE, a week) after
  * the switch back. The testing policy's own max_age is shorter and says nothing about what senders still hold from before (RFC 8461 section 8.3: "the previously
  * published policy was last served plus that policy's max_age").
  */
