@@ -127,7 +127,7 @@ describe('zone quota', () => {
 
 describe('hosted records for a domain', () => {
   const ZONE = 'zone-h';
-  const SOURCE = 'v=spf1 include:_spf.example.net ip4:203.0.113.5 ~all';
+  const SOURCE = 'v=spf1 include:_spf.example.net ip4:203.0.113.5';
   const resolver = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.7 -all'] } });
 
   async function setup() {
@@ -159,7 +159,7 @@ describe('hosted records for a domain', () => {
     const byName = Object.fromEntries(created.map(r => [r.name, r.content]));
     expect(byName[names.dmarc]).toBe(`v=DMARC1; p=none; rua=mailto:${addresses.rua}`);
     expect(byName[names.tlsRpt]).toBe(`v=TLSRPTv1; rua=mailto:${addresses.tls_rpt}`);
-    expect(byName[names.spf]).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.7 ip4:203.0.113.5 ~all');
+    expect(byName[names.spf]).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.7 ip4:203.0.113.5');
     expect(addresses.rua).toMatch(/^rua\+[a-z2-7]{32}@rua\.readysetmail\.com$/);
 
     // the address in the record resolves back to this domain; only its hash is stored
@@ -237,6 +237,14 @@ describe('hosted records for a domain', () => {
     expect(await look.resolveToken(await hashToken(old), Math.floor(Date.now() / 1000) + 73 * 3600)).toBeNull();
   });
 
+  it('a source the include cannot carry is refused before anything is written: a macro, or a qualifier other than + before the all', async () => {
+    const { cf, tenant, domain } = await setup();
+    for (const [source, why] of [['v=spf1 exists:%{i}._e.%{d} include:_spf.example.net -all', /uses a macro/], ['v=spf1 -ip4:192.0.2.9 include:_spf.example.net -all', /has a qualifier/]] as const) {
+      await expect(enableHosted(tenant(), await domain(), { spfRecord: source }, { resolver })).rejects.toMatchObject({ status: 422, message: expect.stringMatching(why) });
+    }
+    expect(cf.calls.filter(c => c.method === 'POST')).toEqual([]);
+  });
+
   it('disable removes the records and the rows, and nothing else', async () => {
     const { w, cf, tenant, domain } = await setup();
     const outsidersBefore = outsiders(cf);
@@ -255,18 +263,41 @@ describe('hosted records for a domain', () => {
     const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE }, { resolver });
     const spfName = hostedNames(hosted.hosted_id, 'h.readysetmail.com').spf;
     const content = () => zoneRecords(cf).find(r => r.name === spfName)!.content;
-    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.7 ip4:203.0.113.5 ~all');
+    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.7 ip4:203.0.113.5');
 
     expect(await refreshHostedSpf(w.env, { resolver })).toEqual({ updated: 0, failed: 0 }); // unchanged: no write
     expect(cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
 
+    // A range moves: the new address is written at once, the old one stays until a second look at least four hours later sees the same (ADR 0028).
     const moved = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 -all'] } });
-    expect(await refreshHostedSpf(w.env, { resolver: moved })).toEqual({ updated: 1, failed: 0 });
-    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5 ~all');
+    const t0 = Date.now();
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 })).toEqual({ updated: 1, failed: 0 });
+    const held = 'v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:198.51.100.7 ip4:203.0.113.5';
+    expect(content()).toBe(held);
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 + 3 * 3600_000 })).toEqual({ updated: 0, failed: 0 }); // 3 hours: still waiting
+    expect(content()).toBe(held);
+    expect(await refreshHostedSpf(w.env, { resolver: moved, now: () => t0 + 4 * 3600_000 })).toEqual({ updated: 1, failed: 0 }); // 4 hours: the removal is written
+    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5');
 
     const broken = dnsFrom({ '_spf.example.net': { error: true } });
     expect(await refreshHostedSpf(w.env, { resolver: broken })).toEqual({ updated: 0, failed: 1 });
-    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5 ~all');
+    expect(content()).toBe('v=spf1 ip4:192.0.2.0/24 ip4:198.51.100.200 ip4:203.0.113.5');
+  });
+
+  it('a provider that answers with nothing for a moment does not empty the hosted record', async () => {
+    const { w, cf, tenant, domain } = await setup();
+    const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE }, { resolver });
+    const spfName = hostedNames(hosted.hosted_id, 'h.readysetmail.com').spf;
+    const content = () => zoneRecords(cf).find(r => r.name === spfName)!.content;
+    const before = content();
+    const glitch = dnsFrom({ '_spf.example.net': { TXT: ['v=spf1 -all'] } });
+    const t0 = Date.now();
+    await refreshHostedSpf(w.env, { resolver: glitch, now: () => t0 });
+    expect(content()).toBe(before);
+    expect(cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
+    await refreshHostedSpf(w.env, { resolver, now: () => t0 + 3600_000 }); // the provider is back
+    expect(content()).toBe(before);
+    expect(w.rows('SELECT spf_state FROM hosted_domains')[0].spf_state).toContain('"pending_removed":null');
   });
 
   it('daily reconcile counts the whole zone, reports drift, flags changes outside the label, and writes nothing', async () => {

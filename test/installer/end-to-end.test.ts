@@ -89,7 +89,8 @@ describe('npm run setup (fake Cloudflare)', () => {
     const planAt = r.out.indexOf('Plan:');
     expect(planAt).toBeGreaterThan(0);
     expect(planAt).toBeLessThan(r.out.indexOf('[4/9]'));
-    for (const c of ['0 4 * * *', '0 8 * * *', '0 9 * * 1', '0 10 * * *', '0 11 * * *']) expect(r.out).toContain(c);
+    for (const c of ['0 4 * * *', '0 8 * * *', '0 9 * * 1', '0 11 * * *']) expect(r.out).toContain(c);
+    expect(r.out).not.toContain('0 10 * * *');
     expect(r.out).toContain('workers.dev address on, preview URLs off');
 
     // The secret appears once, inside the setup link; the token and the encryption key never.

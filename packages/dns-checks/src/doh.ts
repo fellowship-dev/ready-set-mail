@@ -80,6 +80,8 @@ export interface TxtResult {
   status: DnsStatus;
   /** One entry per TXT record, character-strings already concatenated. */
   records: string[];
+  /** The server set the TC bit: the records listed are only some of the answer. */
+  truncated?: boolean;
   error?: string;
 }
 
@@ -201,6 +203,7 @@ export function createResolver(options: ResolverOptions = {}): Resolver {
         status: r.status,
         records: r.answers.map(a => decodeTxtData(a.data)),
         ...(r.error ? { error: r.error } : {}),
+        ...(r.truncated ? { truncated: true } : {}),
       };
     },
   };

@@ -18,9 +18,14 @@
 //       file and the flow map) changed up to HEAD. So a base that moves in files the flow does not cover leaves a walk valid, and a
 //       change to a covered file after the walked commit (in this pull request or in main) asks for a new walk. On a pull request
 //       HEAD is GitHub's merge of it into main. A new flow's first record may be its baseline (Kind: baseline).
-//   .flowchad/walks/<date>-<id>.not-affected.md  (or <date>-<id>.<tag>.not-affected.md, tag [a-z0-9-]+) a reviewed "not affected" record, for a change to a mapped file that does not
-//       change what the person sees or does on the flow. Fields: Flow, Changed (every mapped file this change touches, in
-//       back-quotes), Reason (why the flow is unchanged), By, Date. Not accepted when the flow file or its map changed.
+//   .flowchad/walks/<date>-<id>.not-affected.md  a reviewed "not affected" record, for a change to a mapped file that does not
+//       change what the person sees or does on the flow. Like a walk record it may carry a tag, <date>-<id>.<tag>.not-affected.md
+//       (tag [a-z0-9-]+), so two pull requests that each judge the same flow on the same day do not add the same file name.
+//       Fields: Flow, Changed (every mapped file this change touches, in back-quotes), Reason (why the flow is unchanged), By, Date,
+//       and Commit: the commit the judgement was made at. Like a walk's Commit it must exist, be an ancestor of HEAD, not be in the
+//       base, and no file the flow covers may have changed after it (a later change to a covered file asks for a new judgement, as
+//       it asks for a new walk). Not accepted when the flow file or its map changed.
+
 //
 // What this proves: the record is new, complete and fresh. What it cannot prove: that a walk took place. A hand-written record
 // with the right fields passes; the pull request review is the check that it is real (FlowChad's gate says the same of itself).
@@ -91,7 +96,7 @@ export function walkRecordProblems(text, { id, newFlow, commitState, coveredChan
 }
 
 /** Problems with a "not affected" record, or []. */
-export function notAffectedProblems(text, { id, baseDate, today, hits, flowChanged, nameDate }) {
+export function notAffectedProblems(text, { id, baseDate, today, hits, flowChanged, commitState, coveredChangedSince, nameDate }) {
   const p = [];
   const f = fields(text);
   if (flowChanged) p.push('the flow file or its map changed in this change, so the flow did change: walk it');
@@ -100,6 +105,17 @@ export function notAffectedProblems(text, { id, baseDate, today, hits, flowChang
   if (reason.length < 20 || reason.split(/\s+/).length < 4) p.push('Reason must say why the flow is unchanged (at least 20 characters, four words)');
   if (!/[\p{L}\p{N}]/u.test(f.By ?? '')) p.push('By must name who judged it');
   if (!realDate(f.Date ?? '') || f.Date < baseDate || f.Date > today) p.push(`Date ${f.Date ?? 'missing'} is not a real date between the base commit (${baseDate}) and today`);
+  if (!/^[0-9a-f]{7,40}$/i.test(f.Commit ?? '')) p.push(`Commit is not a commit id: ${f.Commit ?? 'missing'} (the commit this was judged at)`);
+  else {
+    const state = commitState(f.Commit);
+    if (state === 'unknown') p.push(`Commit ${f.Commit} is not in this repository`);
+    else if (state === 'in-base') p.push(`Commit ${f.Commit} is already in the base: the judgement is older than this change`);
+    else if (state === 'not-ancestor') p.push(`Commit ${f.Commit} is not an ancestor of HEAD`);
+    else {
+      const moved = coveredChangedSince(f.Commit);
+      if (moved.length) p.push(`${moved.join(', ')} changed after the judged commit ${f.Commit}: judge the flow again at the current commit`);
+    }
+  }
   if (nameDate && f.Date !== nameDate) p.push(`the file name says ${nameDate} but Date is ${f.Date ?? 'missing'}: file it under the day it was written`);
   const listed = new Set([...(f.Changed ?? '').matchAll(/`([^`]+)`/g)].map((m) => m[1]));
   const unlisted = hits.filter((h) => !listed.has(h));
@@ -155,7 +171,7 @@ function main(argv) {
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
     if (!ok) for (const file of [...added].filter((f) => f.startsWith(`${WALKS}/`) && naRe.test(f.slice(WALKS.length + 1))).sort().reverse()) {
-      const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged, nameDate: file.slice(WALKS.length + 1, WALKS.length + 11) });
+      const problems = notAffectedProblems(readFileSync(file, 'utf8'), { id, baseDate, today, hits, flowChanged, commitState, coveredChangedSince, nameDate: file.slice(WALKS.length + 1, WALKS.length + 11) });
       if (!problems.length) { ok = `not affected (${file}, reviewed)`; break; }
       tried.push(`${file}:\n      - ${problems.join('\n      - ')}`);
     }
@@ -176,12 +192,13 @@ A protected value flow changed (ADR 0012). For each flow above, add ONE record t
   - it changed what a person sees or does: walk it on a local copy of the current commit (a covered file that changes after the walked commit, here or in main, asks for a new walk) and commit the gate's record:
       /flow-walk <id>   then   /flow-gate <id> --target <url> --record ${WALKS}
     (if the flow itself changed, update ${FLOWS}/<id>.map.md first: map before building)
-  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md (or <YYYY-MM-DD>-<id>.<tag>.not-affected.md when that name is taken)
+  - it did not (a refactor, a log line, a fix the person cannot see): add ${WALKS}/<YYYY-MM-DD>-<id>.not-affected.md (or <YYYY-MM-DD>-<id>.<tag>.not-affected.md, tag [a-z0-9-]+, when another change adds one the same day; the date is the record's Date line and the day it was written)
       - **Flow:** <id>
       - **Changed:** \`<every file listed above>\`
       - **Reason:** <why the flow is unchanged>
       - **By:** <who judged it>
       - **Date:** <YYYY-MM-DD>
+      - **Commit:** <the commit you judged it at; no file the flow covers may change after it>
     The reviewer accepts or rejects that reason. See AGENTS.md and scripts/check-flows.mjs.`);
     return 1;
   }

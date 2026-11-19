@@ -1,0 +1,52 @@
+name: Owner of a domain with too many SPF lookups turns on flattening and it stays correct
+goal: The owner of a domain whose SPF record needs more than 10 lookups turns on flattening through Cloudflare, the record is written, and it follows the providers' addresses until the owner turns it off and gets the original back
+value_moment: Flattening is on - the record lists the sender addresses directly, within 10 lookups and 450 bytes, and the daily check keeps it current or says why it could not
+covers:
+  - web/src/pages/wizards/SpfFlattenPage.tsx
+  - web/src/components/domain/DnsTools.tsx
+  - web/src/components/domain/SpfCard.tsx
+  - web/src/components/domain/SpfStatusLine.tsx
+  - web/src/pages/domains/SpfLookupsPage.tsx
+  - web/src/lib/spf-breakdown.ts
+  - web/src/lib/spf-flatten.ts
+  # Server files that implement the steps: the one refresh engine, the add-on gate and the operator setting parser. The routes are in src/api/router.ts, which stays out
+  # of this list on purpose: every router change would then ask for a walk of this flow; the logic the routes call is in src/spf/* and is covered.
+  - src/spf/*
+  - packages/dns-checks/src/spf-flatten.ts
+  - src/hosted/plan-limits.ts
+  - src/hosted/allow.ts
+url: /#/domains/1/spf-flatten
+tags: [spf, value, protected]
+priority: P1
+context:
+  user: workspace_owner
+  auth: logged_in
+  mode: self-host (or hosted, with HOSTED_SPF_FLATTENING admitting the workspace)
+  cloudflare: connected
+steps:
+  - action: navigate
+    url: /#/domains/1
+    expect: Domain page; "Do this next" leads with "Bring SPF down to 10 DNS lookups or fewer" and its link "Open SPF flattening" is in the first screen at 375 and 1440
+  - action: click
+    selector: "text=Open SPF flattening"
+    expect: Your SPF record - why it matters, the record and the flattened record side by side
+  - action: click
+    selector: "text=Continue"
+    expect: Turn on SPF flattening - what is written and when it is checked
+  - action: click
+    selector: "text=Turn on flattening"
+    effect: write
+    expect: SPF flattening is on - the published record, last checked, checked again every day around 11:00 UTC
+    first_value: true
+  # Branch: someone edited the record in Cloudflare (the daily check left it as it is). The screen is walked too: the decision comes first, the evidence below it.
+  - action: navigate
+    url: /#/domains/1/spf-flatten?review=1
+    expect: Review the record - the choice "Use my edit as the new original" (selected) and "Discard my edit" (with the terms it drops) and the action "Use my edit" come first, with the action in the first screen at 375 and 1440; the two records are below
+  - action: click
+    selector: "text=Use my edit"
+    effect: write
+    expect: SPF flattening is on - the edit is the new original, the include it added stays, addresses that would leave a provider are held for a second look
+  - action: click
+    selector: "text=Turn off"
+    effect: write
+    expect: Confirm, then the original record is back in Cloudflare

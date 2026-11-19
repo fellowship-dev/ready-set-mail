@@ -14,11 +14,12 @@
 // Seeded so a walk shows each outcome: brightwave-mail.com has a DMARC record without our rua (an update),
 // harbor-lane.org has none (a create), quietfield.net has an MX at its apex (left untouched).
 //
-// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?, failAfterWrite?, failPosts?: [DNS types]} (replace a zone's routing rules; failPage answers that page 500), GET /__state (with zoneReads: GET /zones/:id per zone name), POST /__reset, POST /__ns {name, ns:[...]} (that name and
+// Test helpers (not part of Cloudflare's API): POST /__rules {zone, rules:[...], failPage?, failAfterWrite?, failPosts?: [DNS types]} (replace a zone's routing rules; failPage answers that page 500), GET /__state (with zoneReads: GET /zones/:id per zone name), POST /__reset, POST /__config {realisticTxt: true} (store TXT content the way Cloudflare does: quoted strings of at most 255 bytes; see cloudflare-txt.mjs), POST /__ns {name, ns:[...]} (that name and
 // everything under it answers NS queries with those hosts, zone or not; ns:[] removes it).
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { cloudflareTxtContent } from './cloudflare-txt.mjs';
 
 export const ACCOUNT = { id: hex('account:example-co'), name: 'Example Co' };
 export const ZONE_NAMES = ['brightwave-mail.com', 'harbor-lane.org', 'quietfield.net'];
@@ -50,6 +51,7 @@ function freshState() {
     addresses: [], // account-level destination addresses
     nextId: () => hex(`record:${++seq}:${Date.now()}`),
     zoneReads: {}, // zone name -> number of GET /zones/:id (a live check of a zone)
+    realisticTxt: false, // POST /__config {realisticTxt: true}: TXT content stored as Cloudflare stores it (quoted strings of at most 255 bytes)
   };
 }
 
@@ -73,6 +75,7 @@ export function createFakeCloudflare() {
     return n === '@' || n === '' ? zone.name : n === zone.name || n.endsWith(`.${zone.name}`) ? n : `${n}.${zone.name}`;
   };
   const stripQuotes = s => String(s ?? '').replace(/^"|"$/g, '');
+  const stored = (type, content) => (st.realisticTxt && String(type).toUpperCase() === 'TXT' ? cloudflareTxtContent(content) : content);
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://fake.local');
@@ -130,6 +133,7 @@ export function createFakeCloudflare() {
       return send(200, { ok: true, activated: n });
     }
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
+    if (url.pathname === '/__config' && method === 'POST') { if (typeof body?.realisticTxt === 'boolean') st.realisticTxt = body.realisticTxt; return send(200, { ok: true, realisticTxt: st.realisticTxt }); }
 
     // DNS-over-HTTPS (application/dns-json) from the in-memory records.
     if (method === 'GET' && url.pathname === '/dns-query') {
@@ -147,7 +151,7 @@ export function createFakeCloudflare() {
       const rows = lagged ? lagged.map(c => ({ data: JSON.stringify(c) })) : type === 'NS' && name === zone.name
         ? [{ data: 'ada.ns.cloudflare.com.' }, { data: 'bob.ns.cloudflare.com.' }]
         : st.records.get(zone.id).filter(r => r.name === name && r.type === type).map(r => ({
-            data: type === 'TXT' ? JSON.stringify(stripQuotes(r.content)) : type === 'MX' ? `${r.priority ?? 0} ${r.content}.` : r.type === 'CNAME' || type === 'NS' ? `${r.content}.` : r.content,
+            data: type === 'TXT' ? (st.realisticTxt ? r.content : JSON.stringify(stripQuotes(r.content))) : type === 'MX' ? `${r.priority ?? 0} ${r.content}.` : r.type === 'CNAME' || type === 'NS' ? `${r.content}.` : r.content,
           }));
       return reply({ Status: 0, Question: [{ name, type: CODES[type] }], ...(rows.length ? { Answer: rows.map(r => ({ name, type: CODES[type], TTL: 60, data: r.data })) } : {}) });
     }
@@ -223,7 +227,7 @@ export function createFakeCloudflare() {
         const dup = records.find(r => r.type === type && r.name === name && r.content === body.content && (r.priority ?? null) === (body.priority ?? null));
         if (dup) return send(400, failure('An identical record already exists.', 81058));
         const now = new Date().toISOString();
-        const rec = { id: st.nextId(), zone_id: zone.id, zone_name: zone.name, type, name, content: body.content, ttl: body.ttl ?? 1, proxied: body.proxied ?? false, comment: body.comment ?? null, created_on: now, modified_on: now };
+        const rec = { id: st.nextId(), zone_id: zone.id, zone_name: zone.name, type, name, content: stored(type, body.content), ttl: body.ttl ?? 1, proxied: body.proxied ?? false, comment: body.comment ?? null, created_on: now, modified_on: now };
         if (body.priority !== undefined) rec.priority = body.priority;
         records.push(rec);
         return ok(rec);
@@ -237,6 +241,7 @@ export function createFakeCloudflare() {
       if (method === 'GET') return ok(rec);
       if (method === 'PATCH' || method === 'PUT') {
         for (const k of ['content', 'ttl', 'priority', 'proxied', 'comment']) if (body?.[k] !== undefined) rec[k] = body[k];
+        if (body?.content !== undefined) rec.content = stored(rec.type, rec.content);
         if (body?.name !== undefined) rec.name = fqdn(zone, body.name);
         if (body?.type !== undefined) rec.type = String(body.type).toUpperCase();
         rec.modified_on = new Date().toISOString();

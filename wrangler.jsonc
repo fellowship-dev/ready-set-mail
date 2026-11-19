@@ -76,11 +76,11 @@
 	// Crons (what each does: docs/self-hosting.md#scheduled-jobs):
 	//   0 8 * * *  — daily DNS monitor check
 	//   0 9 * * 1  — weekly DMARC digest email on self-host (Mondays 9am UTC); nothing on the hosted service, whose weekly summary and tips run at 0 11
-	//   0 10 * * * — daily SPF flatten refresh
-	//   0 11 * * * — hosted only: lifecycle emails (src/lifecycle/email/: milestones, the weekly summary and, when enabled, tips) and product analytics' daily step; nothing on self-host
+	//   0 11 * * * — daily SPF flattening refresh (domains that turned it on), then hosted-only jobs (lifecycle emails: src/lifecycle/email/, product analytics' daily step, the hosted service's reconcile)
+	//                (an installation whose wrangler.local.jsonc still lists `0 10 * * *` keeps working: the same refresh answers it)
 	//   0 4 * * *  — daily data lifecycle: retry Cloudflare revocations, then retention sweeps (own invocation: src/cron.ts)
 	"triggers": {
-		"crons": ["0 8 * * *", "0 9 * * 1", "0 10 * * *", "0 11 * * *", "0 4 * * *"]
+		"crons": ["0 8 * * *", "0 9 * * 1", "0 11 * * *", "0 4 * * *"]
 	},
 
 	// Email funnel (docs/email-funnel.md), all optional: RESEND_API_KEY (secret), AUTHSERV_ID, AUTHSERV_HEADER, MAIL_FROM, MAIL_REPLY_TO,

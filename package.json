@@ -13,6 +13,7 @@
     "start": "wrangler dev",
     "test": "vitest --config vitest.node.config.mts",
     "test:ui": "npm test --workspace @ready-set-mail/ui",
+    "test:spf-property": "bash scripts/spf-property.sh",
     "test:web": "npm run build -w @ready-set-mail/ui && npm test -w @ready-set-mail/web",
     "test:e2e": "playwright test",
     "cf-typegen": "wrangler types",

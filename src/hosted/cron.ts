@@ -14,11 +14,11 @@ import type { BoundEnv } from '../index';
 import { globalQueries, intakeLookups, forWorkspace } from '@ready-set-mail/db';
 import { mapLimit } from '../cron';
 import { hostedApex, hostedConfig, hostedEnabled } from './config';
-import { hostedNames, openHostedZone } from './records';
+import { hostedNames, openHostedZone, HOSTED_SPF_OPTS } from './records';
 import { assessQuota, configuredZones, type ZoneQuota } from './zones';
 import { mergePointerReport, verifyPointers } from './pointers';
-import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
-import { flattenSource } from './spf';
+import { createResolver, flattenFromSource, sameSpfRecord, type Resolver } from '@ready-set-mail/dns-checks';
+import { decideSpfWrite, parseEntries, loadSpfState, spfStateJson } from '../spf/refresh';
 import { refreshMtaStsHosted } from '../mta-sts/refresh';
 import { recheckZoneProofs } from '../domains/proof-recheck';
 import { runBillingJob } from '../billing/reconcile';
@@ -107,9 +107,10 @@ export async function verifyAllPointers(env: BoundEnv, opts: { resolver?: Resolv
 
 /**
  * Re-flatten every hosted SPF from its stored source and update the record when the result changed.
- * A source that can't be fully resolved today leaves yesterday's record in place (a partial one would drop senders).
+ * A source that can't be fully resolved today leaves yesterday's record in place (a partial one would drop senders). The same rule as every other flattened
+ * record (decideSpfWrite, docs/adr/0028): an address that left a provider is kept in the record until a second look, four hours later at the earliest, sees the same.
  */
-export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fetch; resolver?: Resolver } = {}): Promise<{ updated: number; failed: number }> {
+export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fetch; resolver?: Resolver; now?: () => number } = {}): Promise<{ updated: number; failed: number }> {
   const apex = hostedApex(hostedConfig(env));
   const out = { updated: 0, failed: 0 };
   if (!apex) return out;
@@ -124,13 +125,22 @@ export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fet
       if (!writer) writers.set(slot.key, writer = await openHostedZone(env, slot.name, { fetch: opts.fetch }));
       const domain = await forWorkspace(env.DB, h.workspace_id).domains.getById(h.domain_id);
       if (!domain) continue;
-      const flat = await flattenSource(domain.domain, h.spf_source!, resolver);
-      if (!flat.ok) throw new Error(flat.errors.map(e => e.message).join('; '));
+      // The one engine (packages/dns-checks/src/spf-flatten.ts): from the stored source, never from what is published (that is our own include).
+      const state = loadSpfState(h.spf_state);
+      const flat = await flattenFromSource(domain.domain, h.spf_source!, resolver, { ...HOSTED_SPF_OPTS, previous: parseEntries(state.provider_state) });
+      if (!flat.ok) throw new Error(flat.problems.map(p => p.message).join(' '));
+      const at = Math.floor((opts.now?.() ?? Date.now()) / 1000);
+      const decision = decideSpfWrite(state, flat.flat, at);
       const name = hostedNames(h.hosted_id, apex).spf;
-      const current = await writer.read(h.spf_record_id!, name);
-      if (current.content === flat.content) continue;
-      await writer.setContent(h.spf_record_id!, name, flat.content);
-      out.updated++;
+      if (decision.plan) {
+        const current = await writer.read(h.spf_record_id!, name);
+        if (!sameSpfRecord(current.content, decision.plan.record)) {
+          await writer.setContent(h.spf_record_id!, name, decision.plan.record);
+          out.updated++;
+        }
+      }
+      await forWorkspace(env.DB, h.workspace_id).hosted.setRecords(h.domain_id, { spf_state: spfStateJson(decision.plan?.providers ?? parseEntries(state.provider_state), decision.pending) });
+      if (decision.how === 'first' || decision.how === 'replaced') console.warn(`[hosted] ${domain.domain}: a provider stopped listing addresses; they stay in the hosted SPF record until a second check, at least four hours later, sees the same`);
     } catch (e) {
       out.failed++;
       console.error(`[hosted] SPF refresh failed for domain ${h.domain_id} (record kept as is):`, e instanceof Error ? e.message : e);

@@ -235,3 +235,26 @@ describe('GET /api/domains/:id/onboarding-status stores what it resolved', () =>
     expect(stored(env).dns_check_attempted_at).toBeGreaterThan(5);
   });
 });
+
+describe('GET /api/domains/:id/onboarding-status: the SPF lookup count', () => {
+  const spfDns = (n: string, t: string) => {
+    if (t === 'TXT' && n === 'acme.com') return txt('v=spf1 include:a.test include:b.test ~all');
+    if (t === 'TXT' && n === 'a.test') return txt('v=spf1 include:c.test -all');
+    if (t === 'TXT' && n === 'b.test') return txt('v=spf1 ip4:192.0.2.1 -all');
+    if (t === 'TXT' && n === 'c.test') return txt('v=spf1 ip4:192.0.2.2 -all');
+    return undefined;
+  };
+  it('nothing stored yet: counted from the live record with this request\'s resolver, returned and stored (a self-hosted instance has no other way to learn it)', async () => {
+    stubDns(spfDns);
+    const env = makeEnv();
+    const body = await (await handleApi(get('/api/domains/1/onboarding-status'), env, ctx)).json() as any;
+    expect(body.spf.lookup_count).toBe(3);
+    expect((env.DB as any).sqlite.prepare('SELECT spf_lookup_count FROM domains WHERE id = 1').get().spf_lookup_count).toBe(3);
+  });
+  it('the record changed since it was stored: the count follows it (a flattened record no longer needs what it needed)', async () => {
+    const env = makeEnv();
+    (env.DB as any).sqlite.prepare("UPDATE domains SET spf_record = 'v=spf1 include:old.test -all', spf_lookup_count = 11 WHERE id = 1").run();
+    stubDns(spfDns);
+    expect(((await (await handleApi(get('/api/domains/1/onboarding-status'), env, ctx)).json()) as any).spf.lookup_count).toBe(3);
+  });
+});

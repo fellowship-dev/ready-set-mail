@@ -23,16 +23,18 @@ const WORKSPACES = [
 function setup() {
   const db = createMigratedD1();
   const cf = new FakeCloudflare({}, undefined, undefined, {});
+  cf.realisticTxt = true;
   for (const a of WORKSPACES) {
     db.sqlite.prepare('INSERT INTO workspaces (id, name) VALUES (?, ?)').run(a.id, a.id);
     seedSettings(db, {
       base_domain: a.domain, reports_domain: `reports.${a.domain}`, zone_id: a.zone, zone_name: a.domain, cf_account_id: `cf-${a.id}`,
     }, a.id);
     db.sqlite.prepare('INSERT INTO domains (id, workspace_id, domain, rua_address) VALUES (?, ?, ?, ?)').run(a.domainId, a.id, a.domain, `rua@reports.${a.domain}`);
-    db.sqlite.prepare('INSERT INTO spf_flatten_config (domain_id, workspace_id, enabled, canonical_record, cf_record_id) VALUES (?, ?, 1, ?, ?)')
-      .run(a.domainId, a.id, 'v=spf1 include:_spf.mail.test -all', `spf-${a.id}`);
+    // Flattening is on: the original is stored, and what was written last is what Cloudflare holds (the provider's earlier address).
+    db.sqlite.prepare("INSERT INTO spf_flatten_config (domain_id, workspace_id, enabled, canonical_record, cf_record_id, flattened_record, inline_mode) VALUES (?, ?, 1, ?, ?, ?, 'most')")
+      .run(a.domainId, a.id, 'v=spf1 include:_spf.mail.test -all', `spf-${a.id}`, 'v=spf1 ip4:192.0.2.77 -all');
     cf.zones[a.domain] = { id: a.zone, cfAccountId: `cf-${a.id}` };
-    cf.seed(a.zone, { id: `spf-${a.id}`, type: 'TXT', name: a.domain, content: 'v=spf1 include:_spf.mail.test -all' });
+    cf.seed(a.zone, { id: `spf-${a.id}`, type: 'TXT', name: a.domain, content: 'v=spf1 ip4:192.0.2.77 -all' });
   }
   cf.doh['_spf.mail.test'] = ['v=spf1 ip4:192.0.2.1 -all'];
   for (const a of WORKSPACES) cf.doh[a.domain] = ['v=spf1 include:_spf.mail.test -all'];
@@ -55,7 +57,7 @@ describe('cron iterates workspaces, each in its own try', () => {
 
     for (const a of WORKSPACES) {
       expect(state(a.id).last_error).toBeNull();
-      expect(cf.records.get(a.zone)).toEqual([expect.objectContaining({ content: 'v=spf1 ip4:192.0.2.1 -all' })]);
+      expect(cf.records.get(a.zone)).toEqual([expect.objectContaining({ content: '"v=spf1 ip4:192.0.2.1 -all"' })]);
     }
     // each workspace used its own token
     for (const a of WORKSPACES) {
@@ -70,10 +72,10 @@ describe('cron iterates workspaces, each in its own try', () => {
     await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: ['ws_a', 'ws_b', 'ws_c'], load });
 
     expect(state('ws_a').last_error).toMatch(/Authentication error/);
-    expect(state('ws_a').flattened_record).toBeNull();
+    expect(state('ws_a').flattened_record).toBe('v=spf1 ip4:192.0.2.77 -all');
     expect(state('ws_b').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
     expect(state('ws_c').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
-    expect(cf.records.get('zone-a')).toEqual([expect.objectContaining({ content: 'v=spf1 include:_spf.mail.test -all' })]);
+    expect(cf.records.get('zone-a')).toEqual([expect.objectContaining({ content: '"v=spf1 ip4:192.0.2.77 -all"' })]); // left as it was
   });
 
   it('a workspace that fails to load is logged and skipped, the rest still run', async () => {
@@ -98,6 +100,26 @@ describe('cron iterates workspaces, each in its own try', () => {
     await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: ['ws_a', 'ws_b', 'ws_c'], load });
     const logged = spies.flatMap(s => s.mock.calls.map(c => c.map(String).join(' '))).join('\n');
     for (const a of WORKSPACES) expect(logged).not.toContain(a.token);
+  });
+});
+
+describe('the SPF refresh runs on 0 11, and the older 0 10 trigger is the same job', () => {
+  const ELEVEN = { cron: '0 11 * * *' } as ScheduledController;
+  it('0 11 refreshes every workspace; a second trigger the same day finds nothing due', async () => {
+    const { cf, env, load, state } = setup();
+    await runCronForWorkspaces(ELEVEN, env, ctx, { workspaces: WORKSPACES.map(a => a.id), load });
+    for (const a of WORKSPACES) expect(state(a.id).flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
+    const writes = () => cf.calls.filter(c => c.method === 'PATCH').length;
+    expect(writes()).toBe(3);
+    cf.doh['_spf.mail.test'] = ['v=spf1 ip4:192.0.2.99 -all']; // the provider moved after the first run
+    await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: WORKSPACES.map(a => a.id), load }); // an install that kept `0 10`: looked at an hour ago, not due
+    expect(writes()).toBe(3);
+    expect(state('ws_a').flattened_record).toBe('v=spf1 ip4:192.0.2.1 -all');
+  });
+  it('0 10 does not fall through to the monitor job (an expression this file does not know would)', async () => {
+    const { db, env, load } = setup();
+    await runCronForWorkspaces(SPF_CRON, env, ctx, { workspaces: ['ws_a'], load });
+    expect(db.sqlite.prepare('SELECT dns_checked_at FROM domains WHERE id = 1').get().dns_checked_at).toBeNull();
   });
 });
 

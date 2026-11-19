@@ -12,6 +12,7 @@ import { DnsTools } from '../../components/domain/DnsTools';
 import { DoThisNext } from '../../components/domain/DoThisNext';
 import { FixOffer } from '../../components/billing/FixOffer';
 import { hasSomethingToFix } from '../../lib/billing';
+import { SpfStatusLine } from '../../components/domain/SpfStatusLine';
 import { ProofLost } from '../../components/domain/ProofLost';
 import { isUnproven } from '../../lib/proof';
 import { FailingSources, notRecordedLine, oneCheckLine } from '../../components/domain/FailingSources';
@@ -37,7 +38,7 @@ import type { StatusKind } from '@ready-set-mail/ui';
 import { formatNumber } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
 import { hasReportAddress } from '../../lib/dmarc-record';
-import { useHosted, useSession } from '../../lib/session';
+import { useAddOns, useHosted, useSession } from '../../lib/session';
 import type { Domain, DomainCheckSummary } from '../../lib/types';
 import { suffixParentOf } from '../../lib/dmarc-step';
 import { inForceSentence, policyInForce } from '@ready-set-mail/dns-checks/dmarc-next-step';
@@ -274,7 +275,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// The health report runs live DNS and reads collected evidence: only when its section is opened.
 	const [healthOpen, setHealthOpen] = useState(false);
 	const health = useHealthReport(domain.id, healthOpen);
-	const { spfOff } = useDnsToolsOff(domain.id); // the one predicate (src: web/src/lib/hosted.ts)
+	const { spfOff } = useDnsToolsOff(domain.id); // the one predicate (web/src/lib/hosted.ts): SPF flattening is off where the workspace has not got the add-on
 	const spfTool = useSpfFlatten(domain.id, !spfOff);
 	const mtaTool = useMtaSts(domain.id);
 	const { canWrite } = useSession();
@@ -330,6 +331,8 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 	// A listed parent whose own record does not cover this name: a public suffix (gov.uk above www.gov.uk).
 	const suffixParent = summaryFresh && parent ? suffixParentOf(summary.data, { domain: parent.domain, summary: parentSummary.data }) : null;
 	const actionInput = {
+		spfFlattening: !spfOff,
+		spfFlat: spfTool.data?.config && spfTool.data.config.enabled ? { lookups_after: spfTool.data.config.lookups_after } : null,
 		domain,
 		dns: dns.isPending ? undefined : dns.isError ? null : dns.data,
 		onboarding: onboarding.isPending ? undefined : onboarding.isError ? null : onboarding.data,
@@ -341,7 +344,6 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 		hosted: hostedInfo,
 		suffixParent,
 		reportsRefusal,
-		hostedMode,
 	};
 	const actions = domainActions(actionInput);
 
@@ -392,6 +394,7 @@ function DomainDetail({ domain, all }: { domain: Domain; all: Domain[] }) {
 			<ReadOnlyNotice />
 			{/* First: nothing else on this page is trusted until the name is proven again. */}
 			{isUnproven(domain) ? <ProofLost domain={domain} canWrite={canWrite} /> : null}
+			<SpfStatusLine domainId={domain.id} status={spfOff ? undefined : spfTool.data} />
 			{/* The order is the same at every width: the first step, the offer (once, right after the first step so it is on the first screen and "Do this next" still leads; never on a domain
 			    that is fine or still being read; renders nothing unless hosted billing is on), the other steps, then the reports panel. With no offer on the page the panel is first,
 			    where its statement and action are in the first screen. The panel also comes first once there is something to Apply (ConnectReports). The connect-reports step in

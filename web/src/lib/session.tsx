@@ -153,3 +153,13 @@ export function useWriteAccess(): { canWrite: boolean; reason: string | undefine
 	const { canWrite } = useSession();
 	return { canWrite, reason: canWrite ? undefined : READ_ONLY_REASON };
 }
+
+/**
+ * Add-ons of this workspace (src/hosted/plan-limits.ts capability). Self-host has them all; on the hosted service nothing is shown
+ * until the server says so, and an older server that does not say is read as the instance's own mode.
+ */
+export function useAddOns(): { spf_flattening: boolean } {
+	const s = useContext(SessionContext);
+	const hosted = s?.status?.mode === 'saas';
+	return { spf_flattening: s?.me?.add_ons?.spf_flattening ?? !hosted };
+}

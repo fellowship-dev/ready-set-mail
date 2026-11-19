@@ -299,11 +299,40 @@ export const spfFlattenConfig = sqliteTable(
 		flattened_record: text('flattened_record'),
 		ip_count: integer('ip_count'),
 		lookup_count: integer('lookup_count'),
+		/** When the published record last CHANGED (turning flattening on counts). Not bumped by a refresh that found nothing new. */
 		last_flattened_at: integer('last_flattened_at'),
+		/** The one plain sentence about the last problem; null when there is none. */
 		last_error: text('last_error'),
 		created_at: integer('created_at').notNull().default(now),
 		updated_at: integer('updated_at').notNull().default(now),
 		workspace_id: workspaceId(),
+		/** Version for compare-and-set: +1 on every state change. */
+		revision: integer('revision').notNull().default(0),
+		/** Unix seconds: a run holds the row until then (claim first, then write). */
+		lease_until: integer('lease_until'),
+		/** The flattened record before the last change (one step back). */
+		previous_record: text('previous_record'),
+		/** When a run last looked at the row, whatever came of it (queue order: oldest first). */
+		last_attempt_at: integer('last_attempt_at'),
+		/** When a run last resolved the original successfully, changed or not. */
+		last_refreshed_at: integer('last_refreshed_at'),
+		/** Null, or why the record is not being kept current (src/spf/problems.ts SPF_PROBLEMS). */
+		problem_kind: text('problem_kind'),
+		/** When this kind of problem began (cleared when it recovers). */
+		problem_since: integer('problem_since'),
+		last_error_at: integer('last_error_at'),
+		/** Lookups the flattened record needs (RFC 7208 section 4.6.4); `lookup_count` stays what the original needed. */
+		lookups_after: integer('lookups_after'),
+		/** How many includes to inline: `fewest` (as few as the limits need) or `most` (an owner flattening a record that is within the limits). Kept so every refresh makes the same kind of choice. */
+		inline_mode: text('inline_mode').notNull().default('fewest'),
+		/** JSON: what the published record authorises for each inlined include, by include (entries: ip4:/ip6: terms and kept lookup terms). */
+		provider_state: text('provider_state'),
+		/** JSON, same shape: addresses a check saw leave a provider and did not take out of the record yet (ADR 0028). Null: nothing is waiting. */
+		pending_removed: text('pending_removed'),
+		/** When that removal was first seen; a later check at least SPF_PENDING_CONFIRM_SECONDS after it confirms it. */
+		pending_since: integer('pending_since'),
+		/** 1: the record was written with the additions and the held addresses; 0: the combination did not fit both limits, nothing was written. */
+		pending_additions: integer('pending_additions'),
 	},
 	(t) => [index('idx_spf_flatten_workspace').on(t.workspace_id)],
 );
@@ -643,6 +672,8 @@ export const hostedDomains = sqliteTable(
 		tls_rpt_record_id: text('tls_rpt_record_id'),
 		/** The customer's own SPF record at enable time: what the hosted (flattened) record is built from. */
 		spf_source: text('spf_source'),
+		/** JSON: what the published hosted SPF record authorises per inlined include and a removal that waits for a second look (the rule of ADR 0028, decideSpfWrite in src/spf/refresh.ts). */
+		spf_state: text('spf_state'),
 		dmarc_pointer: text('dmarc_pointer'),
 		spf_pointer: text('spf_pointer'),
 		mta_sts_pointer: text('mta_sts_pointer'),

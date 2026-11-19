@@ -46,7 +46,9 @@
 //   GET    /api/audit-log                     — immutable audit log (admin only)
 //   GET    /api/domains/:id/spf-flatten       — SPF flatten config + availability
 //   POST   /api/domains/:id/spf-flatten       — enable SPF flattening (triggers initial flatten)
-//   DELETE /api/domains/:id/spf-flatten       — disable + restore canonical record
+//   DELETE /api/domains/:id/spf-flatten       — disable + restore the original record
+//   GET    /api/domains/:id/spf-flatten/preview — what flattening would write (no write)
+//   POST   /api/domains/:id/spf-flatten/refresh — check now ("Try again"), or Replace after an outside edit
 //   GET    /api/domains/:id/monitor-subs      — list monitoring subscriptions
 //   PATCH  /api/domains/:id/alerts            — toggle domain-level alerts on/off
 //   PATCH  /api/monitor-subs/:id             — toggle subscription active status
@@ -127,6 +129,7 @@ import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberF
 import { isClaimProof, needsPctRecheck, recheckStoredDns, recordFirstDnsCheck, reservePctRecheck } from '../domains/first-check';
 import { DomainServiceError, EVICTED_NOTICE, assertDomainRoom, proofIncomplete, domainCap, domainRefusal, enrollDomain, commitVerifiedDomain, resumeExistingDomain } from '../domains/service';
 import { PlanLimitError, ProofIncompleteError } from '@ready-set-mail/db';
+import { capability, type CapabilityAnswer } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
@@ -142,7 +145,8 @@ import type { TenantContext } from '../tenancy/context';
 import { defaultResolver, type WorkspaceResolver } from '../tenancy/resolver';
 import { CfApiError, CfAuthError, CfConnectionError, CfIncompleteListError, CfNotConfiguredError, CfRecordNotAllowedError, CfZoneNotAllowedError, CfZoneNotFoundError, cfErrorText, incompleteListMessage } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
-import { flattenSpf, restoreSpf, collectIps, buildFlatRecord } from '../email/spf-flattener';
+import { spfLookupsView } from '../spf/breakdown';
+import { adoptSpf, disableSpf, enableSpf, pendingSentence, previewSpf, refreshSpf, restoreSpfBeforeRemoval, spfIsOn, spfView } from '../spf/refresh';
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
@@ -170,8 +174,6 @@ const SELF_HOST_ONLY: ReadonlyArray<{ method: string | null; path: RegExp }> = [
   { method: 'POST', path: /^\/api\/setup\/custom-domain$/ },
   { method: 'POST', path: /^\/api\/settings\/register-destination$/ },
   { method: 'PUT', path: /^\/api\/domains\/[^/]+\/set-default$/ },
-  // SPF flattening rewrites the customer's SPF in place and its daily refresh is not wired for the hosted service (hosted SPF has its own, src/hosted/spf.ts).
-  { method: null, path: /^\/api\/domains\/[^/]+\/spf-flatten(\/preview)?$/ },
   // Monitoring alerts: the email is built from the workspace's own reports domain and sender address (src/monitor/notify.ts), which a hosted workspace has neither of,
   // so the send fails after the baseline moved on (src/tenancy/load.ts derives both for self-host only).
   { method: 'PATCH', path: /^\/api\/domains\/[^/]+\/alerts$/ },
@@ -357,12 +359,18 @@ async function cloudflarePreflight(tenant: TenantContext, domains: Array<{ id: n
   return null;
 }
 
-export async function deleteDomain(tenant: TenantContext, domainId: string, actor?: { id?: string; email?: string }, ctx?: ExecutionContext): Promise<Response> {
+export async function deleteDomain(tenant: TenantContext, domainId: string, actor?: { id?: string; email?: string }, ctx?: ExecutionContext, opts: { leaveSpfRecord?: boolean } = {}): Promise<Response> {
   const id = parseInt(domainId, 10);
   if (isNaN(id)) return err('invalid domain id', 400);
 
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
+
+  // A flattened SPF record goes back to the owner's original first: deleting the row would leave the flattened record in Cloudflare with nothing keeping it up
+  // to date and the original lost. If it cannot be put back, the delete stops and says why, with the original to copy (leave_spf_record=1 deletes anyway).
+  const restored = await restoreSpfBeforeRemoval(tenant, domain, { actor, ctx });
+  if (!restored.ok && !opts.leaveSpfRecord) return json(restored.refusal, 409);
+  if (!restored.ok) logAudit(tenant, { actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user', action: 'spf_flatten.left_in_dns', resource_type: 'domain', resource_id: String(id), resource_name: domain.domain, before_value: { spf_record: restored.refusal.flattened_record }, after_value: { original_record: restored.refusal.original } }, ctx);
 
   // Hosted records (and their quota) go first. If the DNS cleanup fails the domain is kept, so nothing is orphaned.
   try {
@@ -788,6 +796,19 @@ async function _handleApi(
 
   if (getMode(env) === 'saas' && selfHostOnly(method, path)) return err('not available on the hosted service', 404);
 
+  // SPF flattening is an add-on: one gate for every one of its routes (src/hosted/plan-limits.ts). Where it is not available, nothing is read or written and the route
+  // answers 404, except reading the state and turning it off for a domain that already has it: nobody is left with a flattened record they cannot get rid of.
+  const spfGate = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh|adopt))?$/);
+  let spfAccess: CapabilityAnswer | null = null;
+  if (spfGate) {
+    const spfId = parseInt(spfGate[1], 10);
+    spfAccess = await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: isNaN(spfId) ? undefined : spfId });
+    if (!spfAccess.allowed) {
+      const keepsRow = !isNaN(spfId) && !spfGate[2] && (method === 'GET' || method === 'DELETE') && !!(await tenant.scope.spf.get(spfId));
+      if (!keepsRow) return err('not available on the hosted service', 404);
+    }
+  }
+
   // GET /api/me — who the caller is in this workspace (the dashboard gates controls on `role`)
   const instanceOwner = isInstanceOwner(env, { kind: (workspace as AuthedWorkspace).kind, email: userBySession?.email, role: workspace.role, workspaceId: workspace.workspaceId });
   // Operator-only wording (the counting note's AUTHSERV_* settings) is for the person who runs the instance, never a hosted customer.
@@ -800,6 +821,8 @@ async function _handleApi(
     return json({
       ...(profile ? { whose_email: profile.whose_email, ...(profile.whose_email === 'clients' ? { agency_name: profile.organization } : {}) } : {}),
       instance_owner: instanceOwner,
+      // What this workspace may use beyond the base product: true when allowed, or when it still has something turned on that it must be able to see and turn off.
+      add_ons: { spf_flattening: (await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId })).allowed || await tenant.scope.spf.any() },
       user: userBySession,
       role: workspace.role ?? 'member',
       workspace_id: tenant.workspaceId,
@@ -1318,6 +1341,16 @@ async function _handleApi(
       }
 
       const spfFlatConfig = await tenant.scope.spf.get(domain.id);
+      // The lookups the record needs: stored by the daily check and when a domain is added, and counted here, with this request's resolver, when nothing is stored
+      // yet or the record changed since (a self-hosted instance reads DNS through its own resolver; the count must not depend on which path stored it first).
+      let spfLookupCount = domain.spf_lookup_count ?? null;
+      if (resolved.spf_record && (spfLookupCount === null || resolved.spf_record !== domain.spf_record)) {
+        const s = await lookupSpf(domain.domain, dnsResolver).catch(() => null);
+        if (s?.lookup_count !== undefined) {
+          spfLookupCount = s.lookup_count;
+          await tenant.scope.domains.updateSpfLookupCount(domain.id, spfLookupCount).catch(() => {});
+        }
+      }
       return json({
         domain_id: domain.id,
         domain: domain.domain,
@@ -1328,7 +1361,7 @@ async function _handleApi(
         dmarc: { ...dmarcData, auth_record: authRecordData, effective: resolved.dmarc ? { policy: resolved.dmarc.policy, inherited_from: resolved.dmarc.inherited_from, issue: resolved.dmarc.issue, record: inheritedRecord } : null },
         // DNS said the name itself does not exist.
         nxdomain: resolved.nxdomain === true,
-        spf: { record: spfLiveData ?? domain.spf_record ?? null, lookup_count: domain.spf_lookup_count ?? null, flattening_active: !!(spfFlatConfig?.enabled) },
+        spf: { record: spfLiveData ?? domain.spf_record ?? null, lookup_count: spfLookupCount, flattening_active: spfIsOn(spfFlatConfig) },
         dkim: dkimData,
         routing: { ...routingData, reports_domain: rd ?? null, null_sender_spf: nullSenderData.spf, null_sender_dmarc: nullSenderData.dmarc },
         // Checks whose DNS lookup failed; their values above are "unknown", not "absent".
@@ -1468,9 +1501,9 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
       if (!tenant.hasCloudflare()) return cfFailure(new CfNotConfiguredError());
 
-      // Block if SPF flattening is active — wizard edits would be overwritten by next cron run
+      // Ready Set Mail manages the record while flattening is on: a hand edit here is refused (an edit made in Cloudflare is detected by the daily check, never overwritten)
       const flatConfig = await tenant.scope.spf.get(id);
-      if (flatConfig?.enabled) return err('SPF flattening is active for this domain. Disable it before editing the SPF record manually.', 409);
+      if (spfIsOn(flatConfig)) return err('SPF flattening is on for this domain. Turn it off before editing the SPF record here.', 409);
 
       const body = await parseBody<{ record?: string; confirm_overwrite?: boolean }>(request);
       if (!body.record) return err('record content is required', 400);
@@ -1499,18 +1532,18 @@ async function _handleApi(
         cf = await tenant.cfFor(domain.domain);
         zoneId = (await cf.zoneFor(domain.domain)).id;
         existingSpf = (await cf.listDnsRecords(zoneId, { type: 'TXT', name: recordName, per_page: 100 }))
-          .find(r => r.content.replace(/^"|"$/g, '').startsWith('v=spf1'));
+          .find(r => decodeTxtData(r.content).startsWith('v=spf1'));
       } catch (e) {
         return cfFailure(e);
       }
       // The one SPF rule against the live record: a ptr it already has may stay (the wizard warns), a new ptr is refused.
-      const ptrProblem = validateSpfRecord(record, existingSpf ? existingSpf.content.replace(/^"|"$/g, '') : null);
+      const ptrProblem = validateSpfRecord(record, existingSpf ? decodeTxtData(existingSpf.content) : null);
       if (ptrProblem) return err(ptrProblem, 400);
       const existingId = existingSpf?.id;
 
       // Safety: require explicit confirmation when overwriting an existing record
       if (existingSpf && !body.confirm_overwrite) {
-        return json({ ok: false, needs_confirmation: true, existing_record: existingSpf.content.replace(/^"|"$/g, ''), proposed_record: record }, 200);
+        return json({ ok: false, needs_confirmation: true, existing_record: decodeTxtData(existingSpf.content), proposed_record: record }, 200);
       }
 
       let written;
@@ -1757,7 +1790,7 @@ async function _handleApi(
     // DELETE /api/domains/:id
     const domainDeleteMatch = path.match(/^\/api\/domains\/([^/]+)$/);
     if (domainDeleteMatch && method === 'DELETE') {
-      return await deleteDomain(tenant, domainDeleteMatch[1], { id: userBySession?.id, email: userBySession?.email }, ctx);
+      return await deleteDomain(tenant, domainDeleteMatch[1], { id: userBySession?.id, email: userBySession?.email }, ctx, { leaveSpfRecord: url.searchParams.get('leave_spf_record') === '1' });
     }
     // GET /api/reports
     if (path === '/api/reports' && method === 'GET') {
@@ -1929,120 +1962,87 @@ async function _handleApi(
       return json({ ok: true });
     }
 
-    // SPF flatten preview — resolve IPs without writing to DNS
-    const spfPreviewMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten\/preview$/);
-    if (spfPreviewMatch && method === 'GET') {
-      const id = parseInt(spfPreviewMatch[1], 10);
-      if (isNaN(id)) return err('invalid domain id', 400);
-      const domain = await tenant.scope.domains.getById(id);
+    // SPF flattening: GET /api/domains/:id/spf-flatten, /preview; POST /spf-flatten (turn on), /spf-flatten/refresh ("Try again", or Replace after an outside edit); DELETE (turn off).
+    // The gate (capability above) already answered 404 where it is not available. Everything below is src/spf/refresh.ts: the one engine.
+    // GET /api/domains/:id/spf-lookups — where the lookups of the SPF record go (any workspace; reading only)
+    const spfLookupsMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-lookups$/);
+    if (spfLookupsMatch) {
+      if (method !== 'GET') return err('method not allowed', 405);
+      const domain = await tenant.scope.domains.getById(parseInt(spfLookupsMatch[1], 10));
       if (!domain) return err('domain not found', 404);
-      try {
-        const { ips, extra, allQualifier } = await collectIps(domain.domain);
-        const flattened_record = buildFlatRecord(ips, extra, allQualifier);
-        return json({ flattened_record, ip_count: ips.length });
-      } catch (e: any) {
-        return err(e.message ?? 'Failed to resolve SPF', 500);
-      }
+      const view = await spfLookupsView(tenant, domain);
+      return json(view);
     }
 
-    // SPF flatten routes — GET/POST/DELETE /api/domains/:id/spf-flatten
-    const spfFlattenMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten$/);
-    if (spfFlattenMatch) {
-      const id = parseInt(spfFlattenMatch[1], 10);
+    const spfMatch = path.match(/^\/api\/domains\/([^/]+)\/spf-flatten(?:\/(preview|refresh|adopt))?$/);
+    if (spfMatch) {
+      const id = parseInt(spfMatch[1], 10);
       if (isNaN(id)) return err('invalid domain id', 400);
       const domain = await tenant.scope.domains.getById(id);
       if (!domain) return err('domain not found', 404);
-
+      const actor = { id: userBySession?.id, email: userBySession?.email };
       const available = tenant.hasCloudflare();
+      const access = spfAccess ?? await capability(env, 'spf_flattening', { workspaceId: tenant.workspaceId, domainId: id });
+      const sub = spfMatch[2];
 
-      // GET — return current config + availability
+      if (sub === 'preview') {
+        if (method !== 'GET') return err('method not allowed', 405);
+        const p = await previewSpf(tenant, domain);
+        return json({
+          original: p.original, within_limits: p.within_limits, problem: p.problem, live: p.live,
+          flat: p.flat && { record: p.flat.record, bytes: p.flat.bytes, ip_count: p.flat.ipCount, inlined: p.flat.inlined, kept_includes: p.flat.keptIncludes, lookups_before: p.flat.lookupsBefore, lookups_after: p.flat.lookupsAfter },
+        });
+      }
+
+      if (sub === 'refresh') {
+        if (method !== 'POST') return err('method not allowed', 405);
+        const row = await tenant.scope.spf.get(id);
+        if (!row || row.enabled !== 1) return err('SPF flattening is not on for this domain', 404);
+        const body = await parseBody<{ replace?: boolean }>(request).catch(() => ({} as { replace?: boolean }));
+        const r = await refreshSpf(tenant, row, { manual: true, takeOver: body.replace === true, actor, ctx });
+        if (r.outcome === 'skipped') return err('A check is already running for this domain. Try again in a minute.', 409);
+        const config = spfView((await tenant.scope.spf.get(id))!);
+        // A removal is waiting for its second look: say when it can be confirmed, truthfully, whether or not this check wrote something.
+        return json({ ok: true, outcome: r.outcome, config, ...(config.pending ? { message: pendingSentence(config.pending, Math.floor(Date.now() / 1000)) } : {}) });
+      }
+
+      // POST .../adopt — the record was edited in Cloudflare: keep the edit as the new original and flatten from it
+      if (sub === 'adopt') {
+        if (method !== 'POST') return err('method not allowed', 405);
+        const r = await adoptSpf(tenant, domain, { actor, ctx });
+        if (!r.ok) {
+          if ('conflict' in r) return err(r.conflict === 'not_on' ? 'SPF flattening is not on for this domain' : 'A check is already running for this domain. Try again in a minute.', r.conflict === 'not_on' ? 404 : 409);
+          return json({ error: r.refused.message, code: r.refused.kind }, 422);
+        }
+        return json({ ok: true, outcome: r.outcome, config: spfView(r.config) });
+      }
+
+      // GET — the state, and whether the tool is available
       if (method === 'GET') {
         const config = await tenant.scope.spf.get(id);
-        return json({ available, config: config ?? null, lookup_count: domain.spf_lookup_count ?? null });
+        return json({ available, access: { allowed: access.allowed }, config: config ? spfView(config) : null, lookup_count: domain.spf_lookup_count ?? null });
       }
 
-      // POST — enable + trigger initial flatten
+      // POST — turn on: resolve from what is published now, write, read back
       if (method === 'POST') {
         if (!available) return err('Cloudflare credentials not configured — complete the setup wizard first', 422);
-
-        // Walk lookup count first (for display)
-        let spfRecord;
-        try {
-          spfRecord = await lookupSpf(domain.domain);
-        } catch (e) {
-          return err(`DNS lookup failed: ${e instanceof Error ? e.message : String(e)}`, 502);
+        const body = await parseBody<{ anyway?: boolean }>(request).catch(() => ({} as { anyway?: boolean }));
+        const r = await enableSpf(tenant, domain, { anyway: body.anyway === true }, { actor, ctx });
+        if (!r.ok) {
+          if ('conflict' in r) return err(r.conflict === 'already_on' ? 'SPF flattening is already on for this domain.' : 'Turning SPF flattening off did not finish for this domain. Finish that first.', 409);
+          return json({ error: r.refused.message, code: r.refused.kind }, 422);
         }
-        const lookup_count = spfRecord?.lookup_count ?? null;
-
-        // Do initial flatten
-        let result;
-        try {
-          result = await flattenSpf(tenant, domain.domain);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          // Save config with error so user can see it
-          await tenant.scope.spf.upsert({
-            domain_id: id,
-            canonical_record: spfRecord?.raw ?? '',
-            lookup_count,
-            cf_record_id: null,
-          });
-          await tenant.scope.spf.updateError(id, msg);
-          return err(msg, 422);
-        }
-
-        await tenant.scope.spf.upsert({
-          domain_id: id,
-          canonical_record: result.canonical_record,
-          lookup_count,
-          cf_record_id: result.cf_record_id,
-        });
-        await tenant.scope.spf.updateResult(id, result.flattened_record, result.ip_count, result.cf_record_id);
-
-        logAudit(tenant, {
-              actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-          action: 'spf_flatten.enable',
-          resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-          before_value: { spf_record: result.canonical_record },
-          after_value: { spf_record: result.flattened_record, ip_count: result.ip_count },
-        }, ctx);
-        if (result.cf_record_id) {
-          logAudit(tenant, {
-                  actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-            action: 'dns.update',
-            resource_type: 'dns_record', resource_id: result.cf_record_id, resource_name: `TXT _spf.${domain.domain}`,
-            before_value: { content: result.canonical_record },
-            after_value: { content: result.flattened_record },
-          }, ctx);
-        }
-
-        const config = await tenant.scope.spf.get(id);
-        return json({ ok: true, config }, 201);
+        return json({ ok: true, config: spfView(r.config) }, 201);
       }
 
-      // DELETE — disable + restore canonical record
+      // DELETE — turn off: always possible where there is something to turn off, entitled or not
       if (method === 'DELETE') {
-        const config = await tenant.scope.spf.get(id);
-        if (!config) return err('SPF flattening not configured for this domain', 404);
-
-        if (available && config.cf_record_id && config.canonical_record) {
-          try {
-            await restoreSpf(tenant, domain.domain, config.cf_record_id, config.canonical_record);
-          } catch (e) {
-            console.warn(`[spf-flatten] restore failed for ${domain.domain}:`, e);
-            // Non-fatal — delete config anyway so user can retry
-          }
+        const r = await disableSpf(tenant, domain, { actor, ctx });
+        if (!r.ok) {
+          if ('notConfigured' in r) return err('SPF flattening is not configured for this domain', 404);
+          return json({ error: r.restoreFailed, code: 'restore_failed', original: r.original }, 502);
         }
-
-        logAudit(tenant, {
-              actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-          action: 'spf_flatten.disable',
-          resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-          before_value: { spf_record: config.flattened_record ?? config.canonical_record },
-          after_value: { spf_record: config.canonical_record },
-        }, ctx);
-        await tenant.scope.spf.delete(id);
-        return new Response(null, { status: 204 });
+        return r.restored ? new Response(null, { status: 204 }) : json({ ok: true, restored: false, why: r.why }, 200);
       }
     }
 

@@ -125,6 +125,8 @@ const ROUTES: Route[] = [
   { method: 'POST', path: '/api/domains/2/spf-flatten', body: {}, kind: 'denied' },
   { method: 'DELETE', path: '/api/domains/2/spf-flatten', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/spf-flatten/preview', kind: 'denied' },
+  { method: 'POST', path: '/api/domains/2/spf-flatten/adopt', body: {}, kind: 'denied' },
+  { method: 'GET', path: '/api/domains/2/spf-lookups', kind: 'denied' },
   { method: 'GET', path: '/api/domains/2/mta-sts', kind: 'denied' },
   { method: 'POST', path: '/api/domains/2/mta-sts', body: { mode: 'enforce' }, kind: 'denied' },
   { method: 'PUT', path: '/api/domains/2/mta-sts', body: { mode: 'enforce' }, kind: 'denied' },

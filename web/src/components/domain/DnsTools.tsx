@@ -1,17 +1,18 @@
 import type { KeptRecord } from '../../lib/removal-notice';
 import { Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Info, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, CircleDashed, Clock, Info, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { useDnsToolsOff } from '../../lib/hosted';
 import { api, errorMessage } from '../../lib/api';
 import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
+import { useAddOns } from '../../lib/session';
+import { SpfCard } from './SpfCard';
 import { cardState, type CardState } from '../../lib/mta-sts';
 import type { MtaStsStatus, SpfFlatStatus } from '../../lib/types';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 import { ConfirmDialog } from './ConfirmDialog';
-import { SPF_LOOKUP_LIMIT, spfLookupJudgement } from '@ready-set-mail/dns-checks/spf-record';
 
 interface ToolProps {
 	domainId: number;
@@ -91,44 +92,6 @@ const availableBadge = (
 	</Badge>
 );
 
-function lookupBadge(count: number): { variant: BadgeProps['variant']; word: string; Icon: typeof CheckCircle2 } {
-	const j = spfLookupJudgement(count);
-	if (j.level === 'over') return { variant: 'danger', word: j.label.toLowerCase(), Icon: AlertTriangle };
-	if (j.level !== 'ok') return { variant: 'warning', word: j.label.toLowerCase(), Icon: AlertTriangle };
-	return { variant: 'success', word: j.label.toLowerCase(), Icon: CheckCircle2 };
-}
-
-function spfCard(id: number, s: SpfFlatStatus) {
-	const active = !!s.config?.enabled;
-	const count = s.lookup_count ?? s.config?.lookup_count ?? null;
-	let badge: ReactNode = availableBadge;
-	if (active) badge = activeBadge;
-	else if (count !== null) {
-		const { variant, word, Icon } = lookupBadge(count);
-		badge = (
-			<Badge variant={variant}>
-				<Icon aria-hidden />
-				{count}/{SPF_LOOKUP_LIMIT} lookups ({word})
-			</Badge>
-		);
-	}
-	return (
-		<ToolCard
-			domainId={id}
-			title="SPF flattening"
-			badge={badge}
-			active={active}
-			activeText={`${s.config?.ip_count ?? '?'} IPs, as resolved when it ran. Not updated when your providers change theirs.`}
-			inactiveText="Resolve SPF includes to raw IPs to stay under the 10-lookup limit."
-			configureTo={`/domains/${id}/spf-flatten`}
-			disablePath={`/api/domains/${id}/spf-flatten`}
-			disableKey={domainKeys.spf(id)}
-			disableTitle="Disable SPF flattening?"
-			disableDescription="Ready Set Mail restores your original SPF record and stops re-resolving it daily. Your lookup count may go back over the limit."
-		/>
-	);
-}
-
 const CARD_BADGE: Record<CardState, { variant: BadgeProps['variant']; Icon: typeof CheckCircle2 }> = {
 	off: { variant: 'outline', Icon: CircleDashed },
 	setting_up: { variant: 'info', Icon: Clock },
@@ -175,7 +138,7 @@ const dnsToolsSummary = (spfListed: boolean) => (spfListed ? 'Optional tools for
 const spfListed = (q: UseQueryResult<SpfFlatStatus>) => q.isSuccess && (q.data.available || !!q.data.config);
 
 export function DnsTools({ domainId }: { domainId: number }) {
-	// Hosted: no SPF flattening (the routes are off there; a hosted-records domain's SPF is flattened by the hosted service). MTA-STS is shown everywhere with its real
+	// Hosted: SPF flattening is an add-on, shown only where the workspace has it (src/hosted/plan-limits.ts capability); a hosted-records domain's SPF is flattened by the hosted service. MTA-STS is shown everywhere with its real
 	// state: the server says whether it can be turned on here (the capability check) and, when it cannot, why.
 	const { spfOff } = useDnsToolsOff(domainId);
 	const spf = useSpfFlatten(domainId, !spfOff);
@@ -183,7 +146,7 @@ export function DnsTools({ domainId }: { domainId: number }) {
 	return (
 		<Section title="DNS tools" description={dnsToolsSummary(spfListed(spf))}>
 			<div className="grid gap-3 md:grid-cols-2">
-				{spfOff ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => spfCard(domainId, d)} />}
+				{spfOff ? null : <Slot q={spf} title="SPF flattening" show={(d) => d.available || !!d.config} render={(d) => <SpfCard domainId={domainId} status={d} />} />}
 				<Slot q={mta} title="MTA-STS" show={() => true} render={(d) => <MtaStsCard id={domainId} s={d} />} />
 			</div>
 		</Section>

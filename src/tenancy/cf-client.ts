@@ -10,6 +10,7 @@
 
 import { assertDnsWriteAllowed, type DnsWrite } from '../dns/write-policy';
 import type { Mode } from './mode';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
 
@@ -493,7 +494,7 @@ export class CfClient {
     this.#checkDnsWrite('DELETE', path, undefined, { expect });
     try {
       const stored = await this.request<Pick<CfDnsRecord, 'type' | 'name' | 'content'>>('GET', path);
-      const norm = (v: string) => String(v ?? '').trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
+      const norm = (v: string) => decodeTxtData(String(v ?? '')).toLowerCase().replace(/\.$/, '');
       const same = norm(stored?.type) === norm(expect.type) && norm(stored?.name) === norm(expect.name)
         && (expect.content === undefined || (typeof expect.content === 'string' ? norm(stored?.content) === norm(expect.content) : expect.content.test(String(stored?.content ?? ''))));
       if (!same) throw new CfRecordChangedError(`the record ${recordId} is not the ${expect.type} record ${expect.name} that was meant to be removed`, { method: 'DELETE', type: stored?.type, name: stored?.name, path });

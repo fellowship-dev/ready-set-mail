@@ -10,6 +10,7 @@
 // This is the one builder behind the hosted report address too (`reviewReportRecord` in src/hosted/report-address.ts): both entry points
 // (the domain page and the first-run Apply) get their record from here, by the address-count rule in packages/dns-checks/src/dmarc-rua.ts.
 
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 import { RUA_ADDRESS_LIMIT, isDmarcRecord, lookupDmarc, parseDmarcRecord, parseDmarcTags, recordHasAddress, ruaEntries, ruaLimitSentence, withReportAddress, type Resolver } from '@ready-set-mail/dns-checks';
 
 /** What the public DNS says applies to a name that has no DMARC record of its own. */
@@ -36,9 +37,6 @@ export type DmarcDecision =
   | { action: 'update'; before: string; record: string; reason: string }
   | { action: 'create'; record: string; reason: string }
   | { action: 'skip'; reason: string };
-
-/** Cloudflare returns TXT content quoted in some responses. */
-export const unquote = (s: string): string => s.trim().replace(/^"([\s\S]*)"$/, '$1');
 
 const isPolicy = (v: string | undefined): v is 'none' | 'quarantine' | 'reject' => v === 'none' || v === 'quarantine' || v === 'reject';
 const mode = (v: string | undefined): 's' | 'r' | null => (v?.toLowerCase() === 's' ? 's' : v?.toLowerCase() === 'r' ? 'r' : null);
@@ -78,7 +76,7 @@ export function planDmarc(input: DmarcPlanInput & { ruaLimit: true }): DmarcDeci
 export function planDmarc(input: DmarcPlanInput & { ruaLimit?: false }): WriteDecision;
 export function planDmarc(input: DmarcPlanInput): DmarcDecision {
   const rua = input.rua?.trim() || null;
-  const own = input.ownRecords.map(unquote).filter(isDmarcRecord);
+  const own = input.ownRecords.map(decodeTxtData).filter(isDmarcRecord);
   if (own.length > 1) return { action: 'skip', reason: 'There is more than one DMARC record. Receivers ignore all of them until only one is left.' };
   if (own.length === 1) {
     const record = own[0].trim();

@@ -1,6 +1,6 @@
 import { removalNotice, type KeptRecord, type RemovedState } from '../../lib/removal-notice';
 import { Alert, Badge, Button, Card, CardContent, EmptyState, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, toast } from '@ready-set-mail/ui';
-import { useHosted } from '../../lib/session';
+import { useAddOns, useHosted } from '../../lib/session';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Download, PauseCircle, PlayCircle, Star } from 'lucide-react';
 import { useState } from 'react';
@@ -13,7 +13,7 @@ import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteBu
 import { ApiError, api, errorMessage } from '../../lib/api';
 import { dmarcRecordProblem, hasReportAddress } from '../../lib/dmarc-record';
 import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
-import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useMtaSts, useOnboardingStatus, type MonitorSub } from '../../lib/domain-queries';
+import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useMtaSts, useOnboardingStatus, useSpfFlatten, type MonitorSub } from '../../lib/domain-queries';
 import { maxAgeWords } from '../../lib/mta-sts';
 import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
@@ -180,11 +180,15 @@ function DangerZone({ domain }: { domain: Domain }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const [open, setOpen] = useState(false);
+	// A flattened SPF record: the original goes back first, and the person is told which one. If it cannot, the delete stops (409) and they read why.
+	const addOn = useAddOns().spf_flattening;
+	const spf = useSpfFlatten(domain.id, addOn);
+	const flattened = addOn ? (spf.data?.config ?? null) : null;
 	// Asked only when the dialog opens (the answer costs a DNS lookup): is MTA-STS enforcing, so senders may still hold its policy?
 	const mta = useMtaSts(domain.id, open);
 	const enforcing = mta.data?.config?.enabled && mta.data.config.mode === 'enforce';
 	const remove = useMutation({
-		mutationFn: () => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}`, { method: 'DELETE' }),
+		mutationFn: (leaveSpf: boolean) => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}${leaveSpf ? '?leave_spf_record=1' : ''}`, { method: 'DELETE' }),
 		onSuccess: async (res) => {
 			const kept = res?.kept ?? [];
 			toast({ title: 'Domain removed', description: domain.domain, variant: 'success' });
@@ -196,6 +200,7 @@ function DangerZone({ domain }: { domain: Domain }) {
 	});
 	// 502: hosted DNS cleanup failed and the server kept the domain. Say so, and let the user try again.
 	const cleanupFailed = remove.error instanceof ApiError && remove.error.status === 502;
+	const stop = remove.error instanceof ApiError && remove.error.status === 409 && (remove.error.body as { code?: string } | undefined)?.code === 'spf_restore_failed' ? (remove.error.body as { reason: string; original: string }) : null;
 	return (
 		<Section title="Danger zone">
 			<div className="space-y-3 rounded-lg border border-danger/40 p-4">
@@ -211,14 +216,31 @@ function DangerZone({ domain }: { domain: Domain }) {
 					if (!o) remove.reset();
 				}}
 				title={`Remove ${domain.domain}?`}
-				description={`All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.${enforcing ? ` MTA-STS is enforcing: senders that already fetched the policy may refuse to deliver to mail servers that are not in it for up to ${maxAgeWords(mta.data?.max_age ?? 604800)}.` : ''}`}
-				confirmLabel={cleanupFailed ? 'Retry' : 'Yes, remove'}
 				busyLabel="Removing…"
 				variant="danger"
 				busy={remove.isPending}
-				error={remove.isError ? (cleanupFailed ? `${errorMessage(remove.error)} ${domain.domain} was NOT deleted. Nothing was removed, so you can retry.` : errorMessage(remove.error)) : null}
-				onConfirm={() => remove.mutate()}
-			/>
+				description={stop ? null : `All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.${enforcing ? ` MTA-STS is enforcing: senders that already fetched the policy may refuse to deliver to mail servers that are not in it for up to ${maxAgeWords(mta.data?.max_age ?? 604800)}.` : ''}`}
+				confirmLabel={cleanupFailed ? 'Retry' : stop ? 'Try again' : 'Yes, remove'}
+				error={remove.isError && !stop ? (cleanupFailed ? `${errorMessage(remove.error)} ${domain.domain} was NOT deleted. Nothing was removed, so you can retry.` : errorMessage(remove.error)) : null}
+				onConfirm={() => remove.mutate(false)}
+			>
+				{flattened && !stop ? (
+					<div className="space-y-2 text-sm" data-testid="spf-delete-note">
+						<p className="text-ink-1">SPF flattening is on for this domain. Before anything is deleted, this original SPF record is put back in Cloudflare. If it cannot be put back, nothing is deleted.</p>
+						<CopyField label="Your original SPF record" value={flattened.original_record} />
+					</div>
+				) : null}
+				{stop ? (
+					<div className="space-y-3 text-sm" data-testid="spf-delete-stop">
+						<p className="text-ink-1">Nothing was deleted: the flattened SPF record could not be put back. {stop.reason} Copy the original below into Cloudflare, then try again.</p>
+						<CopyField label="Your original SPF record" value={stop.original} />
+						<p className="text-ink-2">If you delete anyway, the flattened record stays in Cloudflare and nothing will refresh it again.</p>
+						<Button variant="danger" loading={remove.isPending} onClick={() => remove.mutate(true)}>
+							Delete anyway
+						</Button>
+					</div>
+				) : null}
+			</ConfirmDialog>
 		</Section>
 	);
 }

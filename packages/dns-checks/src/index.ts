@@ -1,6 +1,8 @@
 export * from './doh';
+export { encodeTxtData, TXT_STRING_MAX_BYTES } from './txt';
 export * from './org-domain';
 export * from './spf';
+export * from './spf-flatten';
 export * from './dmarc';
 export * from './effective-policy';
 export * from './name-exists';

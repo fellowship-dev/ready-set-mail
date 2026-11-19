@@ -58,6 +58,18 @@ export const SINGLE: Single[] = [
   },
   { concept: 'MTA-STS policy host (Cloudflare for SaaS custom hostnames and Worker routes in the operator\'s zone)', signature: /custom_hostnames/, owners: ['src/mta-sts/policy-host.ts'] },
   {
+    concept: 'SPF flattening (resolving a stored original into a flat record)',
+    // the names of the old and the new walkers: a second flattener that resolves includes into ip4:/ip6: terms would reuse or reinvent them
+    signature: /\bcollectIps\b|\bbuildFlatRecord\b|\bwithSpfSource\b|\bpreviewFlatten\b|\bflattenFromSource\b/,
+    owners: ['packages/dns-checks/src/spf-flatten.ts', 'src/spf/', 'src/hosted/service.ts', 'src/hosted/cron.ts'],
+  },
+  {
+    concept: 'TXT content (quotes and character strings of a TXT record)',
+    // stripping the outer quotes of TXT content by hand: decodeTxtData reads every form (one string, several quoted strings, unquoted), encodeTxtData writes it
+    signature: /\.replace\(\/\^"\|"\$\/g/,
+    owners: ['packages/dns-checks/src/txt.ts'],
+  },
+  {
     concept: 'Assistants a person may connect (names and connect steps)',
     // the steps' own words, and the list's name: a second list of assistants would drift from the one the Agents page and the instance status read
     signature: /Add custom connector|MCP: Add Server|\bAGENT_CLIENTS\s*(?::|=)/,
@@ -231,6 +243,13 @@ export const MUST_NOT_GROW: Duplicate[] = [
  * who agreed (the reviewer), and the date (YYYY-MM-DD, not in the future). Empty today.
  */
 export const ALLOW: Allow[] = [
+  {
+    concept: 'TXT content (quotes and character strings of a TXT record)',
+    file: 'tools/audit-fleet/lib/doh.ts',
+    reason: 'The operator audit tool has its own small DNS-over-HTTPS client by design (known duplicate "DNS-over-HTTPS endpoints"); it leaves with that consolidation.',
+    by: 'coordinator, round 2 of PR 189',
+    date: '2026-11-16',
+  },
   {
     concept: 'How reports reach a name (the reach decision)',
     file: 'web/src/components/reports/ConnectReports.tsx',

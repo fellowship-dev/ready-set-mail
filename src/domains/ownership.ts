@@ -22,6 +22,8 @@ import { removeAuthRecord, removeHostedRecords, removeMtaSts } from './remove';
 import { checkDelegation, reassessZoneHolders } from './proof-recheck';
 import type { TenantContext } from '../tenancy/context';
 import { getMode } from '../tenancy/mode';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
+import { stopSpf } from '../spf/refresh';
 import { domainRoom, planLimits, planLimitWaitingBody, type DomainUse } from '../hosted/plan-limits';
 
 export type VerifiedVia = 'selfhost' | 'cloudflare' | 'txt' | 'parent' | 'existing';
@@ -256,7 +258,7 @@ export async function provenByTxt(claim: DomainClaimRow, resolver: Resolver): Pr
   const res = await resolver.txt(claimTxtName(claim.domain));
   if (res.status === 'error') return { ok: false, reason: `DNS lookup failed (${res.error ?? 'error'}) — try again in a minute`, code: 'lookup_failed' };
   const want = CLAIM_TXT_PREFIX + claim.token;
-  const holds = (records: string[], value: string) => records.some(r => r.trim().replace(/^"|"$/g, '').trim() === value);
+  const holds = (records: string[], value: string) => records.some(r => decodeTxtData(r).trim() === value);
   if (holds(res.records, want)) return { ok: true };
   // A claim made before the rename may already be published under the old record name: accept it too.
   const legacy = await resolver.txt(`${LEGACY_CLAIM_TXT_LABEL}.${claim.domain}`);
@@ -318,6 +320,7 @@ async function finishEviction(tenant: TenantContext, domain: string): Promise<vo
       cleanup = 'failed';
       console.warn(`[eviction] hosted cleanup failed for domain ${row.id}:`, e instanceof Error ? e.message : e);
     }
+    await stopSpf(evicted, row, 'proof_lost'); // the name is another workspace's now: no refresh writes to it
     await removeMtaSts(evicted, row, undefined, undefined, 'evicted');
     await removeAuthRecord(evicted, row);
     if (row.id !== holderDomainId) await lookups.detach(row.id, Math.floor(Date.now() / 1000)); // the holder's own row went with the insert

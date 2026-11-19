@@ -101,6 +101,20 @@ export interface SpfFlattenConfig {
   last_error: string | null;
   created_at: number;
   updated_at: number;
+  revision: number;
+  lease_until: number | null;
+  previous_record: string | null;
+  last_attempt_at: number | null;
+  last_refreshed_at: number | null;
+  problem_kind: string | null;
+  problem_since: number | null;
+  last_error_at: number | null;
+  lookups_after: number | null;
+  inline_mode: 'fewest' | 'most';
+  provider_state: string | null;
+  pending_removed: string | null;
+  pending_since: number | null;
+  pending_additions: number | null;
 }
 
 export type MtaStsMode = 'testing' | 'enforce';

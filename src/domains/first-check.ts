@@ -5,6 +5,7 @@
 // answer when this isolate read it in the last minute, else one snapshot, the same `snapshotDns` the daily refresh runs.
 // The write goes through `recordDnsCheck`, so "no record" is stored only when DNS answered so. A read in which SPF or DMARC
 // got no answer stores nothing (the card keeps saying "not checked yet", never "missing"). It never fails the proof.
+import { resolverFor } from '../dns/resolver';
 import type { Resolver } from '@ready-set-mail/dns-checks';
 import { governingTags, snapshotDns, type DnsSnapshot } from '../email/dns-snapshot';
 import type { TenantContext } from '../tenancy/context';
@@ -39,7 +40,7 @@ export async function recordFirstDnsCheck(
 ): Promise<'preview' | 'snapshot' | null> {
   try {
     const fresh = cachedPreview(domain, opts.now);
-    const found = fresh ? snapshotFromPreview(fresh) : await snapshotDns(domain, opts.resolver);
+    const found = fresh ? snapshotFromPreview(fresh) : await snapshotDns(domain, opts.resolver ?? resolverFor(tenant.env));
     if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(domainId, found.spf_lookup_count);
     // Only a complete read is stored: a half-answered one would turn "not checked yet" into "last check failed" on a domain
     // proven seconds ago. The daily refresh and the domain page read it again either way.

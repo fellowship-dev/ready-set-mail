@@ -94,6 +94,28 @@ function StepList({ actions, first, total, canWrite, onRetry }: { actions: Domai
 							<span className="text-sm font-medium text-ink-2">Do this: </span>
 							{a.do}
 						</p>
+						{a.retry ? (
+							<div>
+								<Button variant="secondary" size="sm" onClick={onRetry}>
+									<RefreshCw aria-hidden />
+									Check again
+								</Button>
+							</div>
+						) : a.connectReports && canWrite ? (
+							<p className="text-sm">
+								<button type="button" onClick={focusConnectReports} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
+									{a.cta ?? 'Connect reports'}
+								</button>
+							</p>
+						) : a.to && (canWrite || !a.writes) ? (
+							<p className="text-sm">
+								<Link to={a.to} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
+									{a.cta ?? 'Open'}
+								</Link>
+							</p>
+						) : a.to ? (
+							<p className="text-sm text-ink-2">An owner or admin makes this change.</p>
+						) : null}
 						<p className="max-w-prose text-sm text-ink-2">
 							<span className="font-medium text-ink-1">Why: </span>
 							{a.why}
@@ -104,27 +126,9 @@ function StepList({ actions, first, total, canWrite, onRetry }: { actions: Domai
 								<code className="break-all font-mono text-xs text-ink-1">{a.record}</code>
 							</p>
 						) : null}
-						<div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-0.5 text-sm">
-							<span className="text-ink-2">
-								Who: <span className="text-ink-1">{a.who}</span>
-							</span>
-							{a.retry ? (
-								<Button variant="secondary" size="sm" onClick={onRetry}>
-									<RefreshCw aria-hidden />
-									Check again
-								</Button>
-							) : a.connectReports && canWrite ? (
-								<button type="button" onClick={focusConnectReports} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
-									{a.cta ?? 'Connect reports'}
-								</button>
-							) : a.to && (canWrite || !a.writes) ? (
-								<Link to={a.to} className="rounded-sm font-medium text-brand-ink underline underline-offset-4">
-									{a.cta ?? 'Open'}
-								</Link>
-							) : a.to ? (
-								<span className="text-ink-2">An owner or admin makes this change.</span>
-							) : null}
-						</div>
+						<p className="text-sm text-ink-2">
+							Who: <span className="text-ink-1">{a.who}</span>
+						</p>
 					</div>
 				</li>
 			))}

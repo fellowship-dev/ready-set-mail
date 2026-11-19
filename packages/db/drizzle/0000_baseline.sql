@@ -407,6 +407,7 @@ CREATE TABLE `hosted_domains` (
 	`mta_sts_host_record_id` text,
 	`tls_rpt_record_id` text,
 	`spf_source` text,
+	`spf_state` text,
 	`dmarc_pointer` text,
 	`spf_pointer` text,
 	`mta_sts_pointer` text,
@@ -809,6 +810,20 @@ CREATE TABLE `spf_flatten_config` (
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
+	`revision` integer DEFAULT 0 NOT NULL,
+	`lease_until` integer,
+	`previous_record` text,
+	`last_attempt_at` integer,
+	`last_refreshed_at` integer,
+	`problem_kind` text,
+	`problem_since` integer,
+	`last_error_at` integer,
+	`lookups_after` integer,
+	`inline_mode` text DEFAULT 'fewest' NOT NULL,
+	`provider_state` text,
+	`pending_removed` text,
+	`pending_since` integer,
+	`pending_additions` integer,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint

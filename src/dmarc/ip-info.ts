@@ -5,6 +5,7 @@
 
 import type { IpInfo } from './types';
 import { globals } from '../db/scope';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
 
 const DOH_URL = 'https://cloudflare-dns.com/dns-query';
@@ -42,7 +43,7 @@ async function lookupAsn(ip: string): Promise<{ asn: string | null; countryCode:
   if (!originAnswers.length) return { asn: null, countryCode: null, org: null };
 
   // Strip surrounding quotes if present
-  const originTxt = originAnswers[0].replace(/^"|"$/g, '');
+  const originTxt = decodeTxtData(originAnswers[0]);
   const parts = originTxt.split('|').map(p => p.trim());
   const asn = parts[0] || null;
   const countryCode = parts[2] || null;
@@ -51,7 +52,7 @@ async function lookupAsn(ip: string): Promise<{ asn: string | null; countryCode:
   if (asn) {
     const asnAnswers = await dohQuery(`AS${asn}.asn.cymru.com`, 'TXT');
     if (asnAnswers.length) {
-      const asnTxt = asnAnswers[0].replace(/^"|"$/g, '');
+      const asnTxt = decodeTxtData(asnAnswers[0]);
       const asnParts = asnTxt.split('|').map(p => p.trim());
       // Last part is "ORG NAME, CC" — take everything before the trailing ", CC"
       const raw = asnParts[asnParts.length - 1] ?? '';

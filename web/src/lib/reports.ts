@@ -287,7 +287,7 @@ export function spfStatus(result: string | null, lookups: number | null): CheckS
 export function spfAdvice(result: string | null, lookupCount: number | null): string {
 	if (!result || result === 'none') return 'No SPF record found. Add a TXT record to your DNS: v=spf1 include:your-mail-provider.com ~all';
 	if (result === 'permerror') {
-		return `SPF permerror — your record requires ${lookupCount ?? '?'} DNS lookups, exceeding the ${SPF_LOOKUP_LIMIT}-lookup limit. Receivers treat this as a fail. Flatten your SPF record or use a dynamic SPF service.`;
+		return `SPF permerror — your record requires ${lookupCount ?? '?'} DNS lookups, exceeding the ${SPF_LOOKUP_LIMIT}-lookup limit. Receivers treat this as a fail. Bring the record down to ${SPF_LOOKUP_LIMIT} lookups or fewer.`;
 	}
 	const j = lookupCount === null ? null : spfLookupJudgement(lookupCount);
 	if (j?.level === 'over') {

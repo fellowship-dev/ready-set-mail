@@ -31,6 +31,9 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, the first-day card | must-not-grow (standing rules) |
 | Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
 | Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE`; the one-sentence `OFFER_SUMMARY` (mirrors the website's fixture) sits in `src/lifecycle/email/offer.ts` until it can move next to them | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
+| SPF flattening (resolving a stored original into a flat record) | `packages/dns-checks/src/spf-flatten.ts` (pure) and `src/spf/refresh.ts` (Worker) | `flattenFromSource`, `lookupBreakdown`, `sameSpfRecord`; `enableSpf`, `refreshSpf`, `adoptSpf`, `disableSpf`, `restoreSpfBeforeRemoval`, `stopSpf`, `rollbackSpf`, `runSpfRefresh`; the removal rule `decideSpfWrite` (one rule for the customer's refresh and the hosted record's); the by-hand breakdown `spfLookupsView` in `src/spf/breakdown.ts` | routes (`src/api/router.ts`), the daily job (`src/cron.ts`), hosted records (`src/hosted/service.ts`, `src/hosted/cron.ts`) | single; `test/agent-memory/single-sources.test.ts` and `single-sources.behaviour.test.ts` (ADR 0026, ADR 0028) |
+| TXT content (quotes and character strings of a TXT record) | `packages/dns-checks/src/txt.ts` | `decodeTxtData` (every form Cloudflare or DNS-over-HTTPS returns: one string, several quoted strings, unquoted), `encodeTxtData` (quoted strings of at most 255 bytes, split at a space) | everyone who reads or writes TXT content from Cloudflare or DNS | single (the quote-stripping pattern; `tools/audit-fleet/lib/doh.ts` is allowed with its own DoH client) |
+| Operator allow-settings (`owner` / `all` / workspace ids) | `src/hosted/allow.ts` | `parseAllow`, `allowed`, `workspaceIsOperators`; the answer to "may this workspace use it": `capability` in `src/hosted/plan-limits.ts` (a new capability is a new name there, never a second function) | `HOSTED_CONNECT_REPORTS` (`src/hosted/fixed-address.ts`), `HOSTED_SPF_FLATTENING` | not guarded (two callers; a third parser would be a second copy: extend `parseAllow`) |
 | Assistants a person may connect (names and connect steps) | `web/src/lib/agent-clients.ts` | `AGENT_CLIENTS`, `canConnect` | the Agents page; the server tells it what the instance supports (`GET /api/agents/status`) | single |
 | Names a self-registered app may not claim | `src/mcp/client-names.ts` | `RESERVED_APP_NAMES`, `vetClientName`, `isReservedName` | registration (`src/mcp/registration.ts`); the pages show a name only through `clientIdentity` | single |
 | Refresh token reuse (the 30-second grace window and the revocation of a leaked token) | `src/mcp/refresh-replay.ts` | `handleRefreshToken`, `purgeOldRotations`, `REFRESH_GRACE_MS` | the token endpoint wrapper in `src/auth/mcp-issuer.ts`; the rows are `refresh_rotations` (`globalQueries.refreshRotations`) | single |
@@ -79,6 +82,22 @@ Each row is guarded in "must not grow" form: the test lists exactly today's file
 - **DNS-over-HTTPS endpoints** (4): `packages/dns-checks/src/doh.ts`, `src/dmarc/ip-info.ts`, `src/public-reports/resolver.ts`, `tools/audit-fleet/lib/doh.ts`
 - **Effective DMARC policy rule (own p=, else sp=/np=, else p=)** (9): `packages/dns-checks/src/dmarc-next-step.ts`, `packages/dns-checks/src/dmarc-rua.ts`, `packages/dns-checks/src/effective-policy.ts`, `packages/report/src/bimi-readiness.ts`, `packages/report/src/findings.ts`, `src/dmarc/parse-aggregate.ts`, `src/dmarc/rollout.ts`, `web/src/lib/report-address.ts`, `web/src/lib/reports.ts`
 - **Fix-offer scope promising reject (contradicts ADR 0013)** (1): `src/billing/offer.ts`
+
+## SPF flattening: what a module does
+
+The name guard above catches the names it knows. A second flattener under a new name (the independent review of PR 189 added `flattenSpf2` and the name guard stayed green) is caught by what it does: `test/agent-memory/single-sources.behaviour.test.ts` fails any production module other than the engine (`packages/dns-checks/src/spf-flatten.ts`) and the TXT codec (`packages/dns-checks/src/txt.ts`) that
+
+- **resolves the targets of `include:` or `redirect=`**: it handles that SPF syntax (a comparison or case on the term name, a pattern with `include:`) and reads TXT records (`.txt(`, `resolveTxt(`, a DNS-over-HTTPS query for TXT); or
+- **builds `ip4:` / `ip6:` SPF terms from DNS answers**: a template or a concatenation that makes an address term, in a module that reads DNS.
+
+The record parser (`packages/dns-checks/src/spf-terms.ts`) reads no DNS and builds no address term; display code (the dashboard, `packages/report/src/catalog/`) names `include:` and shows addresses but reads no TXT; a limiter that builds `ip4:` from a client address reads no DNS. None matches. What matches and is not a flattener is listed in `ALLOW_BEHAVIOUR` (`test/agent-memory/single-sources.behaviour.ts`), each with its reason; an entry for a module that no longer matches fails, so it cannot outlive its reason:
+
+- `packages/dns-checks/src/spf.ts`: the SPF check; follows include and redirect to count lookups and report problems, builds no record.
+- `src/public-reports/check.ts`: the free check; reads the include and redirect chain to show what the analyzer found, builds no record.
+- `src/hosted/pointers.ts`: reads the customer's own SPF record to see whether it carries our include; resolves no include target.
+- `tools/audit-fleet/lib/checker.ts`: an operator tool that audits a list of domains and names the providers; writes no record.
+
+**A known limit of the behaviour guard.** It reads the source text without comments, so a term name built from pieces (`'inc' + 'lude'`, a template that joins the halves) is not seen. The guard is a net for the honest second copy, not a lock against someone who hides one; the pull request review is the check for that, and the review question is the same: does this module resolve includes or build address terms outside the engine?
 
 ## How the guards work
 

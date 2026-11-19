@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { DmarcWizardPage } from '../src/pages/wizards/DmarcWizardPage';
-import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import { fail, renderApp, type Handler } from './render';
 
 const domain = { id: 3, domain: 'example.com', dmarc_policy: 'none', rua_address: 'r@reports.example.com', parent_id: null, created_at: 1, alerts_enabled: 1, is_default: 1 };
@@ -16,88 +15,6 @@ const mount = (path: string, element: React.ReactElement) => (
 		<Route path={path} element={element} />
 	</Routes>
 );
-
-describe('SPF flatten wizard', () => {
-	const flatStatus = { available: true, config: null, lookup_count: 9 };
-	const onboarding = (spf: { record: string | null }, dns_errors?: string[]) => ({
-		domain_id: 3,
-		spf: { ...spf, lookup_count: 9, flattening_active: false },
-		...(dns_errors ? { dns_errors } : {}),
-	});
-	const base = (extra: Record<string, unknown | Handler> = {}) => ({
-		'GET /api/domains/3/spf-flatten': flatStatus,
-		'GET /api/domains/3/onboarding-status': onboarding({ record: 'v=spf1 include:a.example include:b.example ~all' }),
-		'GET /api/domains/3/spf-flatten/preview': { flattened_record: 'v=spf1 ip4:192.0.2.1 ip4:192.0.2.2 ~all', ip_count: 2 },
-		...extra,
-	});
-	const ui = mount('/domains/:id/spf-flatten', <SpfFlattenPage />);
-
-	it('walks analyze, compare, enable and done', async () => {
-		const { calls } = renderApp(ui, {
-			route: '/domains/3/spf-flatten',
-			routes: base({
-				'POST /api/domains/3/spf-flatten': { ok: true, config: { enabled: 1, canonical_record: 'x', flattened_record: 'v=spf1 ip4:192.0.2.1 ip4:192.0.2.2 ~all', ip_count: 2, lookup_count: 1 } },
-			}),
-		});
-		expect(await screen.findByText('v=spf1 include:a.example include:b.example ~all')).toBeInTheDocument();
-		expect(screen.getByText(/Step 1 of 4/)).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-
-		expect(await screen.findByText('Original record')).toBeInTheDocument();
-		expect(screen.getByText('Flattened record')).toBeInTheDocument();
-		expect(screen.getByText('1 lookup')).toBeInTheDocument();
-		await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-
-		expect(await screen.findByText('This changes your live DNS')).toBeInTheDocument();
-		const enable = screen.getByRole('button', { name: 'Enable SPF flattening' });
-		await waitFor(() => expect(enable).toBeEnabled());
-		await userEvent.click(enable);
-		expect(await screen.findByRole('heading', { name: 'SPF flattening enabled' })).toBeInTheDocument();
-		expect(screen.getByText(/2 IPs in the flattened record/)).toBeInTheDocument();
-		expect(screen.getAllByRole('link', { name: 'Back to domain' }).every((l) => l.getAttribute('href') === '/domains/3')).toBe(true);
-		expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/spf-flatten'))).toHaveLength(1);
-	});
-
-	it('treats a failed preview as degraded, not blocking', async () => {
-		renderApp(ui, { route: '/domains/3/spf-flatten', routes: base({ 'GET /api/domains/3/spf-flatten/preview': () => fail(502) }) });
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		expect(await screen.findByText('Preview unavailable')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
-	});
-
-	it('a failed SPF lookup is "Lookup failed", not "No SPF record found"', async () => {
-		renderApp(ui, {
-			route: '/domains/3/spf-flatten',
-			routes: base({ 'GET /api/domains/3/onboarding-status': onboarding({ record: null }, ['spf: timeout']), 'GET /api/domains/3/spf-flatten': { available: true, config: null, lookup_count: null } }),
-		});
-		expect(await screen.findByText('Lookup failed')).toBeInTheDocument();
-		expect(screen.getByText(/timeout/)).toBeInTheDocument();
-		expect(screen.queryByText('No SPF record found')).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
-	});
-
-	it('really no record: says so and offers a way back', async () => {
-		renderApp(ui, {
-			route: '/domains/3/spf-flatten',
-			routes: base({ 'GET /api/domains/3/onboarding-status': onboarding({ record: null }), 'GET /api/domains/3/spf-flatten': { available: true, config: null, lookup_count: null } }),
-		});
-		expect(await screen.findByText('No SPF record found')).toBeInTheDocument();
-		expect(screen.getAllByRole('link', { name: 'Back to domain' })).toHaveLength(2);
-	});
-
-	it('members can read the steps but not enable', async () => {
-		renderApp(ui, { role: 'member', route: '/domains/3/spf-flatten', routes: base() });
-		expect(await screen.findByTestId('read-only-notice')).toBeInTheDocument();
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		expect(await screen.findByRole('button', { name: 'Enable SPF flattening' })).toBeDisabled();
-	});
-
-	it('shows a retryable error when the status cannot be loaded', async () => {
-		renderApp(ui, { route: '/domains/3/spf-flatten', routes: base({ 'GET /api/domains/3/spf-flatten': () => fail(404, 'domain not found') }) });
-		expect(await screen.findByText('domain not found')).toBeInTheDocument();
-	});
-});
 
 describe('DMARC graduation wizard', () => {
 	const ui = mount('/domains/:id/dmarc-wizard', <DmarcWizardPage />);

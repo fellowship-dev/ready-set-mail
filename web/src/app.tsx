@@ -156,6 +156,7 @@ const MtaStsPage = lazy(() => import('./pages/wizards/MtaStsPage').then((m) => (
 const CloudflareWizardPage = lazy(() => import('./pages/wizards/cloudflare/CloudflareWizardPage').then((m) => ({ default: m.CloudflareWizardPage })));
 const ConnectCloudflarePage = lazy(() => import('./pages/cloudflare/ConnectCloudflarePage').then((m) => ({ default: m.ConnectCloudflarePage })));
 const SetupWizardPage = lazy(() => import('./pages/wizards/SetupWizardPage').then((m) => ({ default: m.SetupWizardPage })));
+const SpfLookupsPage = lazy(() => import('./pages/domains/SpfLookupsPage').then((m) => ({ default: m.SpfLookupsPage })));
 const SpfFlattenPage = lazy(() => import('./pages/wizards/SpfFlattenPage').then((m) => ({ default: m.SpfFlattenPage })));
 
 // Hash routes on purpose: reset and invite emails, and bookmarks, already use `#/…`.
@@ -213,6 +214,7 @@ function AppRoutes() {
 				<Route path="domains/:id/setup" element={<WizardFor render={() => <SetupWizardPage />} />} />
 				<Route path="domains/:id/setup/:step" element={<WizardFor render={() => <SetupWizardPage />} />} />
 				<Route path="domains/:id/spf-flatten" element={<WizardFor render={() => <SpfFlattenPage />} />} />
+				<Route path="domains/:id/spf-lookups" element={<WizardFor render={() => <SpfLookupsPage />} />} />
 				<Route path="domains/:id/mta-sts" element={<WizardFor render={() => <MtaStsPage />} />} />
 				<Route path="domains/:id/dmarc-wizard" element={<WizardFor render={() => <DmarcWizardPage />} />} />
 			</Route>

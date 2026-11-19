@@ -108,11 +108,10 @@ describe('ADR index', () => {
   it('lists no ADR that does not exist', () => {
     for (const m of index.matchAll(/\((\d{4}-[^)]+\.md)\)/g)) expect(files, m[1]).toContain(m[1]);
   });
-  it('numbers ADRs without repeats; a gap only for a number reserved for an open pull request, listed in the index as reserved', () => {
+  it('numbers ADRs without repeats; a gap is a number an open pull request holds (merge order decides), and the index carries no placeholder rows for it', () => {
     const nums = files.map(f => Number(f.slice(0, 4)));
     expect(new Set(nums).size).toBe(nums.length);
-    const reserved = [...index.matchAll(/^\| (\d{4}) \| reserved/gm)].map(m => Number(m[1]));
-    const all = [...nums, ...reserved].sort((a, b) => a - b);
-    expect(all).toEqual(all.map((_, i) => i + 1));
+    expect(index).not.toMatch(/^\| \d{4} \| reserved/m);
+    for (const f of files) expect(index, f).toContain(`(${f})`);
   });
 });

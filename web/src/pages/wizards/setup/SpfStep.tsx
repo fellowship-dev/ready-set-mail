@@ -3,6 +3,7 @@ import { Alert, Badge, Button, CheckResult, CheckResultList, FieldHint, IconButt
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { DnsHostLine } from '../../../components/domain/DnsHostLine';
 import { WriteButton } from '../../../components/states';
 import { CopyButton } from '../../../components/wizard/CopyButton';
@@ -11,6 +12,7 @@ import { SeverityBadge } from '../../../components/wizard/SeverityBadge';
 import { StepAside, StepCard, StepColumns, StepMain } from '../../../components/wizard/StepCard';
 import { StepFooter, StepNav } from '../../../components/wizard/StepNav';
 import { api, errorMessage } from '../../../lib/api';
+import { useAddOns } from '../../../lib/session';
 import { SPF_PROVIDERS, detectProviders } from '@ready-set-mail/dns-checks/email-service-providers';
 import { buildSpfRecord, existingQualifier, extractIncludes, extractOtherMechanisms, SPF_LOOKUP_LIMIT, spfLookupJudgement, spfPtrWarning, validateSpfRecord, type SpfQualifier } from '@ready-set-mail/dns-checks/spf-record';
 import type { OnboardingStatus } from '../../../lib/types';
@@ -64,7 +66,7 @@ export function SpfStep(props: StepProps) {
 			<StepCard title="SPF record" badge={<SeverityBadge severity="info" />}>
 				{status.spf.record ? <TxtRecord title="Current record" value={status.spf.record} /> : null}
 				<Alert variant="info" title="SPF flattening is active">
-					Editing is disabled because the next flattening run would overwrite your changes. Disable flattening on the domain page to edit the record by hand.
+					Ready Set Mail manages this record while flattening is on, so it cannot be edited here. Turn flattening off on the domain page to edit it by hand.
 				</Alert>
 				<StepNav onNext={onNext} onSkip={onSkip} showSkip={false} />
 			</StepCard>
@@ -75,6 +77,7 @@ export function SpfStep(props: StepProps) {
 
 function SpfEditor({ status, onNext, onSkip }: StepProps) {
 	const qc = useQueryClient();
+	const flattening = useAddOns().spf_flattening; // an add-on: where it is not offered, only the by-hand way is named and linked
 	const { spf, cf_available } = status;
 	const existingIncludes = spf.record ? extractIncludes(spf.record) : [];
 	const detectedKnown = new Set((spf.record ? detectProviders(spf.record) : []).map((p) => p.include));
@@ -200,7 +203,10 @@ function SpfEditor({ status, onNext, onSkip }: StepProps) {
 			) : null}
 			{preview && spfLookupJudgement(lookupCount).level === 'over' && !counting ? (
 				<Alert variant="warning" title={`Over the ${SPF_LOOKUP_LIMIT}-lookup limit`}>
-					{spfLookupJudgement(lookupCount).detail}
+					{spfLookupJudgement(lookupCount, { flatten: flattening }).detail}{' '}
+					<Link to={`/domains/${status.domain_id}/${flattening ? 'spf-flatten' : 'spf-lookups'}`} className="underline underline-offset-4">
+						{flattening ? 'Open SPF flattening' : 'See where the lookups go'}
+					</Link>
 				</Alert>
 			) : null}
 

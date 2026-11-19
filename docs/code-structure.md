@@ -50,9 +50,9 @@ Keyed on `event.cron` (the expression string from `wrangler.jsonc`):
 
 | Cron | Time | Task |
 |------|------|------|
-| `0 11 * * *` | 11am UTC daily | Hosted only: the lifecycle emails of `src/lifecycle/email/` (records live, first-report catch-up, no reports yet; [hosted.md](hosted.md#lifecycle-emails)) and the product analytics' daily step ("No Report After 3 Days"; a no-op unless PostHog is configured, [analytics.md](analytics.md)) |
+| `0 11 * * *` | 11am UTC daily | SPF flattening refresh (`runSpfRefresh`, `src/spf/refresh.ts`; [spf-flattening.md](spf-flattening.md)); on the hosted service only: the lifecycle emails of `src/lifecycle/email/` (records live, first-report catch-up, no reports yet; [hosted.md](hosted.md#lifecycle-emails)) and the product analytics' daily step ("No Report After 3 Days"; a no-op unless PostHog is configured, [analytics.md](analytics.md)); then `src/hosted/cron.ts` |
 | `0 9 * * 1` | 9am UTC Monday | Weekly digest emails via `sendWeeklyDigests()` (self-host; returns at once on the hosted service). Nothing in `src/lifecycle/email/` depends on it |
-| `0 10 * * *` | 10am UTC daily | SPF flatten refresh — re-flattens all enabled domains via CF DNS |
+| `0 10 * * *` | 10am UTC daily | Older installations only (they kept the trigger): the same SPF refresh as `0 11` |
 | `0 4 * * *` | 4am UTC daily | Data lifecycle: retry failed Cloudflare revocations, backfill pre-0022 alignment verdicts (`src/lifecycle/verdict-backfill.ts`), then retention sweeps (own invocation) |
 | `0 8 * * *` | 8am UTC daily (default) | Monitor check + SPF lookup count refresh + rollback regression check + MTA-STS refresh (self-host; the hosted service runs it in its 11:00 job) |
 
@@ -116,7 +116,7 @@ The worker imports it by relative path and only adds the Cloudflare/D1 side:
 | Worker module | Role |
 |---------------|------|
 | `src/email/dns-check.ts` | Adapter: binds the package to global `fetch`. `null` = authoritatively absent; a DNS failure **throws** `DnsLookupError` |
-| `src/email/spf-flattener.ts` | `collectIps` (throws on incomplete resolution) + Cloudflare DNS PATCH/restore |
+| `src/spf/refresh.ts`, `src/spf/target.ts` | SPF flattening: turn on, refresh, turn off, roll back, the daily job, over `flattenFromSource` in `packages/dns-checks/src/spf-flatten.ts`; where the record lives (the customer's zone or the hosted zone) |
 | `src/email/mta-sts.ts` | `discoverMxHosts` / `detectExistingMtaStsMode` (throw on DNS error) + the customer's three records (`createPolicyHostCname`, `createTlsRptRecord`, `createPolicyIdRecord`, `deprovisionMtaSts`) |
 | `src/mta-sts/` | MTA-STS (ADR 0021): `service.ts` (availability, enable with rollback, verify, modes, disable), `policy-host.ts` (the policy host seam and the operator zone's own write policy), `evidence.ts` (enforce readiness, disable rule), `refresh.ts` (the one daily job and the operator reconcile), `routes.ts`, `serve.ts` (the policy file; 404 for everything else on `mta-sts.*`), `config.ts` |
 | `src/monitor/check.ts` | Diffs baselines; a failed lookup keeps the old baseline and reports no change |

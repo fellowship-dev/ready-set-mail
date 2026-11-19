@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { billingWorld, call, json, rows, BASE, KEY, WHSEC, signStripePayload, ctx, type World } from './world';
 import { handleApi } from '../../src/api/router';
 import { parseSignatureHeader, verifySignature, WEBHOOK_MAX_BYTES } from '../../src/billing/webhook';
+import { CARD_LAST4 } from '../helpers/card-text';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -259,7 +260,8 @@ describe('secrets and payloads never reach the logs', () => {
     await w.fake.flush();
     const lines = ['log', 'warn', 'error', 'info', 'debug'].flatMap((m) => (console[m as 'log'] as unknown as { mock?: { calls: unknown[][] } }).mock?.calls ?? []).map((c) => c.map(String).join(' '));
     const all = lines.join('\n');
-    for (const secret of [KEY, WHSEC, 'rk_test_', 'whsec_', 'owner@example.com', '4242', 'cus_', 'pm_', 'acme.com', 'Your card']) expect(all, secret).not.toContain(secret);
+    for (const secret of [KEY, WHSEC, 'rk_test_', 'whsec_', 'owner@example.com', 'cus_', 'pm_', 'acme.com', 'Your card']) expect(all, secret).not.toContain(secret);
+    expect(all, 'the card digits').not.toMatch(CARD_LAST4);
     const hooks = lines.filter((l) => l.startsWith('[billing] webhook'));
     expect(hooks.length).toBeGreaterThan(3);
     for (const l of hooks) expect(l).toMatch(/^\[billing\] webhook evt=[A-Za-z0-9_.?-]+ type=[A-Za-z0-9_.?-]+ outcome=[A-Za-z0-9_.?= -]+$/);

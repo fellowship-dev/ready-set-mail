@@ -5,6 +5,7 @@
 // behind a pass-rate threshold to prevent mail loss.
 
 import { parseDmarcTags as parseSharedTags } from '@ready-set-mail/dns-checks/dmarc-tags';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 export type RolloutPolicy = 'none' | 'quarantine' | 'reject';
 
@@ -34,7 +35,7 @@ function asPolicy(p: string | null | undefined): RolloutPolicy | null {
 
 /** Splits a DMARC record into lower-cased tag → value (first occurrence wins), with the shared RFC 7489 parser. */
 export function parseDmarcTags(record: string): Map<string, string> {
-  return new Map(Object.entries(parseSharedTags(record.replace(/^"|"$/g, ''))));
+  return new Map(Object.entries(parseSharedTags(decodeTxtData(record))));
 }
 
 /**
@@ -186,7 +187,7 @@ export function buildStepRecord(existingRecord: string, step: RolloutStep): stri
   if (step.testing) out.push(['t', 'y']);
 
   const managed = new Set(['v', 'p', 'sp', 'np', 't', 'pct']);
-  const rest = existingRecord.replace(/^"|"$/g, '').split(';')
+  const rest = decodeTxtData(existingRecord).split(';')
     .map((s) => s.trim()).filter(Boolean)
     .filter((part) => !managed.has(part.split('=')[0].trim().toLowerCase()));
 

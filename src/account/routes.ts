@@ -88,7 +88,7 @@ export async function handleAccountRoutes(
   const pasted_tokens: number[] = [];
   const erasedNames: string[] = [];
   for (const { ws, tenant, domains } of plans) {
-    const erased = await eraseWorkspace(deps, ctx, tenant, domains, { id: user.id, email: user.email });
+    const erased = await eraseWorkspace(deps, ctx, tenant, domains, { id: user.id, email: user.email }, { leaveSpfRecord: new URL(request.url).searchParams.get('leave_spf_record') === '1' });
     if (!erased.ok) {
       // Not atomic across workspaces: say which ones are already gone. The account is intact; retrying finishes the job.
       if (erasedNames.length === 0) return erased.response;

@@ -42,7 +42,7 @@ function makeEnv(overrides: { cfToken?: string; flattenEnabled?: boolean } = {})
   db.sqlite.prepare('INSERT INTO domains (id, domain, rua_address, spf_record, spf_lookup_count) VALUES (?, ?, ?, ?, ?)')
     .run(DOMAIN.id!, DOMAIN.domain!, DOMAIN.rua_address!, DOMAIN.spf_record!, DOMAIN.spf_lookup_count!);
   if (flattenEnabled) {
-    db.sqlite.prepare('INSERT INTO spf_flatten_config (domain_id, enabled, canonical_record) VALUES (?, 1, ?)').run(DOMAIN.id!, DOMAIN.spf_record!);
+    db.sqlite.prepare('INSERT INTO spf_flatten_config (domain_id, enabled, canonical_record, flattened_record) VALUES (?, 1, ?, ?)').run(DOMAIN.id!, DOMAIN.spf_record!, 'v=spf1 ip4:192.0.2.1 -all');
   }
 
   // acme.com is the base domain; its zone is stored, so no zone lookup is needed for it.
@@ -191,7 +191,7 @@ describe('POST /api/domains/:id/apply-spf', () => {
     );
     expect(res.status).toBe(409);
     const body = await res.json() as any;
-    expect(body.error).toContain('flattening is active');
+    expect(body.error).toContain('flattening is on');
   });
 
   it('returns 400 when CF credentials are missing', async () => {

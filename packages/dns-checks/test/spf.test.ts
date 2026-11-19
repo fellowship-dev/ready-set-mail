@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeSpf, analyzeSpfRecord, buildFlatRecord, collectIps, parseSpfRecord, previewFlatten, isSpfRecord } from '../src/spf';
+import { analyzeSpf, analyzeSpfRecord, parseSpfRecord, isSpfRecord } from '../src/spf';
 import { fakeResolver, type Zone } from './helpers';
 
 const txt = (...v: string[]) => v;
@@ -231,52 +231,6 @@ describe('analyzeSpf – loops', () => {
   });
 });
 
-describe('flatten preview', () => {
-  const zone: Zone = {
-    'TXT x.com': txt('v=spf1 include:a.com include:b.com mx ip4:9.9.9.9 -all'),
-    'TXT a.com': txt('v=spf1 ip4:1.1.1.1 ip4:1.1.1.2 ip6:2001:db8::/32 ~all'),
-    'TXT b.com': txt('v=spf1 ip4:1.1.1.1 include:c.com -all'),
-    'TXT c.com': txt('v=spf1 ip4:3.3.3.3 -all'),
-  };
-  it('collects deduplicated IPs, keeps mx, and takes `all` from the root only', async () => {
-    const r = await collectIps('x.com', fakeResolver(zone));
-    expect(r.ips).toEqual(['ip4:1.1.1.1', 'ip4:1.1.1.2', 'ip6:2001:db8::/32', 'ip4:3.3.3.3', 'ip4:9.9.9.9']);
-    expect(r.extra).toEqual(['mx']);
-    expect(r.allQualifier).toBe('-all');
-    expect(r.errors).toEqual([]);
-  });
-  it('follows redirect= for the terminal all', async () => {
-    const r = await collectIps('x.com', fakeResolver({ 'TXT x.com': txt('v=spf1 ip4:1.1.1.1 redirect=y.com'), 'TXT y.com': txt('v=spf1 ip4:2.2.2.2 -all') }));
-    expect(r.ips).toEqual(['ip4:1.1.1.1', 'ip4:2.2.2.2']);
-    expect(r.allQualifier).toBe('-all');
-  });
-  it('keeps qualifiers on ip mechanisms and non-pass includes verbatim', async () => {
-    const r = await collectIps('x.com', fakeResolver({ 'TXT x.com': txt('v=spf1 -ip4:1.1.1.1 +ip4:2.2.2.2 ~include:y.com -all') }));
-    expect(r.ips).toEqual(['-ip4:1.1.1.1', 'ip4:2.2.2.2']);
-    expect(r.extra).toEqual(['~include:y.com']);
-  });
-  it('a DNS error makes the result incomplete instead of silently dropping the include', async () => {
-    const p = await previewFlatten('x.com', fakeResolver({ ...zone, 'TXT a.com': 'SERVFAIL' }));
-    expect(p.incomplete).toBe(true);
-    expect(p.errors[0].code).toBe('dns-error');
-  });
-  it('multiple SPF records and loops make the result incomplete', async () => {
-    expect((await previewFlatten('x.com', fakeResolver({ ...zone, 'TXT c.com': txt('v=spf1 -all', 'v=spf1 -all') }))).incomplete).toBe(true);
-    expect((await previewFlatten('a.com', fakeResolver({ 'TXT a.com': txt('v=spf1 include:b.com -all'), 'TXT b.com': txt('v=spf1 include:a.com -all') }))).incomplete).toBe(true);
-  });
-  it('reports remaining lookups, size and splitting', async () => {
-    const p = await previewFlatten('x.com', fakeResolver(zone));
-    expect(p.remainingLookups).toBe(1);
-    expect(p.flattenedRecord).toBe('v=spf1 ip4:1.1.1.1 ip4:1.1.1.2 ip6:2001:db8::/32 ip4:3.3.3.3 ip4:9.9.9.9 mx -all');
-    expect(p.needsSplitting).toBe(false);
-    const many = 'v=spf1 ' + Array.from({ length: 40 }, (_, i) => `ip4:10.0.${i}.1`).join(' ') + ' -all';
-    expect((await previewFlatten('y.com', fakeResolver({ 'TXT y.com': txt(many) }))).needsSplitting).toBe(true);
-  });
-  it('buildFlatRecord dedupes', () => {
-    expect(buildFlatRecord(['ip4:1.1.1.1', 'ip4:1.1.1.1'], ['mx'], '~all')).toBe('v=spf1 ip4:1.1.1.1 mx ~all');
-  });
-});
-
 describe('void lookups on MX hosts (RFC 7208 §4.6.4)', () => {
   it('MX hosts without addresses count as void lookups', async () => {
     const z: Zone = { 'TXT x.com': txt('v=spf1 mx -all'), 'MX x.com': ['10 a.x.com.', '20 b.x.com.', '30 c.x.com.'] };
@@ -294,24 +248,5 @@ describe('void lookups on MX hosts (RFC 7208 §4.6.4)', () => {
   it('multiple SPF records expose rawRecords', async () => {
     const a = await analyzeSpf('x.com', fakeResolver({ 'TXT x.com': txt('v=spf1 -all', 'v=spf1 ~all') }));
     expect(a.rawRecords).toEqual(['v=spf1 -all', 'v=spf1 ~all']);
-  });
-});
-
-describe('flatten: terms copied from include targets', () => {
-  it('pins bare a/mx/ptr (and cidr) to the include domain, not the customer domain', async () => {
-    const r = await collectIps('x.com', fakeResolver({
-      'TXT x.com': txt('v=spf1 include:vendor.com a -all'),
-      'TXT vendor.com': txt('v=spf1 a mx/24 ~ptr ip4:1.1.1.1 -all'),
-    }));
-    expect(r.extra).toEqual(['a:vendor.com', 'mx:vendor.com/24', '~ptr:vendor.com', 'a']);
-    expect(r.errors).toEqual([]);
-  });
-  it('keeps explicit targets and the root bare a untouched', async () => {
-    const r = await collectIps('x.com', fakeResolver({ 'TXT x.com': txt('v=spf1 a mx:mail.x.com -all') }));
-    expect(r.extra).toEqual(['a', 'mx:mail.x.com']);
-  });
-  it('does not lowercase macros', async () => {
-    const r = await collectIps('x.com', fakeResolver({ 'TXT x.com': txt('v=spf1 exists:%{I}._spf.Vendor.com -all') }));
-    expect(r.extra).toEqual(['exists:%{I}._spf.Vendor.com']);
   });
 });

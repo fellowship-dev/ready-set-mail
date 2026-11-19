@@ -4,6 +4,7 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { makeEnv, setupOwner } from '../auth/helpers';
 import { billingWorld, call, json, rows, BASE, flushBackground, type World } from './world';
 import { delegatedKey } from '../auth/grant-fixture';
+import { CARD_DETAILS } from '../helpers/card-text';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -134,8 +135,8 @@ describe('the card: Stripe-hosted Checkout, one customer per workspace', () => {
     const after = await json(await w.api(w.owner, 'GET', '/api/billing'));
     expect(after).toMatchObject({ has_customer: true, card: { brand: 'visa', last4: '4242' }, billing_email: 'owner@example.com' });
     expect(after.card.exp_year).toBeGreaterThan(2000);
-    expect(JSON.stringify(rows(w.db, 'SELECT * FROM billing_checkout_sessions'))).not.toMatch(/last4|visa/); // the card is read from Stripe, never stored
-    expect(JSON.stringify(rows(w.db, 'SELECT * FROM workspaces'))).not.toMatch(/last4|visa/);
+    expect(JSON.stringify(rows(w.db, 'SELECT * FROM billing_checkout_sessions'))).not.toMatch(CARD_DETAILS); // the card is read from Stripe, never stored
+    expect(JSON.stringify(rows(w.db, 'SELECT * FROM workspaces'))).not.toMatch(CARD_DETAILS);
     expect(JSON.stringify(after)).not.toMatch(/cus_|pm_|seti_/);
     await flushBackground();
     expect(w.audits(w.owner.workspaceId)).toEqual(['billing.card_session_started', 'billing.card_added']);

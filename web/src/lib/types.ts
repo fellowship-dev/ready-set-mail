@@ -200,21 +200,55 @@ export interface AggregateReport {
   counted?: boolean;
 }
 
+/** Why SPF flattening is not keeping a record current (src/spf/refresh.ts). */
+export type SpfProblemKind = 'include_unresolved' | 'too_large' | 'macro' | 'no_addresses' | 'connection_lost' | 'edited_outside' | 'record_missing' | 'restore_failed' | 'connection_gone' | 'proof_lost';
+
+/** What the API returns for a domain with flattening on (never the raw row). */
 export interface SpfFlatConfig {
-  enabled: number;                 // 0 | 1
-  cf_record_id: string | null;
-  canonical_record: string;
+  enabled: boolean;
+  /** The record as the owner had it. */
+  original_record: string;
   flattened_record: string | null;
+  /** The flattened record before the last change. */
+  previous_record: string | null;
   ip_count: number | null;
-  lookup_count: number | null;
-  last_flattened_at: number | null;
-  last_error: string | null;
+  lookups_before: number | null;
+  lookups_after: number | null;
+  last_changed_at: number | null;
+  last_refreshed_at: number | null;
+  problem: { kind: SpfProblemKind; message: string | null; since: number | null } | null;
+  /** A removal waiting for its second look (docs/adr/0028); absent or null when none is. */
+  pending?: SpfPending | null;
+}
+
+export interface SpfPending {
+  /** The addresses (and lookup terms) that left a provider and are still in the record, by provider. */
+  removed: Record<string, string[]>;
+  providers: string[];
+  since: number;
+  /** The earliest time a check confirms the removal (unix seconds). */
+  confirm_after: number;
+  /** The record was written with the additions; false: both together do not fit, so nothing was written. */
+  additions_written: boolean;
 }
 
 export interface SpfFlatStatus {
+  /** A Cloudflare connection exists. */
   available: boolean;
+  /** Absent on a domain without the add-on. */
+  access?: { allowed: boolean };
   config: SpfFlatConfig | null;
   lookup_count: number | null;  // from domains.spf_lookup_count — populated on add + daily cron
+}
+
+/** GET /api/domains/:id/spf-flatten/preview */
+export interface SpfFlatPreview {
+  original: string | null;
+  within_limits: boolean;
+  /** Flattening on: the record in Cloudflare now (null when it could not be read). */
+  live: string | null;
+  problem: { kind: SpfProblemKind; message: string } | null;
+  flat: { record: string; bytes: number; ip_count: number; inlined: string[]; kept_includes: string[]; lookups_before: number; lookups_after: number } | null;
 }
 
 /** GET /api/domains/:id/mta-sts (docs/mta-sts.md). */
@@ -468,6 +502,8 @@ export interface Me {
   pending_invites?: Array<{ token: string; role: string; invited_by: string; workspace_id: string; workspace_name: string | null }>;
   /** Runs this instance (OWNER_EMAIL, or the self-host owner): sees the orders page and the instance's configuration check. */
   instance_owner?: boolean;
+  /** Capabilities beyond the base product. `spf_flattening`: available to this workspace, or still on for a domain (so it can be seen and turned off). Absent on an older server. */
+  add_ons?: { spf_flattening: boolean };
   /** Hosted: what the person said on sign-up about whose email they set up (never the free-text answers). */
   whose_email?: 'company' | 'clients' | 'looking';
   /** Hosted, "My clients'": the agency's own name. The workspace switcher's heading; each client workspace is a row under it. */

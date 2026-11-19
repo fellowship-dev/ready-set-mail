@@ -86,6 +86,8 @@ All properties are optional and dropped when not in the list. Buckets: `COUNT` =
 | `Fix Order Failed` | failed or canceled | `offer`, `reason` (`failed` `canceled`) |
 | `Fix Order Refunded` | fully refunded | `offer` |
 | `Fix Order Delivered` (**finish line**) | the operator marked it done | `offer`, `since_paid` (`LONG_WAIT`) |
+| `Flattened Record Changed` | a daily SPF refresh rewrote a flattened record because a provider changed its addresses (src/spf/refresh.ts); hosted, for a workspace admitted to SPF flattening | none |
+| `Flattened Record Problem` | a daily SPF refresh could not keep a record current, sent once when the problem starts | `problem` (`SPF_PROBLEMS`: why, never a domain or a record) |
 | `Lifecycle Email Sent` | a lifecycle email (`src/lifecycle/email/`) was handed to the mail provider | `kind` (`records_live` `first_report` `no_reports` `summary` `tip_fix` `tip_next`). Never an address, a domain or a count |
 
 ## Funnels

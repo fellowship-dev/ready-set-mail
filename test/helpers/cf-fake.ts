@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { cloudflareTxtContent } from '../../e2e/support/cloudflare-txt.mjs';
 
 export interface FakeZone {
   id: string;
@@ -15,6 +16,8 @@ export interface FakeZone {
 }
 export const CF_NS = ['a.ns.cloudflare.com', 'b.ns.cloudflare.com'];
 export interface FakeRecord { id: string; type: string; name: string; content: string }
+
+export { cloudflareTxtContent };
 
 export interface FakeCall {
   method: string;
@@ -76,11 +79,19 @@ export class FakeCloudflare {
     public doh: Record<string, string[]> = {},
   ) {}
 
+  /** Store TXT content the way Cloudflare does (see cloudflareTxtContent): quoted, split at 255 bytes, returned as `"a" "b"`. Off keeps what was sent, which most tests of other features assert on. */
+  realisticTxt = false;
+
+  /** The content as stored: TXT records follow Cloudflare's rules. */
+  #stored(type: string | undefined, content: string): string {
+    return this.realisticTxt && type?.toUpperCase() === 'TXT' && typeof content === 'string' ? cloudflareTxtContent(content) : content;
+  }
+
   /** Hostname of every DNS-over-HTTPS lookup, in order (cloudflare-dns.com, dns.google). */
   readonly dohHosts: string[] = [];
 
   seed(zoneId: string, rec: Omit<FakeRecord, 'id'> & { id?: string }): FakeRecord {
-    const r = { id: rec.id ?? `seed-${this.#nextId++}`, ...rec };
+    const r = { id: rec.id ?? `seed-${this.#nextId++}`, ...rec, content: this.#stored(rec.type, rec.content) };
     this.records.set(zoneId, [...(this.records.get(zoneId) ?? []), r]);
     return r;
   }
@@ -223,7 +234,7 @@ export class FakeCloudflare {
         return paged(matching, 5000);
       }
       if (rest === '/dns_records' && method === 'POST') {
-        const r = { id: String(this.#nextId++).padStart(32, "0"), type: body.type, name: body.name, content: body.content };
+        const r = { id: String(this.#nextId++).padStart(32, "0"), type: body.type, name: body.name, content: this.#stored(body.type, body.content) };
         this.records.set(zoneId, [...list, r]);
         return ok(r);
       }
@@ -241,6 +252,7 @@ export class FakeCloudflare {
         const rec = list.find(r => r.id === one[1]);
         if (!rec) return fail(404, 'record not found');
         Object.assign(rec, body);
+        if (body.content !== undefined) rec.content = this.#stored(rec.type, rec.content);
         return ok(rec);
       }
       if (one && method === 'DELETE') {

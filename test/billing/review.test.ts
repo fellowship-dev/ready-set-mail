@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { billingWorld, json, rows, flushBackground, type World } from './world';
 import { runBillingJob } from '../../src/billing/reconcile';
+import { CARD_DETAILS } from '../helpers/card-text';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -185,7 +186,8 @@ describe('4. only the owner sees the card and the billing email', () => {
         expect(b.card_on_file, path).toBe(true);
         expect(b, path).not.toHaveProperty('card');
         expect(b, path).not.toHaveProperty('billing_email');
-        expect(text, path).not.toMatch(/4242|visa|owner@example\.com/i);
+        expect(text, path).not.toMatch(CARD_DETAILS);
+        expect(text, path).not.toMatch(/owner@example\.com/i);
         expect(b.orders, path).toBeInstanceOf(Array);
         expect(b.can_manage ?? b.can_buy, path).toBe(false);
       }

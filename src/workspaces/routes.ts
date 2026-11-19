@@ -11,6 +11,7 @@ import { logAudit } from '../audit/log';
 import type { Env } from '../index';
 import { planLimitResponse, planLimits } from '../hosted/plan-limits';
 import type { TenantContext } from '../tenancy/context';
+import { restoreSpfBeforeRemoval, type SpfRestoreRefusal } from '../spf/refresh';
 import { revokeWorkspaceConnections, type RevokeSummary } from '../lifecycle/revoke';
 import { streamWorkspaceExport } from '../lifecycle/export';
 import { workspaceAdded } from '../product-analytics/steps';
@@ -36,7 +37,7 @@ export interface WorkspaceDeps {
   tenantFor: (workspaceId: string) => Promise<TenantContext>;
   /** Before anything is deleted: can Cloudflare (and the hosted-records zone) be reached for every domain? A message when not. */
   preflight: (tenant: TenantContext, domains: Array<{ id: number; domain: string }>) => Promise<string | null>;
-  deleteDomain: (tenant: TenantContext, domainId: string, actor: { id?: string; email?: string }, ctx?: ExecutionContext) => Promise<Response>;
+  deleteDomain: (tenant: TenantContext, domainId: string, actor: { id?: string; email?: string }, ctx?: ExecutionContext, opts?: { leaveSpfRecord?: boolean }) => Promise<Response>;
 }
 
 type Actor = { id?: string; email?: string };
@@ -54,11 +55,27 @@ export async function preflightWorkspace(deps: WorkspaceDeps, tenant: TenantCont
  * memberships, keys and agent approvals for it go with it, and they land on "No workspace yet" when it was their only one. The caller has checked who may do this, and run preflightWorkspace.
  */
 export async function eraseWorkspace(
-  deps: WorkspaceDeps, ctx: ExecutionContext, tenant: TenantContext, domains: Array<{ id: number; domain: string }>, actor: Actor,
+  deps: WorkspaceDeps, ctx: ExecutionContext, tenant: TenantContext, domains: Array<{ id: number; domain: string }>, actor: Actor, opts: { leaveSpfRecord?: boolean } = {},
 ): Promise<{ ok: true; cloudflare: RevokeSummary } | { ok: false; response: Response }> {
+  // Every flattened SPF record goes back to its original before anything is deleted: a domain that cannot be restored stops the whole delete, with
+  // nothing deleted yet and the originals to copy. leave_spf_record=1 deletes anyway, after the owner has them.
+  if (!opts.leaveSpfRecord) {
+    const refused: SpfRestoreRefusal[] = [];
+    for (const d of domains) {
+      const r = await restoreSpfBeforeRemoval(tenant, d, { actor, ctx });
+      if (!r.ok) refused.push(r.refusal);
+    }
+    if (refused.length) {
+      const names = refused.map(r => r.domain).join(', ');
+      return { ok: false, response: json({
+        error: `${refused.length === 1 ? 'The SPF record' : 'The SPF records'} of ${names} could not be put back to ${refused.length === 1 ? 'its' : 'their'} original, so nothing was deleted. ${refused.map(r => r.error).join(' ')}`,
+        code: 'spf_restore_failed', domains: refused, leave_param: 'leave_spf_record=1',
+      }, 409) };
+    }
+  }
   let deleted = 0;
   for (const d of domains) {
-    const res = await deps.deleteDomain(tenant, String(d.id), actor, ctx);
+    const res = await deps.deleteDomain(tenant, String(d.id), actor, ctx, opts);
     if (!res.ok) {
       return {
         ok: false,
@@ -182,7 +199,7 @@ export async function handleWorkspaceRoutes(
     // for all of them; refuse before deleting any if not.
     const blocked = await deps.preflight(tenant, domains);
     if (blocked) return err(`Cloudflare cannot be reached for ${blocked}; nothing was deleted. Fix that (or reconnect Cloudflare) and try again.`, 502, 'cloudflare_preflight_failed');
-    const erased = await eraseWorkspace(deps, ctx, tenant, domains, { id: user.id, email: user.email });
+    const erased = await eraseWorkspace(deps, ctx, tenant, domains, { id: user.id, email: user.email }, { leaveSpfRecord: url.searchParams.get('leave_spf_record') === '1' });
     if (!erased.ok) return erased.response;
     // pasted_tokens: API tokens cannot be revoked from here; the owner revokes them in the Cloudflare dashboard.
     return json({ ok: true, cloudflare: erased.cloudflare });

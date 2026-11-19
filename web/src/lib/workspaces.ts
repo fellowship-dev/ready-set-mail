@@ -81,7 +81,12 @@ export function useDeleteWorkspace(id: string, then: () => void) {
 	const qc = useQueryClient();
 	const { signedIn } = useSession();
 	return useMutation({
-		mutationFn: (confirm?: string) => api(`/api/workspaces/${id}${confirm ? `?confirm=${encodeURIComponent(confirm)}` : ''}`, { method: 'DELETE' }),
+		// `leaveSpf`: delete although a flattened SPF record could not be put back (it then stays in Cloudflare, unrefreshed): only after the person has the original.
+		mutationFn: (arg?: string | { confirm?: string; leaveSpf?: boolean }) => {
+			const { confirm, leaveSpf } = typeof arg === 'string' || arg === undefined ? { confirm: arg, leaveSpf: false } : arg;
+			const q = [confirm ? `confirm=${encodeURIComponent(confirm)}` : '', leaveSpf ? 'leave_spf_record=1' : ''].filter(Boolean).join('&');
+			return api(`/api/workspaces/${id}${q ? `?${q}` : ''}`, { method: 'DELETE' });
+		},
 		onSuccess: async () => {
 			workspaceStore.forget();
 			await qc.invalidateQueries({ queryKey: workspaceKeys.all });

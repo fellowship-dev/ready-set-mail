@@ -48,6 +48,7 @@ import { ConnectionInputError, IMPLICIT_CONNECTION_ID, type PublicConnection } f
 import { accountViews } from './accounts';
 import { importZones, suggestedZones, verifyPendingClaims } from './import';
 import { DomainServiceError } from '../domains/service';
+import { settleSpfBeforeDisconnect } from '../spf/refresh';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -211,11 +212,13 @@ export async function handleConnectionRoutes(
 
       if (!sub && method === 'DELETE') {
         const before = await svc.get(id);
+        // Flattened SPF records go back to the original while this connection can still write; where they cannot, flattening stops and the answer carries the original.
+        const spf = before ? await settleSpfBeforeDisconnect(tenant, await tenant.scope.connections.linkedDomains(id), { actor: caller.user ?? undefined, ctx }) : [];
         const result = await svc.disconnect(id);
         if (!before || !result) return err('connection not found', 404);
         audit('cf_connection.delete', { id, name: before.label }, { before: { auth_type: before.auth_type, status: before.status, cf_account_id: before.cf_account_id }, after: { revoked_remote: result.revokedRemote, unlinked_domains: result.unlinkedDomains } });
         tenant.invalidate();
-        return json({ ok: true, revoked_remote: result.revokedRemote, unlinked_domains: result.unlinkedDomains });
+        return json({ ok: true, revoked_remote: result.revokedRemote, unlinked_domains: result.unlinkedDomains, ...(spf.length ? { spf_flattened: spf } : {}) });
       }
 
       if (sub === 'token' && method === 'PUT') {

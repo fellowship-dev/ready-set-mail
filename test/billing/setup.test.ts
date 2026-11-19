@@ -62,8 +62,8 @@ describe('preflight', () => {
 describe('migration 0016 and the schema', () => {
   const db = createMigratedD1().sqlite;
   const info = (t: string) => db.prepare(`PRAGMA table_info(${t})`).all() as Array<{ name: string; notnull: number }>;
-  it('is required by the Worker (the newest migration it needs is this one or a later one)', () => {
-    expect(REQUIRED_MIGRATION >= '0016_billing.sql').toBe(true);
+  it('is the newest migration the Worker requires', () => {
+    expect(REQUIRED_MIGRATION).toBe('0025_spf_flattening.sql'); // 0016 (billing), 0021, 0022 (report alignment), 0023 (lifecycle emails) and 0024 (hosted MTA-STS) are applied before it
   });
   it('is additive: one nullable column on workspaces, new tables, nothing dropped', () => {
     const sql = readFileSync(join(import.meta.dirname, '../../migrations/0016_billing.sql'), 'utf8');

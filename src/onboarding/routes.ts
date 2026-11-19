@@ -19,6 +19,7 @@ import { ReportAddressError, ReportRecordChanged, applyReportRecord } from '../h
 import { applyClicked, applyDone, dnsCheckedById } from '../product-analytics/steps';
 import { setupPathChosen } from '../product-analytics/auth';
 import { DNS_PROVIDERS } from '../product-analytics/events';
+import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const err = (message: string, status: number, code?: string) => json({ error: message, ...(code ? { code } : {}) }, status);
@@ -66,7 +67,7 @@ async function domainIds(request: Request): Promise<{ ids: number[]; body: Recor
 
 async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Awaited<ReturnType<typeof buildPlan>>['exec'] extends Map<string, infer E> ? E : never>, ctx: ExecutionContext | undefined, caller: OnboardingCaller): Promise<void> {
   const actor = { actor_id: caller.user?.id ?? null, actor_email: caller.user?.email ?? null, actor_type: 'user' as const };
-  const same = (r: { content: string }) => r.content.trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '') === w.content.toLowerCase().replace(/\.$/, '');
+  const same = (r: { content: string }) => decodeTxtData(r.content).toLowerCase().replace(/\.$/, '') === w.content.toLowerCase().replace(/\.$/, '');
   switch (x.kind) {
     case 'dmarc':
     case 'auth': {
@@ -107,7 +108,7 @@ async function applyWrite(tenant: TenantContext, w: PlanWrite, x: NonNullable<Aw
 
 /** Reads the write back from Cloudflare. Not verified, with the reason, when it cannot be confirmed (a failed or partial read is never "checked"). */
 async function verifyWrite(tenant: TenantContext, w: PlanWrite, x: Parameters<typeof applyWrite>[2]): Promise<{ verified: boolean; reason?: string }> {
-  const norm = (c: string) => c.trim().replace(/^"|"$/g, '').toLowerCase().replace(/\.$/, '');
+  const norm = (c: string) => decodeTxtData(c).toLowerCase().replace(/\.$/, '');
   try {
     switch (x.kind) {
       case 'dmarc':

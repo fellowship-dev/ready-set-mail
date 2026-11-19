@@ -2,7 +2,8 @@ import { createResolver, type FetchLike, type FetchResponseLike, type Resolver }
 
 const TYPE_CODE: Record<string, number> = { A: 1, NS: 2, CNAME: 5, PTR: 12, MX: 15, TXT: 16, AAAA: 28 };
 
-export type Zone = Record<string, string[] | 'SERVFAIL' | 'TIMEOUT' | 'HTTP500' | 'GARBAGE' | 'NODATA'>;
+/** `{ tc: [...] }`: the answer carries the TC bit (truncated) with these records. */
+export type Zone = Record<string, string[] | { tc: string[] } | 'SERVFAIL' | 'TIMEOUT' | 'HTTP500' | 'GARBAGE' | 'NODATA'>;
 
 /** Build a DoH fetch backed by a table keyed `"TYPE name"`. Unknown keys: NXDOMAIN. */
 export function dohFetch(zone: Zone, calls: string[] = [], http: Record<string, FetchResponseLike | Error> = {}): FetchLike {
@@ -25,6 +26,9 @@ export function dohFetch(zone: Zone, calls: string[] = [], http: Record<string, 
     if (v === 'GARBAGE') return resp(200, '<html>not json</html>');
     if (v === 'SERVFAIL') return resp(200, JSON.stringify({ Status: 2 }));
     if (v === undefined) return resp(200, JSON.stringify({ Status: 3 }));
+    if (!Array.isArray(v) && typeof v === 'object') {
+      return resp(200, JSON.stringify({ Status: 0, TC: true, Answer: v.tc.map(data => ({ name, type: TYPE_CODE[type], TTL: 60, data: type === 'TXT' ? `"${data}"` : data })) }));
+    }
     if (v === 'NODATA' || v.length === 0) return resp(200, JSON.stringify({ Status: 0 }));
     return resp(200, JSON.stringify({
       Status: 0,
