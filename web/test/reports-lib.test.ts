@@ -169,6 +169,23 @@ describe('formatting', () => {
 		expect(relativeTime(now / 1000 - 3 * 3600, now)).toBe('3h ago');
 		expect(relativeTime(now / 1000 - 2 * 86400, now)).toBe('2d ago');
 	});
+	it('"Nd ago" counts whole days: yesterday is 1d, around midnight UTC and across the 24 h / 36 h / 47 h marks', () => {
+		const at = (iso: string) => Date.parse(iso);
+		const report = at('2026-11-15T00:00:00Z') / 1000; // a report day: yesterday's, starting at midnight UTC
+		// seen at any hour on the day after, the report day is "1d ago"
+		for (const seen of ['2026-11-16T00:01:00Z', '2026-11-16T12:00:00Z', '2026-11-16T15:30:00Z', '2026-11-16T23:59:00Z']) expect(relativeTime(report, at(seen))).toBe('1d ago');
+		expect(relativeTime(report, at('2026-11-16T00:00:00Z'))).toBe('1d ago'); // exactly 24 h
+		expect(relativeTime(report, at('2026-11-16T12:00:00Z'))).toBe('1d ago'); // 36 h: rounding said 2d
+		expect(relativeTime(report, at('2026-11-16T23:00:00Z'))).toBe('1d ago'); // 47 h
+		expect(relativeTime(report, at('2026-11-17T00:00:00Z'))).toBe('2d ago'); // 48 h
+		// 23:59 and 00:01 across midnight UTC are minutes apart, not a day
+		expect(relativeTime(at('2026-11-15T23:59:00Z') / 1000, at('2026-11-16T00:01:00Z'))).toBe('2m ago');
+		expect(relativeTime(at('2026-11-15T00:01:00Z') / 1000, at('2026-11-16T00:00:00Z'))).toBe('23h ago'); // just under a day: never "24h"
+		expect(relativeTime(report, at('2026-11-15T00:00:00Z'))).toBe('just now');
+		expect(relativeTime(at('2026-11-22T00:00:00Z') / 1000, at('2026-11-16T00:00:00Z'))).toBe('6d from now');
+		expect(relativeTime(report, at('2026-11-29T00:00:00Z'))).toBe('2w ago'); // 14 days
+		expect(relativeTime(report, at('2026-11-27T00:00:00Z'))).toBe('1w ago'); // 12 days, not 2w
+	});
 	it('audit helpers', () => {
 		expect(actionTone('dns.record_added')).toBe('warning');
 		expect(actionTone('mystery')).toBe('neutral');

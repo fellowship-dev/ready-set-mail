@@ -197,7 +197,15 @@ export function SettingsPage() {
 	);
 }
 
+/** What a password change leaves working: hosted has agents to revoke, self-host has API keys; neither is named where it does not exist. */
+export function passwordChangedNote(hosted: boolean): string {
+	return hosted
+		? 'Other devices were signed out. Agents you connected still work: revoke one under Agents below if you are worried about it.'
+		: 'Other devices were signed out. Your API keys still work: revoke them if you are worried about one.';
+}
+
 function ChangePassword() {
+	const hosted = useHosted();
 	const [current, setCurrent] = useState('');
 	const [next, setNext] = useState('');
 	const [confirm, setConfirm] = useState('');
@@ -208,7 +216,7 @@ function ChangePassword() {
 			setCurrent('');
 			setNext('');
 			setConfirm('');
-			toast({ variant: 'success', title: 'Password changed', description: 'Other devices were signed out. Your API keys still work: revoke them if you are worried about one.' });
+			toast({ variant: 'success', title: 'Password changed', description: passwordChangedNote(hosted) });
 		},
 	});
 

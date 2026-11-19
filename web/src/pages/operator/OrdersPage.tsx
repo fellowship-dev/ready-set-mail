@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../../components/domain/ConfirmDialog';
 import { ListSkeleton, LoadError } from '../../components/states';
 import { api, ApiError, errorMessage } from '../../lib/api';
 import { formatMoney, orderDate, STATUS_WORDS, statusDate, type Order } from '../../lib/billing';
+import { useHosted, useSession } from '../../lib/session';
 
 interface OperatorOrder extends Order {
 	workspace_id: string;
@@ -26,16 +27,32 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
 	);
 }
 
+/**
+ * What /orders says when the server will not list orders. The server answers 404 while billing is off and 403 to anyone but the instance owner.
+ * Only the instance owner is told what turns billing on (it is theirs to set); everyone else is only told the page is not theirs.
+ */
+export function ordersUnavailable(status: number, who: { instanceOwner: boolean; hosted: boolean }): { title: string; body: string } {
+	if (who.instanceOwner && status === 404 && !who.hosted) {
+		return { title: 'A self-hosted install has no orders', body: 'Orders belong to the hosted service\'s billing: this install does not sell anything, so there is nothing to list.' };
+	}
+	if (who.instanceOwner && status === 404) {
+		return { title: 'Billing is off, so there are no orders', body: 'Orders appear once Stripe is set up: set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET on this instance (docs/billing.md), then deploy.' };
+	}
+	return { title: 'This page is not available to your account', body: 'Orders are for the person who runs this service.' };
+}
+
 /** The instance owner's orders, across workspaces. Refunds are made in the Stripe dashboard and arrive by webhook: there is no refund button. */
 export function OrdersPage() {
+	const { me } = useSession();
+	const hosted = useHosted();
 	const q = useQuery({ queryKey: key, queryFn: () => api<{ orders: OperatorOrder[] }>('/api/operator/orders'), retry: false });
-	const forbidden = q.error instanceof ApiError && (q.error.status === 403 || q.error.status === 404);
+	const unavailable = q.error instanceof ApiError && (q.error.status === 403 || q.error.status === 404) ? ordersUnavailable(q.error.status, { instanceOwner: !!me?.instance_owner, hosted }) : null;
 	return (
 		<div className="min-w-0 space-y-6">
-			<PageHeader title="Orders" description="Orders from every workspace, newest first, whatever their status. Instance owner only. Refunds are made in the Stripe dashboard." />
-			{forbidden ? (
-				<Alert variant="info" title="Only the instance owner can see orders">
-					Orders are the operator's, not a workspace's. They are visible to the account in OWNER_EMAIL, on the hosted service when billing is on.
+			<PageHeader title="Orders" description={unavailable ? undefined : 'Orders from every workspace, newest first, whatever their status. Refunds are made in the Stripe dashboard.'} />
+			{unavailable ? (
+				<Alert variant="info" title={unavailable.title}>
+					{unavailable.body}
 				</Alert>
 			) : q.isPending ? (
 				<ListSkeleton rows={4} label="Loading orders" />

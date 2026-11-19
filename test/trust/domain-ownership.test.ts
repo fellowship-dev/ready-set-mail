@@ -160,10 +160,10 @@ describe('a claimed domain stays pending until ownership is proven', () => {
     expect(w.rows('SELECT * FROM domain_claims')).toEqual([]);
   });
 
-  it('caps the unverified claims one workspace can hold', async () => {
+  it('caps the unverified claims one workspace can hold at its domain slots (src/hosted/plan-limits.ts)', async () => {
     const w = await world();
-    for (let i = 0; i < 25; i++) expect((await add(w, w.A, `d${i}.example.net`)).status).toBe(202);
-    expect((await add(w, w.A, 'one-too-many.example.net')).status).toBe(429);
+    for (let i = 0; i < 10; i++) expect((await add(w, w.A, `d${i}.example.net`)).status).toBe(202);
+    expect((await add(w, w.A, 'one-too-many.example.net')).status).toBe(403);
     expect((await add(w, w.B, 'd0.example.net')).status).toBe(202); // the cap is per workspace
   });
 });

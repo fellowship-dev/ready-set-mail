@@ -80,7 +80,7 @@ export interface ImportResult {
 	removed: number;
 	more: number;
 	accounts: { id: string | null; name: string | null }[];
-	needs_selection?: { room: number; cap: number; zones: { id: string; name: string; account_id: string | null; account_name: string | null }[] };
+	needs_selection?: { room: number; cap: number; zones: { id: string; name: string; account_id: string | null; account_name: string | null }[]; claimed?: string[] };
 	verified_claims: string[];
 }
 export interface ImportTotals { imported: string[]; skipped: { domain: string; reason: string }[]; already: number; accounts: string[]; verifiedClaims: string[] }

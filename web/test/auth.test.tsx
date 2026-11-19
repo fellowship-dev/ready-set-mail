@@ -37,13 +37,13 @@ describe('sign in', () => {
 	});
 
 	it('shows the server message for a wrong password and stays signed out', async () => {
-		renderApp(<AuthPage />, { role: null, routes: { 'POST /api/auth/login': fail(401, 'invalid credentials') } });
+		renderApp(<AuthPage />, { role: null, routes: { 'POST /api/auth/login': fail(401, 'That email and password do not match. Check both, or reset your password.') } });
 		const user = userEvent.setup();
 		await user.type(await screen.findByLabelText('Email'), 'a@example.com');
 		await user.type(screen.getByLabelText('Password'), 'nope-nope');
 		await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-		expect(await screen.findByRole('alert')).toHaveTextContent('invalid credentials');
+		expect(await screen.findByRole('alert')).toHaveTextContent('That email and password do not match. Check both, or reset your password.');
 	});
 
 	it('offers OAuth buttons only for configured providers', async () => {

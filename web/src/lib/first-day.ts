@@ -3,7 +3,7 @@
  * first run was about, from what the server already knows: whether the domain is proven, whether reports can reach this workspace,
  * whether its DMARC record names our report address, and whether any report has arrived. Never from a page that was visited.
  */
-import { isUnproven, type ProofShape } from '../components/domain/ProofLost';
+import { isUnproven, type ProofShape } from './proof';
 import { hasReportAddress } from './dmarc-record';
 import type { Domain, DomainCheckSummary } from './types';
 import type { DomainVerdict, ReportTotals } from './verdict';

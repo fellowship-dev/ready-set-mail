@@ -271,12 +271,13 @@ describe('finding 2: the NS check follows no CNAME and wants the zone\'s exact s
 });
 
 describe('finding 3: nobody loses a domain to a claim that cannot be added', () => {
-  /** C holds two domains under a cap of 2 and has a pending claim on a-corp.com, which workspace A holds without proof. */
+  /** C holds two domains under a cap of 2 (one of them put there beside the room rule, as an older version or a race could) and has a pending claim on a-corp.com, which workspace A holds without proof. */
   async function fullPlan() {
     const s = await setup({ 'f1.com': {}, 'f2.com': {}, 'a-corp.com': {} }, { MAX_DOMAINS_PER_WORKSPACE: '2' });
     expect((await call(s.w.env, 'POST', '/api/domains', { key: s.C.token, body: { domain: 'a-corp.com' } })).status).toBe(202);
     const id = await s.connect();
-    expect((await json(await s.imp(id, { zone_ids: [zid('f1.com'), zid('f2.com')] }))).imported).toHaveLength(2);
+    expect((await json(await s.imp(id, { zone_ids: [zid('f1.com')] }))).imported).toHaveLength(1); // f1 and the claim fill the 2 places
+    s.w.db.sqlite.prepare("INSERT INTO domains (workspace_id, domain, rua_address, verified_via) VALUES (?, 'f2.com', '', 'txt')").run(s.C.ws);
     s.w.send.mockClear();
     return { s, id };
   }
