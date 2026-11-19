@@ -7,7 +7,7 @@
  * Stripe or the operator supplies, before any workspace is known; the daily job sweeps). Each such read is marked
  * `workspace-scope-exempt`; once a row is in hand every write goes through the scoped queries with the row's own workspace id.
  */
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { getDb, unwrapDriverError, type Db, type DbLike } from '../client';
 import { billingCheckoutSessions, billingEvents, billingOrders, billingPriceCache, workspacePlans, workspaces, type OrderStatus } from '../schema';
 import { changesOf } from './plan-limit';
@@ -133,8 +133,8 @@ export function billingLookups(dbLike: DbLike) {
 
 		/** The workspace a Stripe customer belongs to (the table is the tenant registry, not tenant data). */
 		workspaceByCustomer: (customerId: string) => db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.stripe_customer_id, customerId)).get().then((r) => r?.id ?? null),
-		/** Every workspace with a plan row: the daily job syncs them all. */
-		planWorkspaces: () => db.select({ id: workspacePlans.workspace_id }).from(workspacePlans).where(/* workspace-scope-exempt: the daily job re-syncs every workspace that has a plan */ undefined).all().then((r) => r.map((x) => x.id)),
+		/** Every workspace with a plan row or a Stripe customer (a card may be on file before any plan row exists): the daily job syncs them all. */
+		planWorkspaces: () => db.select({ id: workspaces.id }).from(workspaces).where(/* workspace-scope-exempt: the daily job re-syncs every workspace that has a plan row or a Stripe customer */ or(isNotNull(workspaces.stripe_customer_id), inArray(workspaces.id, db.select({ id: workspacePlans.workspace_id }).from(workspacePlans).where(/* workspace-scope-exempt: the same sweep, the workspaces that have a plan row */ undefined)))).all().then((r) => r.map((x) => x.id)),
 		workspaceName: (workspaceId: string) => db.select({ name: workspaces.name }).from(workspaces).where(eq(workspaces.id, workspaceId)).get().then((r) => r?.name ?? null),
 
 		events: {

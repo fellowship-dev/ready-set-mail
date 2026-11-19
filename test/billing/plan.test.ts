@@ -172,6 +172,19 @@ describe('billing', () => {
     expect(planRow(w).stripe_subscription_id).toBeTruthy();
   });
 
+  it('a domain proven through a path that never syncs is billed by the daily job once the workspace has a card (no plan row yet)', async () => {
+    const w = await billingWorld(PLAN);
+    seedPrices(w);
+    w.addDomain(w.owner.workspaceId, 'acme.com');
+    await w.addCard(w.owner);
+    await flushBackground();
+    expect(planRow(w)).toBeUndefined();
+    w.addDomain(w.owner.workspaceId, 'two-corp.com'); // bulk add, the setup wizard's base domain: no syncPlan call
+    await runBillingJob(w.env as never);
+    expect(planRow(w)).toMatchObject({ quantity: 1, sync_error: null });
+    expect(w.fake.state.subscriptions.size).toBe(1);
+  });
+
   it('plan off: syncPlan does nothing', async () => {
     const w = await billingWorld();
     w.addDomain(w.owner.workspaceId, 'acme.com');
