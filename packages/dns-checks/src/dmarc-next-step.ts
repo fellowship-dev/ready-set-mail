@@ -9,6 +9,7 @@
 // policy (`sp=` at _dmarc.<parent> when the parent has or needs one), says what else that change affects, mentions pct= while
 // it is below 100, and offers the alternative of the name's own record, which affects only this name.
 
+import { serviceNotSetUpAction, serviceNotSetUpSentence } from './sender-providers';
 import { dmarcBreakFix, dmarcBreakSentence, storedDmarcBreak, type DmarcIssue } from './dmarc-problem';
 
 export type Policy = 'none' | 'quarantine' | 'reject';
@@ -151,6 +152,11 @@ export interface DmarcEvidence {
    */
   suffixParent?: string | null;
   /**
+   * The name does not exist in DNS (`false`: NXDOMAIN, RFC 9989 section 3.2.13). No record can be published at a name that does
+   * not exist, so no record is offered there: the step says what applies to it instead. Absent or true: it exists.
+   */
+  nameExists?: boolean | null;
+  /**
    * The alignment modes (`adkim=`/`aspf=`) of the record that governs an inherited name, when it was read. A record of the
    * name's own replaces it, so it carries them; absent: not read (the relaxed default is assumed).
    */
@@ -166,6 +172,23 @@ export interface DmarcEvidence {
    * and moves one rung at a time; `ownership` and `hosted_records` have a step of their own. Absent or null: they can be.
    */
   reportsRefusal?: ReportsRefusal | null;
+  /**
+   * Of the window's failing messages (total - passed), how many came from servers that are not a known sending service and
+   * passed SPF or DKIM for no name of this organization (`likelyNotYours`). When it covers every failure, the failures are
+   * likely mail pretending to be this domain, not senders to fix. Absent or null: not known, failures are treated as yours.
+   */
+  failedNotYours?: number | null;
+  /**
+   * Of the window's failing messages, how many came from a service sending as this name without being set up for it
+   * (`classifySource` 'service_not_set_up'), and the From names they sent as. Not "nothing to fix": one thing to look at.
+   */
+  failedService?: number | null;
+  failedServiceNames?: string[] | null;
+  /**
+   * Of the window's failing messages, how many are in reports stored before the receiver's verdict was kept (no source is recorded
+   * for them, so they can be neither yours nor not yours). Absent or null: none.
+   */
+  failedUnrecorded?: number | null;
 }
 
 export interface ReportsRefusal {
@@ -231,6 +254,13 @@ const shownRate = (r: { total: number; passed: number; days: number }) =>
  * it first). Empty only while the report totals are still loading and the step depends on them.
  */
 export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): DmarcStep[] {
+  if (ev.nameExists === false) {
+    const governing = f.kind === 'inherited' || f.kind === 'partial-read' || f.kind === 'broken' ? f.at : null;
+    const applies = governing
+      ? `Receivers apply the np= tag of the record at _dmarc.${governing} to mail claiming to be from it (else its sp=, else its p=; RFC 9989 section 4.7). Change that record to change what applies.`
+      : 'No DMARC record covers it, so receivers apply no DMARC policy to mail claiming to be from it.';
+    return [{ key: 'name-missing', status: 'note', do: 'Nothing to publish at this name', who: 'nobody', where: 'none', why: `${name} does not exist in DNS (NXDOMAIN), so no record can be published at it. ${applies}` }];
+  }
   if (f.kind === 'unread' || f.kind === 'partial-read') {
     const what = f.kind === 'unread' ? 'DMARC has not been read from public DNS yet' : `public DNS showed p=${f.policy}${f.inherited ? ` from ${f.at}` : ''}, but how much of it is enforced (pct=, sp=) and whether it sends reports here have not been read yet`;
     return [{ key: 'dmarc-read', status: 'unknown', do: 'Check the DMARC record again', why: `For ${name}, ${what}, so it is not called enforced and nothing is suggested until it is.`, who: 'you', where: 'recheck' }];
@@ -239,7 +269,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     const suffix = ev.suffixParent ? ` ${ev.suffixParent} is a public suffix, so its DMARC record does not apply to ${name}: ${name} counts as its own organization.` : '';
     return [{
       key: 'dmarc-missing', status: 'attention', do: 'Publish a DMARC record at p=none', who: 'dns', where: 'dmarc-setup', at: name,
-      why: `No DMARC record covers ${name}, so receivers get no instruction for mail that fails, and nobody sends reports about who mails as ${name}.${suffix} p=none changes no delivery; it starts the reports.`,
+      why: `No DMARC record covers ${name}, so receivers get no instruction for mail that fails, and nobody sends reports about who mails as ${name}.${suffix} ${ev.reportsAddress ? 'p=none changes no delivery; it starts the reports.' : 'p=none changes no delivery. Reports start once the record names a reports address: connect reports first, or add your own rua=.'}`,
       record: dmarcRecordFor({ policy: 'none', pct: 100 }, ev.reportsAddress ? ev.ruaAddress : null), recordAt: `_dmarc.${name}`,
     }];
   }
@@ -322,7 +352,38 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     };
   };
   const reloadStep = (why: string): DmarcStep => ({ key: 'reports-failed', status: 'unknown', do: 'Load the report totals again', why, who: 'you', where: 'reload-reports' });
-  const sendersStep = (status: StepStatus, why: string): DmarcStep => ({ key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' });
+  // Whose the failures are (`classifySource`, the one judgement): not_yours (nothing to fix), service_not_set_up (one thing to look at), the rest yours.
+  const failed = reports ? reports.total - reports.passed : 0;
+  const notYours = ev.failedNotYours ?? 0;
+  const service = ev.failedService ?? 0;
+  const unrec = ev.failedUnrecorded ?? 0;
+  const others = notYours + service;
+  // Nothing recorded as yours: unchanged. Otherwise the failures are the recorded not-yours and service ones plus those with no recorded verdict.
+  const onlyOthers = failed > 0 && others > 0 && others + unrec >= failed;
+  /** The failures with no recorded source: what is left of `failed` once the not-yours and service ones are taken out (at most `unrec`). */
+  const unrecorded = onlyOthers ? failed - others : 0;
+  const svcNames = ev.failedServiceNames?.length ? ev.failedServiceNames : [name];
+  const serviceWords = serviceNotSetUpSentence(svcNames);
+  const likelySpoofed = `servers that are not a known sending service and passed SPF or DKIM for no name of ${name}: likely mail pretending to be ${name}`;
+  const othersWhy = service > 0
+    ? notYours > 0
+      ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}, which needs no fix, and ${service} from ${serviceWords}`
+      : unrecorded > 0 ? `Of the ${failed} messages that failed, ${service} came from ${serviceWords}` : `Every message that failed came from ${serviceWords}`
+    : unrecorded > 0 ? `Of the ${failed} messages that failed, ${notYours} came from ${likelySpoofed}` : `Every message that failed came from ${likelySpoofed}`;
+  const unrecordedWhy = unrecorded > 0 ? ` The other ${unrecorded} are in reports stored before Ready Set Mail kept each receiver's verdict, so who sent them is not recorded.` : '';
+  const serviceDo = serviceNotSetUpAction(svcNames);
+  const sendersStep = (status: StepStatus, why: string, threshold?: { next: string; pct: number }): DmarcStep => onlyOthers && threshold
+    ? service > 0
+      ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} ${cap(threshold.next)} still waits until ${threshold.pct}% of reported messages pass.` }
+      : { key: 'senders', status: 'improve', do: 'Check whether the failing senders are yours', who: 'you', where: 'senders', why: `${shown}. ${othersWhy}.${unrecordedWhy} If none of the failing senders is a service you use, there is nothing to fix for them; ${threshold.next} still waits until ${threshold.pct}% of reported messages pass.` }
+    : { key: 'senders', status, do: 'Fix the senders that fail DMARC', why, who: 'providers', where: 'senders' };
+  const othersStep = (): DmarcStep => service > 0
+    ? { key: 'service-not-set-up', status: 'improve', do: serviceDo, who: 'you', where: 'senders',
+        why: `${shown}. ${othersWhy}.${unrecordedWhy}${f.policy === 'none' ? '' : ` Until then, p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'} that mail.`}` }
+    : {
+        key: 'not-yours', status: 'note', do: unrecorded > 0 ? 'Nothing to fix in the mail with a recorded verdict' : 'Nothing to fix', who: 'nobody', where: 'senders',
+        why: `${shown}. ${othersWhy}, which p=${f.policy} asks receivers to ${f.policy === 'reject' ? 'reject' : 'send to spam'}.${unrecordedWhy} If one of the failing senders is a service you use, open the failing senders.`,
+      };
 
   // The report evidence a rung waits on: the gating step, 'ready', or 'loading'.
   const gate = (next: string, threshold: number, where: StepWhere = inh ? 'parent' : 'dmarc-wizard'): DmarcStep | 'ready' | 'loading' => {
@@ -340,11 +401,11 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
         : `No reports arrived in the last ${reports.days} days. Receivers send them about once a day; until they arrive, nobody can confirm that every sender passes.`;
       return { key: 'gathering', status: 'gathering', do: `Wait for DMARC reports before ${next}`, why, who: 'nobody', where: 'none' };
     }
-    if (rate !== null && rate < threshold) return sendersStep('improve', `${shown}. ${cap(next)} should wait until they pass.`);
+    if (rate !== null && rate < threshold) return sendersStep('improve', `${shown}. ${cap(next)} should wait until they pass.`, { next, pct: threshold });
     return 'ready';
   };
 
-  const harmful = f.policy !== 'none' && rate !== null && rate < HARMFUL;
+  const harmful = f.policy !== 'none' && rate !== null && rate < HARMFUL && !onlyOthers;
   if (harmful) steps.push(sendersStep('attention', `${shown}, so some of your own mail is likely ${f.policy === 'reject' ? 'rejected' : 'in spam'}.`));
 
   // The next rung: pct to 100 under an enforcing policy, else the next policy. p=reject at pct=100 is the top.
@@ -370,7 +431,7 @@ export function dmarcSteps(name: string, f: PolicyInForce, ev: DmarcEvidence): D
     }
     else if (f.reportsHere === false) steps.push(ruaStep(`Protection is in place either way; without it, nobody sees which services send as ${name} and whether they pass.`, 'note'));
     else if (reports === null) steps.push(reloadStep('They could not be loaded, so whether every sender passes is unknown.'));
-    else if (rate !== null && rate < READY) steps.push(sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
+    else if (rate !== null && rate < READY) steps.push(onlyOthers ? othersStep() : sendersStep('improve', `${shown}. Their mail is rejected until they pass.`));
   }
 
   // An own record whose subdomain policy is weaker than its own: the subdomains climb the same ladder, one rung at a

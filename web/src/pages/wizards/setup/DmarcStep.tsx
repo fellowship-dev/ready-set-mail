@@ -15,7 +15,8 @@ import { errorMessage } from '../../../lib/api';
 import { useApplyDmarc, type ApplyDmarcResponse } from '../../../lib/apply-dmarc';
 import { dmarcCoverage, inheritedSentence, keptEnforcement, offerEnforcement, offeredDmarcRecord } from '../../../lib/dmarc-coverage';
 import { useHosted } from '../../../lib/session';
-import { useReportIntakeEnabled } from '../../../lib/report-address';
+import { reachWords, reportsArrive, useReportAddress, useReportIntakeEnabled } from '../../../lib/report-address';
+import { ReachStatement } from '../../../components/reports/ReachStatement';
 import { buildRecommendedRecord, dmarcRecordProblem, hasReportAddress, parseDmarcPolicy } from '../../../lib/dmarc-record';
 import type { OnboardingStatus } from '../../../lib/types';
 import { setupKeys } from './hooks';
@@ -42,11 +43,17 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 	// Hosted, before report intake is connected: no domain has a report address, so the step judges only what DNS shows
 	// (a record or none) and never asks for an rua= that does not exist.
 	const hostedMode = useHosted();
-	const hostedNoReports = hostedMode && !rua;
+	// Whether reports reach this name, and how, is the server's one answer (`reach`: its own connection, through its parent, or through the record that
+	// applies): this step says what the panel says. Before that is known (or without hosted intake) only the stored address is left.
+	const reach = useReportAddress(status.domain_id, hostedMode && reportsPanel);
+	const reachSaid = reachWords(reach.data);
+	const hostedNoReports = hostedMode && !(reportsArrive(reach.data) ?? !!rua);
 	// What covers this name when it has no record of its own: a parent's policy, nothing, or unknown (lookup failed).
 	const coverage = dmarcCoverage(status, dmarcFailed.length > 0);
 	// Without a report address nothing reaches Ready Set Mail, whatever the record says, so it is never "configured".
-	const severity = hostedNoReports
+	// The record that applies to this name (its organizational domain's) already sends reports here: nothing is missing, whatever the name's own lookup shows.
+	const inheritedReports = reach.data?.available === true && reach.data.reach.kind === 'inherited_record' && coverage.kind === 'inherited';
+	const severity = hostedNoReports || inheritedReports
 		? coverage.kind === 'unknown'
 			? 'unknown'
 			: coverage.kind === 'own'
@@ -74,6 +81,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 		: hostedNoReports && coverage.kind === 'none'
 			? offeredDmarcRecord(null, coverage, null)
 			: null;
+
+	// Whether the Connect reports panel is on this step (the block below that offers the record through it).
+	const panelShown = (severity === 'error' || severity === 'warning') && !!recommended && !applied && reportsPanel && !!rua;
 
 	const patch = (fn: (s: OnboardingStatus) => OnboardingStatus) => qc.setQueryData<OnboardingStatus>(setupKeys.status(status.domain_id), (s) => (s ? fn(s) : s));
 
@@ -127,6 +137,8 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							No DMARC record found for <strong className="text-ink-1">_dmarc.{status.domain}</strong>.
 						</p>
 					)}
+					{/* The Connect reports panel below says the state of a connected name itself (its state line): said once, never twice. */}
+					{reachSaid && !(panelShown && reach.data?.available === true && !!reach.data.address) ? <ReachStatement words={reachSaid} /> : null}
 					{hostedNoReports ? (
 						<>
 							<div className="space-y-1">
@@ -189,7 +201,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 						// Every mode says which policy is in force for this name before anything is offered.
 						<p className="text-sm text-ink-2">
 							{inheritedSentence(status.domain, coverage)}
-							{rua && floor ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
+							{rua && floor && !reachSaid && !reach.isLoading ? ` To receive reports here, publish the record below: it keeps ${keptEnforcement(coverage, floor)} and adds Ready Set Mail's report address.` : ''}
 						</p>
 					) : null}
 					{rua && !applied && coverage.kind === 'unknown' && !dmarc.found ? (
@@ -217,7 +229,7 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 							<PublicDnsLive domain={status.domain} record={written.record} />
 							<p className="mt-2">Reports are not connected for this name.</p>
 						</Alert>
-					) : (severity === 'info' && !hostedNoReports && !recordProblem) ? (
+					) : (severity === 'info' && !hostedNoReports && !recordProblem && !reachSaid) ? (
 						<Alert variant="info" title="Reports are configured">
 							Reports will start arriving within 24 hours. Once there is data, the dashboard guides you from <code className="font-mono">p=none</code> to{' '}
 							<code className="font-mono">p=reject</code> safely.
@@ -230,9 +242,9 @@ export function DmarcStep({ status, onNext, onSkip, onRetry }: StepProps) {
 				</>
 			)}
 
-			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. Hosted: there is no
-			    reports domain of the install's own to authorize (reports go to the shared address), so no such record exists to check. */}
-			{auth && !hostedMode && (dmarc.found || !!recommended) ? (
+			{/* The authorization record only matters next to a DMARC record: none published and none offered, none required. Hosted: every domain
+			    reports to the shared address, whose own domain authorizes any policy domain (RFC 9990 section 4), so there is nothing per domain to check. */}
+			{auth && !hostedMode && !hostedNoReports && (dmarc.found || !!recommended) ? (
 				<section aria-label="Report authorization record" className="space-y-2">
 					<h3 className="text-sm font-semibold text-ink-1">Report authorization record</h3>
 					<CheckResultList>

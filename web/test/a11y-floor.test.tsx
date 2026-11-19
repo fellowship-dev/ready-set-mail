@@ -34,7 +34,7 @@ describe('TrendChart tick labels', () => {
 
 const sender = (o: Partial<Sender> = {}): Sender => ({
 	source_ip: '198.2.180.1', reverse_dns: 'mail1.mcsv.net', base_domain: 'mcsv.net', org: 'Example Org', country_code: 'US',
-	provider: { id: 'mailchimp', name: 'Mailchimp', evidence: 'authenticated as mcsv.net' }, domains: ['example.com'], messages: 240, share_pct: 12, spf_aligned_pct: 0, dkim_aligned_pct: 0, dmarc_pass_pct: 0,
+	provider: { id: 'mailchimp', name: 'Mailchimp', evidence: 'authenticated as mcsv.net' }, domains: ['example.com'], from_domains: ['example.com'], messages: 240, share_pct: 12, spf_aligned_pct: 0, dkim_aligned_pct: 0, dmarc_pass_pct: 0,
 	spf_domain: 'mcsv.net', dkim_domain: 'mcsv.net', first_seen: 1_760_000_000, last_seen: 1_760_900_000, is_new: false, ...o,
 });
 

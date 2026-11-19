@@ -15,7 +15,7 @@ const routes = (current: string) => ({
 		total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 2, dmarc_pct: 100, dmarc_p: 'reject', dmarc_sp: null, dmarc_rua: 0,
 	},
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: current, cf_managed: true },
 	'GET /api/domains/1/onboarding-status': {

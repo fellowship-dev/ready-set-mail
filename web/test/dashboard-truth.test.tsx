@@ -26,7 +26,7 @@ const routes = (over: Record<string, unknown | Handler> = {}) => ({
 	'GET /api/domains': { domains: [D] },
 	'GET /api/domains/1/check-summary': SUM,
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [{ day: '2026-11-10', total: 100, passed: 97, failed: 3 }] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': WIZ,
 	'GET /api/domains/1/dns-check': { found: true, has_rua: true, current_record: current, cf_managed: false },
 	'GET /api/domains/1/onboarding-status': ONB,

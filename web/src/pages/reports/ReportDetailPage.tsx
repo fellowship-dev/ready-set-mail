@@ -1,24 +1,33 @@
 import { Card, EmptyState, PageHeader, Stat, StatGroup, cn } from '@ready-set-mail/ui';
 import { ReportsNotConnected, useReportsNotConnected } from '../../components/ReportsNotConnected';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, ChevronDown, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleHelp, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useParams } from 'react-router';
 import { AuthBadge, BackLink, ProviderName, useRouteDomainId } from '../../components/reports';
 import { LoadError, PageSkeleton, Section } from '../../components/states';
 import { api } from '../../lib/api';
 import { invalidDmarcSp, parseDmarcPct, parseDmarcPolicy, parseDmarcSp } from '../../lib/dmarc-record';
-import { useCheckSummary, useDnsCheck } from '../../lib/domain-queries';
+import { useCheckSummary, useDnsCheck, useNames } from '../../lib/domain-queries';
 import { emptyReportsMessage, emptyReportsState } from '../../lib/uncounted';
 import { useDomain } from '../../lib/queries';
-import { explain, formatDayWithRelative, isFailing, passRate, type KnownPolicy, type LiveDmarc } from '../../lib/reports';
-import type { DayReport, ReportSource } from '../../lib/types';
+import { useReachWords } from '../../lib/report-address';
+import { ReachStatement } from '../../components/reports/ReachStatement';
+import { explain, formatDayWithRelative, isFailing, isOneCheck, isUnrecorded, NOT_RECORDED, passRate, verdictLead, verdictLeadSentence, type KnownPolicy, type LiveDmarc, type NamePolicy } from '../../lib/reports';
+import type { DayReport, NameSeen, ReportSource } from '../../lib/types';
 
-const sourceKey = (s: ReportSource) => `${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}`;
+/** The policy the server read for a name that sent mail as a subdomain of this domain (null: not read). */
+const namedPolicy = (names: NameSeen[] | undefined, headerFrom: string | null): NamePolicy | null => {
+	const e = names?.find((n) => n.name === headerFrom?.toLowerCase())?.effective;
+	return e ? { ...e, pct: e.pct ?? undefined } : null;
+};
 
-function FailingCard({ src, policy, live }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc }) {
+const sourceKey = (s: ReportSource) => `${s.source_ip}-${s.header_from}-${s.spf_domain}-${s.dkim_domain}-${s.spf_aligned}-${s.dkim_aligned}-${s.disposition}`;
+
+/** One source with its explanation: a danger border when it failed DMARC, a neutral one when it passed on one check only. */
+function FailingCard({ src, policy, live, named, quiet = false }: { src: ReportSource; policy: KnownPolicy; live?: LiveDmarc; named?: NamePolicy | null; quiet?: boolean }) {
 	return (
-		<Card className="space-y-3 border-danger/40 p-4">
+		<Card className={cn('space-y-3 p-4', quiet ? 'border-line' : 'border-danger/40')}>
 			<div className="flex flex-wrap items-start justify-between gap-3">
 				<div className="min-w-0 space-y-0.5">
 					<ProviderName src={src} />
@@ -29,7 +38,7 @@ function FailingCard({ src, policy, live }: { src: ReportSource; policy: KnownPo
 					<span className="ml-1 text-xs text-ink-2">{src.count === 1 ? 'message' : 'messages'}</span>
 				</p>
 			</div>
-			<p className="text-sm leading-relaxed text-ink-1">{explain(src, policy, live)}</p>
+			<p className="text-sm leading-relaxed text-ink-1">{explain(src, policy, live, named)}</p>
 			<div className="flex flex-wrap items-center gap-2">
 				<AuthBadge protocol="SPF" pass={!!src.spf_pass} />
 				<AuthBadge protocol="DKIM" pass={!!src.dkim_pass} />
@@ -39,7 +48,8 @@ function FailingCard({ src, policy, live }: { src: ReportSource; policy: KnownPo
 	);
 }
 
-function PassingRow({ src }: { src: ReportSource }) {
+/** One collapsed source: passing, or (`unrecorded`) one whose DMARC verdict was not kept. */
+function PassingRow({ src, unrecorded = false }: { src: ReportSource; unrecorded?: boolean }) {
 	const [open, setOpen] = useState(false);
 	const panelId = `passing-${sourceKey(src).replace(/[^a-z0-9]/gi, '-')}`;
 	const details: Array<[string, string | number | null, boolean]> = [
@@ -58,8 +68,8 @@ function PassingRow({ src }: { src: ReportSource }) {
 				onClick={() => setOpen((o) => !o)}
 				className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/60"
 			>
-				<CheckCircle2 aria-hidden className="size-4 shrink-0 text-success" />
-				<span className="sr-only">Passing: </span>
+				{unrecorded ? <CircleHelp aria-hidden className="size-4 shrink-0 text-ink-2" /> : <CheckCircle2 aria-hidden className="size-4 shrink-0 text-success" />}
+				<span className="sr-only">{unrecorded ? 'Verdict not recorded: ' : 'Passing: '}</span>
 				<span className="min-w-0 flex-1">
 					<ProviderName src={src} />
 				</span>
@@ -105,10 +115,13 @@ export function ReportDetailPage() {
 
 	// "No reports received" only when none arrived: dropped, not processed or uncounted reports are said as such.
 	const summaryQ = useCheckSummary(id, !Number.isNaN(id));
+	// The policy of each subdomain a source sent as, read by the server: its true source (its own record, or the organizational domain's tag).
+	const names = useNames(id, !Number.isNaN(id));
 	const visibility = summaryQ.data;
 	const lost = emptyReportsState(0, visibility) !== 'none' ? emptyReportsMessage(0, visibility) : null;
 	const name = q.data?.domain ?? domain?.domain;
 	const reportsOff = useReportsNotConnected(domain);
+	const reached = useReachWords(id);
 	const record = dns.data && !dns.data.error && dns.data.found ? dns.data.current_record : null;
 	const live: LiveDmarc | undefined = name && record ? { domain: name, sp: parseDmarcSp(record), invalidSp: invalidDmarcSp(record), pct: parseDmarcPct(record), monitoredSubdomain: !!domain?.parent_id } : undefined;
 	const header = (title: string, description?: string) => (
@@ -142,15 +155,23 @@ export function ReportDetailPage() {
 
 	const { summary, sources } = q.data;
 	const failing = sources.filter(isFailing);
-	const passing = sources.filter((s) => !isFailing(s));
+	const oneCheck = sources.filter(isOneCheck);
+	const unrecorded = sources.filter(isUnrecorded);
+	const passing = sources.filter((s) => !isFailing(s) && !isOneCheck(s) && !isUnrecorded(s));
 	const rate = passRate(summary.passed, summary.total);
 
+	// Some of the day's mail has no recorded verdict: this page and the Anomalies page lead with the same count (`verdictLead`), and the failed figure
+	// is the one among the records that have a verdict, never the reports' own total that includes the rest.
+	const lead = verdictLead(sources, q.data.unrecorded_reports);
+	const failedShown = lead ? lead.failedMessages : summary.failed;
 	const hero =
 		summary.total === 0
 			? null
-			: failing.length === 0
+			: lead
+				? `${summary.total.toLocaleString()} messages analyzed. ${verdictLeadSentence(lead)}`
+				: summary.failed === 0
 				? `${summary.total.toLocaleString()} messages analyzed — everything passed.`
-				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} need attention.`;
+				: `${summary.total.toLocaleString()} messages analyzed — ${summary.failed.toLocaleString()} failed DMARC.`;
 
 	return (
 		<div className="space-y-8">
@@ -158,6 +179,8 @@ export function ReportDetailPage() {
 
 			{summary.total === 0 && lost ? (
 				<EmptyState title="No counted reports for this date" description={`${lost.replace(/\.?$/, '.')} Pick another day from the reports list.`} />
+			) : summary.total === 0 && reached ? (
+				<ReachStatement words={reached} />
 			) : summary.total === 0 ? (
 				<EmptyState
 					title="No reports received for this date"
@@ -165,24 +188,44 @@ export function ReportDetailPage() {
 				/>
 			) : (
 				<>
-					<p className={cn('flex items-center gap-2 text-base font-medium', failing.length > 0 ? 'text-danger' : 'text-success')}>
-						{failing.length > 0 ? <XCircle aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
+					<p className={cn('flex items-center gap-2 text-base font-medium', failedShown > 0 ? 'text-danger' : lead ? 'text-ink-1' : 'text-success')}>
+						{failedShown > 0 ? <XCircle aria-hidden className="size-5" /> : lead ? <CircleHelp aria-hidden className="size-5" /> : <CheckCircle2 aria-hidden className="size-5" />}
 						{hero}
 					</p>
 					<StatGroup className={'sm:grid-cols-4'}>
 						<Stat label="Pass rate" value={`${rate}%`} />
 						<Stat label="Total" value={summary.total.toLocaleString()} />
 						<Stat label="Passed" value={summary.passed.toLocaleString()} />
-						{summary.failed > 0 ? <Stat label="Failed" value={summary.failed.toLocaleString()} /> : null}
+						{failedShown > 0 ? <Stat label={lead ? 'Failed (recorded verdicts)' : 'Failed'} value={failedShown.toLocaleString()} /> : null}
 					</StatGroup>
 
 					{failing.length > 0 ? (
-						<Section title="Needs attention" description="These sources failed SPF or DKIM for this day.">
+						<Section title="Needs attention" description="These sources failed DMARC for this day: neither SPF nor DKIM passed and aligned with the From domain.">
 							<div className="space-y-3">
 								{failing.map((s) => (
-									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} />
+									<FailingCard key={sourceKey(s)} src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />
 								))}
 							</div>
+						</Section>
+					) : null}
+
+					{oneCheck.length > 0 ? (
+						<Section title="Passed, but one check failed" description="DMARC passed on SPF or DKIM alone. Worth fixing so there is a backup.">
+							<div className="space-y-3">
+								{oneCheck.map((s) => (
+									<FailingCard key={sourceKey(s)} quiet src={s} policy={policy} live={live} named={namedPolicy(names.data, s.header_from)} />
+								))}
+							</div>
+						</Section>
+					) : null}
+
+					{unrecorded.length > 0 ? (
+						<Section title="Verdict not recorded" description={NOT_RECORDED}>
+							<ul className="overflow-hidden rounded-lg border border-line bg-surface-1">
+								{unrecorded.map((s) => (
+									<PassingRow key={sourceKey(s)} src={s} unrecorded />
+								))}
+							</ul>
 						</Section>
 					) : null}
 

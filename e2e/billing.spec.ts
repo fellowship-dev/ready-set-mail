@@ -69,7 +69,7 @@ test('owner adds a card through Stripe, pays once, and the webhook marks the ord
 		const domainId = inst.d1(`SELECT id FROM domains WHERE domain = '${DOMAIN}'`)[0]!.id as number;
 		await somethingToFix(page);
 
-		// The quiet offer, below "Do this next".
+		// The quiet offer, right after the first step of "Do this next".
 		await page.goto(`${inst.url}/#/w/${workspaceId}/domains/${domainId}`);
 		const offer = page.getByRole('button', { name: 'Have us fix this domain: $149 USD' });
 		await expect(offer).toBeVisible({ timeout: 60_000 });

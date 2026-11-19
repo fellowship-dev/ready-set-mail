@@ -31,7 +31,25 @@ describe('reports.checkSummary', () => {
       total_messages: 1000, pass_messages: 980, fail_messages: 20,
       dkim_total: 1000, dkim_pass: 950, spf_total: 1000, spf_pass: 950,
       mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: null, dmarc_pct: null, dmarc_p: null, dmarc_sp: null, dmarc_rua: null,
+      from_messages: 1000, from_dkim_aligned: 0, from_spf_at_name: 0, from_unjudged: 1000, // these records were stored without the receiver's alignment verdict
+      failed_not_yours: 0, failed_service: 0, failed_service_names: [], failed_unrecorded: 20,
     });
+  });
+
+  it('says what the reports show about the mail sent AS the domain: DKIM aligned, SPF domain at the name, no verdict', async () => {
+    const { q, id } = await seed();
+    const rep = await q.reports.insertAggregate({
+      domain_id: id, org_name: 'microsoft', report_id: 'r3', date_begin: NOW - 3600, date_end: NOW,
+      total_count: 230, pass_count: 150, fail_count: 80, raw_xml: null, reporter_auth: 'pass', reporter_tier: 'counted',
+    });
+    const row = (ip: string, count: number, from: string, spfDomain: string, spf: number, dkim: number) =>
+      ({ report_id: Number(rep.meta.last_row_id), source_ip: ip, count, disposition: 'none', dkim_result: 'pass', spf_result: 'pass', dkim_domain: 'example.com', spf_domain: spfDomain, header_from: from, spf_aligned: spf, dkim_aligned: dkim });
+    await q.reports.insertRecords([
+      row('6.6.6.6', 150, 'example.com', 'cf-bounce.example.com', 0, 1),
+      row('7.7.7.7', 50, 'Example.com', 'Example.com', 1, 0),
+      row('8.8.8.8', 30, 'app.example.com', 'app.example.com', 0, 0), // another name: not counted as sent as example.com
+    ]);
+    expect(await q.reports.checkSummary(id, NOW - 30 * 86400)).toMatchObject({ from_messages: 1000 + 200, from_dkim_aligned: 150, from_spf_at_name: 50, from_unjudged: 1000 });
   });
 
   it('counts each report once however many records it has, and records once however many reports there are', async () => {

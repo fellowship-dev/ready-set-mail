@@ -9,6 +9,7 @@ import { ExplorePage } from '../src/pages/reports/ExplorePage';
 import { ReportBrowserPage } from '../src/pages/reports/ReportBrowserPage';
 import { SetupWizardPage } from '../src/pages/wizards/SetupWizardPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const now = Math.floor(Date.now() / 1000);
 const RUA = 'r@reports.test';
@@ -28,7 +29,7 @@ const base = (o: Record<string, unknown> = {}) => ({
 	'GET /api/domains/1/check-summary': SUM(),
 	'GET /api/domains/summaries': { summaries: [SUM()], next_after: null, window_days: 30 },
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'PUT /api/domains/1/wizard-state': {},
 	'GET /api/domains/1/rollout-next': { __status: 404, body: {} },
@@ -150,7 +151,7 @@ describe('5. report pages for a hosted customer whose reports cannot come here',
 					'GET /api/domains': { domains: [dom({ rua_address: '' })] },
 					'GET /api/domains/1/check-summary': SUM({ report_connect: { can_connect: true, refusal: null, refusal_kind: null } }),
 					'GET /api/domains/1/explore': { days: 30, domain: 'example.com', sources: [] },
-					'GET /api/domains/1/report-address': { available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
+					'GET /api/domains/1/report-address': { available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null, counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, parent: null },
 				}) as never,
 				status: HOSTED as never,
 			},

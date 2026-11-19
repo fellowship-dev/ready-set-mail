@@ -3,10 +3,10 @@
 // Provider facts (SPF include, DKIM selectors, guide URLs) come from the same registry the DNS checks use.
 
 import { extractIncludes, extractOtherMechanisms, existingQualifier, buildSpfRecord, spfLookupJudgement, spfPtrWarning, SPF_LOOKUP_LIMIT } from '@ready-set-mail/dns-checks/spf-record';
-import { identifySender } from '@ready-set-mail/dns-checks/sender-providers';
+import { identifySender, serviceNotSetUpSentence } from '@ready-set-mail/dns-checks/sender-providers';
 import { pct, underOrg, type Sender } from './senders';
 
-export type FixKind = 'authorize-sender' | 'fix-dkim-alignment' | 'investigate-sender' | 'review-new-sender';
+export type FixKind = 'authorize-sender' | 'fix-dkim-alignment' | 'investigate-sender' | 'outside-mail' | 'review-new-sender';
 export type FixSeverity = 'high' | 'medium' | 'low';
 
 export interface FixRecord {
@@ -41,6 +41,8 @@ export interface FixDomain {
   spf_record: string | null;
   /** Stored count of DNS lookups the SPF record needs, when known. */
   spf_lookup_count?: number | null;
+  /** The policy in force for this name (the stored effective policy); null or absent: not known. */
+  dmarc_policy?: string | null;
 }
 
 /** Below both of these a problem is noise, not a to-do. */
@@ -50,7 +52,7 @@ const MIN_AFFECTED_MESSAGES = 20;
 const AUTHORIZE_AT = 0.05;
 /** Aligned DKIM on fewer than this share of a provider's mail means it relies on SPF alone. */
 const DKIM_WEAK_BELOW = 0.5;
-const SCORE: Readonly<Record<FixKind, number>> = { 'authorize-sender': 3, 'investigate-sender': 2, 'fix-dkim-alignment': 1, 'review-new-sender': 0.2 };
+const SCORE: Readonly<Record<FixKind, number>> = { 'authorize-sender': 3, 'investigate-sender': 2, 'fix-dkim-alignment': 1, 'review-new-sender': 0.2, 'outside-mail': 0.05 };
 
 interface Group {
   key: string;
@@ -168,16 +170,54 @@ export function buildFixes(domain: FixDomain, senders: Sender[]): Fix[] {
     }
 
     if (!g.providerId && failShare >= AUTHORIZE_AT && material(g.dmarcFail)) {
+      const enforcing = domain.dmarc_policy === 'quarantine' || domain.dmarc_policy === 'reject';
       const s0 = g.senders[0];
+      // The names this sender sent as (its From domains). The stored policy is the one in force for THIS domain's own name, so it is
+      // quoted only for mail sent as the domain itself; for a subdomain the policy that applies to that name is its own (see the names list).
+      const sentAs = [...new Set(g.senders.flatMap((x) => x.from_domains))].sort();
+      const names = sentAs.length ? sentAs.join(', ') : domain.domain;
+      const own = sentAs.every((n) => n === domain.domain);
+      const failedPct = fmtPct(pct(g.dmarcFail, g.messages));
+      if (s0?.source_class === 'not_yours') {
+        // The one judgement (`classifySource`): not a known service, nothing aligned, not both checks passing for a domain of its own. Nothing to fix.
+        const outcome = !own ? `the policy that applies to ${names} decides what happens to it` : domain.dmarc_policy === 'reject' ? 'rejected by your policy' : domain.dmarc_policy === 'quarantine' ? 'sent to spam by your policy' : 'not yet blocked';
+        fixes.push({
+          ...base, id: `outside:${domain.id}:${g.key}`, kind: 'outside-mail', severity: 'low',
+          title: own ? `Mail from outside, ${outcome}: ${g.name}` : `Mail from outside, sent as ${names}: ${g.name}`,
+          detail: `Estimated from the reports: ${failedPct} of what ${g.name} sent as ${names} failed DMARC. It is not a service we recognise, it authenticated as no name of ${domain.domain}, and it did not pass SPF and DKIM for a domain of its own: likely mail pretending to be ${names}. ${own ? (domain.dmarc_policy === 'none' ? 'Your policy is p=none, so it is still delivered.' : `Your policy (p=${domain.dmarc_policy}) already applies to it.`) : `The policy that applies to ${names} applies to it.`}`,
+          affected_pct: pct(g.dmarcFail, total), affected_messages: g.dmarcFail,
+          steps: [`Nothing to fix. ${own && domain.dmarc_policy === 'none' ? 'Keep it in view until you move to enforcement.' : 'If it is a service you use, authorize it.'}`],
+          records: [], guide_url: null,
+        });
+        continue;
+      }
+      if (s0?.source_class === 'service_not_set_up') {
+        // A real mail service (it passed SPF and DKIM for its own domain) sending as the owner's domain without alignment: one thing to look at.
+        const sentence = serviceNotSetUpSentence(sentAs.length ? sentAs : [domain.domain]);
+        fixes.push({
+          ...base, id: `investigate:${domain.id}:${g.key}`, kind: 'investigate-sender', severity: 'medium',
+          title: `${fmtPct(share)} of your mail comes from ${g.name}, ${sentence.split(':')[0]}`,
+          detail: `Estimated from the reports: ${failedPct} of it fails DMARC. It authenticated as its own domains (${[s0.spf_domain, s0.dkim_domain].filter((d, i, all): d is string => !!d && all.indexOf(d) === i).join(', ')}), so it looks like a real mail service. ${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`,
+          affected_pct: pct(g.dmarcFail, total), affected_messages: g.dmarcFail,
+          steps: [
+            `Find out what ${s0.reverse_dns || s0.source_ip || 'this server'} is${s0.org ? ` (network owner: ${s0.org})` : ''}.`,
+            `If you send from it: set up its custom return-path and DKIM signing as ${names} in the service, then check again.`,
+            'If you do not: nothing to do.',
+          ],
+          records: [], guide_url: null,
+        });
+        continue;
+      }
+      const applies = own && enforcing ? `your DMARC policy (p=${domain.dmarc_policy}) already applies to it` : own ? 'enforcing DMARC may block it' : `the DMARC policy that applies to ${names} applies to it`;
       fixes.push({
         ...base, id: `investigate:${domain.id}:${g.key}`, kind: 'investigate-sender', severity: pct(g.dmarcFail, total) >= 5 ? 'high' : 'medium',
         title: `${fmtPct(share)} of your mail comes from ${g.name}, which we do not recognise`,
-        detail: `Estimated from the reports: ${fmtPct(pct(g.dmarcFail, g.messages))} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and enforcing DMARC may block it.`,
+        detail: `Estimated from the reports: ${failedPct} of it fails DMARC. If it is a service you use, authorize it. If not, it is likely spoofing, and ${applies}.`,
         affected_pct: pct(g.dmarcFail, total), affected_messages: g.dmarcFail,
         steps: [
           `Find out what ${s0?.reverse_dns || s0?.source_ip || 'this server'} is${s0?.org ? ` (network owner: ${s0.org})` : ''}.`,
-          'If you send from it: add it to SPF and set up DKIM signing for it, then check again.',
-          'If you do not: nothing to add. Keep it in view until you move to enforcement.',
+          `If you send from it: set up DKIM signing as ${names} in the service (DKIM aligned with the From domain is enough for DMARC; SPF counts only when the service's return-path domain is under it), then check again.`,
+          `If you do not: nothing to add. ${own && enforcing ? `Your policy (p=${domain.dmarc_policy}) already applies to it.` : own ? 'Keep it in view until you move to enforcement.' : `The policy that applies to ${names} already applies to it.`}`,
         ],
         records: [], guide_url: null,
       });

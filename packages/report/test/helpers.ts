@@ -1,5 +1,6 @@
 // DomainReport fixtures: a port of unzip-inboxangel outreach-tools/tests/conftest.py make_rec / bimi_rec.
 import type { BimiLookup, DetectedProvider, DomainReport, SpfIssue } from '@ready-set-mail/dns-checks';
+import { effectivePolicy } from '@ready-set-mail/dns-checks';
 
 export const CHECKED = '2026-10-22T18:00:00.000Z';
 
@@ -52,10 +53,13 @@ export function makeRec(domain = 'example.com', o: RecOptions = {}): DomainRepor
       domain, status: spf, record: spfRec, lookupCount: lookups, voidLookupCount: 0, lookupLimitExceeded: lookups > 10, voidLimitExceeded: false,
       issues: spfIssues, includes: spfIncludes, ...(spfRaws ? { rawRecords: spfRaws } : {}),
     },
-    dmarc: {
-      status: dmarc, domain, record: dmarcRec, foundAt: dmarcRec ? `_dmarc.${domain}` : null, inherited: false, organizationalDomain: domain,
-      ...(dmarcRaws ? { rawRecords: dmarcRaws } : {}),
-    },
+    dmarc: (() => {
+      const l = {
+        status: dmarc, domain, record: dmarcRec, foundAt: dmarcRec ? `_dmarc.${domain}` : null, inherited: false as const, organizationalDomain: domain,
+        ...(dmarcRaws ? { rawRecords: dmarcRaws } : {}),
+      };
+      return { ...l, effective: effectivePolicy(l) };
+    })(),
     dkim: {
       found: dkim.map(s => ({ status: 'found' as const, selector: s, name: `${s}._domainkey.${domain}`, record: { raw: 'v=DKIM1; p=abc', version: 'DKIM1', keyType: 'rsa', present: true, revoked: false }, txt: ['v=DKIM1; p=abc'] })),
       errors: [], scanned: 36, wildcard: dkimWildcard !== undefined, wildcardRecord: dkimWildcard ?? null,
