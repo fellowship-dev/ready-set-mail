@@ -65,3 +65,15 @@ export async function signUp(page: Page, inst: HostedInstance, email: string, ab
 	await enterMailedCode(page, inst, before);
 	await expect(s4Heading(page)).toBeVisible({ timeout: 30_000 });
 }
+
+/** E2E_SHOTS_DIR set: a full-page screenshot of the screen as it is now, at 375 and 1440 px wide (for review); otherwise nothing. */
+export async function shots(page: Page, name: string) {
+	const dir = process.env.E2E_SHOTS_DIR;
+	if (!dir) return;
+	const before = page.viewportSize();
+	for (const [width, height] of [[375, 812], [1440, 900]] as const) {
+		await page.setViewportSize({ width, height });
+		await page.screenshot({ path: `${dir}/${name}-${width}.png`, fullPage: true });
+	}
+	if (before) await page.setViewportSize(before);
+}

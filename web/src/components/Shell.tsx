@@ -18,7 +18,7 @@ import { BarChart3, Bot, Globe, History, LogOut, Mail, Megaphone, Moon, Receipt,
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 import { cleanName } from '../lib/names';
-import { switchToWorkspace, useWorkspaces } from '../lib/workspaces';
+import { canCreateWorkspace, switchToWorkspace, useWorkspaces } from '../lib/workspaces';
 import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
 import { useTheme } from '../lib/theme';
 import { useSession } from '../lib/session';
@@ -34,7 +34,7 @@ function isCurrent(path: string, item: string): boolean {
 
 export function Shell() {
 	const { pathname } = useLocation();
-	const { me, role, signOut, status } = useSession();
+	const { me, role, canWrite, signOut, status } = useSession();
 	const billing = useBilling(!!me?.instance_owner);
 	const { theme, toggle } = useTheme();
 	const [creating, setCreating] = useState(false);
@@ -42,16 +42,15 @@ export function Shell() {
 	const workspaces = useWorkspaces(!!me?.user);
 	const list = workspaces.data ?? [];
 	const current = list.find((w) => w.id === me?.workspace_id) ?? null;
-	// Hosted: anyone may start a workspace. Self-host: only the instance owner (owner of the default workspace).
-	const canCreate = status?.mode === 'saas' || list.some((w) => w.id === 'ws_default' && w.role === 'owner');
+	const canCreate = canCreateWorkspace(status?.mode, list);
 	const items = [
 		{ label: 'Domains', href: '/', icon: <Globe /> },
 		{ label: 'Analytics', href: '/analytics', icon: <BarChart3 /> },
 		// Hidden where it cannot work (hosted without a canary domain), instead of a page that ends in an error.
 		...(status?.email_check === false ? [] : [{ label: 'Email check', href: '/check', icon: <Mail /> }]),
 		{ label: 'Agents', href: '/agents', icon: <Bot /> },
-		{ label: 'Members', href: '/members', icon: <Users /> },
-		{ label: 'Audit log', href: '/audit', icon: <History /> },
+		// Owners and admins only: the server refuses both lists to a member, so a member is not offered them.
+		...(canWrite ? [{ label: 'Members', href: '/members', icon: <Users /> }, { label: 'Audit log', href: '/audit', icon: <History /> }] : []),
 		...(me?.instance_owner ? [{ label: 'Leads', href: '/leads', icon: <Megaphone /> }] : []),
 		// Hosted orders: only the instance owner, and only where billing is on (the server answers 404 otherwise).
 		...(me?.instance_owner && billing.data ? [{ label: 'Orders', href: '/orders', icon: <Receipt /> }] : []),

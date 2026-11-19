@@ -132,7 +132,7 @@ describe('GET /api/domains/claims/:id/preview', () => {
   });
 
   it('the 11th cache miss in a minute is a 429 with no DNS lookups; a hit still answers', async () => {
-    const w = await world();
+    const w = await world({ MAX_DOMAINS_PER_WORKSPACE: '50' }); // more claims than the default slots: the preview limit is under test, not the cap
     const ids: number[] = [];
     for (let i = 0; i < 11; i++) ids.push((await w.claim(w.A, `d${i}.example.com`)).id);
     for (const id of ids.slice(0, 10)) expect((await w.preview(w.A, id)).status).toBe(200);
@@ -145,7 +145,7 @@ describe('GET /api/domains/claims/:id/preview', () => {
   });
 
   it('limits per user: another person is unaffected', async () => {
-    const w = await world();
+    const w = await world({ MAX_DOMAINS_PER_WORKSPACE: '50' }); // more claims than the default slots: the preview limit is under test, not the cap
     const a: number[] = [];
     for (let i = 0; i < 11; i++) a.push((await w.claim(w.A, `a${i}.example.com`)).id);
     for (const id of a.slice(0, 10)) await w.preview(w.A, id);

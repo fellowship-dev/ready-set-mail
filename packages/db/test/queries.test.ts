@@ -134,7 +134,7 @@ describe('a workspace-scoped query cannot see or touch another workspace', () =>
 		await b.monitor.setActive(1, false);
 		await b.monitor.updateBaseline(1, { spf_record: 'x', dmarc_policy: 'none', dmarc_pct: 1, dmarc_record: 'x' });
 		await b.team.markInviteUsed('tok');
-		await b.team.removeUser('u1');
+		await b.team.removeMembership('u1', 1);
 		await b.spf.delete(domA);
 		await b.mtaSts.delete(domA);
 		await b.domains.delete(domA);
@@ -229,19 +229,20 @@ describe('behaviour carried over from the old queries.ts', () => {
 		expect(await a.audit.list({ limit: 9999 })).toHaveLength(5);
 	});
 
-	it('team: first admin becomes owner; removing a user deletes them when they have no other workspace', async () => {
+	it('team: first admin becomes owner; removing a member keeps their login and revokes what they held here', async () => {
 		await a.team.addUser({ id: 'u1', email: 'one@x.test', name: 'One', password_hash: 'h', role: 'admin' });
 		await a.team.addUser({ id: 'u2', email: 'two@x.test', name: 'Two', password_hash: 'h', role: 'admin' });
 		await a.team.addUser({ id: 'u3', email: 'three@x.test', name: 'Three', password_hash: null, role: 'member' });
 		const roles = d1.sqlite.prepare('SELECT user_id, role FROM memberships ORDER BY user_id').all();
 		expect(roles).toEqual([{ user_id: 'u1', role: 'owner' }, { user_id: 'u2', role: 'admin' }, { user_id: 'u3', role: 'member' }]);
 		expect((await a.team.firstAdmin())!.id).toBe('u1');
-		// u2 also joins B, then is removed from A: the user survives.
+		// u2 also joins B, then is removed from A: the user survives, B is untouched.
 		d1.sqlite.exec(`INSERT INTO memberships (workspace_id, user_id, role) VALUES ('${B}', 'u2', 'member')`);
-		await a.team.removeUser('u2');
+		await a.team.removeMembership('u2', 5);
 		expect(await b.team.getMember('u2')).toMatchObject({ id: 'u2' });
-		await a.team.removeUser('u3');
-		expect(await globalQueries(d1).users.byEmail('three@x.test')).toBeNull();
+		// u3 belongs to nothing else: still removed from A, but the login stays.
+		await a.team.removeMembership('u3', 5);
+		expect(await globalQueries(d1).users.byEmail('three@x.test')).toMatchObject({ id: 'u3' });
 		expect((await a.team.list()).map((u) => u.id)).toEqual(['u1']);
 	});
 });

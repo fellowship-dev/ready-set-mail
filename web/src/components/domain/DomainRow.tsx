@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { useId } from 'react';
 import { Link } from 'react-router';
 import { accountLabel, useCfConnections } from '../../lib/cloudflare';
+import { WHO_WORDS } from '../../lib/dmarc-step';
 import type { DomainVerdict } from '../../lib/verdict';
 import { TalkToMax } from '../TalkToMax';
 
@@ -71,6 +72,8 @@ export function DomainRow({
 	const { next } = verdict;
 	// Read-only members are not sent into wizards that change things: they get the domain page instead.
 	const writes = !!next.to && /\/(setup|dmarc-wizard|spf-flatten|settings)/.test(next.to);
+	// An action that changes things is an owner's or admin's to do: a read-only member is told so, not that they should.
+	const who = next.writes && !canWrite ? WHO_WORDS.approver : next.who;
 	const to = next.to && (canWrite || !writes) ? next.to : next.to ? page : undefined;
 	const nothing = next.who === 'Nobody';
 
@@ -100,7 +103,7 @@ export function DomainRow({
 						) : (
 							<>
 								<span className="text-ink-2">
-									Next, <span className="font-medium text-ink-1">{next.who.charAt(0).toLowerCase() + next.who.slice(1)}:</span>
+									Next, <span className="font-medium text-ink-1">{who.charAt(0).toLowerCase() + who.slice(1)}:</span>
 								</span>
 								{onRetry && !next.to ? (
 									<Button variant="secondary" size="sm" onClick={onRetry}>

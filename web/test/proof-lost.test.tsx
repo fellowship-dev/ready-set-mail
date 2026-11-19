@@ -15,6 +15,8 @@ const SUM = (id: number, name: string) => ({
 	domain_id: id, domain: name, dmarc_policy: 'none', spf_record: 'v=spf1 -all', dns_checked_at: now - 60, dns_check_attempted_at: now - 60, dns_check_status: 'ok', dmarc_issue: null, dmarc_inherited_from: null, dns_last_good_status: 'ok',
 	total_messages: 0, pass_messages: 0, fail_messages: 0, dkim_total: 0, dkim_pass: 0, spf_total: 0, spf_pass: 0, mta_sts_enabled: 0, mta_sts_mode: null, spf_lookup_count: 2, dmarc_pct: 100, dmarc_p: 'none', dmarc_sp: null, dmarc_rua: 1, report_connect: null,
 });
+/** A summary that would read "Verified" for a proven domain: p=reject on all mail, SPF in limits, a current check. */
+const REJECT = (id: number, name: string) => ({ ...SUM(id, name), dmarc_policy: 'reject', dmarc_p: 'reject', spf_record: 'v=spf1 include:_spf.google.com -all', dmarc_rua: 1 });
 const CLAIM = { id: 9, domain: 'sold.com', status: 'pending', txt_name: '_readysetmail.sold.com', txt_value: 'readysetmail-verify=abc', created_at: now, last_checked_at: null, last_error: null };
 const text = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 
@@ -80,6 +82,62 @@ describe('overview', () => {
 		expect(await screen.findByText(TITLE)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Prove again' })).toBeDisabled();
 	});
+
+	it('a read-only member is told why, and the row says an owner or admin proves it, not "you"', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com'), REJECT(2, 'fine.org')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [LOST, OK] },
+		}, 'member');
+		await screen.findByText(TITLE);
+		const button = screen.getByRole('button', { name: 'Prove again' });
+		expect(button).toBeDisabled();
+		expect(button).toHaveAccessibleDescription('Your role is member, which is read-only. Ask an owner or admin to make this change.');
+		const alert = screen.getByTestId('proof-lost-1');
+		expect(alert.textContent).toContain('Your role is member, which is read-only. Ask an owner or admin to make this change.'); // in words, not only in a tooltip
+		const sold = (await screen.findAllByRole('listitem')).find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('sold.com'))!;
+		expect(sold.textContent).toContain('Next, an owner or admin:');
+		expect(sold.textContent).not.toContain('Next, you:');
+	});
+
+	it('an owner is still told "you"', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [LOST] },
+		}, 'owner');
+		await screen.findByText(TITLE);
+		const sold = (await screen.findAllByRole('listitem')).find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('sold.com'))!;
+		expect(sold.textContent).toContain('Next, you:');
+	});
+});
+
+describe('the domain card follows the ownership source: a lost proof is never Verified, never "nothing to do"', () => {
+	it('overview: the card of a domain whose proof lapsed says so, with the way back, while a proven twin stays Verified', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com'), REJECT(2, 'fine.org')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [LOST, OK] },
+		});
+		await screen.findByText(TITLE);
+		const rows = await screen.findAllByRole('listitem');
+		const sold = rows.find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('sold.com'))!;
+		const fine = rows.find((r) => r.getAttribute('data-status') !== null && r.textContent?.includes('fine.org'))!;
+		await waitFor(() => expect(fine).toHaveAttribute('data-status', 'verified'));
+		expect(sold).toHaveAttribute('data-status', 'attention');
+		expect(sold.textContent).not.toMatch(/Verified|nothing to do/i);
+		expect(sold.textContent).toMatch(/Ownership of sold\.com is no longer proven, so reports for it are not accepted until you prove it again\./);
+		expect(within(sold).getByRole('link', { name: 'Prove it is still yours for sold.com' })).toHaveAttribute('href', '/domains/1');
+		expect(fine.textContent).toMatch(/Nothing to do|nothing to do/);
+	});
+
+	it('a domain that was never proven says that, not that a proof lapsed', async () => {
+		overview({
+			'GET /api/domains/summaries': { summaries: [REJECT(1, 'sold.com')], next_after: null, window_days: 30 },
+			'GET /api/domains': { domains: [{ ...LOST, proof_lost_at: null }] },
+		});
+		await screen.findByText(/Ownership of sold\.com has not been proven in this workspace/);
+		const sold = screen.getAllByRole('listitem').find((r) => r.textContent?.includes('sold.com') && r.getAttribute('data-status'))!;
+		expect(sold.textContent).toMatch(/Ownership of sold\.com has not been proven in this workspace/);
+		expect(sold.textContent).not.toMatch(/Verified/);
+	});
 });
 
 describe('domain page', () => {
@@ -91,7 +149,7 @@ describe('domain page', () => {
 				routes: {
 					'GET /api/domains': { domains: [LOST] },
 					'GET /api/domains/summaries': { summaries: [SUM(1, 'sold.com')], next_after: null, window_days: 30 },
-					'GET /api/domains/1/check-summary': SUM(1, 'sold.com'),
+					'GET /api/domains/1/check-summary': REJECT(1, 'sold.com'),
 					'GET /api/domains/1/stats': { domain: 'sold.com', days: 7, stats: [] },
 					'GET /api/domains/1/sources': { sources: [] },
 					'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
@@ -113,6 +171,9 @@ describe('domain page', () => {
 		const alert = screen.getByTestId('proof-lost-1');
 		const title = screen.getByRole('heading', { name: 'sold.com' });
 		expect(title.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		// its facts would read "Verified" if it were proven: unproven, it is not, and nothing says there is nothing to do
+		await waitFor(() => expect(text()).toMatch(/Ownership of sold\.com is no longer proven/));
+		expect(text()).not.toMatch(/Verified|nothing to do/i);
 		await userEvent.click(screen.getByRole('button', { name: 'Prove again' }));
 		await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/domains/1/prove')).toBe(true));
 	});

@@ -9,6 +9,7 @@ import { applyHostedInputs, assessDomain, didNotResolve, dnsCheckLine, type Host
 import type { Domain, DomainCheckSummary } from './types';
 import { emptyReportsMessage, emptyReportsState, type ReportVisibilityFields } from './uncounted';
 import { HELP_PRIORITY } from '../components/TalkToMax';
+import { isUnproven, proofLapsed, type ProofState } from './proof';
 
 /**
  * "Am I done?" for one domain, in the status vocabulary shared with the website: one state, the level under it, one
@@ -34,6 +35,8 @@ export interface NextAction {
 	who: string;
 	/** Where the action happens. Absent when there is nothing to open. */
 	to?: string;
+	/** The action changes something: a read-only member is told an owner or admin does it (the row says so, as the domain page does). */
+	writes?: boolean;
 }
 
 export interface DomainVerdict {
@@ -107,7 +110,7 @@ function reportsLine(domain: Pick<Domain, 'rua_address'>, r: ReportTotals | null
 type Core = Omit<DomainVerdict, 'reportsNotConnected' | 'help' | 'reportsConfirmed'>;
 
 export function domainVerdict(
-	domain: Pick<Domain, 'id' | 'domain' | 'rua_address'>,
+	domain: Pick<Domain, 'id' | 'domain' | 'rua_address'> & ProofState,
 	s: DomainCheckSummary,
 	reports: ReportTotals | null | undefined,
 	hosted: HostedLevelInput | null = null,
@@ -124,7 +127,7 @@ export function domainVerdict(
 	} = {},
 ): DomainVerdict {
 	const intakeOff = !!opts.hostedMode && reportsNotConnected(domain);
-	const core = coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null, opts.reportsRefusal);
+	const core = isUnproven(domain) ? unprovenVerdict(domain) : coreVerdict(domain, s, reports, hosted, now, intakeOff, opts.idByName, opts.suffixParent ?? null, opts.reportsRefusal);
 	const about = `about ${domain.domain}`;
 	const unresolved = hosted ? null : didNotResolve(s);
 	const help = unresolved ? { lead: 'Sure this is the right name?', about, priority: HELP_PRIORITY.dnsFailing } : !hosted && s.dns_check_status === 'failed' ? { lead: 'DNS checks keep failing?', about, priority: HELP_PRIORITY.dnsFailing } : null;
@@ -132,6 +135,22 @@ export function domainVerdict(
 	// Hosted: no SPF flattening to send the person to (the page says it is not available there).
 	if (opts.hostedMode && core.next?.to?.endsWith('/spf-flatten')) core.next = { ...core.next, to: undefined };
 	return { ...core, reportsConfirmed: rate !== null && rate >= READY, reportsNotConnected: reportsNotConnected(domain), help };
+}
+
+/**
+ * A domain this workspace holds but cannot show it controls (ownership module: `verified_via` is legacy; `proof_lost_at` says a proof once held). Nothing about its
+ * DNS, reports or level is claimed: reports are not accepted for it, so it is never Verified and never "nothing to do". The way back is the domain page's Prove again.
+ */
+function unprovenVerdict(domain: Pick<Domain, 'id' | 'domain'> & ProofState): Core {
+	const lapsed = proofLapsed(domain);
+	return {
+		status: 'attention',
+		level: null,
+		sentence: lapsed ? `Ownership of ${domain.domain} is no longer proven, so reports for it are not accepted until you prove it again.` : `Ownership of ${domain.domain} has not been proven in this workspace, so reports for it are not accepted yet.`,
+		evidence: null,
+		checked: null,
+		next: { label: 'Prove it is still yours', who: WHO.you, to: `/domains/${domain.id}`, writes: true },
+	};
 }
 
 function coreVerdict(

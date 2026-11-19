@@ -4,7 +4,7 @@ import { PlanLimitError, forWorkspace } from '@ready-set-mail/db';
 import { createMigratedD1 } from '@ready-set-mail/db/testing';
 import { call, makeEnv, setupOwner, signupVerified } from '../auth/helpers';
 import { HOSTED_ENV } from './world';
-import { mayUseMtaSts, planLimitBody, planLimitResponse, planLimits } from '../../src/hosted/plan-limits';
+import { domainRoom, mayUseMtaSts, planLimitBody, planLimitResponse, planLimits } from '../../src/hosted/plan-limits';
 
 vi.mock('../../src/dns/provision', () => ({
   provisionDomain: vi.fn().mockResolvedValue({ recordId: null, recordName: null, manual: true }),
@@ -140,9 +140,33 @@ describe('domains per workspace', () => {
     w.fill(a.ws, 1, 'tenth');
     const res = await add(w, a, 'over.example.org');
     expect(res.status).toBe(403);
-    expect(await json(res)).toEqual({ error: 'This workspace has reached its limit of 10 domains.', code: 'plan_limit', limit: { kind: 'domains_per_workspace', max: 10 }, help_url: 'https://cal.example.com/max' });
+    expect(await json(res)).toEqual({ error: 'This workspace can hold 10 domains: it has 10, and 1 more is waiting for proof (under.example.org). Use Remove on its card to free the place.', waiting: ['under.example.org'], code: 'plan_limit', limit: { kind: 'domains_per_workspace', max: 10 }, help_url: 'https://cal.example.com/max' });
     expect(w.rows("SELECT * FROM domain_claims WHERE domain = 'over.example.org'")).toEqual([]);
     expect(w.liveDomains(a.ws)).toBe(10);
+  });
+
+  it('claims waiting for proof take domain slots: 12 cannot wait in a workspace of 10, and the answer says why', async () => {
+    const w = await hosted();
+    const a = await w.user('a@example.com');
+    for (let i = 0; i < 10; i++) expect((await add(w, a, `wait${i}.example.org`)).status).toBe(202);
+    const res = await add(w, a, 'wait10.example.org');
+    expect(res.status).toBe(403);
+    expect(await json(res)).toMatchObject({
+      error: 'This workspace can hold 10 domains, and 10 are waiting for proof (wait0.example.org, wait1.example.org, wait2.example.org and 7 more). Use Remove on their card to free the places.',
+      code: 'plan_limit', limit: { kind: 'domains_per_workspace', max: 10 },
+    });
+    expect(w.rows('SELECT COUNT(*) AS n FROM domain_claims WHERE workspace_id = ?', a.ws)[0].n).toBe(10);
+    expect((await add(w, a, 'wait3.example.org')).status).toBe(202); // a claim it already holds is not a new one
+  });
+
+  it('domains and waiting claims share the slots', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 2);
+    expect((await add(w, a, 'one.example.org')).status).toBe(202); // 2 domains + 1 waiting = 3 of 3
+    const res = await add(w, a, 'two.example.org');
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe('This workspace can hold 3 domains: it has 2, and 1 more is waiting for proof (one.example.org). Use Remove on its card to free the place.');
   });
 
   it('a domain the workspace already has keeps working at the cap', async () => {
@@ -312,5 +336,120 @@ describe('mayUseMtaSts', () => {
 
   it('says "host" for a ceiling of one', () => {
     expect((mayUseMtaSts({ MODE: 'saas' }, { ...facts, hostsInUse: 1, max: 1 }) as any).body.error).toBe('This service has reached its limit of 1 MTA-STS policy host.');
+  });
+});
+
+describe('the one room rule: room = cap − (domains + waiting claims), for every way of adding a domain', () => {
+  const add = (w: Awaited<ReturnType<typeof hosted>>, who: { token: string }, domain: string) => call(w.env, 'POST', '/api/domains', { key: who.token, body: { domain } });
+  const claim = (w: Awaited<ReturnType<typeof hosted>>, ws: string, domain: string) => w.db.sqlite.prepare("INSERT INTO domain_claims (workspace_id, domain, token) VALUES (?, ?, 'tok')").run(ws, domain);
+  const own = (w: Awaited<ReturnType<typeof hosted>>, ws: string, domain: string, via = 'txt') => w.db.sqlite.prepare("INSERT INTO domains (domain, rua_address, workspace_id, verified_via) VALUES (?, 'x', ?, ?)").run(domain, ws, via);
+  const bulk = (w: Awaited<ReturnType<typeof hosted>>, who: { token: string }, domains: string) => call(w.env, 'POST', '/api/domains/bulk-import', { key: who.token, body: { domains } });
+
+  it('the rule itself: a held name or a claim becoming its domain needs no room, a new name needs one', () => {
+    const use = { domains: ['a.org', 'b.org'], waiting: ['c.org'] };
+    expect(domainRoom(3, use, 'a.org')).toEqual({ ok: true });
+    expect(domainRoom(3, use, 'c.org')).toEqual({ ok: true });
+    expect(domainRoom(3, use, 'd.org')).toEqual({ ok: false, cap: 3, held: 2, waiting: ['c.org'] });
+    expect(domainRoom(4, use, 'd.org')).toEqual({ ok: true });
+    expect(domainRoom(3, { domains: ['a.org'], waiting: ['a.org', 'c.org'] }, 'e.org')).toMatchObject({ ok: true }); // a claim for a held name is one place, not two
+    expect(domainRoom(2, { domains: ['a.org', 'b.org'], waiting: ['c.org'] }, 'c.org')).toMatchObject({ ok: false }); // already over: the claim cannot become a third domain
+  });
+
+  it('typed domain: refused at the cap with the waiting claim named; removing the claim makes room', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 2);
+    const first = await json(await add(w, a, 'wait.example.org'));
+    const res = await add(w, a, 'new.example.org');
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toContain('(wait.example.org). Use Remove on its card');
+    expect((await call(w.env, 'DELETE', `/api/domains/claims/${first.claim.id}`, { key: a.token })).status).toBe(200);
+    expect((await add(w, a, 'new.example.org')).status).toBe(202);
+  });
+
+  it('claim: a name that already waits is not a new claim, even at the cap', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '2' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 1);
+    expect((await add(w, a, 'wait.example.org')).status).toBe(202);
+    expect((await add(w, a, 'wait.example.org')).status).toBe(202);
+    expect(w.rows('SELECT COUNT(*) AS n FROM domain_claims')[0].n).toBe(1);
+  });
+
+  it('prove again on a domain the workspace already holds is never refused, at the limit with a claim waiting', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 2);
+    own(w, a.ws, 'lapsed.example.org', 'legacy'); // 3 of 3, one of them unproven
+    claim(w, a.ws, 'wait.example.org'); // a 4th place in use: the state the review found (a parent-proven or imported add did not count claims)
+    const id = w.rows("SELECT id FROM domains WHERE domain = 'lapsed.example.org'")[0].id;
+    const res = await call(w.env, 'POST', `/api/domains/${id}/prove`, { key: a.token, body: {} });
+    expect(res.status).toBe(202);
+    expect((await json(res)).claim.domain).toBe('lapsed.example.org');
+    expect(w.liveDomains(a.ws)).toBe(3);
+  });
+
+  it('a claim becoming its own domain needs no room: at the cap with the claim as the last place it verifies', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 1);
+    const one = await json(await add(w, a, 'one.example.org'));
+    await add(w, a, 'two.example.org'); // 3 of 3: one domain and two claims
+    vi.stubGlobal('fetch', async (url: string) => {
+      const name = new URL(url).searchParams.get('name');
+      return new Response(JSON.stringify(name === '_readysetmail.one.example.org' ? { Status: 0, Answer: [{ name, type: 16, TTL: 60, data: `"${one.claim.txt_value}"` }] } : { Status: 3 }));
+    });
+    expect((await call(w.env, 'POST', `/api/domains/claims/${one.claim.id}/verify`, { key: a.token, body: {} })).status).toBe(201);
+    expect(w.liveDomains(a.ws)).toBe(2);
+  });
+
+  it('a subdomain proven by its parent counts the waiting claims too (both the check and the insert)', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    own(w, a.ws, 'acme.com');
+    w.fill(a.ws, 1);
+    claim(w, a.ws, 'wait.example.org'); // 2 domains + 1 claim = 3 of 3
+    const res = await add(w, a, 'sub.acme.com');
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toContain('(wait.example.org)');
+    expect(w.liveDomains(a.ws)).toBe(2);
+    // the database refuses it too, whatever the advisory check said
+    await expect(forWorkspace(w.db as any, a.ws).domains.insert({ domain: 'sub2.acme.com', rua_address: 'x', verified_via: 'parent' }, undefined, { maxDomains: 3 })).rejects.toBeInstanceOf(PlanLimitError);
+    // and lets the claim itself become its domain
+    await forWorkspace(w.db as any, a.ws).domains.insert({ domain: 'wait.example.org', rua_address: 'x', verified_via: 'txt' }, undefined, { maxDomains: 3 });
+    expect(w.liveDomains(a.ws)).toBe(3);
+  });
+
+  it('the base-domain route and the base-domain insert count the waiting claims', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '2' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 1);
+    claim(w, a.ws, 'wait.example.org');
+    const res = await call(w.env, 'POST', '/api/settings/base-domain', { key: a.token, body: { domain: 'hub.example.net' } });
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toContain('(wait.example.org)');
+    const arg = { domain: 'hub.example.net', rua_address: 'x', verified_via: 'txt', settings: { base_domain: 'hub.example.net' } };
+    await expect(forWorkspace(w.db as any, a.ws).baseDomain.apply(arg, { maxDomains: 2 })).rejects.toBeInstanceOf(PlanLimitError);
+    expect(w.rows("SELECT * FROM domains WHERE domain = 'hub.example.net'")).toEqual([]);
+  });
+
+  it('bulk import (and so the certificate-log import, which adds through it) counts claims, including the ones it just made', async () => {
+    const w = await hosted({ MAX_DOMAINS_PER_WORKSPACE: '3' });
+    const a = await w.user('a@example.com');
+    w.fill(a.ws, 1);
+    claim(w, a.ws, 'wait.example.org'); // 2 of 3
+    const body = await json(await bulk(w, a, 'one.example.org\ntwo.example.org\nwait.example.org\nf0.example.com'));
+    expect(body.results.map((r: any) => [r.domain, r.status, r.code])).toEqual([
+      ['one.example.org', 'pending', undefined], // 3 of 3
+      ['two.example.org', 'error', 'plan_limit'],
+      ['wait.example.org', 'pending', undefined], // already waiting: its place is its own
+      ['f0.example.com', 'duplicate', undefined],
+    ]);
+    expect(body.results[1].error).toContain('(wait.example.org, one.example.org). Use Remove on their card');
+    expect(w.rows('SELECT COUNT(*) AS n FROM domain_claims')[0].n).toBe(2);
+  });
+
+  it('self-host: no rule, no cap', async () => {
+    expect(planLimits({ MODE: 'selfhost' })).toBeNull();
   });
 });
