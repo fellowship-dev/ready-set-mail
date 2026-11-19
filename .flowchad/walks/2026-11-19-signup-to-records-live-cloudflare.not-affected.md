@@ -1,7 +1,0 @@
-# Not affected: signup-to-records-live-cloudflare
-
-- **Flow:** signup-to-records-live-cloudflare
-- **Changed:** `src/api/router.ts`, `src/connections/import.ts`, `src/domains/ownership.ts`, `src/domains/service.ts`, `web/src/components/domain/DnsRecords.tsx`, `web/src/components/domain/DoThisNext.tsx`, `web/src/components/domain/FailingSources.tsx`, `web/src/components/domain/ImportResults.tsx`, `web/src/components/domain/InheritanceBanner.tsx`, `web/src/components/domain/Rollout.tsx`, `web/src/components/domain/SubdomainNames.tsx`, `web/src/lib/first-day.ts`, `web/src/pages/domains/DomainDetailPage.tsx`, `web/src/pages/domains/OverviewPage.tsx`, `web/src/pages/wizards/cloudflare/FirstScreen.tsx`
-- **Reason:** This change touched `src/api/router.ts` (the add-domain refusal status and a plan sync after a domain is removed), `src/domains/ownership.ts` and `src/domains/service.ts` (the one async `domainCap`, a plan sync after a domain is proven), `src/connections/import.ts` and `web/src/components/domain/ImportResults.tsx` (the cap is awaited; a `card_required` row is recognised). All behind `HOSTED_PLAN=pay_as_you_go`, unset by default: with it unset the caps, answers (403 `plan_limit`) and words are identical. The other files in the list come from the merged subdomains-slice1 (#181), which carries its own walk records for them. **No walk was run for this pull request**: this record is a judgement, not a walk, and the reviewer accepts or rejects it.
-- **By:** Claude Opus 5.5 (the reviewer accepts or rejects the reason)
-- **Date:** 2026-11-19
