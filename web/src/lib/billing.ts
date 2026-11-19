@@ -52,8 +52,23 @@ export interface Order {
 	failed_at: number | null;
 }
 
+export type PlanInterval = 'month' | 'year';
+
+/** The hosted plan "pay as you go" (GET /api/billing `plan`): present only when the server has it on. Nothing about paying shows without it. */
+export interface PlanView {
+	free_domains: number;
+	interval: PlanInterval;
+	/** Stripe's recurring prices; null when one cannot be read right now. */
+	prices: Record<PlanInterval, { amount: number; currency: string } | null>;
+	billed_domains: number;
+	card_on_file: boolean;
+	/** A subscription exists: the interval can no longer be chosen. */
+	started: boolean;
+}
+
 export interface BillingView {
 	enabled: true;
+	plan?: PlanView | null;
 	role: 'owner' | 'admin' | 'member';
 	can_manage: boolean;
 	/** The owner only: admins and members get `card_on_file` and nothing about the card or the email. */
@@ -221,6 +236,18 @@ export function orderSentence(o: Order, next: string): string {
 export async function startCardSession(returnPath: string): Promise<void> {
 	const { url } = await api<{ url: string }>('/api/billing/card-session', { method: 'POST', body: { return_path: returnPath } });
 	window.location.assign(url);
+}
+
+/** "$50", "$5", "$5.50": a price in the sentence about the plan (the currency code is not repeated there). */
+export function priceWord(p: { amount: number; currency: string } | null): string {
+	if (!p) return 'a price we cannot read just now';
+	const whole = p.amount % 100 === 0;
+	return new Intl.NumberFormat('en-US', { style: 'currency', currency: p.currency.toUpperCase(), minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(p.amount / 100);
+}
+
+/** The owner's choice of interval, before the first extra domain is billed. */
+export async function choosePlan(interval: PlanInterval): Promise<void> {
+	await api('/api/billing/plan', { method: 'POST', body: { interval } });
 }
 
 export async function openPortal(): Promise<void> {

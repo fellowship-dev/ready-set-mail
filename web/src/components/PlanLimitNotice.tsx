@@ -1,8 +1,14 @@
 import { Alert } from '@ready-set-mail/ui';
+import { Link } from 'react-router';
+import { Button } from '@ready-set-mail/ui';
 import { ApiError } from '../lib/api';
 import { HELP_PRIORITY, TalkToMax } from './TalkToMax';
 
 export interface PlanLimit {
+	/** `card_required`: the hosted plan wants a card for another domain (HTTP 402). */
+	code?: 'plan_limit' | 'card_required';
+	/** With `card_required`: the viewer may add the card (the workspace owner). */
+	can_manage?: boolean;
 	kind: 'workspaces_per_user' | 'domains_per_workspace';
 	/** The server's sentence, shown as is. */
 	message: string;
@@ -13,7 +19,8 @@ export interface PlanLimit {
 /** The plan limit an API error carries (HTTP 403, code `plan_limit`), or null for any other error. */
 export function planLimitOf(err: unknown): PlanLimit | null {
 	if (!(err instanceof ApiError)) return null;
-	const body = err.body as { code?: unknown; limit?: { kind?: unknown }; help_url?: unknown } | undefined;
+	const body = err.body as { code?: unknown; limit?: { kind?: unknown }; help_url?: unknown; can_manage?: unknown } | undefined;
+	if (body?.code === 'card_required') return { code: 'card_required', can_manage: body.can_manage === true, kind: 'domains_per_workspace', message: err.message, help_url: null };
 	if (body?.code !== 'plan_limit') return null;
 	return {
 		kind: body.limit?.kind === 'workspaces_per_user' ? 'workspaces_per_user' : 'domains_per_workspace',
@@ -31,6 +38,18 @@ const FREE_UP = {
 
 /** A plan limit is information, not a failure: the person did nothing wrong. */
 export function PlanLimitNotice({ limit, className }: { limit: PlanLimit; className?: string }) {
+	if (limit.code === 'card_required') {
+		return (
+			<Alert variant="info" className={className}>
+				<p>{limit.message}</p>
+				{limit.can_manage ? (
+					<Button asChild variant="secondary" className="mt-2">
+						<Link to="/settings">Add a card</Link>
+					</Button>
+				) : null}
+			</Alert>
+		);
+	}
 	// The response's link (https only; the server builds it with the same helpUrl()) becomes the shared Talk to Max line,
 	// the one contextual link on the screen. Without one, say how to make room.
 	const href = limit.help_url?.startsWith('https://') ? limit.help_url : null;

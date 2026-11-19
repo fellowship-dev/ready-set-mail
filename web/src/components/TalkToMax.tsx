@@ -148,7 +148,7 @@ export function TalkToMax({
 export function domainRefusal(e: unknown): 'taken' | 'limit' | null {
 	if (!(e instanceof ApiError)) return null;
 	// A plan limit (code `plan_limit`) is PlanLimitNotice's, which carries its own single Talk to Max line.
-	if ((e.body as { code?: string } | undefined)?.code === 'plan_limit') return null;
+	if ((e.body as { code?: string } | undefined)?.code === 'plan_limit' || (e.body as { code?: string } | undefined)?.code === 'card_required') return null;
 	if (e.status === 409) return 'taken';
 	if (e.status === 429 && /unverified domains/i.test(e.message)) return 'limit';
 	return null;
