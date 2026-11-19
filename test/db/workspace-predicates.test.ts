@@ -157,7 +157,7 @@ describe('every query on tenant data carries a workspace predicate (per statemen
 		expect(files.length).toBeGreaterThan(5);
 		const { found, exemptions } = scan(files);
 		expect(found).toEqual([]);
-		expect(exemptions).toBe(58); // main's 49 + 2 elsewhere (lifecycle emails) + 7 in intake.ts: the MTA-STS policy hosts and the retiring MTA-STS policies are served and finished by name for every workspace (packages/db/src/queries/intake.ts)
+		expect(exemptions).toBe(57); // main's 49 + 2 elsewhere (lifecycle emails) + 6 in intake.ts (PR 188 counted 7: its files hold 6; PR 189 adds none): the MTA-STS policy hosts and the retiring MTA-STS policies are served and finished by name for every workspace (packages/db/src/queries/intake.ts)
 	});
 
 	it('pins the privileged access lookup census without exempting scoped access queries', () => {

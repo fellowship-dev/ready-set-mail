@@ -1,5 +1,5 @@
 import type { KeptRecord } from '../../lib/removal-notice';
-import { Badge, Button, Card, CardContent, toast } from '@ready-set-mail/ui';
+import { Badge, Button, Card, CardContent, toast, type BadgeProps } from '@ready-set-mail/ui';
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { CheckCircle2, CircleDashed, Clock, Info, ShieldCheck } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
@@ -10,7 +10,7 @@ import { domainKeys, useMtaSts, useSpfFlatten } from '../../lib/domain-queries';
 import { useAddOns } from '../../lib/session';
 import { SpfCard } from './SpfCard';
 import { cardState, type CardState } from '../../lib/mta-sts';
-import type { MtaStsStatus } from '../../lib/types';
+import type { MtaStsStatus, SpfFlatStatus } from '../../lib/types';
 import { ListSkeleton, LoadError, Section, WriteButton } from '../states';
 import { ConfirmDialog } from './ConfirmDialog';
 
