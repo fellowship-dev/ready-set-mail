@@ -137,6 +137,11 @@ The hosted service's own counts of the steps people take from sign-up to a paid 
 _Avoid_: telemetry (the opt-in self-host telemetry was removed; its endpoint never resolved), tracking, usage stats, the website's browser analytics (Plausible, a different thing)
 Home: `src/product-analytics/` (`capture.ts` the one sender, `events.ts` the allow-list, `steps.ts` and `auth.ts` the hooks the server actions call, `identity.ts` the analytics id and the once-only markers); `scripts/posthog-setup.mjs` for the funnels; `docs/analytics.md`; ADR 0008.
 
+**Plan**, **extra domain**, **add-on**:
+The plan is the hosted pay-as-you-go arrangement (ADR 0025), on only with `HOSTED_PLAN=pay_as_you_go` (`hostedPlanOn` in `src/billing/plan.ts`): a workspace holds one domain for free, and a domain waiting for proof counts. An extra domain is a proven, live domain beyond the free one: one card on file allows it, one Stripe subscription per workspace bills it (`syncPlan`). An add-on is a feature priced per domain, attached through `PLAN_ADD_ONS` (price open, nothing charged today). The plan is not the offer: the offer is the one-time fix.
+_Avoid_: tier, package, seat
+Home: `src/billing/plan.ts`; `docs/billing.md#pay-as-you-go-for-extra-domains`.
+
 **Analytics id**:
 `settings.analytics_id`: one random UUID per workspace, made by the Worker (`crypto.randomUUID()`, never derived from an email, a domain, a user or a workspace id and never chosen by a link), used as the `distinct_id` of every event about the workspace. A sign-up by email code mints it with the pending attempt and the new workspace adopts it. The once-only markers (`analytics:live:<domain id>`, `analytics:applied:<domain id>`) are rows in the same `settings` table.
 _Avoid_: visitor id, user id, person id (events are personless)
@@ -147,7 +152,7 @@ Home: `src/product-analytics/identity.ts` (`analyticsIdFor`, `adoptAnalyticsId`,
 **Offer** and **order**:
 The offer is the priced service, today one: "Fix one domain" (ADR 0013; the amount always comes from the Stripe price, intended $149). An order is one purchase of it by a workspace.
 An order becomes **paid** only in `applyInvoice` in `src/billing/sync.ts`, after it re-reads the invoice from Stripe and Stripe says paid. Three callers reach it: Stripe's webhook (`src/billing/webhook.ts`: `invoice.paid`, and `invoice.payment_action_required` or `invoice.payment_failed` when the re-read invoice is paid); `failOrder` when an invoice it was about to fail turns out paid (the purchase itself can take this path); and the daily reconcile, `runBillingJob` in `src/billing/reconcile.ts` (the hosted cron at 11:00 UTC, orders pending for over an hour, 25 per run). Pressing Pay never marks an order paid on its own.
-_Avoid_: plan, subscription, package
+_Avoid_: package
 Home: `src/billing/offer.ts`, order states `src/billing/orders.ts`; `docs/billing.md`.
 
 **Agent**:

@@ -29,6 +29,7 @@ There is exactly one of each concept below. Extend it; never add a second. `test
 | Hosted shared report address | `src/hosted/fixed-address.ts` | `fixedReportAddress`, `attributeReport` | intake, `src/hosted/report-address.ts` | must-not-grow (report address construction) |
 | Domain verdict | `web/src/lib/verdict.ts` | `domainVerdict` | overview, domain page, the PDF, the first-day card | must-not-grow (standing rules) |
 | Verdict words | `packages/ui/src/components/status.tsx` | `STATUS` | every status badge | must-not-grow (verdict labels) |
+| Hosted plan (free place, card, extra-domain subscription) | `src/billing/plan.ts` | `hostedPlanOn`, `syncPlan`, `planItems`, `PLAN_ADD_ONS`; the cap `domainCap` in `src/domains/ownership.ts`; the refusal words `cardRequiredBody` in `src/hosted/plan-limits.ts` | domain service, import, bulk, billing routes, the daily billing job | single (one cap, one room rule, one subscription writer) |
 | Offer text | `src/billing/offer.ts` | `OFFER_SCOPE`, `REFUND_RULE` | billing routes; the dashboard renders what the API sends | must-not-grow (offer scope) |
 | Assistants a person may connect (names and connect steps) | `web/src/lib/agent-clients.ts` | `AGENT_CLIENTS`, `canConnect` | the Agents page; the server tells it what the instance supports (`GET /api/agents/status`) | single |
 | Names a self-registered app may not claim | `src/mcp/client-names.ts` | `RESERVED_APP_NAMES`, `vetClientName`, `isReservedName` | registration (`src/mcp/registration.ts`); the pages show a name only through `clientIdentity` | single |
