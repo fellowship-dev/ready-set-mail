@@ -1,4 +1,4 @@
-// /api/workspaces — the caller's workspaces: list, create, rename, leave, delete.
+// /api/workspaces — the caller's workspaces: list, create, rename, leave, delete, hand ownership on, change a member's role.
 //
 // These act on the *user*, not on the workspace named by X-Workspace-Id: the router resolves them
 // without that header, and each handler checks the caller's membership (and role) in the workspace
@@ -51,8 +51,8 @@ export async function preflightWorkspace(deps: WorkspaceDeps, tenant: TenantCont
 /**
  * Delete a workspace and everything in it: its domains one at a time through the normal delete (DNS and hosted
  * records first; each is final), then the Cloudflare access (OAuth grants are revoked remotely; a failed revoke is
- * tombstoned and retried by the cron, never blocking the delete), then the data. People who belonged only to this
- * workspace are deleted with it. The caller has checked who may do this, and run preflightWorkspace.
+ * tombstoned and retried by the cron, never blocking the delete), then the data. Its members keep their accounts (ADR 0024): their
+ * memberships, keys and agent approvals for it go with it, and they land on "No workspace yet" when it was their only one. The caller has checked who may do this, and run preflightWorkspace.
  */
 export async function eraseWorkspace(
   deps: WorkspaceDeps, ctx: ExecutionContext, tenant: TenantContext, domains: Array<{ id: number; domain: string }>, actor: Actor, opts: { leaveSpfRecord?: boolean } = {},
@@ -101,10 +101,7 @@ export async function eraseWorkspace(
       ),
     };
   }
-  const members = (await tenant.scope.team.list()).map((u) => u.id);
-  await workspaceLifecycle(deps.db).purge(tenant.workspaceId);
-  // People who belonged only to this workspace have nowhere to sign in to any more.
-  for (const uid of members) await globalQueries(deps.db).users.deleteIfOrphan(uid);
+  await workspaceLifecycle(deps.db).purge(tenant.workspaceId); // memberships, keys and agent approvals go with the workspace; the people and their logins stay
   return { ok: true, cloudflare };
 }
 
@@ -161,7 +158,7 @@ export async function handleWorkspaceRoutes(
     return json({ id, name, role: 'owner', member_count: 1 }, 201);
   }
 
-  const m = path.match(/^\/api\/workspaces\/([^/]+)(?:\/(leave|export|transfer-ownership))?$/);
+  const m = path.match(/^\/api\/workspaces\/([^/]+)(?:\/(leave|export|transfer-ownership|members\/[^/]+\/role))?$/);
   if (!m) return err('not found', 404);
   const id = decodeURIComponent(m[1]);
   const role: MembershipRole | null = await lifecycle.roleOf(user.id, id);
@@ -179,10 +176,11 @@ export async function handleWorkspaceRoutes(
     return json({ ok: true, id, name });
   }
 
-  // POST /api/workspaces/:id/leave — remove your own membership. Never your last workspace, never the last owner.
+  // POST /api/workspaces/:id/leave — remove your own membership; never as the last owner. Leaving your only workspace is allowed:
+  // you keep your login and land on "No workspace yet". Your keys and agent approvals for it end.
   if (m[2] === 'leave' && method === 'POST') {
-    if ((await lifecycle.listForUser(user.id)).length <= 1) return err('you cannot leave your only workspace — create another first, or delete this one', 409, 'only_workspace');
-    if (!(await lifecycle.leave(user.id, id))) return err('you are the only owner — make someone else an owner or delete the workspace', 409, 'last_owner');
+    if (!(await lifecycle.leave(user.id, id))) return err('you are the only owner — make someone else an owner first', 409, 'last_owner');
+    await (await deps.tenantFor(id)).scope.team.revokeAccessOf(user.id, Math.floor(Date.now() / 1000));
     audit(id, { action: 'workspace.left', resource_type: 'user', resource_id: user.id, resource_name: user.email, before_value: { role } });
     return json({ ok: true });
   }
@@ -191,7 +189,6 @@ export async function handleWorkspaceRoutes(
   if (!m[2] && method === 'DELETE') {
     if (role !== 'owner') return err('only an owner can delete a workspace', 403);
     if (id === IMPLICIT_WORKSPACE_ID) return err('the default workspace cannot be deleted', 400, 'default_workspace');
-    if ((await lifecycle.listForUser(user.id)).length <= 1) return err('you cannot delete your only workspace — create another first', 409, 'only_workspace');
 
     const tenant = await deps.tenantFor(id);
     const domains = (await tenant.scope.domains.list()).map(d => ({ id: d.id, domain: d.domain }));
@@ -233,6 +230,25 @@ export async function handleWorkspaceRoutes(
     await globalQueries(deps.db).users.setLegacyRole(to, 'admin');
     audit(id, { action: 'workspace.ownership_transferred', resource_type: 'user', resource_id: to, resource_name: target.email, before_value: { owner: user.email }, after_value: { owner: target.email } });
     return json({ ok: true });
+  }
+
+  // POST /api/workspaces/:id/members/:userId/role { role: 'admin' | 'member' } — the owner promotes a member or demotes an admin.
+  // Never the owner's own row (hand ownership on instead), never yourself, never to owner (that is a transfer).
+  if (m[2]?.startsWith('members/') && method === 'POST') {
+    if (role !== 'owner') return err('only an owner can change a role', 403);
+    const targetId = decodeURIComponent(m[2].split('/')[1]);
+    let body: { role?: unknown };
+    try { body = await request.json(); } catch { return err('Invalid JSON body', 400); }
+    if (body.role !== 'admin' && body.role !== 'member') return err('role must be admin or member; hand ownership on with transfer-ownership', 400);
+    if (targetId === user.id) return err('you cannot change your own role', 400);
+    const team = (await deps.tenantFor(id)).scope.team;
+    const target = await team.getMember(targetId);
+    if (!target) return err('that person is not a member of this workspace', 404);
+    if (target.role === 'owner') return err('the owner row cannot change role: hand ownership on instead', 403);
+    if (target.role === body.role) return json({ ok: true, role: body.role, changed: false });
+    if (!(await team.setRole(targetId, body.role))) return err('could not change the role; reload and try again', 409);
+    audit(id, { action: 'team.role_changed', resource_type: 'user', resource_id: targetId, resource_name: target.email, before_value: { role: target.role }, after_value: { role: body.role } });
+    return json({ ok: true, role: body.role, changed: true });
   }
 
   return err('method not allowed', 405);

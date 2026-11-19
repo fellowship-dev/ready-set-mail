@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { batchStatements, unwrapDriverError, type Db } from '../client';
 import { domains, settings } from '../schema';
 import { sql } from 'drizzle-orm';
-import { PlanLimitError, changesOf, freeNameStatements, proofValues, type ZoneProofColumns } from './plan-limit';
+import { PlanLimitError, changesOf, freeNameStatements, proofValues, slotsUsed, type ZoneProofColumns } from './plan-limit';
 
 /**
  * The wizard's first step as one batch: the domain row (when new) and the derived settings (base domain,
@@ -44,13 +44,13 @@ export function baseDomainQueries(db: Db, workspaceId: string) {
 			const domainInsert = capped
 				? sql`INSERT INTO domains (workspace_id, domain, rua_address, parent_id, verified_via, cf_account_id, cf_zone_id, verified_at, cf_zone_name, cf_name_servers, cf_connection_id)
 					SELECT ${workspaceId}, ${d.domain}, ${d.rua_address}, ${parentId}, ${d.verified_via ?? 'legacy'}, ${pv.cf_account_id ?? null}, ${pv.cf_zone_id ?? null}, ${pv.verified_at ?? null}, ${pv.cf_zone_name ?? null}, ${pv.cf_name_servers ?? null}, ${pv.cf_connection_id ?? null}
-					WHERE (SELECT COUNT(*) FROM domains WHERE workspace_id = ${workspaceId} AND evicted_at IS NULL) < ${max}`
+					WHERE ${slotsUsed(workspaceId, d.domain)} < ${max}`
 				: db.insert(domains).values({ workspace_id: workspaceId, domain: d.domain, rua_address: d.rua_address, parent_id: parentId, verified_via: d.verified_via, ...pv });
 			// Under a cap the settings follow the domain: written only when the workspace has the (live) domain row.
 			const upsertIfDomain = (key: string, value: string) =>
 				sql`INSERT OR REPLACE INTO settings (workspace_id, key, value) SELECT ${workspaceId}, ${key}, ${value}
 					WHERE EXISTS (SELECT 1 FROM domains WHERE workspace_id = ${workspaceId} AND domain = ${d.domain} AND evicted_at IS NULL)`;
-			const free = !existing && opts.freeing !== undefined ? freeNameStatements(opts.freeing, workspaceId, max) : []; // an unproven holder of the name, detached in the same transaction
+			const free = !existing && opts.freeing !== undefined ? freeNameStatements(opts.freeing, workspaceId, max, d.domain) : []; // an unproven holder of the name, detached in the same transaction
 			const stmts: any[] = [
 				...free,
 				...(existing ? [] : [domainInsert]),

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@ready-set-mail/ui';
 import { api, errorMessage } from './api';
 import type { Role } from './types';
+import { useSession } from './session';
 import { hashFor, workspaceStore } from './workspace';
 
 export interface WorkspaceSummary {
@@ -10,6 +11,8 @@ export interface WorkspaceSummary {
 	name: string;
 	role: Role;
 	member_count: number;
+	/** How many members are owners: with one, an owner cannot leave. */
+	owner_count: number;
 	created_at: number;
 }
 
@@ -25,6 +28,10 @@ export function useWorkspaces(enabled = true) {
 		staleTime: 30_000,
 	});
 }
+
+/** Hosted: anyone may start a workspace. Self-host: only the instance owner (owner of the default workspace). */
+export const canCreateWorkspace = (mode: string | undefined, list: readonly Pick<WorkspaceSummary, 'id' | 'role'>[]): boolean =>
+	mode === 'saas' || list.some((w) => w.id === 'ws_default' && w.role === 'owner');
 
 /** Open a workspace: the URL changes, the router remounts, the previous workspace's data is dropped. */
 export function switchToWorkspace(id: string, rest = '/') {
@@ -54,14 +61,15 @@ export function useRenameWorkspace(id: string) {
 	});
 }
 
-/** Leave or delete: afterwards the person is somewhere that still exists. */
+/** Leave or delete: afterwards the person is somewhere that still exists (another workspace, or "No workspace yet" when it was their only one). */
 export function useLeaveWorkspace(id: string, then: () => void) {
 	const qc = useQueryClient();
+	const { signedIn } = useSession();
 	return useMutation({
 		mutationFn: () => api(`/api/workspaces/${id}/leave`, { method: 'POST', body: {} }),
 		onSuccess: async () => {
 			workspaceStore.forget();
-			await qc.invalidateQueries({ queryKey: workspaceKeys.all });
+			await signedIn();
 			toast({ variant: 'success', title: 'You left the workspace' });
 			then();
 		},
@@ -71,6 +79,7 @@ export function useLeaveWorkspace(id: string, then: () => void) {
 
 export function useDeleteWorkspace(id: string, then: () => void) {
 	const qc = useQueryClient();
+	const { signedIn } = useSession();
 	return useMutation({
 		// `leaveSpf`: delete although a flattened SPF record could not be put back (it then stays in Cloudflare, unrefreshed): only after the person has the original.
 		mutationFn: (arg?: string | { confirm?: string; leaveSpf?: boolean }) => {
@@ -81,6 +90,7 @@ export function useDeleteWorkspace(id: string, then: () => void) {
 		onSuccess: async () => {
 			workspaceStore.forget();
 			await qc.invalidateQueries({ queryKey: workspaceKeys.all });
+			await signedIn(); // with no workspace left, "No workspace yet" is what the page now shows
 			toast({ variant: 'success', title: 'Workspace deleted' });
 			then();
 		},

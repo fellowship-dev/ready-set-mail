@@ -44,11 +44,12 @@ describe('a settled claim', () => {
     expect((await w.list()).pending_claims).toEqual([]);
   });
 
-  it('does not count toward the pending-claims limit', async () => {
-    const w = await settled();
-    for (let i = 0; i < 25; i++) expect((await w.add(`p${i}.example.org`)).status).toBe('pending');
+  it('does not count as a pending claim: its domain holds one slot, not two', async () => {
+    const w = await settled(); // acme.org is a domain now (1 of 10 slots)
+    for (let i = 0; i < 9; i++) expect((await w.add(`p${i}.example.org`)).status).toBe('pending');
     const over = await w.api(w.a, 'POST', '/api/domains', { domain: 'one-too-many.example.org' });
-    expect(over.status).toBe(429);
+    expect(over.status).toBe(403);
+    expect((await json(over)).code).toBe('plan_limit');
   });
 
   it('is not previewed or deleted as a pending claim', async () => {

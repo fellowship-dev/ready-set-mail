@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import { api, ApiError, onUnauthorized } from './api';
+import { api, ApiError, onNoWorkspace, onUnauthorized } from './api';
 import type { AuthStatus, Me, Role } from './types';
 import { clearSignupDomain, reconcileSignupDomain } from './signup-intent';
 import { workspaceStore } from './workspace';
@@ -95,6 +95,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		onUnauthorized(clearSession);
 		return () => onUnauthorized(null);
 	}, [clearSession]);
+
+	useEffect(() => {
+		onNoWorkspace(() => {
+			workspaceStore.forget();
+			void qc.invalidateQueries({ queryKey: ['me'] });
+		});
+		return () => onNoWorkspace(null);
+	}, [qc]);
 
 	const value = useMemo<Session>(() => {
 		const me = meQ.data ?? null;
