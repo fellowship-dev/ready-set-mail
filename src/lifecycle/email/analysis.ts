@@ -2,13 +2,13 @@
 //
 // Two kinds of number, never mixed up:
 //  - EXACT: the totals of a report (messages, and how many passed DMARC as the reporter evaluated them). Pass rates and "every message passed" use only these.
-//  - ESTIMATED: which SOURCE failed. The database keeps each record's raw SPF and DKIM result and domain, not the report's own aligned verdict, so a
-//    source's failing messages are derived the way the sender inventory derives them (src/analytics/senders.ts `recordAlignment`, relaxed
-//    alignment). An estimate never exceeds the exact failing total, and when the reporter said nothing failed, no source failed.
+//  - PER SOURCE: which source failed. A row failed when the receiver's own verdict for it says so (`dmarcVerdict`, packages/dns-checks/src/alignment.ts,
+//    the one rule; a row stored without a verdict is never called failed). A source's failing messages never exceed the exact failing total, and
+//    when the reporter said nothing failed, no source failed.
 
 import type { WeekSourceRow } from '@ready-set-mail/db';
+import { dmarcVerdict } from '@ready-set-mail/dns-checks/alignment';
 import { identifySender } from '@ready-set-mail/dns-checks/sender-providers';
-import { recordAlignment } from '../../analytics/senders';
 import { TIP_MIN_MESSAGES } from './kinds';
 
 /** The longest a report-derived word (a reporter, a source, an authenticated domain) may be in an email. */
@@ -26,15 +26,8 @@ export function clean(s: string | null | undefined, max = MAX_WORD): string {
 
 type Row = WeekSourceRow;
 
-/**
- * THE one place that decides "this report row did not pass DMARC" for the lifecycle emails (first report, weekly summary, tips). It is the
- * derivation of the sender inventory (relaxed alignment of the first SPF and first DKIM result). It will be replaced by PR 181's function from
- * packages/db/src/queries/reports.ts, which reads the report's own verdict; until then nothing else in src/lifecycle/ may derive pass or fail.
- */
-export const rowFailsDmarc = (r: Row): boolean => {
-  const al = recordAlignment(r);
-  return !(al.spf || al.dkim);
-};
+/** A row failed DMARC: the one rule, `dmarcVerdict` (never restated here). */
+const failed = (r: Row): boolean => dmarcVerdict(r) === 'failed';
 
 /**
  * Evidence that a failing source is a service the owner uses, as the name of that service, or null. Only two things count, and an SPF pass
@@ -60,7 +53,7 @@ export interface SourceStat {
   /** Addresses it sent from, the busiest first. */
   ips: string[];
   messages: number;
-  /** Messages that did not pass DMARC (estimated, see above). */
+  /** Messages whose row the receiver reported as failed (`dmarcVerdict`, see above). */
   failing: number;
   /** What the failing messages DID pass, for another domain: DKIM first. Null when they passed nothing. */
   other: { by: 'DKIM' | 'SPF'; domain: string } | null;
@@ -95,7 +88,7 @@ export function sourceStats(rows: readonly WeekSourceRow[], exactFailed: number 
     a.byIp.set(ip, (a.byIp.get(ip) ?? 0) + r.messages);
     const n = clean(r.org || r.reverse_dns || r.base_domain);
     if (n) a.name.set(n, (a.name.get(n) ?? 0) + r.messages);
-    if (!rowFailsDmarc(r)) continue;
+    if (!failed(r)) continue;
     a.stat.failing += r.messages;
     const other = r.dkim_result === 'pass' && r.dkim_domain ? (['DKIM', clean(r.dkim_domain)] as const) : r.spf_result === 'pass' && r.spf_domain ? (['SPF', clean(r.spf_domain)] as const) : null;
     if (other) a.passedFor.set(`${other[0]}|${other[1].toLowerCase()}`, (a.passedFor.get(`${other[0]}|${other[1].toLowerCase()}`) ?? 0) + r.messages);

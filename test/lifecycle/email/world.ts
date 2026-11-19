@@ -28,7 +28,7 @@ export const LIFECYCLE_ENV = {
   MAIL_REPLY_TO: REPLY_TO,
 } as const;
 
-export interface RecordSpec { ip: string; count: number; spf?: [string, string | null]; dkim?: [string, string | null]; org?: string | null; rdns?: string | null; base?: string | null; from?: string }
+export interface RecordSpec { ip: string; count: number; spf?: [string, string | null]; dkim?: [string, string | null]; org?: string | null; rdns?: string | null; base?: string | null; from?: string; /** The receiver's own alignment verdict (policy_evaluated), when a case needs one other than "passed for the domain itself". */ spfAligned?: number | null; dkimAligned?: number | null }
 export interface ReportSpec {
   domain: string;
   /** Unix seconds of the report's first day (00:00 UTC). */
@@ -120,8 +120,8 @@ export async function lifecycleWorld(extraEnv: Record<string, unknown> = {}) {
     sql.prepare('INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, workspace_id, reporter_tier, reporter_known_as, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, domainId, r.org ?? 'google.com', `r-${id}`, r.day, r.day + DAY - 1, total, passed, total - passed, WS, r.tier ?? 'counted', r.knownAs === undefined ? 'Google' : r.knownAs, r.storedAt ?? clock.now);
     for (const x of records) {
-      sql.prepare('INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, reverse_dns, base_domain, org, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, x.ip, x.count, 'none', x.dkim?.[0] ?? null, x.dkim?.[1] ?? null, x.spf?.[0] ?? null, x.spf?.[1] ?? null, x.from ?? r.domain, x.rdns ?? null, x.base ?? null, x.org === undefined ? null : x.org, WS);
+      sql.prepare('INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, dkim_domain, spf_result, spf_domain, header_from, spf_aligned, dkim_aligned, reverse_dns, base_domain, org, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, x.ip, x.count, 'none', x.dkim?.[0] ?? null, x.dkim?.[1] ?? null, x.spf?.[0] ?? null, x.spf?.[1] ?? null, x.from ?? r.domain, x.spfAligned ?? (aligned(x.spf) ? 1 : 0), x.dkimAligned ?? (aligned(x.dkim) ? 1 : 0), x.rdns ?? null, x.base ?? null, x.org === undefined ? null : x.org, WS);
     }
     return id;
   };

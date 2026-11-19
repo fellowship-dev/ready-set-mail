@@ -1,5 +1,5 @@
 /**
- * Lifecycle emails (0018): who may be written to, what was already sent, what the reports of a week say.
+ * Lifecycle emails (0023): who may be written to, what was already sent, what the reports of a week say.
  *
  * Every statement is bound to the workspace. The report reads apply the workspace's counting filter (counting.ts), so the numbers in an email
  * are the numbers on the dashboard. `wk` is the zero-based week of a report's `date_begin` counted from the `from` the caller passed
@@ -29,6 +29,9 @@ export interface WeekSourceRow {
 	spf_result: string | null;
 	dkim_domain: string | null;
 	dkim_result: string | null;
+	/** The receiver's own alignment verdict for the record (policy_evaluated): 1 aligned, 0 not, null/-1 not recorded. Read only through `dmarcVerdict`. */
+	spf_aligned: number | null;
+	dkim_aligned: number | null;
 	messages: number;
 	reverse_dns: string | null;
 	base_domain: string | null;
@@ -65,13 +68,13 @@ export function lifecycleEmailQueries(db: Db, workspaceId: string, counting: Cou
 	const C = (alias: string) => counted(alias, counting);
 	const sources = (where: ReturnType<typeof sql>, from: number) => db.all<WeekSourceRow>(sql`
 		SELECT d.id AS domain_id, d.domain, CAST((ar.date_begin - ${from}) / ${WEEK_SECONDS} AS INTEGER) AS wk,
-		       rr.source_ip, rr.header_from, rr.spf_domain, rr.spf_result, rr.dkim_domain, rr.dkim_result, SUM(rr.count) AS messages,
+		       rr.source_ip, rr.header_from, rr.spf_domain, rr.spf_result, rr.dkim_domain, rr.dkim_result, rr.spf_aligned, rr.dkim_aligned, SUM(rr.count) AS messages,
 		       MAX(rr.reverse_dns) AS reverse_dns, MAX(rr.base_domain) AS base_domain, MAX(rr.org) AS org
 		FROM report_records rr
 		JOIN aggregate_reports ar ON ar.id = rr.report_id
 		JOIN domains d ON d.id = ar.domain_id AND d.workspace_id = ${A}
 		WHERE ar.workspace_id = ${A} AND rr.workspace_id = ${A} AND ${C('ar')} AND ${where}
-		GROUP BY d.id, wk, rr.source_ip, rr.header_from, rr.spf_domain, rr.spf_result, rr.dkim_domain, rr.dkim_result
+		GROUP BY d.id, wk, rr.source_ip, rr.header_from, rr.spf_domain, rr.spf_result, rr.dkim_domain, rr.dkim_result, rr.spf_aligned, rr.dkim_aligned
 	`);
 
 	return {

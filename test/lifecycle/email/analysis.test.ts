@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { WeekSourceRow } from '@ready-set-mail/db';
+import { dmarcVerdict } from '@ready-set-mail/dns-checks/alignment';
 import {
-  allPassed, failingSources, noTotals, passRate, quietWeek, sourceKey, sourceLabel, sourceName, sourceStats, summarise, tipFixSources, clean, rowFailsDmarc, ownerEvidence, MAX_WORD,
+  allPassed, failingSources, noTotals, passRate, quietWeek, sourceKey, sourceLabel, sourceName, sourceStats, summarise, tipFixSources, clean, ownerEvidence, MAX_WORD,
   type SourceStat, type SummaryDomain, type Totals,
 } from '../../../src/lifecycle/email/analysis';
 
 const D = 'brightwave-mail.com';
-const row = (p: Partial<WeekSourceRow> = {}): WeekSourceRow => ({
-  domain_id: 7, domain: D, wk: 0, source_ip: '192.0.2.10', header_from: D,
-  spf_domain: null, spf_result: null, dkim_domain: null, dkim_result: null,
-  messages: 1, reverse_dns: null, base_domain: null, org: null, ...p,
-});
+/** What a receiver says about an identifier (policy_evaluated): aligned when it passed for the From domain's own name or a name of the same organisation. Rows state it themselves when a case needs another verdict. */
+const verdictOf = (result: string | null | undefined, domain: string | null | undefined, from: string | null | undefined): number =>
+  result === 'pass' && !!domain && !!from && (domain === from || domain.endsWith(`.${from}`) || from.endsWith(`.${domain}`)) ? 1 : 0;
+const row = (p: Partial<WeekSourceRow> = {}): WeekSourceRow => {
+  const r = {
+    domain_id: 7, domain: D, wk: 0, source_ip: '192.0.2.10', header_from: D,
+    spf_domain: null, spf_result: null, dkim_domain: null, dkim_result: null,
+    messages: 1, reverse_dns: null, base_domain: null, org: null, ...p,
+  };
+  return { ...r, spf_aligned: p.spf_aligned !== undefined ? p.spf_aligned : verdictOf(r.spf_result, r.spf_domain, r.header_from ?? r.domain), dkim_aligned: p.dkim_aligned !== undefined ? p.dkim_aligned : verdictOf(r.dkim_result, r.dkim_domain, r.header_from ?? r.domain) };
+};
 /** A message that passes DMARC through aligned DKIM. */
 const pass = (p: Partial<WeekSourceRow> = {}) => row({ dkim_result: 'pass', dkim_domain: D, ...p });
 /** A message that fails DMARC and passed nothing. */
@@ -352,12 +359,14 @@ describe('summarise', () => {
 
 // ── Who the failing source is (ownerEvidence), and what is safe to print ──
 
-describe('rowFailsDmarc', () => {
-  it('is the one decision: aligned DKIM or SPF passes, anything else fails', () => {
-    expect(rowFailsDmarc(pass())).toBe(false);
-    expect(rowFailsDmarc(row({ spf_result: 'pass', spf_domain: D }))).toBe(false);
-    expect(rowFailsDmarc(fail())).toBe(true);
-    expect(rowFailsDmarc(row({ spf_result: 'pass', spf_domain: 'bulkmailer.example' }))).toBe(true);
+describe('a failed row is dmarcVerdict(row) === "failed", nothing else', () => {
+  it('the receiver\'s verdict decides; a row without one is never failed', () => {
+    expect(dmarcVerdict(pass())).toBe('passed-one');
+    expect(dmarcVerdict(fail())).toBe('failed');
+    expect(sourceStats([fail({ messages: 4 })])[0].failing).toBe(4);
+    expect(sourceStats([pass({ messages: 4 })])[0].failing).toBe(0);
+    expect(sourceStats([row({ spf_aligned: null, dkim_aligned: null, dkim_result: 'fail', messages: 4 })])[0].failing).toBe(0);
+    expect(sourceStats([row({ spf_aligned: -1, dkim_aligned: -1, dkim_result: 'fail', messages: 4 })])[0].failing).toBe(0);
   });
 });
 

@@ -377,7 +377,7 @@ describe('injection: whatever a report says, the email says only cleaned words',
   const evilName = '<script>alert(1)</script>\r\nX';
   const evilDomain = 'x.example\r\nSubject: hi';
   const controls = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-  const base = { domain_id: 7, domain: 'brightwave-mail.com', wk: 0, header_from: 'brightwave-mail.com', spf_domain: null, spf_result: null, messages: 30 } as const;
+  const base = { domain_id: 7, domain: 'brightwave-mail.com', wk: 0, header_from: 'brightwave-mail.com', spf_domain: null, spf_result: null, spf_aligned: 0, dkim_aligned: 0, messages: 30 } as const;
   const evilStat = (): SourceStat => sourceStats([{ ...base, source_ip: '203.0.113.9', org: evilOrg, reverse_dns: evilName, base_domain: evilName, dkim_result: 'pass', dkim_domain: evilDomain }])[0];
   const who = { name: 'Dana Reyes', footer: { why: 'Why.', settingsUrl: null } };
 
