@@ -19,6 +19,7 @@
     "generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@ready-set-mail/dns-checks": "*",
     "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {

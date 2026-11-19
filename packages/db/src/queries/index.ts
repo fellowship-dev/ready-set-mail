@@ -23,6 +23,7 @@ import { settingsQueries } from './settings';
 import { teamQueries } from './team';
 
 export * from './reports';
+export { verdictSql, type DmarcVerdict } from './verdict';
 export { counted, type CountingMode } from './counting';
 export type { DomainClaimRow, ZoneHolder } from './claims';
 export { claimLookups, isUnprovenRow } from './claims';

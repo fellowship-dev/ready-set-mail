@@ -6,7 +6,7 @@
 // everything else (grade, providers, unchecked) from the run with the fewest failed lookups.
 // Everything is redacted (`build`): no DMARC report mailbox read from DNS leaves the process.
 
-import type { DetectedProvider, DnsHost, DomainReport, Grade } from '@ready-set-mail/dns-checks';
+import { gradeReport, noSpfNeededAtName, spfNotNeededAtName, type DetectedProvider, type DnsHost, type DomainReport, type FromEvidence, type Grade } from '@ready-set-mail/dns-checks';
 import { bimiReadiness, type BimiReadiness } from './bimi-readiness';
 import { CATALOG } from './catalog/index';
 import { consensus } from './consensus';
@@ -29,6 +29,8 @@ export interface BuildReportInput {
   /** Where the report will live (`https://readysetmail.com/r/<token>`); this package does not serve it. The website serves `/r/<id>` from the app's stored public reports (src/public-reports/), so a token resolves only to one of those. */
   reportUrl?: string | null;
   generatedAt: string;
+  /** What the stored reports of the last 30 days say about mail sent AS the domain. Regrades the base run and softens `spf-missing` when SPF was never evaluated at the name. */
+  from?: FromEvidence;
 }
 
 export interface ReportFinding extends Finding {
@@ -153,13 +155,24 @@ export function planned(f: ReportFinding): boolean {
   return f.status === 'confirmed' && (f.severity !== 'low' || f.fix.exact) && (f.fix.records.length > 0 || f.fix.steps.length > 0);
 }
 
-export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt }: BuildReportInput): ReportModel {
+/** `spf-missing` when the reports show SPF was never evaluated at the name: lowest severity, and the evidence says so. */
+function spfMissingNotNeeded(f: Finding, domain: string, from: FromEvidence): Finding {
+  return {
+    ...f, severity: 'low', impact: 0.3,
+    evidence: [...f.evidence, `Reports, last 30 days: none of the ${from.from_messages} messages sent as ${domain} used ${domain} as its SPF (return-path) domain`],
+    recommendation: noSpfNeededAtName(domain, from),
+  };
+}
+
+export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt, from }: BuildReportInput): ReportModel {
   if (runs.length === 0) throw new Error('buildReport needs at least one checkDomain() run');
   const domain = runs[0].domain;
   if (runs.some(r => r.domain !== domain)) throw new Error('buildReport: runs are for different domains');
   const base = runs.reduce((best, r) => (r.errors.length < best.errors.length ? r : best));
   const nsRun = runs.find(r => r.ns.status !== 'error') ?? base;
   const host = dnsHost ?? nsRun.dnsHost;
+  const grade = from ? gradeReport(base, from) : base.grade;
+  const spfNotNeeded = !!from && spfNotNeededAtName(from);
   const built = runs.map(r => build(r, generatedAt));
   const baseFacts = built[runs.indexOf(base)].facts;
   const shared = { dnsHost: host, ns: ns ?? nsRun.ns.hosts };
@@ -167,7 +180,7 @@ export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt }
   const completed = (check: DomainReport['errors'][number]['check']) =>
     built[runs.findIndex(r => !r.errors.some(e => e.check === check))]?.facts ?? baseFacts;
   const facts: Facts = {
-    ...baseFacts, ...shared,
+    ...baseFacts, ...shared, grade,
     spf: completed('spf').spf, dmarc: completed('dmarc').dmarc, mx: completed('mx').mx, dkim: completed('dkim').dkim,
     mtaSts: completed('mta-sts').mtaSts, bimi: completed('bimi').bimi,
   };
@@ -180,7 +193,7 @@ export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt }
   const findings: ReportFinding[] = consensus(runs, generatedAt)
     .filter(c => c.status !== 'absent' && c.finding)
     .map(c => ({
-      ...c.finding!, status: c.status === 'confirmed' ? 'confirmed' as const : 'unconfirmed' as const,
+      ...(spfNotNeeded && c.finding!.id === 'spf-missing' ? spfMissingNotNeeded(c.finding!, domain, from!) : c.finding!), status: c.status === 'confirmed' ? 'confirmed' as const : 'unconfirmed' as const,
       consensus: { produced: c.produced, contradicted: c.contradicted, errored: c.errored },
       fix: fill(c.finding!, factsFor(c.id)), derived: derived(c.finding!.id, factsFor(c.id)),
     }))
@@ -216,7 +229,7 @@ export function buildReport({ runs, ns, dnsHost, reportUrl = null, generatedAt }
   }
   const mailDomain = facts.mx.status === 'found' || facts.senderProviders.length > 0 || facts.mailboxProviders.length > 0;
   return {
-    schema: REPORT_SCHEMA, domain, generatedAt, reportUrl, resolvers: runs.length, grade: base.grade,
+    schema: REPORT_SCHEMA, domain, generatedAt, reportUrl, resolvers: runs.length, grade,
     providers: { mailbox: facts.mailboxProviders, sender: facts.senderProviders }, dnsHost: host, ns: facts.ns,
     findings, steps, malformed, deferred, bimi: mailDomain ? bimiReadiness(facts) : null,
     lookupFailed: [...failed.values()], unchecked: facts.unchecked, facts: zFacts(facts),

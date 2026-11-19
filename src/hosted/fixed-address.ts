@@ -8,7 +8,7 @@
 // The full parse later must find the same domain (src/email/dmarc-report.ts `expectedDomain`), or nothing is stored.
 
 import { Gunzip, Unzip, UnzipInflate, UnzipPassThrough, unzipSync } from 'fflate';
-import { normalizeDomain, organizationalDomain } from '@ready-set-mail/dns-checks';
+import { domainAncestry, normalizeDomain } from '@ready-set-mail/dns-checks';
 import type { BoundEnv } from '../index';
 import { allowed, parseAllow } from './allow';
 import { forWorkspace, intakeLookups, type IntakeTarget } from '@ready-set-mail/db';
@@ -213,20 +213,9 @@ export async function attributeReport(env: Pick<BoundEnv, 'HOSTED_CONNECT_REPORT
 
 /**
  * The names that may own a report about `domain`: the domain itself, then each parent up to and including its
- * organizational domain, longest first. Never a public suffix, never above the organizational domain.
+ * organizational domain, longest first (`domainAncestry`). Never a public suffix, never above the organizational domain.
  */
-export function reportDomainCandidates(domain: string): string[] {
-  const d = normalizeDomain(domain);
-  const org = organizationalDomain(d);
-  if (!org || !(d === org || d.endsWith(`.${org}`))) return [];
-  const out: string[] = [];
-  let name = d;
-  for (;;) {
-    out.push(name);
-    if (name === org) return out;
-    name = name.slice(name.indexOf('.') + 1);
-  }
-}
+export const reportDomainCandidates = domainAncestry;
 
 // ── Who may connect reports ─────────────────────────────────
 

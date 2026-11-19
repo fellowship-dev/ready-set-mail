@@ -189,7 +189,7 @@ describe('overview row: checks that are failed, old or missing', () => {
 
 	it('SPF over ten lookups, no SPF, never checked, does not resolve', () => {
 		expect(domainVerdict(domain, summary({ spf_lookup_count: 12 }), reports(99), null, now).next.label).toBe('Bring SPF down to 10 DNS lookups or fewer');
-		expect(domainVerdict(domain, summary({ spf_record: null }), reports(null), null, now).next.label).toBe('Publish an SPF record');
+		expect(domainVerdict(domain, summary({ spf_record: null }), reports(null), null, now).next.label).toBe('Publish SPF only if mail uses this name as its return-path');
 		const never = domainVerdict(domain, summary({ dns_checked_at: null, dns_check_attempted_at: null, dns_check_status: null, spf_record: null, dmarc_policy: null }), reports(null), null, now);
 		expect(never).toMatchObject({ status: 'unknown', level: null });
 		expect(never.next.label).toBe('Open the domain to read its records from DNS');
@@ -210,13 +210,28 @@ describe('domainActions: the live-read parts of Do this next', () => {
 		expect(k).toEqual(['attention:spf-missing', 'attention:dmarc-missing', 'unknown:dkim-unknown']);
 	});
 
+	it('the SPF step is as short as the one it replaced, so the offer below it sits no lower than on main (FOLD-01 measure)', () => {
+		const a = domainActions(input({ onboarding: onboarding({ spf: { record: null, lookup_count: null, flattening_active: false } }) })).find((x) => x.key === 'spf-missing')!;
+		expect(a.do).toBe('Publish SPF only if mail uses this name as its return-path');
+		expect(a.why).toBe('No SPF record at example.com. SPF is checked at the return-path domain.');
+		expect(a.why.length).toBeLessThanOrEqual(80);
+	});
+
+	it('no SPF step when the reports show no message used the name as its SPF domain (40 through cf-bounce.app., 9 unaligned elsewhere); one with no evidence', () => {
+		const noSpf = onboarding({ spf: { record: null, lookup_count: null, flattening_active: false } });
+		const evidence = (o: Partial<DomainCheckSummary>) => keys({ onboarding: noSpf, summary: summary({ ...passing(99), ...o }) });
+		expect(evidence({ from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 0, from_unjudged: 0 })).not.toContain('attention:spf-missing');
+		expect(evidence({ from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 2, from_unjudged: 0 })).toContain('attention:spf-missing');
+		expect(evidence({ from_messages: 0, from_spf_at_name: 0 })).toContain('attention:spf-missing');
+	});
+
 	it('SPF over ten lookups needs attention and points at flattening', () => {
 		const [a] = domainActions(input({ onboarding: onboarding({ spf: { record: 'v=spf1 include:a include:b ~all', lookup_count: 13, flattening_active: false } }) }));
 		expect(a).toMatchObject({ key: 'spf-lookups', status: 'attention', to: '/domains/1/spf-flatten' });
 	});
 
 	it('the largest failing source is named next to "Fix the senders"', () => {
-		const got = domainActions(input({ summary: summary({ ...passing(80), dmarc_policy: 'none', dmarc_p: 'none' }), sources: [{ source_ip: '198.2.180.1', total: 40, header_from: 'example.com', base_domain: 'mcsv.net', org: 'Mailchimp' }] }));
+		const got = domainActions(input({ summary: summary({ ...passing(80), dmarc_policy: 'none', dmarc_p: 'none' }), sources: [{ source_ip: '198.2.180.1', total: 40, header_from: 'example.com', base_domain: 'mcsv.net', org: 'Mailchimp', spf_domain: null, dkim_domain: null, spf_pass: 0, dkim_pass: 0, reverse_dns: null, source_class: 'yours', likely_not_yours: false }] }));
 		expect(got[0]!.why).toMatch(/largest failing source is Mailchimp/);
 	});
 

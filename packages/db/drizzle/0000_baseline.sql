@@ -62,6 +62,8 @@ CREATE TABLE `aggregate_reports` (
 	`reporter_identity` text,
 	`ingest_token` text,
 	`record_count` integer,
+	`aspf` text,
+	`adkim` text,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
@@ -654,6 +656,8 @@ CREATE TABLE `report_records` (
 	`spf_result` text,
 	`spf_domain` text,
 	`header_from` text,
+	`spf_aligned` integer,
+	`dkim_aligned` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`reverse_dns` text,
 	`base_domain` text,

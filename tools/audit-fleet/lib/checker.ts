@@ -6,6 +6,7 @@
 // When packages/dns-checks lands, replace the single `checker` construction in run.ts with its
 // `checkDomain` (mapped to DomainReport) — nothing else in the fleet depends on how checks run.
 import { parseSpfRecord, parseDmarcRecord } from '../../../src/email/dns-check.ts';
+import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
 import { detectProviders, getAllDkimSelectors, matchDkimProvider } from '@ready-set-mail/dns-checks/email-service-providers';
 import type { DohClient } from './doh.ts';
 
@@ -118,9 +119,9 @@ export function createLegacyChecker(doh: DohClient): Checker {
 
     // DMARC (subdomain falls back to org domain)
     let dmarcRaw = dmarcQ.records.find(r => /^v=DMARC1/i.test(r));
-    const labels = domain.split('.');
-    if (!dmarcRaw && labels.length > 2) {
-      const org = await doh.txt(`_dmarc.${labels.slice(-2).join('.')}`);
+    const orgName = organizationalDomain(domain);
+    if (!dmarcRaw && orgName && orgName !== domain) {
+      const org = await doh.txt(`_dmarc.${orgName}`);
       note('dmarc-org', org);
       dmarcRaw = org.records.find(r => /^v=DMARC1/i.test(r));
     }

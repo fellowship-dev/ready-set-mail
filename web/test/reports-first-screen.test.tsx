@@ -11,12 +11,13 @@ import { OverviewPage } from '../src/pages/domains/OverviewPage';
 import { ReportsStep } from '../src/pages/wizards/setup/ReportsStep';
 import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import { renderApp } from './render';
+import { noReach } from './reach';
 
 const ADDR = 'rua@rua.example.net';
 const NOW = Math.floor(Date.now() / 1000);
 const domain = { id: 1, domain: 'example.com', dmarc_policy: 'reject', rua_address: '', parent_id: null, created_at: 1700000000, alerts_enabled: 1, is_default: 0 };
 const addr = (over: Record<string, unknown> = {}) => ({
-	available: true, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null,
+	available: true, reach: noReach, domain_id: 1, domain: 'example.com', managed_by: null, can_connect: true, refusal: null, address: null, connected_at: null, last_report_at: null,
 	counted_since_connect: 0, reports_since_connect: 0, reports_before_connect: 0, visibility: null, state: 'not_connected', dns: null, apply_via_cloudflare: false, preview: null, parent: null, ...over,
 });
 const HOSTED = { status: { mode: 'saas' } } as const;
@@ -25,7 +26,7 @@ const baseRoutes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/hosted/config': { enabled: true, reports: true, records: false },
 	'GET /api/domains/1/report-address': addr(),
 	'GET /api/domains/1/stats': { domain: 'example.com', days: 7, stats: [] },
-	'GET /api/domains/1/sources': { sources: [] },
+	'GET /api/domains/1/sources': { sources: [], one_check: { sources: 0, messages: 0 }, not_recorded: { sources: 0, messages: 0 } },
 	'GET /api/domains/1/wizard-state': { domain: 'complete', spf: 'complete', dkim: 'complete', dmarc: 'complete', routing: 'complete' },
 	'GET /api/domains/1/dns-check': { found: true, has_rua: false, current_record: 'v=DMARC1; p=reject;', cf_managed: false },
 	'GET /api/domains/1/monitor-subs': { subs: [] },
@@ -190,7 +191,7 @@ describe('the setup wizard\'s reports step', () => {
 
 describe('SPF flattening is not offered on the hosted service', () => {
 	it('no entry point under DNS tools, no request for it, and the page says it is not available', async () => {
-		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, config: null, lookup_count: 1 } }));
+		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, reach: noReach, config: null, lookup_count: 1 } }));
 		await screen.findByRole('heading', { name: 'Do this next' });
 		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
 		expect(screen.queryByText('SPF flattening')).not.toBeInTheDocument();
@@ -206,7 +207,7 @@ describe('SPF flattening is not offered on the hosted service', () => {
 	});
 
 	it('self-host keeps the tool and says only what the daily run does', async () => {
-		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, config: { enabled: true, original_record: 'v=spf1 include:a.example ~all', flattened_record: 'v=spf1 ip4:192.0.2.1 ~all', previous_record: null, ip_count: 7, lookups_before: 12, lookups_after: 1, last_changed_at: 1_700_000_000, last_refreshed_at: Math.floor(Date.now() / 1000), problem: null, pending: null }, lookup_count: 12 } }), { status: {} });
+		detail(baseRoutes({ 'GET /api/hosted/config': { enabled: false }, 'GET /api/domains/1/mta-sts': { available: false, config: null, summary: null }, 'GET /api/domains/1/spf-flatten': { available: true, reach: noReach, config: { enabled: true, original_record: 'v=spf1 include:a.example ~all', flattened_record: 'v=spf1 ip4:192.0.2.1 ~all', previous_record: null, ip_count: 7, lookups_before: 12, lookups_after: 1, last_changed_at: 1_700_000_000, last_refreshed_at: Math.floor(Date.now() / 1000), problem: null, pending: null }, lookup_count: 12 } }), { status: {} });
 		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
 		expect(await screen.findByText(/^On: 7 addresses in your record, using 1 of the 10 lookups\. Checked just now; not changed since you turned it on\. Checked again every day around 11:00 UTC\.$/)).toBeInTheDocument();
 		expect(screen.queryByText(/re-resolved daily/)).not.toBeInTheDocument();

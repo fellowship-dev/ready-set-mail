@@ -28,8 +28,8 @@ function seed(db: ReturnType<typeof createMigratedD1>, ws = 'ws_default') {
   const report = (id: number, auth: string | null, total: number, pass: number, ip: string, begin: number, org = 'google.com', tier: string | null = auth === 'pass' ? 'counted' : null) => {
     s.prepare('INSERT INTO aggregate_reports (id, domain_id, org_name, report_id, date_begin, date_end, total_count, pass_count, fail_count, workspace_id, reporter_auth, reporter_auth_domain, reporter_tier, reporter_identity) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(id, org, `r${id}`, begin, begin + DAY - 1, total, pass, total - pass, ws, auth, auth === 'pass' ? org : null, tier, tier === 'counted' ? org.split('.')[0] : tier === 'unknown' ? org : '~unauth');
-    s.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, spf_result, header_from, workspace_id) VALUES (?, ?, ?, ?, ?, ?, 'acme.com', ?)")
-      .run(id, ip, total, pass === total ? 'none' : 'reject', pass === total ? 'pass' : 'fail', pass === total ? 'pass' : 'fail', ws);
+    s.prepare("INSERT INTO report_records (report_id, source_ip, count, disposition, dkim_result, spf_result, header_from, workspace_id, spf_aligned, dkim_aligned) VALUES (?, ?, ?, ?, ?, ?, 'acme.com', ?, ?, ?)")
+      .run(id, ip, total, pass === total ? 'none' : 'reject', pass === total ? 'pass' : 'fail', pass === total ? 'pass' : 'fail', ws, pass === total ? 1 : 0, pass === total ? 1 : 0);
   };
   const begin = Math.floor((NOW - 2 * DAY) / DAY) * DAY;
   report(1, 'pass', 100, 50, '198.51.100.1', begin);                    // the real one: half of the mail fails

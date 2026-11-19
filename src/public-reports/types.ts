@@ -46,6 +46,8 @@ export interface DmarcResult extends Base {
   /** The record came from the parent domain, so for this (sub)domain `sp=` is the policy that applies. */
   inherited: boolean;
   record: string | null;
+  /** The policy in force for THIS name and where it comes from (RFC 9989 section 4.10.1); `grade` is graded on it, never on another name's `p=`. */
+  effective: { policy: "none" | "quarantine" | "reject" | null; tag: "p" | "sp" | "np" | null; at: string | null; source: "own" | "organizational" | null; exists: boolean | null } | null;
   /** Competing records when more than one `v=DMARC1` exists at the same name (DMARC then does not apply). */
   rawRecords?: string[];
   tags: {

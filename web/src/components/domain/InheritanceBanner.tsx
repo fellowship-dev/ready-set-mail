@@ -18,7 +18,7 @@ export function InheritanceBanner({ pc, subdomain }: { pc: ParentContext; subdom
 				</Alert>
 			) : null}
 			<Alert variant="info" title="SPF does not inherit">
-				{subdomain} needs its own SPF record.
+				SPF is checked at each message's return-path (MAIL FROM) domain, so a record on {pc.domain} does not cover {subdomain}. {subdomain} needs its own SPF record only if mail is sent with {subdomain} itself as the return-path; a sending service with its own return-path domain does not.
 			</Alert>
 			<Alert variant="info" title="DKIM does not inherit">
 				Check with your email provider for subdomain signing setup.

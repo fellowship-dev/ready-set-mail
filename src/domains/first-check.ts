@@ -9,6 +9,7 @@ import { resolverFor } from '../dns/resolver';
 import type { Resolver } from '@ready-set-mail/dns-checks';
 import { governingTags, snapshotDns, type DnsSnapshot } from '../email/dns-snapshot';
 import type { TenantContext } from '../tenancy/context';
+import { reportsAddressVia } from '../hosted/report-address';
 import { cachedPreview, type ClaimPreview } from './claim-preview';
 import type { VerifiedVia } from './ownership';
 
@@ -35,7 +36,7 @@ export function snapshotFromPreview(p: ClaimPreview): DnsSnapshot {
  * facts came from, or null when nothing could be stored.
  */
 export async function recordFirstDnsCheck(
-  tenant: TenantContext, domainId: number, domain: string, opts: { resolver?: Resolver; now?: number } = {},
+  tenant: TenantContext, domainId: number, domain: string, opts: { resolver?: Resolver; now?: number; proven?: boolean } = {},
 ): Promise<'preview' | 'snapshot' | null> {
   try {
     const fresh = cachedPreview(domain, opts.now);
@@ -44,7 +45,7 @@ export async function recordFirstDnsCheck(
     // Only a complete read is stored: a half-answered one would turn "not checked yet" into "last check failed" on a domain
     // proven seconds ago. The daily refresh and the domain page read it again either way.
     if (found.spf_record === undefined || found.dmarc === undefined) return null;
-    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor((opts.now ?? Date.now()) / 1000) });
+    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor((opts.now ?? Date.now()) / 1000), reports_address: await viaFor(tenant, domainId, opts.proven) });
     return fresh ? 'preview' : 'snapshot';
   } catch (e) {
     console.warn(`[domain.verified] first DNS check not stored for ${domain}:`, e instanceof Error ? e.message : e);
@@ -71,7 +72,7 @@ export async function recheckStoredDns(tenant: TenantContext, domainId: number, 
   try {
     const found = await snapshotDns(domain, resolver);
     if (found.spf_lookup_count !== undefined) await tenant.scope.domains.updateSpfLookupCount(domainId, found.spf_lookup_count);
-    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000) });
+    await tenant.scope.domains.recordDnsCheck(domainId, { spf_record: found.spf_record, dmarc: found.dmarc, nxdomain: found.nxdomain, at: Math.floor(Date.now() / 1000), reports_address: await viaFor(tenant, domainId) });
   } catch (e) {
     console.warn(`[dns.recheck] not stored for ${domain}:`, e instanceof Error ? e.message : e);
   }
@@ -86,4 +87,10 @@ export async function reservePctRecheck(tenant: TenantContext, domainId: number,
     "UPDATE domains SET dns_check_attempted_at = ?1 WHERE id = ?2 AND workspace_id = ?3 AND ((dmarc_pct IS NULL AND dmarc_policy IN ('quarantine', 'reject')) OR (dmarc_policy IS NOT NULL AND dmarc_p IS NULL)) AND (dns_check_attempted_at IS NULL OR dns_check_attempted_at <= ?4)",
   ).bind(nowSeconds, domainId, tenant.workspaceId, nowSeconds - RECHECK_AFTER_SECONDS).run();
   return (r.meta.changes ?? 0) === 1;
+}
+
+/** The address this row's reports arrive at through its connected parent (none of its own), for the stored `dmarc_rua`. */
+async function viaFor(tenant: TenantContext, domainId: number, proven?: boolean): Promise<string | null> {
+  const row = await tenant.scope.domains.getById(domainId);
+  return row ? reportsAddressVia(tenant, row, { proven }) : null;
 }

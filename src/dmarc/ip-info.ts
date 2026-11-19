@@ -6,6 +6,7 @@
 import type { IpInfo } from './types';
 import { globals } from '../db/scope';
 import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
+import { organizationalDomain } from '@ready-set-mail/dns-checks/org-domain';
 
 const DOH_URL = 'https://cloudflare-dns.com/dns-query';
 const CACHE_TTL_DAYS = 30;
@@ -109,9 +110,9 @@ function isIPv4(ip: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
 }
 
+/** The registrable domain of a PTR name (`mx.mail.example.co.uk` is `example.co.uk`, never `co.uk`); the name itself when it has none. */
 function baseDomain(hostname: string): string {
-  const parts = hostname.replace(/\.$/, '').split('.');
-  return parts.length <= 2 ? hostname : parts.slice(-2).join('.');
+  return organizationalDomain(hostname) ?? hostname;
 }
 
 // ── Public API ────────────────────────────────────────────────

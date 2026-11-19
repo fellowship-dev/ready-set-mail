@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkDomain } from '../src/report';
+import { checkDomain, gradeReport } from '../src/report';
 import { createResolver, DEFAULT_DOH_ENDPOINT, DOH_ENDPOINTS, type FetchLike } from '../src/doh';
 import { COMMON_DKIM_SELECTORS } from '../src/dkim';
 import { dohFetch, resp, type Zone } from './helpers';
@@ -196,5 +196,34 @@ describe('checkDomain – the same real key at several selectors', () => {
     expect(r.dkim.found).toEqual([]);
     expect(r.errors.some(e => e.check === 'dkim')).toBe(true);
     expect(r.grade.reasons.join(' ')).toContain('some lookups failed');
+  });
+});
+
+describe('gradeReport with report evidence (SPF not needed at the From name)', () => {
+  const app = (zone: Zone) => checkDomain('app.readysetmail.com', { resolver: createResolver({ fetch: dohFetch(zone, [], {}) }), dkimProbeHex: () => '0123456789abcdef' });
+  const zone: Zone = { 'TXT _dmarc.app.readysetmail.com': ['v=DMARC1; p=reject; rua=mailto:r@readysetmail.com'], 'TXT cf-bounce._domainkey.app.readysetmail.com': ['v=DKIM1; k=rsa; p=MIIB'] };
+  const evidence = { from_messages: 49, from_dkim_aligned: 40, from_spf_at_name: 0, from_unjudged: 9 };
+  const FAULT = 'No SPF record at app.readysetmail.com. SPF is checked at the return-path (MAIL FROM) domain of each message';
+
+  it('keeps today\'s grade without evidence', async () => {
+    const r = await app(zone);
+    expect(r.grade.level).toBe(0);
+    expect(r.grade.reasons.join(' ')).toContain(FAULT);
+  });
+  it('counts SPF as working when no message used the name as its SPF domain', async () => {
+    const r = await app(zone);
+    const { grade: _g, errors: _e, providers: _p, ns: _n, dnsHost: _d, ...partial } = r;
+    const g = gradeReport(partial, evidence);
+    expect(g.level).toBeGreaterThanOrEqual(2);
+    expect(g.label).not.toBe('Unprotected');
+    expect(g.reasons[0]).toContain('none of the 49 messages sent as app.readysetmail.com used app.readysetmail.com as its SPF (return-path) domain');
+    expect(g.reasons.join(' ')).not.toContain(FAULT);
+    expect(g.reasons).not.toContain('SPF is not -all/~all');
+    expect(g.nextSteps).not.toContain('If any service sends mail with this name as its return-path (MAIL FROM), publish an SPF record that lists it. If every service uses its own return-path domain, no SPF record is needed here: check in DMARC reports that DKIM aligns.');
+  });
+  it('still faults a missing SPF record when some message used the name as its SPF domain', async () => {
+    const r = await app(zone);
+    const { grade: _g, errors: _e, providers: _p, ns: _n, dnsHost: _d, ...partial } = r;
+    expect(gradeReport(partial, { ...evidence, from_spf_at_name: 2 }).level).toBe(0);
   });
 });

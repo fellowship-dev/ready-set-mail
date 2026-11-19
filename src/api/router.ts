@@ -30,9 +30,10 @@
 //   DELETE /api/domains/:id                   — remove a domain: { ok, kept } (the DNS records it left in place, and why)
 //   GET    /api/domains/:id/stats             — daily pass/fail stats (days, max 90)
 //   GET    /api/domains/:id/reports?date=     — report sources for a specific date
-//   GET    /api/domains/:id/sources           — top failing sources (days, max 90)
+//   GET    /api/domains/:id/sources           — top sources that failed DMARC, plus the counts that passed on one check / have no recorded verdict (days, max 90)
+//   GET    /api/domains/:id/names             — subdomains seen sending as the domain, with the policy that applies to each (days, max 90)
 //   GET    /api/domains/:id/explore           — all sources with pass/fail (days, max 90)
-//   GET    /api/domains/:id/anomalies         — failing sources with Active/Older split
+//   GET    /api/domains/:id/anomalies         — sources that did not pass on both checks, one row per verdict (the page splits failed Active/Older)
 //   GET    /api/domains/:id/export            — CSV export
 //   GET    /api/domains/:id/dns-check         — check _dmarc TXT record in DNS
 //   *      /api/cloudflare/connections…, /api/cloudflare/oauth/…, PUT /api/domains/:id/connection — Cloudflare connections (owner/admin; src/connections/routes.ts)
@@ -131,6 +132,9 @@ import { capability, type CapabilityAnswer } from '../hosted/plan-limits';
 import { claimPreviewResponse } from '../domains/claim-preview';
 import { getDomainReport } from '../reports/service';
 import { fetchSubdomains } from '../domains/ct';
+import { namesSeen } from '../domains/names';
+import { reportsAddressVia, withReportsVia } from '../hosted/report-address';
+import { resolverFor } from '../dns/resolver';
 import { ensureEmailRouting, registerEmailRoutingDestination } from '../setup/email-routing';
 import { applyClicked, applyDone, dashboardViewed, dnsChecked, domainAdded, recordsSeenLive, emailCheckDoneLater, emailCheckStartedLater, enrollmentAdded, inviteSent, ownershipVerified } from '../product-analytics/steps';
 import { analyticsEnabled } from '../product-analytics/capture';
@@ -145,7 +149,6 @@ import { adoptSpf, disableSpf, enableSpf, pendingSentence, previewSpf, refreshSp
 import { buildStepRecord, parseDmarcTags, planNextStep, stepIndexForRecord, stepIndexFromStored, stepIndexFor, toStored, PASS_RATE_THRESHOLD, ROLLOUT_SEQUENCE } from '../dmarc/rollout';
 import { lookupSpf, lookupDmarc, countSpfLookupsFromRecord } from '../email/dns-check';
 import { SPF_LOOKUP_LIMIT, spfLookupJudgement, validateSpfRecord } from '@ready-set-mail/dns-checks/spf-record';
-import { resolverFor } from '../dns/resolver';
 import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpfRecord, scanDkimSelectors } from '@ready-set-mail/dns-checks';
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
@@ -256,7 +259,7 @@ async function parseBody<T>(request: Request): Promise<T> {
 // ── Route handlers ────────────────────────────────────────────
 
 async function getDomainsHandler(tenant: TenantContext): Promise<Response> {
-  const results = await tenant.scope.domains.list();
+  const results = await withReportsVia(tenant, await tenant.scope.domains.list());
   // `domains` are verified; `pending_claims` are domains this workspace has asked for but not yet proven (SaaS).
   // `first_run_domain` is the one S4 was given (settings, hosted only): the first-run screens name it in every browser.
   return json({ domains: results, pending_claims: await listClaims(tenant), first_run_domain: (await tenant.scope.settings.get(FIRST_RUN_DOMAIN_KEY))?.value ?? null });
@@ -564,12 +567,13 @@ async function getDomainReportByDate(tenant: TenantContext, domainId: string, ur
   const domain = await tenant.scope.domains.getById(id);
   if (!domain) return err('domain not found', 404);
 
-  const [summary, sources] = await Promise.all([
+  const [summary, sources, unrecordedReports] = await Promise.all([
     tenant.scope.reports.daySummary(id, date),
     tenant.scope.reports.sourcesByDate(id, date),
+    tenant.scope.reports.unrecordedReports(id, { date }),
   ]);
 
-  return json({ date, domain: domain.domain, summary: summary ?? { total: 0, passed: 0, failed: 0 }, sources });
+  return json({ date, domain: domain.domain, summary: summary ?? { total: 0, passed: 0, failed: 0 }, sources, unrecorded_reports: unrecordedReports });
 }
 
 async function getDomainSources(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {
@@ -582,8 +586,24 @@ async function getDomainSources(tenant: TenantContext, domainId: string, url: UR
   const days = intParam(url, 'days', 7, 1, 90);
   const since = Math.floor(Date.now() / 1000) - days * 86400;
 
-  const results = await tenant.scope.reports.topFailingSources(id, since);
-  return json({ sources: results });
+  const [results, tally] = await Promise.all([tenant.scope.reports.topFailingSources(id, since), tenant.scope.reports.verdictTally(id, since)]);
+  // `sources` are the ones that FAILED DMARC; the rest of the window that is not a plain pass is counted, not listed.
+  return json({ sources: results, one_check: tally['passed-one'], not_recorded: tally['not-recorded'] });
+}
+
+/** The names seen sending as this domain: its subdomains in the reports, with the policy that applies to each and where it comes from. */
+async function getDomainNames(tenant: TenantContext, domainId: string, url: URL): Promise<Response> {
+  const id = parseInt(domainId, 10);
+  if (isNaN(id)) return err('invalid domain id', 400);
+
+  const domain = await tenant.scope.domains.getById(id);
+  if (!domain) return err('domain not found', 404);
+
+  const days = intParam(url, 'days', 30, 1, 90);
+  const since = Math.floor(Date.now() / 1000) - days * 86400;
+
+  const rows = await tenant.scope.reports.namesSeen(id, domain.domain, since);
+  return json({ days, domain: domain.domain, names: await namesSeen(rows, resolverFor(tenant.env)) });
 }
 
 // ── Main router ───────────────────────────────────────────────
@@ -1052,6 +1072,11 @@ async function _handleApi(
     if (domainSourcesMatch && method === 'GET') {
       return await getDomainSources(tenant, domainSourcesMatch[1], url);
     }
+    // GET /api/domains/:id/names?days=30
+    const domainNamesMatch = path.match(/^\/api\/domains\/([^/]+)\/names$/);
+    if (domainNamesMatch && method === 'GET') {
+      return await getDomainNames(tenant, domainNamesMatch[1], url);
+    }
     // GET /api/domains/:id/explore?days=30
     const exploreMatch = path.match(/^\/api\/domains\/([^/]+)\/explore$/);
     if (exploreMatch && method === 'GET') {
@@ -1073,8 +1098,8 @@ async function _handleApi(
       if (!domain) return err('domain not found', 404);
       const days = intParam(url, 'days', 30, 1, 90);
       const since = Math.floor(Date.now() / 1000) - days * 86400;
-      const results = await tenant.scope.reports.anomalySources(id, since);
-      return json({ days, domain: domain.domain, anomalies: results });
+      const [results, unrecordedReports] = await Promise.all([tenant.scope.reports.anomalySources(id, since), tenant.scope.reports.unrecordedReports(id, { since })]);
+      return json({ days, domain: domain.domain, anomalies: results, unrecorded_reports: unrecordedReports });
     }
     // GET /api/domains/:id/export — CSV download (requires normal session/API key auth)
     const exportMatch = path.match(/^\/api\/domains\/([^/]+)\/export$/);
@@ -1109,7 +1134,7 @@ async function _handleApi(
         const records = txt.records;
         const found = records.length > 0;
         // An empty address is contained in every string: with none configured, nothing has our rua.
-        const ourRua = domain.rua_address?.trim();
+        const ourRua = domain.rua_address?.trim() || (await reportsAddressVia(tenant, domain)) || '';
         const has_rua = !!ourRua && records.some(r => r.toLowerCase().includes(ourRua.toLowerCase()));
         const current_record = records[0] ?? null;
         // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
@@ -1195,6 +1220,8 @@ async function _handleApi(
       // Live DNS goes through the shared resolver: a DNS *error* is reported as such
       // (`dns_errors`), never as "record not found".
       const dnsResolver = resolverFor(env);
+      // The address this name's DMARC record must list: its own, or its connected parent's when its reports arrive through it.
+      const ourRua = domain.rua_address?.trim() || (await reportsAddressVia(tenant, domain)) || '';
       const dns_errors: string[] = [];
       // What this read resolved, stored below. A key stays unset when its lookup failed (unknown is never stored as absent).
       const resolved: { spf_record?: string | null; dmarc?: DmarcFacts; nxdomain?: boolean } = {};
@@ -1220,7 +1247,7 @@ async function _handleApi(
           resolved.dmarc = lookup ? dmarcFactsFromLookup(lookup) : undefined;
           // The inherited record itself, so the dashboard can say how much mail its policy covers (pct=).
           inheritedRecord = lookup?.inherited ? (lookup.record?.raw ?? null) : null;
-          return { found: t.records.length > 0, has_our_rua: !!domain.rua_address?.trim() && t.records.some(r => r.toLowerCase().includes(domain.rua_address.trim().toLowerCase())), current_record: t.records[0] ?? null };
+          return { found: t.records.length > 0, has_our_rua: !!ourRua && t.records.some(r => r.toLowerCase().includes(ourRua.toLowerCase())), current_record: t.records[0] ?? null };
         }),
 
         // Routing: MX check + destination email verification
@@ -1327,9 +1354,11 @@ async function _handleApi(
         })(),
       ]);
 
+      // The address reports reach this name at when it has none of its own: through its connected parent (`reportReachOf`), as the domain list says.
+      const reportsVia = await reportsAddressVia(tenant, domain);
       // Same store as the daily cron, from lookups this request already made (no extra DNS). A write failure must not fail the read.
       try {
-        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000) });
+        await tenant.scope.domains.recordDnsCheck(domain.id, { ...resolved, at: Math.floor(Date.now() / 1000), reports_address: reportsVia });
         dnsChecked(tenant, ctx, domain, resolved.dmarc, 'setup');
       } catch (e) {
         console.warn(`[onboarding-status] storing DNS check failed for ${domain.domain}:`, e);
@@ -1349,7 +1378,7 @@ async function _handleApi(
       return json({
         domain_id: domain.id,
         domain: domain.domain,
-        rua_address: domain.rua_address,
+        rua_address: domain.rua_address?.trim() ? domain.rua_address : reportsVia ?? domain.rua_address,
         cf_available: tenant.hasCloudflare(),
         // `effective`: the policy that applies (RFC 7489), own or inherited from the organizational domain; null when DNS
         // could not say. The dashboard never offers a record weaker than this.

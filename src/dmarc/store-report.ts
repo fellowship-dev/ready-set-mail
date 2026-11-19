@@ -59,6 +59,9 @@ export function toTuple(rec: ParserRecord): RecordTuple {
     rec.source.base_domain,
     rec.source.country_code,
     rec.source.org ?? null,
+    // The receiver's own verdict per identifier (policy_evaluated): a message fails DMARC when neither is aligned.
+    rec.policy_evaluated.spf === 'pass' ? 1 : 0,
+    rec.policy_evaluated.dkim === 'pass' ? 1 : 0,
   ];
 }
 
@@ -109,6 +112,8 @@ export async function storeReport(
       reporter_tier: reporter?.tier ?? null,
       reporter_known_as: reporter?.knownAs ?? null,
       reporter_identity: reporter?.identity ?? null,
+      aspf: report.policy_published.aspf ?? null,
+      adkim: report.policy_published.adkim ?? null,
     },
     records: report.records.map(toTuple),
     supersedeXmlId: reporter?.tier === 'counted' ? meta.report_id : undefined,

@@ -16,6 +16,7 @@ import { useHosted } from '../../lib/session';
 import type { Domain } from '../../lib/types';
 import { Section, WriteButton } from '../states';
 import { HELP_PRIORITY, TalkToMax } from '../TalkToMax';
+import { noSpfAtName } from '@ready-set-mail/dns-checks/spf-identity';
 import { ConfirmDialog } from './ConfirmDialog';
 
 
@@ -74,8 +75,12 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 	const hostedNoReports = useHosted() && !ruaReady;
 	// Hosted and connectable: the way forward is the reports panel (Connect reports), not a record to copy from here.
 	const intakeOn = useReportIntakeEnabled();
-	const reportsAddr = useReportAddress(domain.id, intakeOn && hostedNoReports);
-	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && !reportsAddr.data.managed_by;
+	const reportsAddr = useReportAddress(domain.id, intakeOn);
+	// The record that applies to this name (its organizational domain's) already lists our address: its reports arrive (`reach`), so nothing is offered to publish.
+	const reachKind = reportsAddr.data?.available === true ? reportsAddr.data.reach.kind : null;
+	const inheritedReports = reachKind === 'inherited_record' || reachKind === 'via_parent';
+	const reportsLoading = intakeOn && reportsAddr.isLoading;
+	const canConnect = !!reportsAddr.data && reportsAddr.data.available && reportsAddr.data.can_connect && !reportsAddr.data.address && reportsAddr.data.reach.kind === 'none' && !reportsAddr.data.managed_by;
 	const connectPointer = canConnect ? ' Use Connect reports on this page to add our address to it.' : '';
 	// No record of its own: a new one replaces what the name inherits, so it starts at the inherited policy when that
 	// enforces, and nothing is offered while the policy that applies is unknown. Never weaker than the effective policy.
@@ -175,7 +180,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const status: CheckStatus = found && has_rua ? 'pass' : found ? 'warn' : inherited ? (inheritedEnforcing ? 'pass' : 'warn') : 'missing';
 		const offerBlocked = !found && !floor;
 		// Compared tag by tag: a record that differs only in letter case or spacing needs no change.
-		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended));
+		const upToDate = !ruaReady || offerBlocked || recommended === null || (found && has_rua && sameDmarcRecord(current, recommended)) || (inherited && inheritedReports);
+		// Offered only while nothing says the reports already arrive, and (hosted) once the reach is known.
+		const holdOffer = !upToDate && reportsLoading;
 		return (
 			<CheckResult
 				status={status}
@@ -187,7 +194,9 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 						: !found && offerBlocked
 							? `No TXT record at ${dmarcName}, and we could not tell whether a parent domain's policy covers this name, so no record is offered.`
 							: !found && coverage.kind === 'inherited'
-								? `${inheritedSentence(domain.domain, coverage)} To receive reports here, publish the record below: it keeps ${floor ? keptEnforcement(coverage, floor) : ''} and adds Ready Set Mail's report address.`
+								? inheritedReports
+									? `${inheritedSentence(domain.domain, coverage)} That record already sends reports here.`
+									: `${inheritedSentence(domain.domain, coverage)} To receive reports here, publish the record below: it keeps ${floor ? keptEnforcement(coverage, floor) : ''} and adds Ready Set Mail's report address.`
 							: !found
 							? `No TXT record at ${dmarcName}. Add the record below so reports start arriving.`
 							: has_rua
@@ -197,9 +206,15 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 			>
 				<div className="space-y-3">
 					{current ? <RecordBlock title="Current record" record={{ type: 'TXT', name: dmarcName, value: current }} /> : null}
-					{!upToDate && cfAvailable && intakeOn && ruaReady ? (
-						// Hosted with report intake, connected: our address is written only by Connect reports (ADR 0020), which reads the record as it is now.
-						<p className="text-ink-2">The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.</p>
+					{holdOffer ? null : !upToDate && cfAvailable && intakeOn && ruaReady ? (
+						// Hosted with report intake: our address is written only by the Connect reports panel (ADR 0020), which reads the record as it is now. Said only where that panel's action is on the page.
+						<p className="text-ink-2">
+							{canConnect
+								? 'The record does not list the report address yet. Use Connect reports on this page: it shows the record as it is now and what it becomes, and writes it.'
+								: reportsAddr.data?.available && reportsAddr.data.address
+									? 'The record does not list the report address yet. Review the change in the DMARC reports panel on this page and press Apply.'
+									: null}
+						</p>
 					) : !upToDate ? (
 						<>
 							<RecordBlock title={found ? 'Recommended record' : 'Add this record'} record={{ type: 'TXT', name: dmarcName, value: recommended ?? '', ttl: 3600 }} />
@@ -227,7 +242,7 @@ export function DnsRecords({ domain }: { domain: Domain }) {
 		const { spf } = onboarding.data;
 		if (errors.some((e) => e.startsWith('spf:'))) return <CheckResult status="error" title="SPF record" summary="The DNS lookup did not complete." onRetry={retryOnboarding} />;
 		if (!spf.record) {
-			return <CheckResult status="missing" title="SPF record" summary="No SPF record found. Receivers cannot tell which servers may send for you." />;
+			return <CheckResult status="missing" title="SPF record" summary={noSpfAtName(domain.domain)} />;
 		}
 		const { status, note } = spfStatus(spf.lookup_count);
 		return (

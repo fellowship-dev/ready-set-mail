@@ -9,6 +9,8 @@ import { lookupMtaSts, type MtaStsLookup } from './mta-sts';
 import { lookupBimi, type BimiLookup } from './bimi';
 import { detectProviders, type DetectedProvider } from './providers';
 import { normalizeDomain } from './org-domain';
+import { effectivePolicySentence } from './effective-policy';
+import { NO_SPF_NEXT_STEP, noSpfAtName, noSpfNeededAtName, spfNotNeededAtName, type FromEvidence } from './spf-identity';
 import { lookupNs, detectDnsHost, type NsLookup, type DnsHost } from './dns-hosts';
 
 export type Level = 0 | 1 | 2 | 3;
@@ -59,13 +61,19 @@ export interface CheckDomainOptions extends ResolverOptions {
 
 const LABELS: Record<Level, string> = { 0: 'Unprotected', 1: 'Monitoring', 2: 'Enforced', 3: 'Hardened' };
 
-export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'providers' | 'ns' | 'dnsHost'>): Grade {
+/**
+ * `from`: what the stored reports say about mail sent AS this name. When SPF is absent and `spfNotNeededAtName(from)`, the missing
+ * record is not a fault: no reason or next step for it, and SPF counts as working for levels 1-3. Without evidence nothing changes.
+ */
+export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'providers' | 'ns' | 'dnsHost'>, from?: FromEvidence): Grade {
   const reasons: string[] = [];
   const nextSteps: string[] = [];
   const spfErr = r.spf.status === 'temperror';
   const dmarcErr = r.dmarc.status === 'error';
-  const spfOk = r.spf.status === 'ok' && r.spf.record?.verdict !== 'open' && r.spf.record?.verdict !== 'missing';
-  const dmarcGrade = gradeDmarcPolicy(r.dmarc.record);
+  const spfNotNeeded = r.spf.status === 'none' && !!from && spfNotNeededAtName(from);
+  const spfOk = spfNotNeeded || r.spf.status === 'ok' && r.spf.record?.verdict !== 'open' && r.spf.record?.verdict !== 'missing';
+  // The policy in force for THIS name (own p=, else the organizational domain's sp= / np= / p=), never a record's p= found elsewhere.
+  const dmarcGrade = gradeDmarcPolicy(r.dmarc.record, r.dmarc.effective.policy);
 
   if (spfErr || dmarcErr) {
     if (spfErr) reasons.push(`Could not check SPF (${r.spf.issues.find(i => i.code === 'dns-error')?.message ?? 'DNS error'})`);
@@ -77,7 +85,8 @@ export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'provider
   const incomplete = r.dkim.errors.length > 0 || r.mtaSts.status === 'error';
 
   // SPF reasoning
-  if (r.spf.status === 'none') { reasons.push('No SPF record'); nextSteps.push('Publish an SPF record listing your senders, ending in -all or ~all.'); }
+  if (spfNotNeeded) reasons.push(noSpfNeededAtName(r.domain, from!));
+  else if (r.spf.status === 'none') { reasons.push(noSpfAtName(r.domain)); nextSteps.push(NO_SPF_NEXT_STEP); }
   else if (r.spf.status === 'permerror') { reasons.push(`SPF is broken (permerror): ${r.spf.issues.filter(i => i.code !== 'dns-error').map(i => i.message).join('; ')}`); nextSteps.push('Fix the SPF record: receivers will treat it as an error.'); }
   else if (r.spf.status === 'temperror') { /* handled above */ }
   else if (r.spf.record?.verdict === 'open') { reasons.push('SPF allows any sender (+all / ?all)'); nextSteps.push('End SPF with -all or ~all.'); }
@@ -88,7 +97,15 @@ export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'provider
   if (r.dmarc.status === 'none') { reasons.push('No DMARC record'); nextSteps.push('Publish _dmarc TXT "v=DMARC1; p=none; rua=mailto:…" to start monitoring.'); }
   else if (r.dmarc.status === 'multiple') { reasons.push('Multiple DMARC records: DMARC does not apply'); nextSteps.push('Remove duplicate _dmarc TXT records.'); }
   else if (!r.dmarc.record?.valid) { reasons.push(`DMARC record invalid: ${r.dmarc.record?.issues.join('; ')}`); nextSteps.push('Fix the DMARC record syntax.'); }
-  else reasons.push(`DMARC ${r.dmarc.record.policy}${r.dmarc.record.pct < 100 ? ` at ${r.dmarc.record.pct}%` : ''}${r.dmarc.inherited ? ` (inherited from ${r.dmarc.organizationalDomain})` : ''}`);
+  else if (r.dmarc.effective.status === 'broken' && r.dmarc.effective.invalidTag === 'np') {
+    // np= is not a policy: the record is not applied as written (RFC 9989 section 4.10.1), whatever its p= says.
+    reasons.push(effectivePolicySentence(r.domain, r.dmarc.effective) ?? 'DMARC record has an invalid np=');
+    nextSteps.push('Fix np= in the DMARC record, or remove it.');
+  } else {
+    const eff = r.dmarc.effective;
+    const how = r.dmarc.inherited ? effectivePolicySentence(r.domain, eff) : null;
+    reasons.push(`DMARC ${eff.policy ?? 'none'}${r.dmarc.record.pct < 100 ? ` at ${r.dmarc.record.pct}%` : ''}${how ? ` (${how.replace(/\.$/, '')})` : ''}`);
+  }
 
   const dmarcPublished = dmarcGrade !== 'missing';
   let level: Level = 0;
@@ -100,7 +117,7 @@ export function gradeReport(r: Omit<DomainReport, 'grade' | 'errors' | 'provider
   if (level === 2) {
     const keyFound = r.dkim.found.some(f => f.record && !f.record.revoked);
     const mtaEnforce = r.mtaSts.status === 'valid' && r.mtaSts.policy?.mode === 'enforce';
-    const spfFirm = r.spf.record?.verdict === 'strict' || r.spf.record?.verdict === 'soft';
+    const spfFirm = spfNotNeeded || r.spf.record?.verdict === 'strict' || r.spf.record?.verdict === 'soft';
     const checks: [boolean, string, string][] = [
       [dmarcGrade === 'strict', 'DMARC is not p=reject', 'Move DMARC to p=reject.'],
       [spfFirm, 'SPF is not -all/~all', 'End SPF with -all or ~all.'],
