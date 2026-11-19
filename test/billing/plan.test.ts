@@ -198,12 +198,10 @@ describe('planItems (the add-on hook)', () => {
     expect(planItems(1, [{ addOn: 'spf-flattening', domainId: 7 }, { addOn: 'unknown', domainId: 8 }])).toEqual([{ lookupKey: 'rsm_extra_domain_yearly', quantity: 1 }]);
   });
   it('an add-on with a price is one item, quantity = the domains that have it', () => {
-    PLAN_ADD_ONS['spf-flattening']!.lookupKey = 'rsm_spf_flattening_yearly';
-    try {
-      expect(planItems(1, [{ addOn: 'spf-flattening', domainId: 7 }, { addOn: 'spf-flattening', domainId: 7 }, { addOn: 'spf-flattening', domainId: 9 }])).toEqual([
-        { lookupKey: 'rsm_extra_domain_yearly', quantity: 1 }, { lookupKey: 'rsm_spf_flattening_yearly', quantity: 2 },
-      ]);
-    } finally { PLAN_ADD_ONS['spf-flattening']!.lookupKey = null; }
+    const catalog = { 'spf-flattening': { label: 'SPF flattening', lookupKey: 'rsm_spf_flattening_yearly' } };
+    expect(planItems(1, [{ addOn: 'spf-flattening', domainId: 7 }, { addOn: 'spf-flattening', domainId: 7 }, { addOn: 'spf-flattening', domainId: 9 }], 'year', catalog)).toEqual([
+      { lookupKey: 'rsm_extra_domain_yearly', quantity: 1 }, { lookupKey: 'rsm_spf_flattening_yearly', quantity: 2 },
+    ]);
   });
 });
 

@@ -16,7 +16,7 @@ import { readCard } from './service';
 export const FREE_DOMAINS = 1;
 
 export type PlanInterval = 'month' | 'year';
-export const PLAN_LOOKUP_KEYS: Record<PlanInterval, string> = { year: 'rsm_extra_domain_yearly', month: 'rsm_extra_domain_monthly' };
+export const PLAN_LOOKUP_KEYS = { year: 'rsm_extra_domain_yearly', month: 'rsm_extra_domain_monthly' } as const satisfies Readonly<Record<PlanInterval, string>>;
 
 /** The words for the two prices when Stripe cannot be asked (the 402 body): the owner's rules, D-44. The app shows Stripe's own amounts where it has them. */
 export const PLAN_PRICE_WORDS = { month: 'USD 5', year: 'USD 50' } as const;
@@ -32,21 +32,22 @@ export function hostedPlanOn(env: PlanEnv): boolean {
  * Add-ons: a feature that costs money per domain (SPF flattening, later) attaches a price to ONE domain here. `lookupKey: null` = the price is not
  * decided: nothing is billed. Nothing is charged for any add-on today.
  */
-export const PLAN_ADD_ONS: Record<string, { label: string; lookupKey: string | null }> = {
+export type AddOnCatalog = Readonly<Record<string, Readonly<{ label: string; lookupKey: string | null }>>>;
+export const PLAN_ADD_ONS = {
   'spf-flattening': { label: 'SPF flattening', lookupKey: null },
-};
+} as const satisfies AddOnCatalog;
 
 export interface PlanItem { lookupKey: string; quantity: number }
 
 /** The subscription's items: the extra-domain item, plus one item per add-on whose price is set (quantity = the domains that have it). A null lookup key bills nothing. */
-export function planItems(quantity: number, addOns: { addOn: string; domainId: number }[], interval: PlanInterval = 'year'): PlanItem[] {
+export function planItems(quantity: number, addOns: { addOn: string; domainId: number }[], interval: PlanInterval = 'year', catalog: AddOnCatalog = PLAN_ADD_ONS): PlanItem[] {
   const items: PlanItem[] = [{ lookupKey: PLAN_LOOKUP_KEYS[interval], quantity: Math.max(0, Math.trunc(quantity)) }];
   const domainsBy = new Map<string, Set<number>>();
   for (const a of addOns) {
-    if (!PLAN_ADD_ONS[a.addOn]?.lookupKey) continue;
+    if (!catalog[a.addOn]?.lookupKey) continue;
     (domainsBy.get(a.addOn) ?? domainsBy.set(a.addOn, new Set()).get(a.addOn)!).add(a.domainId);
   }
-  for (const [addOn, ids] of domainsBy) items.push({ lookupKey: PLAN_ADD_ONS[addOn]!.lookupKey!, quantity: ids.size });
+  for (const [addOn, ids] of domainsBy) items.push({ lookupKey: catalog[addOn]!.lookupKey!, quantity: ids.size });
   return items;
 }
 
