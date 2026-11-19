@@ -38,10 +38,11 @@ describe('release notes', () => {
     expect(() => setDate(SAMPLE, '3.0.0', '2026-11-20')).toThrow();
   });
 
-  it('CHANGELOG.md has a non-empty section for the package version, plus Unreleased, 1.2.0 and 0.6.0', () => {
+  it('CHANGELOG.md has a section for the package version with its self-hoster block (docs/releasing.md), plus Unreleased, 2.0.0, 1.2.0 and 0.6.0', () => {
     const changelog = readFileSync('CHANGELOG.md', 'utf8');
     const current = extractSection(changelog, pkg.version);
-    expect(current?.body).toMatch(/Upgrading from 1\.x/);
+    expect(current?.body).toMatch(/^### Self-hosters: what changes$/m);
+    expect(extractSection(changelog, '2.0.0')?.body).toMatch(/^### Upgrading from 1\.x$/m);
     expect(changelog).toMatch(/^## \[Unreleased\]/m);
     for (const v of ['1.2.0', '0.6.0']) expect(extractSection(changelog, v)?.body.length).toBeGreaterThan(0);
   });
