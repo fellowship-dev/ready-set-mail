@@ -150,9 +150,8 @@ export function dnsCheckLine(s: Pick<DomainCheckSummary, 'dns_checked_at' | 'dns
 
 /** The slice of the hosted status that levels need. */
 export interface HostedLevelInput {
-	mta_sts: boolean;
-	pointer_status: { dmarc: string | null; spf: string | null; mta_sts: string | null };
-	level_inputs: { dmarc_published: boolean; spf_published: boolean; mta_sts_published: boolean };
+	pointer_status: { dmarc: string | null; spf: string | null };
+	level_inputs: { dmarc_published: boolean; spf_published: boolean };
 }
 type LevelSummary = Parameters<typeof assessDomain>[0];
 
@@ -160,18 +159,16 @@ type LevelSummary = Parameters<typeof assessDomain>[0];
 const hostedLive = (published: boolean, pointer: string | null) => published && pointer === 'ok';
 
 /**
- * For a hosted domain the stored summary is not the truth (the records live in our zone): SPF, DMARC and MTA-STS
+ * For a hosted domain the stored summary is not the truth (the records live in our zone): SPF and DMARC
  * "published" come from `level_inputs`, and only when the customer's pointer is verified `ok`.
  * Returns the summary to assess and the purposes whose pointer is not verified yet.
  */
-export function applyHostedInputs<S extends LevelSummary>(s: S, h: HostedLevelInput): { summary: S; unverified: Array<'spf' | 'dmarc' | 'mta_sts'> } {
+export function applyHostedInputs<S extends LevelSummary>(s: S, h: HostedLevelInput): { summary: S; unverified: Array<'spf' | 'dmarc'> } {
 	const spf = hostedLive(h.level_inputs.spf_published, h.pointer_status.spf);
 	const dmarc = hostedLive(h.level_inputs.dmarc_published, h.pointer_status.dmarc);
-	const mta = hostedLive(h.level_inputs.mta_sts_published, h.pointer_status.mta_sts);
-	const unverified: Array<'spf' | 'dmarc' | 'mta_sts'> = [];
+	const unverified: Array<'spf' | 'dmarc'> = [];
 	if (!spf) unverified.push('spf');
 	if (!dmarc) unverified.push('dmarc');
-	if (h.mta_sts && !mta) unverified.push('mta_sts');
 	return {
 		summary: {
 			...s,
@@ -181,14 +178,15 @@ export function applyHostedInputs<S extends LevelSummary>(s: S, h: HostedLevelIn
 			dmarc_inherited_from: null,
 			spf_lookup_count: undefined,
 			dmarc_pct: undefined,
-			mta_sts_enabled: mta ? 1 : 0,
-			mta_sts_mode: mta ? s.mta_sts_mode : null,
+			// MTA-STS is the customer's own records, never hosted ones (a domain with hosted records cannot have it).
+			mta_sts_enabled: 0,
+			mta_sts_mode: null,
 		},
 		unverified,
 	};
 }
 
-const HOSTED_NAME = { spf: 'SPF', dmarc: 'DMARC', mta_sts: 'MTA-STS' } as const;
+const HOSTED_NAME = { spf: 'SPF', dmarc: 'DMARC' } as const;
 
 /** assessDomain for a hosted domain: levels from `level_inputs`, plus a finding for each pointer not verified yet. */
 export function assessHostedDomain(s: LevelSummary, h: HostedLevelInput): LevelAssessment {

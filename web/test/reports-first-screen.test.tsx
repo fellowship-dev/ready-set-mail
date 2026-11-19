@@ -32,6 +32,8 @@ const baseRoutes = (over: Record<string, unknown> = {}) => ({
 	'GET /api/domains/1/monitor-subs': { subs: [] },
 	'GET /api/domains/dns-host': { provider: null, nameservers: [], status: 'unknown' },
 	'GET /api/cloudflare/connections': { connections: [], accounts: [], oauth: null, token_paste: false },
+	// MTA-STS is asked everywhere; a hosted service without policy hosting set up answers that it is not available, so the tools section stays hidden.
+	'GET /api/domains/1/mta-sts': { available: false, unavailable_reason: 'not_configured', unavailable_message: 'MTA-STS is not available on this service: the operator has not set up policy hosting.', config: null, summary: null, records: [], reports: [] },
 	...over,
 });
 const detail = (routes: Record<string, unknown>, opts: Parameters<typeof renderApp>[1] = {}) =>
@@ -77,11 +79,19 @@ describe('the domain page', () => {
 		expect(screen.queryByRole('button', { name: 'Connect reports' })).not.toBeInTheDocument();
 	});
 
-	it('on hosted, without hosted records, no DNS tools are offered: MTA-STS needs the install\'s own reports domain and SPF flattening is off', async () => {
+	it('on hosted, with no policy hosting set up and SPF flattening off, no DNS tools are offered; SPF flattening is not asked for, MTA-STS is (the server says whether it is available)', async () => {
 		const { calls } = detail(baseRoutes());
 		await screen.findByRole('heading', { name: 'Do this next' });
-		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
-		expect(calls.some((c) => c.path === '/api/domains/1/mta-sts' || c.path === '/api/domains/1/spf-flatten')).toBe(false);
+		await waitFor(() => expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument()); // once the server has answered that MTA-STS is not available
+		expect(calls.some((c) => c.path === '/api/domains/1/spf-flatten')).toBe(false);
+		await waitFor(() => expect(calls.some((c) => c.path === '/api/domains/1/mta-sts')).toBe(true));
+	});
+
+	it('on hosted, with policy hosting set up, the DNS tools section offers MTA-STS alone, with its real state', async () => {
+		detail(baseRoutes({ 'GET /api/domains/1/mta-sts': { available: true, unavailable_reason: 'none', via: 'cloudflare', config: null, summary: null, records: [], reports: [] } }));
+		await userEvent.click(await screen.findByRole('button', { name: /^DNS tools/ }));
+		expect(screen.getByText('Optional tool that changes your DNS for you: MTA-STS.', { exact: false })).toBeInTheDocument();
+		expect(await screen.findByRole('link', { name: 'Set up' })).toHaveAttribute('href', '/domains/1/mta-sts');
 	});
 });
 
@@ -193,7 +203,7 @@ describe('SPF flattening is not offered on the hosted service', () => {
 	it('no entry point under DNS tools, no request for it, and the page says it is not available', async () => {
 		const { calls } = detail(baseRoutes({ 'GET /api/domains/1/spf-flatten': { available: true, reach: noReach, config: null, lookup_count: 1 } }));
 		await screen.findByRole('heading', { name: 'Do this next' });
-		expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument();
+		await waitFor(() => expect(screen.queryByRole('button', { name: /^DNS tools/ })).not.toBeInTheDocument());
 		expect(screen.queryByText('SPF flattening')).not.toBeInTheDocument();
 		expect(calls.some((c) => c.path.includes('spf-flatten'))).toBe(false);
 		const { unmount } = renderApp(

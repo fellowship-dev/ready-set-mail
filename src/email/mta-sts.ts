@@ -4,10 +4,10 @@
 // to this domain. Requires three things:
 //   1. _mta-sts.domain.com TXT "v=STSv1; id=TIMESTAMP"
 //   2. https://mta-sts.domain.com/.well-known/mta-sts.txt  (served by this Worker)
-//   3. _smtp._tls.domain.com TXT "v=TLSRPTv1; rua=mailto:tls-rpt@REPORTS_DOMAIN"
+//   3. _smtp._tls.domain.com TXT "v=TLSRPTv1; rua=mailto:<TLS report address>"
 //
-// The CNAME mta-sts.domain.com → WORKER_HOST is also provisioned so the Worker
-// can serve the policy file on the correct hostname over CF's Universal SSL.
+// The CNAME mta-sts.domain.com → the policy host is the third record's sibling: where it points and whether it is proxied is decided by
+// src/mta-sts/policy-host.ts. This module writes and removes the customer's records; src/mta-sts/service.ts orders the steps.
 
 // The pure parts (DoH lookups, policy parsing/building, policy ids) live in
 // packages/dns-checks; this module adds the Cloudflare zone API provisioning on top.
@@ -22,10 +22,11 @@ import {
   createResolver,
   detectExistingMtaStsMode as detectExistingMtaStsModePure,
   generatePolicyId,
+  nextPolicyId,
   lookupMx,
 } from '@ready-set-mail/dns-checks';
 
-export { buildPolicyFile, generatePolicyId };
+export { buildPolicyFile, generatePolicyId, nextPolicyId };
 
 /** Optional audit context for self-logging DNS mutations. */
 export interface MtaStsAuditOpts {
@@ -34,15 +35,6 @@ export interface MtaStsAuditOpts {
   actor_email?: string | null;
   actor_type?: 'user' | 'system';
   ctx?: ExecutionContext;
-}
-
-export interface MtaStsProvisionResult {
-  mta_sts_record_id: string;
-  tls_rpt_record_id: string;
-  cname_record_id: string;
-  mx_hosts: string[];
-  policy_id: string;
-  mode: MtaStsMode;
 }
 
 // ── DNS helpers ───────────────────────────────────────────────
@@ -185,7 +177,7 @@ async function deleteDnsRecord(
  * Public hostname of this Worker, for the mta-sts CNAME: a route in the domain's zone if one
  * exists, else the workers.dev address `{worker}.{account-subdomain}.workers.dev`.
  */
-async function getWorkerRoute(tenant: TenantContext, domain: string): Promise<string> {
+export async function getWorkerRoute(tenant: TenantContext, domain: string): Promise<string> {
   const worker = tenant.workerName;
   try {
     const cf = await tenant.cfFor(domain);
@@ -209,59 +201,42 @@ async function getWorkerRoute(tenant: TenantContext, domain: string): Promise<st
 
 // ── Main entry points ─────────────────────────────────────────
 
-/**
- * Provision all three DNS records for MTA-STS + TLS-RPT.
- * Detects existing MTA-STS setup and preserves mode if found.
- * Always defaults to 'testing' for new setups.
- */
-export async function provisionMtaSts(
-  tenant: TenantContext,
-  domain: string,
-  audit?: MtaStsAuditOpts,
-): Promise<MtaStsProvisionResult> {
-  // Detect existing setup
-  const existingMode = await detectExistingMtaStsMode(domain);
-  const mode: MtaStsMode = existingMode ?? 'testing';
+/** The `mta-sts.<domain>` CNAME to the policy host. `proxied` is the policy host's way (see src/mta-sts/policy-host.ts); the write policy allows only `target`. */
+export function createPolicyHostCname(tenant: TenantContext, domain: string, o: { target: string; proxied: boolean }, audit?: MtaStsAuditOpts): Promise<string> {
+  return createDnsRecord(tenant, domain, {
+    type: 'CNAME',
+    name: `mta-sts.${domain}`,
+    content: o.target,
+    ttl: 1,       // 1 = auto (CF proxied); Cloudflare accepts it for DNS-only records too
+    proxied: o.proxied,
+    comment: `Ready Set Mail MTA-STS policy server for ${domain}`,
+  }, audit, o.target);
+}
 
-  // Discover MX hosts
-  const mx_hosts = await discoverMxHosts(domain);
-  if (mx_hosts.length === 0) {
-    throw new Error(`No MX records found for ${domain}. Configure MX records before enabling MTA-STS.`);
-  }
-
-  const policy_id = generatePolicyId();
-  const workerHost = await getWorkerRoute(tenant, domain);
-
-  // Create _mta-sts TXT
-  const mta_sts_record_id = await createDnsRecord(tenant, domain, {
-    type: 'TXT',
-    name: `_mta-sts.${domain}`,
-    content: `v=STSv1; id=${policy_id}`,
-    ttl: 300,
-    comment: `Ready Set Mail MTA-STS for ${domain}`,
-  }, audit);
-
-  // Create _smtp._tls TXT
-  const tls_rpt_record_id = await createDnsRecord(tenant, domain, {
+/** The `_smtp._tls.<domain>` TLS-RPT TXT pointing at `address` (the shared hosted address, or the workspace's reports domain). */
+export function createTlsRptRecord(tenant: TenantContext, domain: string, address: string, audit?: MtaStsAuditOpts): Promise<string> {
+  return createDnsRecord(tenant, domain, {
     type: 'TXT',
     name: `_smtp._tls.${domain}`,
-    content: `v=TLSRPTv1; rua=mailto:tls-rpt@${tenant.settings.reportsDomain}`,
+    content: tlsRptRecordValue(address),
     ttl: 3600,
     comment: `Ready Set Mail TLS-RPT for ${domain}`,
   }, audit);
-
-  // Create mta-sts CNAME (proxied so CF handles TLS)
-  const cname_record_id = await createDnsRecord(tenant, domain, {
-    type: 'CNAME',
-    name: `mta-sts.${domain}`,
-    content: workerHost,
-    ttl: 1,       // 1 = auto (CF proxied)
-    proxied: true,
-    comment: `Ready Set Mail MTA-STS policy server for ${domain}`,
-  }, audit, workerHost);
-
-  return { mta_sts_record_id, tls_rpt_record_id, cname_record_id, mx_hosts, policy_id, mode };
 }
+
+/** The `_mta-sts.<domain>` TXT with the policy id. Written LAST, once the policy is served (RFC 8461 §8.1). */
+export function createPolicyIdRecord(tenant: TenantContext, domain: string, policyId: string, audit?: MtaStsAuditOpts): Promise<string> {
+  return createDnsRecord(tenant, domain, {
+    type: 'TXT',
+    name: `_mta-sts.${domain}`,
+    content: policyIdRecordValue(policyId),
+    ttl: 300,
+    comment: `Ready Set Mail MTA-STS for ${domain}`,
+  }, audit);
+}
+
+export const policyIdRecordValue = (policyId: string): string => `v=STSv1; id=${policyId}`;
+export const tlsRptRecordValue = (address: string): string => `v=TLSRPTv1; rua=mailto:${address}`;
 
 /**
  * Update the _mta-sts TXT record with a new policy_id (after mode or MX change).

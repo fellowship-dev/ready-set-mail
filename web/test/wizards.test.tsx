@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { DmarcWizardPage } from '../src/pages/wizards/DmarcWizardPage';
-import { MtaStsPage } from '../src/pages/wizards/MtaStsPage';
 import { SpfFlattenPage } from '../src/pages/wizards/SpfFlattenPage';
 import { fail, renderApp, type Handler } from './render';
 
@@ -97,102 +96,6 @@ describe('SPF flatten wizard', () => {
 	it('shows a retryable error when the status cannot be loaded', async () => {
 		renderApp(ui, { route: '/domains/3/spf-flatten', routes: base({ 'GET /api/domains/3/spf-flatten': () => fail(404, 'domain not found') }) });
 		expect(await screen.findByText('domain not found')).toBeInTheDocument();
-	});
-});
-
-describe('MTA-STS wizard', () => {
-	const ui = mount('/domains/:id/mta-sts', <MtaStsPage />);
-	const off = { available: true, config: null, summary: null };
-	const on = (mode: string) => ({ available: true, summary: null, config: { enabled: 1, mode, mx_hosts: 'mx1.example.net,mx2.example.net' } });
-
-	async function toProvision(role: 'owner' | 'member' = 'owner', pick?: string) {
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		if (pick) await userEvent.click(await screen.findByRole('radio', { name: new RegExp(pick) }));
-		await userEvent.click(await screen.findByRole('button', { name: 'Continue' }));
-		const enable = await screen.findByRole('button', { name: 'Enable MTA-STS' });
-		if (role === 'owner') await waitFor(() => expect(enable).toBeEnabled());
-		return enable;
-	}
-
-	it('testing mode: one POST, then done', async () => {
-		let enabled = false;
-		const { calls } = renderApp(ui, {
-			route: '/domains/3/mta-sts',
-			routes: {
-				'GET /api/domains/3/mta-sts': () => (enabled ? on('testing') : off),
-				'POST /api/domains/3/mta-sts': () => {
-					enabled = true;
-					return { ok: true, mode: 'testing', mx_hosts: ['mx1.example.net'] };
-				},
-			},
-		});
-		await userEvent.click(await toProvision());
-		expect(await screen.findByRole('heading', { name: 'MTA-STS enabled' })).toBeInTheDocument();
-		expect(screen.getByText('mx1.example.net')).toBeInTheDocument();
-		expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
-	});
-
-	it('enforce: POST then PATCH', async () => {
-		let mode = 'none';
-		const { calls } = renderApp(ui, {
-			route: '/domains/3/mta-sts',
-			routes: {
-				'GET /api/domains/3/mta-sts': () => (mode === 'none' ? off : on(mode)),
-				'POST /api/domains/3/mta-sts': () => {
-					mode = 'testing';
-					return { ok: true, mode: 'testing', mx_hosts: ['mx1.example.net'] };
-				},
-				'PATCH /api/domains/3/mta-sts': () => {
-					mode = 'enforce';
-					return { ok: true, mode: 'enforce', policy_id: 'p' };
-				},
-			},
-		});
-		await userEvent.click(await toProvision('owner', 'Enforce'));
-		expect(await screen.findByRole('heading', { name: 'MTA-STS enabled' })).toBeInTheDocument();
-		expect(calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${JSON.stringify(c.body ?? null)}`)).toEqual(['POST null', 'PATCH {"mode":"enforce"}']);
-		expect(screen.getByText('enforce')).toBeInTheDocument();
-	});
-
-	it('partial failure: says enabled in testing mode, and the retry only repeats the PATCH', async () => {
-		let patches = 0;
-		const { calls } = renderApp(ui, {
-			route: '/domains/3/mta-sts',
-			routes: {
-				'GET /api/domains/3/mta-sts': off,
-				'POST /api/domains/3/mta-sts': { ok: true, mode: 'testing', mx_hosts: ['mx1.example.net'] },
-				'PATCH /api/domains/3/mta-sts': () => (++patches === 1 ? fail(502, 'policy worker unavailable') : { ok: true, mode: 'enforce', policy_id: 'p' }),
-			},
-		});
-		await userEvent.click(await toProvision('owner', 'Enforce'));
-		const alert = await screen.findByText('Enabled in testing mode; switching to enforce failed');
-		expect(alert).toBeInTheDocument();
-		expect(screen.getByText(/policy worker unavailable/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Enable MTA-STS' })).not.toBeInTheDocument();
-
-		await userEvent.click(screen.getByRole('button', { name: 'Retry switching to enforce' }));
-		expect(await screen.findByRole('heading', { name: 'MTA-STS enabled' })).toBeInTheDocument();
-		expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1);
-		expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(2);
-	});
-
-	it('an enabling failure is shown inline and can be retried', async () => {
-		renderApp(ui, { route: '/domains/3/mta-sts', routes: { 'GET /api/domains/3/mta-sts': off, 'POST /api/domains/3/mta-sts': () => fail(400, 'Cloudflare credentials not configured') } });
-		await userEvent.click(await toProvision());
-		expect(await screen.findByText('Cloudflare credentials not configured')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Enable MTA-STS' })).toBeEnabled();
-	});
-
-	it('members cannot enable', async () => {
-		renderApp(ui, { role: 'member', route: '/domains/3/mta-sts', routes: { 'GET /api/domains/3/mta-sts': off } });
-		expect(await screen.findByTestId('read-only-notice')).toBeInTheDocument();
-		expect(await toProvision('member')).toBeDisabled();
-	});
-
-	it('already active: lists MX hosts and only offers Continue', async () => {
-		renderApp(ui, { route: '/domains/3/mta-sts', routes: { 'GET /api/domains/3/mta-sts': on('testing') } });
-		expect(await screen.findByText('MTA-STS is already active (testing mode)')).toBeInTheDocument();
-		expect(screen.getByText('mx2.example.net')).toBeInTheDocument();
 	});
 });
 

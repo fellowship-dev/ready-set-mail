@@ -6,6 +6,7 @@
 //   3. verify every hosted domain's pointers in the customer's DNS.
 //   4. re-check the zone-verified domains: public DNS against the name servers stored with each Cloudflare proof (src/domains/proof-recheck.ts).
 //   5. forget expired canary addresses.
+//   6. MTA-STS (src/mta-sts/refresh.ts): look at every enabled row, oldest check first, and remove operator-side leftovers.
 //
 // It piggybacks on the existing 11:00 UTC schedule, so no new trigger is needed in wrangler.jsonc.
 
@@ -18,8 +19,7 @@ import { assessQuota, configuredZones, type ZoneQuota } from './zones';
 import { mergePointerReport, verifyPointers } from './pointers';
 import { createResolver, type Resolver } from '@ready-set-mail/dns-checks';
 import { flattenSource } from './spf';
-import { discoverMxHosts } from '../email/mta-sts';
-import { nextPolicyId } from './service';
+import { refreshMtaStsHosted } from '../mta-sts/refresh';
 import { recheckZoneProofs } from '../domains/proof-recheck';
 import { runBillingJob } from '../billing/reconcile';
 
@@ -139,41 +139,12 @@ export async function refreshHostedSpf(env: BoundEnv, opts: { fetch?: typeof fet
   return out;
 }
 
-/** The MX-change refresh for hosted MTA-STS: same rule as the legacy job (never publish a policy without MX hosts), but through the hosted writer. */
-export async function refreshHostedMtaStsMx(env: BoundEnv, opts: { fetch?: typeof fetch; discover?: (domain: string) => Promise<string[]> } = {}): Promise<number> {
-  const apex = hostedApex(hostedConfig(env));
-  if (!apex) return 0;
-  const discover = opts.discover ?? discoverMxHosts;
-  let updated = 0;
-  for (const h of (await intakeLookups(env.DB).allHosted()).filter(h => h.mta_sts_txt_record_id)) {
-    try {
-      const q = forWorkspace(env.DB, h.workspace_id);
-      const [domain, cfg] = await Promise.all([q.domains.getById(h.domain_id), q.mtaSts.get(h.domain_id)]);
-      if (!domain || !cfg?.enabled) continue;
-      const live = await discover(domain.domain);
-      if (live.length === 0) { console.warn(`[hosted] ${domain.domain}: no MX records found, leaving the MTA-STS policy unchanged`); continue; }
-      const stored = cfg.mx_hosts ? cfg.mx_hosts.split(',').filter(Boolean) : [];
-      if ([...live].sort().join() === [...stored].sort().join()) continue;
-      const slot = configuredZones(env).find(z => z.key === h.zone_key);
-      if (!slot) continue;
-      const writer = await openHostedZone(env, slot.name, { fetch: opts.fetch });
-      const policyId = nextPolicyId(cfg.policy_id);
-      await writer.setContent(h.mta_sts_txt_record_id!, hostedNames(h.hosted_id, apex).mtaSts, `v=STSv1; id=${policyId}`);
-      await q.mtaSts.updateMxHosts(h.domain_id, live.join(','), policyId);
-      updated++;
-    } catch (e) {
-      console.error(`[hosted] MTA-STS MX refresh failed for domain ${h.domain_id}:`, e instanceof Error ? e.message : e);
-    }
-  }
-  return updated;
-}
-
 export async function runHostedCron(event: ScheduledController, env: BoundEnv, _ctx: ExecutionContext): Promise<void> {
   if (!hostedEnabled(env) || event.cron !== HOSTED_CRON) return;
   for (const [name, job] of [
     ['zone reconcile', () => reconcileZones(env)],
     ['SPF refresh', () => refreshHostedSpf(env)],
-    ['MTA-STS MX refresh', () => refreshHostedMtaStsMx(env)],
+    ['MTA-STS refresh', () => refreshMtaStsHosted(env, _ctx)],
     ['pointer verification', () => verifyAllPointers(env)],
     ['zone proof re-check', () => recheckZoneProofs(env)],
     ['billing reconcile', () => runBillingJob(env)],

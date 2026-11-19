@@ -1,10 +1,11 @@
 // /api/domains/:id/hosted — the domain's hosted records (MODE=saas, SAAS_ENABLED=1). Tenant-scoped like every
 // other route: the domain is looked up through the caller's workspace, so another workspace's id is a 404.
 //
-// Also GET /api/hosted/config: { enabled, reports, records }: whether the hosted UI applies (MODE=saas and SAAS_ENABLED=1),
-// whether report addresses can be issued (INTAKE_DOMAIN) and whether hosted records can (HOSTED_RECORDS_ZONE). No domain, no tenant data.
+// Also GET /api/hosted/config: { enabled, reports, records, mta_sts }: whether the hosted UI applies (MODE=saas and SAAS_ENABLED=1),
+// whether report addresses can be issued (INTAKE_DOMAIN), whether hosted records can (HOSTED_RECORDS_ZONE) and whether MTA-STS can be served
+// (INTAKE_DOMAIN and the POLICY_HOST_* settings). No domain, no tenant data, no secret.
 //   GET    /api/domains/:id/hosted               status: record names, the pointers to add, their verification, Level inputs
-//   POST   /api/domains/:id/hosted               enable { spf_record?, mta_sts? } → status + intake addresses (shown once)
+//   POST   /api/domains/:id/hosted               enable { spf_record? } → status + intake addresses (shown once)
 //   DELETE /api/domains/:id/hosted               remove the hosted records
 //   POST   /api/domains/:id/hosted/rotate-token  new intake token → addresses (shown once); the old one works for 72 h
 //   POST   /api/domains/:id/hosted/verify        check the customer's pointers now → status
@@ -14,6 +15,7 @@
 import type { TenantContext } from '../tenancy/context';
 import { handleEmailPreferences } from '../lifecycle/email/routes';
 import { hostedConfig, hostedEnabled } from './config';
+import { mtaStsHostedConfigured } from '../mta-sts/config';
 import { disableHosted, enableHosted, hostedStatus, hostedStatuses, HostedError, rotateHostedToken, verifyDomainPointers, type HostedDeps } from './service';
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
@@ -36,7 +38,7 @@ export async function handleHostedRoutes(
   if (path === '/api/hosted/config' && request.method.toUpperCase() === 'GET') {
     const enabled = hostedEnabled(tenant.env);
     const cfg = hostedConfig(tenant.env);
-    return json({ enabled, reports: enabled && !!cfg.intakeDomain, records: enabled && !!cfg.intakeDomain && !!cfg.recordsZone });
+    return json({ enabled, reports: enabled && !!cfg.intakeDomain, records: enabled && !!cfg.intakeDomain && !!cfg.recordsZone, mta_sts: mtaStsHostedConfigured(tenant.env) });
   }
   // GET /api/hosted/statuses — every hosted domain's status in the caller's workspace, by domain id; a domain not listed is
   // not hosted. The overview's one request (instead of GET /api/domains/:id/hosted per domain).
@@ -68,7 +70,8 @@ export async function handleHostedRoutes(
       let body: { spf_record?: unknown; mta_sts?: unknown } = {};
       try { body = request.headers.get('content-length') === '0' ? {} : await request.json(); } catch { return err('Invalid JSON body', 400); }
       if (body.spf_record !== undefined && typeof body.spf_record !== 'string') return err('spf_record must be a string', 400);
-      const result = await enableHosted(tenant, domain, { spfRecord: body.spf_record as string | undefined, mtaSts: body.mta_sts === true }, deps, actor, ctx);
+      if (body.mta_sts !== undefined && body.mta_sts !== false) return err('MTA-STS is no longer hosted with hosted records: turn it on from the domain\'s MTA-STS page (POST /api/domains/:id/mta-sts)', 400);
+      const result = await enableHosted(tenant, domain, { spfRecord: body.spf_record as string | undefined }, deps, actor, ctx);
       return json(result, 201);
     }
     if (!action && method === 'DELETE') {

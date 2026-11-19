@@ -107,6 +107,9 @@ export interface HealthReport {
         tls: Evidence<{
             total_success: number;
             total_failure: number;
+            sts_success?: number;
+            sts_failure?: number;
+            mta_sts?: { mode: 'testing' | 'enforce' } | null;
             report_count: number;
             unit: string;
         }>;
@@ -148,7 +151,7 @@ export function HealthReportSection({ domainId, enabled = true }: {
    <div className="space-y-2"><p className="text-sm text-ink-2">DNS checked {new Date(q.data.dns.generatedAt).toLocaleString(undefined, { timeZone: 'America/Santiago' })} · Report generated {new Date(q.data.generatedAt).toLocaleString(undefined, { timeZone: 'America/Santiago' })}</p><p className="text-sm text-ink-2">{q.data.coverage.detail}</p><Button variant="secondary" loading={q.isFetching} onClick={() => void q.refetch()}>Refresh live report</Button></div>
    <div className="grid gap-6 lg:grid-cols-[repeat(2,minmax(0,1fr))]">
     <Source title="DMARC aggregate history" section={q.data.sections.dmarc}>{q.data.sections.dmarc.data && <p className="text-sm">{q.data.sections.dmarc.data.messages} observed messages · {q.data.sections.dmarc.data.passed} passed · {q.data.sections.dmarc.data.failed} failed · Denominator {q.data.sections.dmarc.data.denominator}</p>}</Source>
-    <Source title="TLS report history" section={q.data.sections.tls}>{q.data.sections.tls.data && <p className="text-sm">{q.data.sections.tls.data.total_success} successful sessions · {q.data.sections.tls.data.total_failure} failed sessions</p>}</Source>
+    <Source title="TLS report history" section={q.data.sections.tls}>{q.data.sections.tls.data && (q.data.sections.tls.data.mta_sts ? <p className="text-sm">{q.data.sections.tls.data.sts_success ?? 0} successful sessions · {q.data.sections.tls.data.sts_failure ?? 0} failed sessions under your MTA-STS policy ({q.data.sections.tls.data.mta_sts.mode} mode)</p> : <p className="text-sm">{q.data.sections.tls.data.total_success} successful sessions · {q.data.sections.tls.data.total_failure} failed sessions</p>)}</Source>
     <Source title="Google Postmaster" section={q.data.sections.google}>{q.data.sections.google.data && <><p className="text-sm">Connection: {q.data.sections.google.data.connectionStatus} · {q.data.sections.google.data.stale ? 'Stale cached evidence' : 'Cached provider evidence'} · Last successful fetch {q.data.sections.google.data.lastSuccessAt ? date(q.data.sections.google.data.lastSuccessAt) : 'unavailable'}</p>{q.data.sections.google.data.observations.map((o, i) => <div key={`${o.sourceId}-${i}`} className="border-t border-line pt-2 text-sm space-y-1"><p>{o.metric}: {o.value} {o.unit} · Denominator {o.denominator ?? 'unavailable'}</p><p>{o.definition} · Source observation {o.sourceId}</p><p>{o.population}{o.filter ? ` · ${o.filter}` : ''}</p><p>{o.periodStart} – {o.periodEnd} · Fetched {date(o.fetchedAt)} · Fetch age {age(Math.floor(Date.now() / 1000) - o.fetchedAt)}</p></div>)}</>}</Source>
     <Source title="Inbox placement" section={q.data.sections.inbox_placement}/>
    </div>

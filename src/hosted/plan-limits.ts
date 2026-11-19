@@ -78,3 +78,44 @@ export function planLimitWaitingBody(env: Partial<LimitEnv>, max: number, held: 
 export function planLimitResponse(env: Partial<LimitEnv>, kind: PlanLimitKind, max: number): Response {
   return Response.json(planLimitBody(env, kind, max), { status: 403 });
 }
+
+// ── MTA-STS ──────────────────────────────────────────────────
+// A separate capability from the domain and workspace caps: available to every hosted workspace once the operator has set it up, with an
+// instance-wide ceiling on policy hosts (Cloudflare for SaaS includes 100 custom hostnames; more cost the operator money, so the ceiling is theirs
+// to raise: MAX_POLICY_HOSTS). Self-host has no gate.
+
+export type MtaStsRefusal = 'not_configured' | 'not_allowed' | 'ceiling';
+
+export interface MtaStsFacts {
+  /** The hosted service has MODE, SAAS_ENABLED, INTAKE_DOMAIN and the three POLICY_HOST_* settings. */
+  configured: boolean;
+  /** HOSTED_CONNECT_REPORTS admits this workspace (workspaceMayConnectReports): without it its TLS reports would be refused. */
+  reportsAdmitted: boolean;
+  /** Custom hostnames the instance holds now. */
+  hostsInUse: number;
+  /** This domain would take one more custom hostname (a new saas_hostname policy host). */
+  needsHostname: boolean;
+  /** The ceiling in force (maxPolicyHosts). */
+  max: number;
+}
+
+export type MtaStsGate =
+  | { allowed: true }
+  | { allowed: false; reason: MtaStsRefusal; body: { error: string; code: 'mta_sts_unavailable'; reason: MtaStsRefusal; limit?: { kind: 'policy_hosts'; max: number }; help_url: string | null } };
+
+const MTA_STS_SENTENCE: Readonly<Record<MtaStsRefusal, (max: number) => string>> = Object.freeze({
+  not_configured: () => 'MTA-STS is not available on this service: the operator has not set up policy hosting.',
+  not_allowed: () => 'MTA-STS is not open to this workspace yet: its TLS reports could not be received.',
+  ceiling: (max) => `This service has reached its limit of ${max} MTA-STS policy ${max === 1 ? 'host' : 'hosts'}.`,
+});
+
+/** May this workspace turn MTA-STS on for a domain? Pure: the caller supplies the facts. A refusal carries a 403 body in the shape of planLimitBody. */
+export function mayUseMtaSts(env: Partial<LimitEnv>, facts: MtaStsFacts): MtaStsGate {
+  if (getMode(env) !== 'saas') return { allowed: true };
+  const reason: MtaStsRefusal | null = !facts.configured ? 'not_configured' : !facts.reportsAdmitted ? 'not_allowed' : facts.needsHostname && facts.hostsInUse >= facts.max ? 'ceiling' : null;
+  if (!reason) return { allowed: true };
+  return {
+    allowed: false, reason,
+    body: { error: MTA_STS_SENTENCE[reason](facts.max), code: 'mta_sts_unavailable', reason, ...(reason === 'ceiling' ? { limit: { kind: 'policy_hosts' as const, max: facts.max } } : {}), help_url: planHelpUrl(env) },
+  };
+}

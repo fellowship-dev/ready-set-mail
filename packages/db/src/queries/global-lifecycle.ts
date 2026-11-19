@@ -209,8 +209,13 @@ export function lifecycleQueries(dbLike: DbLike) {
 				WHERE report_records.id = v.id AND report_records.spf_aligned IS NULL`));
 		},
 
-		purgeTlsReports: (cutoff: number, limits: SweepLimits) =>
-			simple(limits, () => db.run(sql`DELETE FROM tls_reports WHERE id IN (SELECT id FROM tls_reports WHERE date_end < ${cutoff} OR created_at < ${cutoff} ORDER BY id LIMIT ${limits.batch})`)),
+		/** TLS reports past their window, or (when given) uncounted ones (unknown or unauthenticated sender) older than the shorter uncounted retention, like aggregate reports. */
+		purgeTlsReports: (cutoff: number, limits: SweepLimits, uncountedCutoff?: number) => {
+			const old = uncountedCutoff === undefined
+				? sql`(date_end < ${cutoff} OR created_at < ${cutoff})`
+				: sql`(date_end < ${cutoff} OR created_at < ${cutoff} OR (reporter_tier IN ('unknown', 'unauthenticated') AND created_at < ${uncountedCutoff}))`;
+			return simple(limits, () => db.run(sql`DELETE FROM tls_reports WHERE id IN (SELECT id FROM tls_reports WHERE ${old} ORDER BY id LIMIT ${limits.batch})`));
+		},
 
 		/** Drop the raw XML of reports stored before `cutoff`; the parsed rows stay. */
 		clearRawXml: (cutoff: number, limits: SweepLimits) =>

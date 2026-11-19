@@ -27,6 +27,9 @@ export async function getDomainReport(tenant: TenantContext, domainId: number, o
     lookupDmarc: async () => run.dmarc.status === 'error' ? undefined : run.dmarc.record?.raw ?? null,
   });
   const tls = await tenant.scope.reports.tlsSummary(domainId, window.since, window.until);
+  const mtaSts = await tenant.scope.mtaSts.get(domainId);
+  // MTA-STS on (set up and serving): the page says the sessions under its policy; otherwise the report history says what it always said.
+  const mtaStsOn = !!mtaSts?.enabled && mtaSts.state === 'active' ? { mode: mtaSts.mode } : null;
   const evidence = await tenant.scope.reports.evidence(domainId, window.since, window.until);
   const dates: string[] = [];
   for (let day = window.since; day <= now; day += 86400) dates.push(new Date(day * 1000).toISOString().slice(0, 10));
@@ -61,7 +64,7 @@ export async function getDomainReport(tenant: TenantContext, domainId: number, o
     dns, analytics,
     sections: {
       dmarc: { ...section('dmarc-aggregate', 'Messages represented in received aggregate DMARC reports; not all mail sent', evidence.dmarc.report_count ? { ...totals, unit: 'messages', denominator: totals.messages, alignment: analytics.alignment } : null, evidence.dmarc.report_count ? undefined : noDmarc), evidence: provenance(evidence.dmarc), ...(vis ? { report_counting: vis.report_counting, counting_note: vis.counting_note, unrecognised: vis.unrecognised, uncounted: vis.uncounted, intake: vis.intake } : {}) },
-      tls: { ...section('tls-rpt', 'SMTP TLS sessions represented in received TLS-RPT reports; not delivery or inbox placement', tls?.report_count ? { ...tls, unit: 'sessions' } : null, tls?.report_count ? undefined : 'no_reports'), evidence: provenance(evidence.tls) },
+      tls: { ...section('tls-rpt', 'SMTP TLS sessions represented in received TLS-RPT reports; not delivery or inbox placement', tls?.report_count ? { ...tls, unit: 'sessions', mta_sts: mtaStsOn } : null, tls?.report_count ? undefined : 'no_reports'), evidence: provenance(evidence.tls) },
       google,
       inbox_placement: section('none', 'Recipient inbox versus spam placement', null, 'not_measured'),
     },

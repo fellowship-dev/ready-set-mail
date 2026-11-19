@@ -3,13 +3,9 @@ import { createMigratedD1 } from '@ready-set-mail/db/testing';
 
 vi.mock('cloudflare:email', () => ({ EmailMessage: class { constructor(public from: string, public to: string, public raw: string) {} } }));
 
-import worker from '../../src/index';
 import { call, makeEnv, signupVerified, setupOwner } from '../auth/helpers';
 import { FakeCloudflare, stubCloudflare } from '../helpers/cf-fake';
 import { hostedNames } from '../../src/hosted/records';
-import { refreshHostedMtaStsMx } from '../../src/hosted/cron';
-import { runCronForWorkspaces } from '../../src/cron';
-import { makeTenant } from '../helpers/tenant';
 import { HOSTED_ENV, quiet } from './world';
 
 const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext;
@@ -47,27 +43,26 @@ describe('/api/domains/:id/hosted', () => {
     const none = await call(t.env, 'GET', '/api/domains/1/hosted', { key });
     expect(await none.json()).toEqual({ enabled: false });
 
-    const enable = await call(t.env, 'POST', '/api/domains/1/hosted', { key, body: { mta_sts: true } });
+    const enable = await call(t.env, 'POST', '/api/domains/1/hosted', { key, body: {} });
     expect(enable.status).toBe(201);
     const { hosted, addresses } = await enable.json() as any;
     const names = hostedNames(hosted.hosted_id, APEX);
     expect(addresses.rua).toMatch(/^rua\+[a-z2-7]{32}@rua\.readysetmail\.com$/);
-    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt, mta_sts: names.mtaSts });
+    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt });
     expect(t.rows('SELECT workspace_id FROM hosted_domains')).toEqual([{ workspace_id: t.A.ws }]);
     expect(t.rows("SELECT resource_name FROM audit_log WHERE action = 'hosted.enable'")).toEqual([{ resource_name: 'a-corp.com' }]);
 
     // GET never shows the token again
     const status = await (await call(t.env, 'GET', '/api/domains/1/hosted', { key })).text();
     expect(status).not.toContain(addresses.rua.slice(4, 36));
-    expect(JSON.parse(status).pointer_status).toEqual({ dmarc: null, spf: null, mta_sts: null, tls_rpt: null, checked_at: null });
+    expect(JSON.parse(status).pointer_status).toEqual({ dmarc: null, spf: null, tls_rpt: null, checked_at: null });
 
     // the customer adds the CNAMEs; verify sees them
     t.cf.cname['_dmarc.a-corp.com'] = names.dmarc;
-    t.cf.cname['_mta-sts.a-corp.com'] = names.mtaSts;
     t.cf.doh['a-corp.com'] = [`v=spf1 include:${names.spf} -all`];
     const verified = await (await call(t.env, 'POST', '/api/domains/1/hosted/verify', { key })).json() as any;
-    expect(verified.pointer_status).toMatchObject({ dmarc: 'ok', spf: 'ok', mta_sts: 'ok', tls_rpt: 'missing' });
-    expect(verified.level_inputs).toEqual({ dmarc_published: true, spf_published: true, mta_sts_published: true });
+    expect(verified.pointer_status).toMatchObject({ dmarc: 'ok', spf: 'ok', tls_rpt: 'missing' });
+    expect(verified.level_inputs).toEqual({ dmarc_published: true, spf_published: true });
 
     const rotated = await call(t.env, 'POST', '/api/domains/1/hosted/rotate-token', { key });
     expect(rotated.status).toBe(200);
@@ -112,7 +107,7 @@ describe('GET /api/hosted/config', () => {
     const t = await setup();
     const r = await call(t.env, 'GET', '/api/hosted/config', { key: t.A.token });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ enabled: true, reports: true, records: true });
+    expect(await r.json()).toEqual({ enabled: true, reports: true, records: true, mta_sts: false });
     expect((await call(t.env, 'GET', '/api/hosted/config')).status).toBe(401);
   });
 
@@ -121,101 +116,68 @@ describe('GET /api/hosted/config', () => {
     const key = await setupOwner(env);
     const r = await call(env, 'GET', '/api/hosted/config', { key });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ enabled: false, reports: false, records: false });
+    expect(await r.json()).toEqual({ enabled: false, reports: false, records: false, mta_sts: false });
   });
 
   it('says hosted records are unavailable when no records zone is configured, so no dead "Enable" button is shown', async () => {
     const env = makeEnv(createMigratedD1(), { ...HOSTED_ENV, HOSTED_RECORDS_ZONE: '' }) as any;
     const token = await signupVerified(env, 'a@example.com');
     const r = await call(env, 'GET', '/api/hosted/config', { key: token });
-    expect(await r.json()).toEqual({ enabled: true, reports: true, records: false });
+    expect(await r.json()).toEqual({ enabled: true, reports: true, records: false, mta_sts: false });
   });
 });
 
-describe('MTA-STS policy host', () => {
-  const policyReq = (host: string) => new Request(`https://${host}/.well-known/mta-sts.txt`);
-
-  it('resolves the tenant from the hosted id (and from the customer hostname), never from a default workspace', async () => {
+describe('MTA-STS and hosted records (ADR 0021)', () => {
+  async function hostedDomain() {
     const t = await setup();
-    const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: { mta_sts: true } })).json() as any;
-    const idHost = hostedNames(hosted.hosted_id, APEX).mtaSts;
-
-    for (const host of [idHost, 'mta-sts.a-corp.com']) {
-      const res = await worker.fetch(policyReq(host), t.env, ctx);
-      expect(res.status, host).toBe(200);
-      expect(await res.text()).toBe('version: STSv1\nmode: testing\nmx: mx1.mail.example\nmax_age: 86400\n');
-    }
-
-    // unknown id, someone else's domain, a domain nobody hosts: 404
-    expect((await worker.fetch(policyReq(`mta-sts.aaaaaaaaaaaaaaaa.${APEX}`), t.env, ctx)).status).toBe(404);
-    expect((await worker.fetch(policyReq('mta-sts.b-corp.org'), t.env, ctx)).status).toBe(404);
-    expect((await worker.fetch(policyReq('mta-sts.nobody.example'), t.env, ctx)).status).toBe(404);
-
-    // the implicit workspace's config is not served on a hosted instance
-    t.db.sqlite.prepare("INSERT INTO domains (id, workspace_id, domain, rua_address) VALUES (9, 'ws_default', 'legacy.example', 'x')").run();
-    t.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, policy_id, workspace_id, mx_hosts, mode) VALUES (9, 'p', 'ws_default', 'mx.legacy.example', 'enforce')").run();
-    expect((await worker.fetch(policyReq('mta-sts.legacy.example'), t.env, ctx)).status).toBe(404);
-  });
-
-  it('after the hosted records are removed the policy host stops answering', async () => {
-    const t = await setup();
-    const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: { mta_sts: true } })).json() as any;
-    await call(t.env, 'DELETE', '/api/domains/1/hosted', { key: t.A.token });
-    expect((await worker.fetch(policyReq(hostedNames(hosted.hosted_id, APEX).mtaSts), t.env, ctx)).status).toBe(404);
-    expect((await worker.fetch(policyReq('mta-sts.a-corp.com'), t.env, ctx)).status).toBe(404);
-  });
-});
-
-describe('legacy MTA-STS and domain paths on a hosted domain', () => {
-  async function hostedWithMtaSts() {
-    const t = await setup();
-    const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: { mta_sts: true } })).json() as any;
-    const names = hostedNames(hosted.hosted_id, APEX);
-    const rec = (name: string, type?: string) => t.cf.records.get(ZONE)!.find(r => r.name === name && (!type || r.type === type));
-    // a customer-zone record that happens to share an id with a hosted one must never be touched
-    return { ...t, names, rec, hosted };
+    const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: {} })).json() as any;
+    return { ...t, hosted };
   }
 
-  it('PATCH changes the hosted TXT through the hosted writer, nothing else', async () => {
-    const t = await hostedWithMtaSts();
-    const before = t.rec(t.names.mtaSts, 'TXT')!.content;
-    const res = await call(t.env, 'PATCH', '/api/domains/1/mta-sts', { key: t.A.token, body: { mode: 'enforce' } });
-    expect(res.status).toBe(200);
-    expect(t.rows('SELECT mode, policy_id FROM mta_sts_config')[0].mode).toBe('enforce');
-    expect(t.rec(t.names.mtaSts, 'TXT')!.content).not.toBe(before);
-    expect(t.rec(t.names.mtaSts, 'TXT')!.content).toBe(`v=STSv1; id=${t.rows('SELECT policy_id FROM mta_sts_config')[0].policy_id}`);
-    expect(t.cf.calls.filter(c => c.method === 'PATCH').every(c => c.zoneId === ZONE)).toBe(true);
-
-    t.cf.mx['a-corp.com'] = ['10 mx9.mail.example.'];
-    expect((await call(t.env, 'PATCH', '/api/domains/1/mta-sts', { key: t.A.token, body: { refresh_mx: true } })).status).toBe(200);
-    expect(t.rows('SELECT mx_hosts FROM mta_sts_config')).toEqual([{ mx_hosts: 'mx9.mail.example' }]);
+  it('asking for MTA-STS with hosted records is refused with the way to turn it on', async () => {
+    const t = await setup();
+    const res = await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: { mta_sts: true } });
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error).toMatch(/MTA-STS page/);
+    expect(t.rows('SELECT * FROM hosted_domains')).toEqual([]);
   });
 
-  it('POST is refused (409); DELETE removes the hosted MTA-STS records but keeps DMARC, SPF and TLS-RPT', async () => {
-    const t = await hostedWithMtaSts();
-    expect((await call(t.env, 'POST', '/api/domains/1/mta-sts', { key: t.A.token, body: {} })).status).toBe(409);
-    expect((await call(t.env, 'DELETE', '/api/domains/1/mta-sts', { key: t.A.token })).status).toBe(204);
-    expect(t.rec(t.names.mtaSts)).toBeUndefined();
-    for (const n of [t.names.dmarc, t.names.spf, t.names.tlsRpt]) expect(t.rec(n)).toBeDefined();
+  it('a domain with hosted records cannot turn MTA-STS on: its _smtp._tls is already a pointer (409, nothing written)', async () => {
+    const t = await hostedDomain();
+    const res = await call(t.env, 'POST', '/api/domains/1/mta-sts', { key: t.A.token, body: {} });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'mta_sts_unavailable', reason: 'hosted_records' });
     expect(t.rows('SELECT * FROM mta_sts_config')).toEqual([]);
-    expect(t.rows('SELECT record_count FROM hosted_zones')).toEqual([{ record_count: 3 }]);
-    expect(t.rows('SELECT mta_sts_txt_record_id FROM hosted_domains')).toEqual([{ mta_sts_txt_record_id: null }]);
   });
 
-  it('the legacy daily MX job skips hosted domains; the hosted job refreshes them', async () => {
-    const t = await hostedWithMtaSts();
-    t.cf.mx['a-corp.com'] = ['10 mx7.mail.example.'];
-    const tenant = makeTenant({ db: t.db, workspaceId: t.A.ws, env: HOSTED_ENV as any, cfToken: 'customer-token', fetch: t.cf.fetch as any });
-    t.cf.calls.length = 0;
-    await runCronForWorkspaces({ cron: '0 8 * * *' } as ScheduledController, t.env, ctx, { workspaces: [t.A.ws], load: async () => tenant });
-    expect(t.cf.calls.filter(c => c.method === 'PATCH')).toEqual([]);
-    expect(t.rows('SELECT mx_hosts FROM mta_sts_config')).toEqual([{ mx_hosts: 'mx1.mail.example' }]);
-
-    expect(await refreshHostedMtaStsMx(t.env)).toBe(1);
-    expect(t.rows('SELECT mx_hosts FROM mta_sts_config')).toEqual([{ mx_hosts: 'mx7.mail.example' }]);
-    expect(t.rec(t.names.mtaSts, 'TXT')!.content).toBe(`v=STSv1; id=${t.rows('SELECT policy_id FROM mta_sts_config')[0].policy_id}`);
-    expect(await refreshHostedMtaStsMx(t.env)).toBe(0); // unchanged
+  it('hosted records cannot be enabled over a domain whose MTA-STS is on', async () => {
+    const t = await setup();
+    t.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, policy_id, workspace_id, mx_hosts) VALUES (1, 'p', ?, 'mx1.mail.example')").run(t.A.ws);
+    const res = await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: {} });
+    expect(res.status).toBe(409);
+    expect(t.rows('SELECT * FROM hosted_domains')).toEqual([]);
   });
+
+  it('disabling hosted records keeps the customer\'s own MTA-STS config, and removes a leftover one made by the old hosted MTA-STS', async () => {
+    const t = await hostedDomain();
+    t.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, policy_id, workspace_id, mx_hosts) VALUES (1, 'p', ?, 'mx1.mail.example')").run(t.A.ws);
+    expect((await call(t.env, 'DELETE', '/api/domains/1/hosted', { key: t.A.token })).status).toBe(200);
+    expect(t.rows('SELECT domain_id FROM mta_sts_config')).toHaveLength(1);
+
+    const u = await hostedDomain();
+    u.db.sqlite.prepare("UPDATE hosted_domains SET mta_sts_txt_record_id = 'gone'").run();
+    u.db.sqlite.prepare("INSERT INTO mta_sts_config (domain_id, policy_id, workspace_id, mx_hosts) VALUES (1, 'p', ?, 'mx1.mail.example')").run(u.A.ws);
+    expect((await call(u.env, 'DELETE', '/api/domains/1/hosted', { key: u.A.token })).status).toBe(200);
+    expect(u.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+  });
+});
+
+describe('domain paths on a hosted domain', () => {
+  const hostedWithMtaSts = async () => {
+    const t = await setup();
+    const { hosted } = await (await call(t.env, 'POST', '/api/domains/1/hosted', { key: t.A.token, body: {} })).json() as any;
+    return { ...t, hosted };
+  };
 
   it('deleting a domain removes its hosted records and quota first', async () => {
     const t = await hostedWithMtaSts();

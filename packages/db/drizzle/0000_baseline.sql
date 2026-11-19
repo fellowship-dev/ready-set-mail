@@ -606,6 +606,22 @@ CREATE TABLE `mta_sts_config` (
 	`tls_rpt_record_id` text,
 	`cname_record_id` text,
 	`last_error` text,
+	`via` text,
+	`state` text DEFAULT 'active' NOT NULL,
+	`policy_host` text DEFAULT 'worker_route' NOT NULL,
+	`ch_id` text,
+	`ch_status` text,
+	`ch_ssl_status` text,
+	`route_id` text,
+	`policy_published_at` integer,
+	`mode_changed_at` integer,
+	`left_enforce_at` integer,
+	`last_checked_at` integer,
+	`notice` text,
+	`notice_at` integer,
+	`fetch_checked_at` integer,
+	`fetch_ok` integer,
+	`fetch_reason` text,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
@@ -613,6 +629,30 @@ CREATE TABLE `mta_sts_config` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_mta_sts_workspace` ON `mta_sts_config` (`workspace_id`);--> statement-breakpoint
+CREATE INDEX `idx_mta_sts_checked` ON `mta_sts_config` (`enabled`,`last_checked_at`);--> statement-breakpoint
+CREATE TABLE `mta_sts_retiring` (
+	`workspace_id` text NOT NULL,
+	`domain` text NOT NULL,
+	`reason` text NOT NULL,
+	`mode_before` text NOT NULL,
+	`mx_hosts` text NOT NULL,
+	`policy_id` text NOT NULL,
+	`via` text,
+	`policy_host` text DEFAULT 'worker_route' NOT NULL,
+	`ch_id` text,
+	`mta_sts_record_id` text,
+	`tls_rpt_record_id` text,
+	`cname_record_id` text,
+	`cf_connection_id` text,
+	`retire_after` integer NOT NULL,
+	`last_error` text,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	PRIMARY KEY(`workspace_id`, `domain`),
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `idx_mta_sts_retiring_after` ON `mta_sts_retiring` (`retire_after`);--> statement-breakpoint
+CREATE INDEX `idx_mta_sts_retiring_domain` ON `mta_sts_retiring` (`domain`);--> statement-breakpoint
 CREATE TABLE `password_reset_tokens` (
 	`token` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -788,12 +828,20 @@ CREATE TABLE `tls_reports` (
 	`total_success` integer DEFAULT 0 NOT NULL,
 	`total_failure` integer DEFAULT 0 NOT NULL,
 	`failure_details` text,
+	`sts_success` integer,
+	`sts_failure` integer,
+	`sts_failure_types` text,
+	`reporter_auth` text,
+	`reporter_tier` text,
+	`reporter_identity` text,
+	`report_id` text,
 	`raw_json` text,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`workspace_id` text DEFAULT 'ws_default' NOT NULL,
 	FOREIGN KEY (`domain_id`) REFERENCES `domains`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `idx_tls_reports_dedup` ON `tls_reports` (`domain_id`,`reporter_identity`,`report_id`) WHERE "tls_reports"."report_id" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_domain` ON `tls_reports` (`domain_id`,`date_begin`);--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_workspace` ON `tls_reports` (`workspace_id`);--> statement-breakpoint
 CREATE INDEX `idx_tls_reports_date_end` ON `tls_reports` (`date_end`);--> statement-breakpoint

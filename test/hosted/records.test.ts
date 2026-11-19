@@ -173,18 +173,20 @@ describe('hosted records for a domain', () => {
       `TXT a-corp.com include:${names.spf}`,
       `CNAME _smtp._tls.a-corp.com ${names.tlsRpt}`,
     ]);
-    expect(hosted.level_inputs).toEqual({ dmarc_published: false, spf_published: false, mta_sts_published: false });
+    expect(hosted.level_inputs).toEqual({ dmarc_published: false, spf_published: false });
   });
 
-  it('enable with MTA-STS also hosts the policy records and a testing-mode config', async () => {
+  it('hosted records no longer host MTA-STS: three records, and none of its pointers (ADR 0021)', async () => {
     const { w, cf, tenant, domain } = await setup();
     cf.mx['a-corp.com'] = ['10 mx1.mail.example.'];
-    const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE, mtaSts: true }, { resolver });
+    const { hosted } = await enableHosted(tenant(), await domain(), { spfRecord: SOURCE }, { resolver });
     const names = hostedNames(hosted.hosted_id, 'h.readysetmail.com');
-    expect(zoneRecords(cf).filter(r => r.name === names.mtaSts).map(r => r.type).sort()).toEqual(['AAAA', 'TXT']);
-    expect(w.rows('SELECT mode, mx_hosts, workspace_id FROM mta_sts_config')).toEqual([{ mode: 'testing', mx_hosts: 'mx1.mail.example', workspace_id: 'ws_a' }]);
-    expect(hosted.pointers.map(p => p.purpose)).toContain('mta_sts');
-    expect(w.rows("SELECT record_count FROM hosted_zones")).toEqual([{ record_count: 5 }]);
+    expect(zoneRecords(cf).filter(r => r.name === names.mtaSts)).toEqual([]);
+    expect(w.rows('SELECT * FROM mta_sts_config')).toEqual([]);
+    expect(hosted.pointers.map(p => p.purpose)).not.toContain('mta_sts');
+    expect(hosted).not.toHaveProperty('mta_sts');
+    expect(hosted.records).toEqual({ dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt });
+    expect(w.rows("SELECT record_count FROM hosted_zones")).toEqual([{ record_count: 3 }]);
   });
 
   it('refuses a second enable, a full zone, and an SPF record it cannot resolve', async () => {

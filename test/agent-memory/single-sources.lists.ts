@@ -56,6 +56,7 @@ export const SINGLE: Single[] = [
     signature: /api\.cloudflare\.com/,
     owners: ['src/tenancy/cf-client.ts', 'scripts/setup/cloudflare.mjs', 'scripts/setup-email-routing.ts', 'scripts/setup-email-routing.mts', 'scripts/enable-email-routing-shared-zone.mts'],
   },
+  { concept: 'MTA-STS policy host (Cloudflare for SaaS custom hostnames and Worker routes in the operator\'s zone)', signature: /custom_hostnames/, owners: ['src/mta-sts/policy-host.ts'] },
   {
     concept: 'Assistants a person may connect (names and connect steps)',
     // the steps' own words, and the list's name: a second list of assistants would drift from the one the Agents page and the instance status read
@@ -186,8 +187,8 @@ export const MUST_NOT_GROW: Duplicate[] = [
   },
   {
     concept: 'Report address construction',
-    // `rua@…`, `dmarc@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
-    signature: /(?<![\w.+-])(?:rua|dmarc)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
+    // `rua@…`, `dmarc@…`, `tls-rpt@…`, `rua+<token>@…` as a template, a literal or a concatenation, and `${kind}+${token}@…`
+    signature: /(?<![\w.+-])(?:rua|dmarc|tls-rpt)(?:\+[^@\s'"`]*)?@(?:\$\{|\{[a-z]|[a-z0-9-]+\.[a-z])|['"`](?:mailto:)?(?:rua|dmarc|tls-rpt)[+@]['"`]\s*\+|\}\+\$\{\w+\}@/,
     authoritative: 'src/hosted/fixed-address.ts',
     sites: [
       'packages/report/src/catalog/dmarc-missing.ts', 'packages/report/src/catalog/dmarc-p-none-no-rua.ts', 'packages/report/src/fixes.ts', 'packages/report/src/render-md.ts',

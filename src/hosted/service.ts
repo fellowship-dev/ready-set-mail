@@ -10,7 +10,6 @@ import { globalQueries, type PointerStatus } from '@ready-set-mail/db';
 import type { TenantContext } from '../tenancy/context';
 import { CfError, CfNotConfiguredError, cfErrorText } from '../tenancy/cf-client';
 import { logAudit } from '../audit/log';
-import { discoverMxHosts, generatePolicyId } from '../email/mta-sts';
 import { hostedApex, hostedConfig, hostedEnabled, maxHostedDomainsPerWorkspace } from './config';
 import { generateHostedId, generateToken, hashToken, intakeAddress } from './tokens';
 import {
@@ -63,13 +62,12 @@ async function writerFor(tenant: TenantContext, zoneKey: string, deps: HostedDep
 export interface HostedView {
   enabled: true;
   hosted_id: string;
-  records: { dmarc: string; spf: string; tls_rpt: string; mta_sts: string | null };
+  records: { dmarc: string; spf: string; tls_rpt: string };
   /** What the customer adds to their own DNS. */
   pointers: ReturnType<typeof customerPointers>;
-  pointer_status: { dmarc: PointerStatus | null; spf: PointerStatus | null; mta_sts: PointerStatus | null; tls_rpt: PointerStatus | null; checked_at: number | null };
+  pointer_status: { dmarc: PointerStatus | null; spf: PointerStatus | null; tls_rpt: PointerStatus | null; checked_at: number | null };
   /** For the domain's Level: a hosted record counts as published once its pointer is in place. */
   level_inputs: ReturnType<typeof levelInputs>;
-  mta_sts: boolean;
 }
 
 async function view(tenant: TenantContext, domain: DomainRow): Promise<HostedView | null> {
@@ -77,16 +75,14 @@ async function view(tenant: TenantContext, domain: DomainRow): Promise<HostedVie
   if (!h) return null;
   const { apex } = requireHosted(tenant);
   const names = hostedNames(h.hosted_id, apex);
-  const mtaSts = !!h.mta_sts_txt_record_id;
-  const status = { dmarc: h.dmarc_pointer as PointerStatus | null, spf: h.spf_pointer as PointerStatus | null, mta_sts: h.mta_sts_pointer as PointerStatus | null, tls_rpt: h.tls_rpt_pointer as PointerStatus | null };
+  const status = { dmarc: h.dmarc_pointer as PointerStatus | null, spf: h.spf_pointer as PointerStatus | null, tls_rpt: h.tls_rpt_pointer as PointerStatus | null };
   return {
     enabled: true,
     hosted_id: h.hosted_id,
-    records: { dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt, mta_sts: mtaSts ? names.mtaSts : null },
-    pointers: customerPointers(domain.domain, h.hosted_id, apex, { mtaSts }),
+    records: { dmarc: names.dmarc, spf: names.spf, tls_rpt: names.tlsRpt },
+    pointers: customerPointers(domain.domain, h.hosted_id, apex),
     pointer_status: { ...status, checked_at: h.pointers_checked_at },
     level_inputs: levelInputs(status),
-    mta_sts: mtaSts,
   };
 }
 
@@ -106,8 +102,6 @@ export async function hostedStatuses(tenant: TenantContext): Promise<Record<numb
 export interface EnableOptions {
   /** The SPF record to flatten into the hosted record. Default: what the domain publishes today. */
   spfRecord?: string;
-  /** Also host the MTA-STS records (testing mode, the domain's current MX hosts). */
-  mtaSts?: boolean;
 }
 
 export interface Addresses { rua: string; tls_rpt: string }
@@ -122,6 +116,7 @@ export async function enableHosted(
 ): Promise<{ hosted: HostedView; addresses: Addresses }> {
   const { intakeDomain, apex } = requireHosted(tenant);
   if (await tenant.scope.hosted.get(domain.id)) throw new HostedError('Hosted records are already enabled for this domain', 409);
+  if ((await tenant.scope.mtaSts.get(domain.id))?.enabled) throw new HostedError('MTA-STS is on for this domain with its own _smtp._tls record, which hosted records would replace. Turn MTA-STS off first.', 409);
   const cap = maxHostedDomainsPerWorkspace(tenant.env);
   if (await tenant.scope.hosted.count() >= cap) throw new HostedError(`This workspace already hosts records for ${cap} domains, the maximum. Disable hosted records on one first.`, 429);
   const resolver = deps.resolver ?? createResolver();
@@ -140,16 +135,9 @@ export async function enableHosted(
   if (!flat.ok) throw new HostedError(`Could not fully resolve the SPF record: ${flat.errors.map(e => e.message).join('; ')}`, 422);
   const spfContent = flat.content;
 
-  let mxHosts: string[] = [];
-  if (opts.mtaSts) {
-    mxHosts = await discoverMxHosts(domain.domain).catch(e => { throw new HostedError(e instanceof Error ? e.message : 'MX lookup failed', 502); });
-    if (mxHosts.length === 0) throw new HostedError(`No MX records found for ${domain.domain}; MTA-STS needs a mail server to name`, 422);
-  }
-
-  const needed = opts.mtaSts ? 5 : 3;
   let slot;
   try {
-    ({ slot } = await chooseZone(tenant.env, needed));
+    ({ slot } = await chooseZone(tenant.env, 3));
   } catch (e) {
     if (e instanceof HostedQuotaError) throw new HostedError(e.message, 507);
     throw e;
@@ -178,26 +166,13 @@ export async function enableHosted(
       dmarc_record_id: await write('TXT', names.dmarc, buildHostedDmarc(policy, token, intakeDomain)),
       spf_record_id: await write('TXT', names.spf, spfContent),
       tls_rpt_record_id: await write('TXT', names.tlsRpt, buildHostedTlsRpt(token, intakeDomain)),
-      mta_sts_txt_record_id: null as string | null,
-      mta_sts_host_record_id: null as string | null,
     };
-    if (opts.mtaSts) {
-      const policyId = generatePolicyId(new Date(now * 1000));
-      ids.mta_sts_txt_record_id = await write('TXT', names.mtaSts, `v=STSv1; id=${policyId}`);
-      // The Worker serves the policy at this host; 100:: is the usual placeholder origin for a proxied name.
-      ids.mta_sts_host_record_id = await write('AAAA', names.mtaSts, '100::', { proxied: true, ttl: 1 });
-      await tenant.scope.mtaSts.insert({
-        domain_id: domain.id, mode: 'testing', mx_hosts: mxHosts.join(','), policy_id: policyId,
-        mta_sts_record_id: ids.mta_sts_txt_record_id, tls_rpt_record_id: ids.tls_rpt_record_id, cname_record_id: ids.mta_sts_host_record_id,
-      });
-    }
     await tenant.scope.hosted.setRecords(domain.id, ids);
   } catch (e) {
     // All or nothing: take back whatever was written, then forget the domain.
     for (const r of created.reverse()) {
       await writer.remove(r.id, r.name).then(() => zones.addCount(slot.key, -1)).catch(() => {});
     }
-    await tenant.scope.mtaSts.delete(domain.id).catch(() => {});
     await tenant.scope.intake.delete(domain.id).catch(() => {});
     await tenant.scope.hosted.delete(domain.id).catch(() => {});
     if (e instanceof HostedError) throw e;
@@ -208,7 +183,7 @@ export async function enableHosted(
   logAudit(tenant, {
     actor_id: actor?.id ?? null, actor_email: actor?.email ?? null, actor_type: 'user',
     action: 'hosted.enable', resource_type: 'domain', resource_id: String(domain.id), resource_name: domain.domain,
-    after_value: { hosted_id: hostedId, mta_sts: !!opts.mtaSts },
+    after_value: { hosted_id: hostedId },
   }, ctx);
 
   return { hosted: (await view(tenant, domain))!, addresses: { rua: intakeAddress('rua', token, intakeDomain), tls_rpt: intakeAddress('tls-rpt', token, intakeDomain) } };
@@ -274,7 +249,8 @@ export async function disableHosted(
       throw new HostedError(`Could not remove ${name}: ${cfErrorText(e)}`, 502);
     }
   }
-  await tenant.scope.mtaSts.delete(domain.id);
+  // Rows from before ADR 0021 kept their MTA-STS records here: that config goes with them. Today's MTA-STS config is the customer's own and stays.
+  if (h.mta_sts_txt_record_id || h.mta_sts_host_record_id) await tenant.scope.mtaSts.delete(domain.id);
   await tenant.scope.intake.delete(domain.id);
   await tenant.scope.hosted.delete(domain.id);
   logAudit(tenant, {
@@ -291,57 +267,4 @@ export async function verifyDomainPointers(tenant: TenantContext, domain: Domain
   const report = await verifyPointers(domain.domain, h.hosted_id, apex, deps.resolver);
   await tenant.scope.hosted.setPointers(domain.id, mergePointerReport(h, report), Math.floor((deps.now?.() ?? Date.now()) / 1000));
   return (await view(tenant, domain))!;
-}
-
-// ── MTA-STS on a hosted domain ──────────────────────────────
-// The records behind mta_sts_config live in the hosted zone, so the legacy MTA-STS code (which patches the
-// customer's own zone with these ids) must never touch them. These are the hosted equivalents.
-
-/** A policy id that differs from `previous`: the timestamp id has one-second resolution, and an unchanged id would tell senders nothing changed. */
-export function nextPolicyId(previous: string | null | undefined, now = new Date()): string {
-  const id = generatePolicyId(now);
-  return id === previous ? `${id}a` : id;
-}
-
-/** New policy id and/or mode and/or MX hosts for a hosted domain's MTA-STS. */
-export async function updateHostedMtaSts(
-  tenant: TenantContext,
-  domain: DomainRow,
-  change: { mode?: 'testing' | 'enforce'; mxHosts?: string[] },
-  deps: HostedDeps = {},
-): Promise<{ policy_id: string }> {
-  const { apex } = requireHosted(tenant);
-  const h = await tenant.scope.hosted.get(domain.id);
-  const cfg = await tenant.scope.mtaSts.get(domain.id);
-  if (!h?.mta_sts_txt_record_id || !cfg) throw new HostedError('MTA-STS is not enabled for this domain', 404);
-  const writer = await writerFor(tenant, h.zone_key, deps);
-  const policyId = nextPolicyId(cfg.policy_id, new Date(deps.now?.() ?? Date.now()));
-  try {
-    await writer.setContent(h.mta_sts_txt_record_id, hostedNames(h.hosted_id, apex).mtaSts, `v=STSv1; id=${policyId}`);
-  } catch (e) {
-    throw new HostedError(`Could not update the hosted MTA-STS record: ${cfErrorText(e)}`, 502);
-  }
-  if (change.mode) await tenant.scope.mtaSts.updateMode(domain.id, change.mode, policyId);
-  if (change.mxHosts) await tenant.scope.mtaSts.updateMxHosts(domain.id, change.mxHosts.join(','), policyId);
-  return { policy_id: policyId };
-}
-
-/** Remove only the hosted MTA-STS records and config; DMARC, SPF and TLS-RPT stay. */
-export async function removeHostedMtaSts(tenant: TenantContext, domain: DomainRow, deps: HostedDeps = {}): Promise<void> {
-  const { apex } = requireHosted(tenant);
-  const h = await tenant.scope.hosted.get(domain.id);
-  if (!h) throw new HostedError('Hosted records are not enabled for this domain', 404);
-  const writer = await writerFor(tenant, h.zone_key, deps);
-  const name = hostedNames(h.hosted_id, apex).mtaSts;
-  const zones = globalQueries(tenant.db).hostedZones;
-  for (const id of [h.mta_sts_txt_record_id, h.mta_sts_host_record_id]) {
-    if (!id) continue;
-    try {
-      if (await writer.remove(id, name)) await zones.addCount(h.zone_key, -1);
-    } catch (e) {
-      throw new HostedError(`Could not remove ${name}: ${cfErrorText(e)}`, 502);
-    }
-  }
-  await tenant.scope.hosted.setRecords(domain.id, { mta_sts_txt_record_id: null, mta_sts_host_record_id: null });
-  await tenant.scope.mtaSts.delete(domain.id);
 }

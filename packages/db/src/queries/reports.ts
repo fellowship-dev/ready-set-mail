@@ -194,6 +194,27 @@ export interface UncountedSummary {
 	by_reporter: Array<{ reporter: string; reports: number; unverified?: boolean; claims?: string | null }>;
 }
 
+/** One stored TLS-RPT report, as the MTA-STS page lists it. sts_* are null on reports stored before they were kept (unknown). */
+export interface TlsReportRow {
+  id: number;
+  org_name: string;
+  date_begin: number;
+  date_end: number;
+  total_success: number;
+  total_failure: number;
+  sts_success: number | null;
+  sts_failure: number | null;
+  /** JSON array of the distinct failure result-types of the sts policies, or null. */
+  sts_failure_types: string | null;
+  /** counted | unknown | unauthenticated (src/dmarc/reporter-auth.ts); null on rows stored before 0020. */
+  reporter_tier: string | null;
+  reporter_identity: string | null;
+  created_at: number;
+}
+
+/** What the enforce decision reads: counted reports only (see `tlsEvidence`). */
+export interface TlsEvidenceRow { date_begin: number; date_end: number; sts_success: number | null; sts_failure: number | null; sts_failure_types: string | null; reporter_tier: string | null }
+
 type NewReport = Omit<typeof aggregateReports.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
 type NewRecord = Omit<typeof reportRecords.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
 type NewTlsReport = Omit<typeof tlsReports.$inferInsert, 'id' | 'created_at' | 'workspace_id'>;
@@ -251,8 +272,8 @@ function summarySql(A: SQL, C: (alias: string) => SQL, since: number, where: SQL
 			COALESCE(rr.from_dkim_aligned, 0) AS from_dkim_aligned,
 			COALESCE(rr.from_spf_at_name, 0)  AS from_spf_at_name,
 			COALESCE(rr.from_unjudged, 0)     AS from_unjudged,
-			COALESCE(m.enabled, 0)    AS mta_sts_enabled,
-			m.mode                    AS mta_sts_mode
+			CASE WHEN m.enabled = 1 AND m.state = 'active' THEN 1 ELSE 0 END AS mta_sts_enabled, -- on only once set up; a setup in progress is not protection
+			CASE WHEN m.enabled = 1 AND m.state = 'active' THEN m.mode END   AS mta_sts_mode
 		FROM domains d
 		LEFT JOIN (
 			SELECT domain_id, SUM(total_count) AS total, SUM(pass_count) AS pass, SUM(fail_count) AS fail,
@@ -838,6 +859,16 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 
 		// ── TLS-RPT ───────────────────────────────────────────────
 
+		/**
+		 * Has this reporter already sent this report (RFC 8460: reports are retried and can be replayed)? Keyed on (domain, reporter identity, report id), like
+		 * DMARC's: a stranger cannot squat a real reporter's id, because the identity is the authenticated one, never the report's own text.
+		 */
+		async tlsSeen(domainId: number, identity: string, reportId: string): Promise<boolean> {
+			const r = await db.select({ id: tlsReports.id }).from(tlsReports)
+				.where(and(eq(tlsReports.workspace_id, workspaceId), eq(tlsReports.domain_id, domainId), eq(tlsReports.reporter_identity, identity), eq(tlsReports.report_id, reportId))).get();
+			return !!r;
+		},
+
 		insertTls(r: NewTlsReport) {
 			return db
 				.insert(tlsReports)
@@ -845,9 +876,16 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
 				.onConflictDoUpdate({
 					target: [tlsReports.domain_id, tlsReports.org_name, tlsReports.date_begin],
 					set: {
+						reporter_auth: sql`excluded.reporter_auth`,
+						reporter_tier: sql`excluded.reporter_tier`,
+						reporter_identity: sql`excluded.reporter_identity`,
+						report_id: sql`excluded.report_id`,
 						total_success: sql`excluded.total_success`,
 						total_failure: sql`excluded.total_failure`,
 						failure_details: sql`excluded.failure_details`,
+						sts_success: sql`excluded.sts_success`,
+						sts_failure: sql`excluded.sts_failure`,
+						sts_failure_types: sql`excluded.sts_failure_types`,
 						raw_json: sql`excluded.raw_json`,
 					},
 				})
@@ -858,11 +896,11 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
     async evidence(domainId: number, since: number, until: number) {
       const [dmarc, tls, dmarcSummary, tlsSummary, dmarcDates, tlsDates] = await Promise.all([
         db.all<ReportEvidenceRow>(sql`SELECT id, CASE WHEN reporter_identity IS NOT NULL AND substr(report_id, 1, length(reporter_identity) + 1) = reporter_identity || '|' THEN substr(report_id, length(reporter_identity) + 2) ELSE report_id END AS source_report_id, org_name AS reporter, date_begin, date_end, created_at, total_count, pass_count, fail_count FROM aggregate_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('aggregate_reports')} ORDER BY date_begin DESC, id DESC LIMIT 201`),
-        db.all<ReportEvidenceRow>(sql`SELECT id, NULL AS source_report_id, org_name AS reporter, date_begin, date_end, created_at, total_success + total_failure AS total_count, total_success AS pass_count, total_failure AS fail_count FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} ORDER BY date_begin DESC, id DESC LIMIT 201`),
+        db.all<ReportEvidenceRow>(sql`SELECT id, NULL AS source_report_id, org_name AS reporter, date_begin, date_end, created_at, total_success + total_failure AS total_count, total_success AS pass_count, total_failure AS fail_count FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('tls_reports')} ORDER BY date_begin DESC, id DESC LIMIT 201`),
         db.all<EvidenceSummaryRow>(sql`SELECT COUNT(*) AS report_count, MAX(date_end) AS latest_period_end, MAX(created_at) AS latest_received_at FROM aggregate_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('aggregate_reports')}`),
-        db.all<EvidenceSummaryRow>(sql`SELECT COUNT(*) AS report_count, MAX(date_end) AS latest_period_end, MAX(created_at) AS latest_received_at FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until}`),
+        db.all<EvidenceSummaryRow>(sql`SELECT COUNT(*) AS report_count, MAX(date_end) AS latest_period_end, MAX(created_at) AS latest_received_at FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('tls_reports')}`),
         db.all<{ day: string }>(sql`SELECT DISTINCT date(date_begin, 'unixepoch') AS day FROM aggregate_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('aggregate_reports')} ORDER BY day`),
-        db.all<{ day: string }>(sql`SELECT DISTINCT date(date_begin, 'unixepoch') AS day FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} ORDER BY day`),
+        db.all<{ day: string }>(sql`SELECT DISTINCT date(date_begin, 'unixepoch') AS day FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND date_begin <= ${until} AND ${C('tls_reports')} ORDER BY day`),
       ]);
       const source = (rows: ReportEvidenceRow[], summary: EvidenceSummaryRow[], dates: { day: string }[]) => ({
         observations: rows.slice(0, 200), truncated: rows.length > 200,
@@ -874,14 +912,51 @@ export function reportQueries(db: Db, workspaceId: string, counting: CountingMod
       return { dmarc: source(dmarc, dmarcSummary, dmarcDates), tls: source(tls, tlsSummary, tlsDates) };
     },
 
-		async tlsSummary(domainId: number, since: number, until?: number) {
-			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number }>(sql`
+		/**
+		 * The newest COUNTED TLS reports of a domain (authenticated, from a known reporter; periods starting at or after `since`), for the MTA-STS page. The page lists
+		 * what it counts and nothing else, so a stranger's reports can neither be mistaken for evidence nor crowd the real ones out of the LIMIT. No raw payloads.
+		 */
+		tlsRecent(domainId: number, since: number, limit: number) {
+			return db.all<TlsReportRow>(sql`
+				SELECT id, org_name, date_begin, date_end, total_success, total_failure, sts_success, sts_failure, sts_failure_types, reporter_tier, reporter_identity, created_at
+				FROM tls_reports
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND reporter_tier = 'counted'
+				ORDER BY date_begin DESC, id DESC LIMIT ${limit}`);
+		},
+
+		/**
+		 * What the enforce decision reads: the MTA-STS sessions of every COUNTED report (authenticated, from a known reporter) whose period ended at or after
+		 * `since`. Whatever REPORT_COUNTING says: the decision changes whether mail is refused, so a stranger's report is never evidence, and it cannot crowd
+		 * the real ones out of the LIMIT either.
+		 */
+		tlsEvidence(domainId: number, since: number) {
+			return db.all<TlsEvidenceRow>(sql`
+				SELECT date_begin, date_end, sts_success, sts_failure, sts_failure_types, reporter_tier
+				FROM tls_reports
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_end >= ${since} AND reporter_tier = 'counted'
+				ORDER BY date_end DESC LIMIT 500`);
+		},
+
+		/** Reports stored in the window that are evidence (counted) and that are not: what the page says about them. */
+		async tlsCounts(domainId: number, since: number) {
+			const rows = await db.all<{ counted: number; uncounted: number }>(sql`
+				SELECT COALESCE(SUM(CASE WHEN reporter_tier = 'counted' THEN 1 ELSE 0 END), 0) AS counted,
+				       COALESCE(SUM(CASE WHEN COALESCE(reporter_tier, '') <> 'counted' THEN 1 ELSE 0 END), 0) AS uncounted
+				FROM tls_reports WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since}`);
+			return { counted: Number(rows[0]?.counted ?? 0), uncounted: Number(rows[0]?.uncounted ?? 0) };
+		},
+
+		/** `countedOnly`: the sessions of the counted reports only, whatever REPORT_COUNTING says (the MTA-STS page: its sentence and its table are the same reports). */
+		async tlsSummary(domainId: number, since: number, until?: number, opts: { countedOnly?: boolean } = {}) {
+			const rows = await db.all<{ total_success: number; total_failure: number; report_count: number; sts_success: number; sts_failure: number }>(sql`
 				SELECT
 					COALESCE(SUM(total_success), 0) AS total_success,
 					COALESCE(SUM(total_failure), 0) AS total_failure,
+					COALESCE(SUM(sts_success), 0) AS sts_success,
+					COALESCE(SUM(sts_failure), 0) AS sts_failure,
 					COUNT(*) AS report_count
 				FROM tls_reports
-				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since}
+				WHERE workspace_id = ${A} AND domain_id = ${domainId} AND date_begin >= ${since} AND ${opts.countedOnly ? sql`reporter_tier = 'counted'` : C('tls_reports')}
 				${until === undefined ? sql`` : sql`AND date_begin <= ${until}`}
 			`);
 			return rows[0] ?? null;

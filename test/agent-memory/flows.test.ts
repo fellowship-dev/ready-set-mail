@@ -30,6 +30,7 @@ describe('protected value flows', () => {
       'agent-connects-and-reads-report',
       'buy-fix-one-domain',
       'connect-reports-cloudflare',
+      'enable-mta-sts',
       'invited-teammate-joins',
       'signup-to-records-live-cloudflare',
       'signup-to-records-live-manual',
@@ -96,6 +97,14 @@ describe('scripts/check-flows.mjs: record names', () => {
     expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.not-affected.md')).toBe(true);
     expect(notAffectedName('buy-fix-one-domain').test('2026-11-16-buy-fix-one-domain.pr177.md')).toBe(false);
   });
+  it('a not-affected record may carry a tag before .not-affected (tag [a-z0-9-]+), so a name already taken that day can be filed again', () => {
+    const na = notAffectedName('buy-fix-one-domain');
+    expect(na.test('2026-11-16-buy-fix-one-domain.mta-sts.not-affected.md')).toBe(true);
+    expect(na.test('2026-11-16-buy-fix-one-domain.round-3.not-affected.md')).toBe(true);
+    for (const n of ['2026-11-16-buy-fix-one-domain.MTA.not-affected.md', '2026-11-16-buy-fix-one-domain..not-affected.md', '2026-11-16-buy-fix-one-domain.a.b.not-affected.md', '2026-11-16-other-flow.mta-sts.not-affected.md', '2026-11-16-buy-fix-one-domain.mta-sts.not-affected.txt']) expect(na.test(n), n).toBe(false);
+    // and a tagged not-affected name is never taken for a walk record
+    expect(walk.test('2026-11-16-buy-fix-one-domain.mta-sts.not-affected.md')).toBe(false);
+  });
   it('other names, other flows and bad tags do not match', () => {
     for (const n of ['2026-11-16-buy-fix-one-domain.PR177.md', '2026-11-16-buy-fix-one-domain..md', '2026-11-16-buy-fix-one-domain.a.b.md', '2026-11-16-buy-fix-one-domain.pr177.txt', '2026-11-16-other-flow.pr177.md', '2026-1-16-buy-fix-one-domain.md', 'x2026-11-16-buy-fix-one-domain.md']) expect(walk.test(n), n).toBe(false);
   });
@@ -148,6 +157,15 @@ describe('scripts/check-flows.mjs: which records count', () => {
     expect(notAffectedProblems(na({ Date: '2026-11-01' }), nctx).join()).toMatch(/Date/);
     expect(notAffectedProblems(na({ By: '' }), nctx).join()).toMatch(/By/);
     expect(notAffectedProblems(na(), { ...nctx, flowChanged: true }).join()).toMatch(/walk it/);
+  });
+  it('a record is filed under the day it happened: the date in the name is the Date line (not-affected) or the walk\'s own timestamp', () => {
+    expect(notAffectedProblems(na(), { ...nctx, nameDate: '2026-11-16' })).toEqual([]);
+    expect(notAffectedProblems(na(), { ...nctx, nameDate: '2026-11-18' }).join()).toMatch(/file name says 2026-11-18 but Date is 2026-11-16/);
+    expect(walkRecordProblems(gateRecord({ Walked: '2026-11-16T22:00:00Z' }), { ...ctx, nameDate: '2026-11-16' })).toEqual([]);
+    expect(walkRecordProblems(gateRecord({ Walked: '2026-11-16T22:00:00Z' }), { ...ctx, nameDate: '2026-11-18' }).join()).toMatch(/file name says 2026-11-18, but the walk ran on 2026-11-16/);
+    // a walk written with an offset may carry either its own day or the UTC day
+    expect(walkRecordProblems(gateRecord({ Walked: '2026-11-17T01:05:00+02:00' }), { ...ctx, nameDate: '2026-11-16' })).toEqual([]);
+    expect(walkRecordProblems(gateRecord({ Walked: '2026-11-17T01:05:00+02:00' }), { ...ctx, nameDate: '2026-11-17' })).toEqual([]);
   });
   it('reads covers globs as the shell does', () => {
     expect(globMatches('src/billing/*', 'src/billing/webhook.ts')).toBe(true);

@@ -17,9 +17,9 @@ export const dmarcXml = (domain: string, reportId = 'rep-1', org = 'google.com')
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64').replace(/(.{76})/g, '$1\r\n');
 
 /** A multipart MIME message carrying `bytes` as an attachment. */
-export function mimeWithAttachment(bytes: Uint8Array, filename: string, contentType: string): string {
+export function mimeWithAttachment(bytes: Uint8Array, filename: string, contentType: string, from = 'noreply-dmarc-support@google.com'): string {
   return [
-    'From: noreply-dmarc-support@google.com', 'To: x', 'Subject: Report', 'MIME-Version: 1.0',
+    `From: ${from}`, 'To: x', 'Subject: Report', 'MIME-Version: 1.0',
     'Content-Type: multipart/mixed; boundary="BOUND"', '',
     '--BOUND', 'Content-Type: text/plain', '', 'see attached', '',
     '--BOUND', `Content-Type: ${contentType}; name="${filename}"`, `Content-Disposition: attachment; filename="${filename}"`,
@@ -30,9 +30,15 @@ export function mimeWithAttachment(bytes: Uint8Array, filename: string, contentT
 export const gzipReportMime = (xml: string) => mimeWithAttachment(gzipSync(strToU8(xml)), 'report.xml.gz', 'application/gzip');
 export const zipReportMime = (xml: string) => mimeWithAttachment(zipSync({ 'report.xml': strToU8(xml) }), 'report.zip', 'application/zip');
 
+/** The day before today (UTC), as a TLS-RPT report period: a report is about a full day and arrives hours later (RFC 8460 section 4.1). */
+export const yesterdayRange = () => {
+  const d = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+  return { 'start-datetime': `${d}T00:00:00Z`, 'end-datetime': `${d}T23:59:59Z` };
+};
+
 export const tlsRptJson = (policyDomain: string, extra: object = {}) => JSON.stringify({
   'organization-name': 'Google Inc.',
-  'date-range': { 'start-datetime': '2024-01-01T00:00:00Z', 'end-datetime': '2024-01-01T23:59:59Z' },
+  'date-range': yesterdayRange(),
   'report-id': 'tls-1',
   policies: [{
     policy: { 'policy-type': 'sts', 'policy-domain': policyDomain },
@@ -41,9 +47,9 @@ export const tlsRptJson = (policyDomain: string, extra: object = {}) => JSON.str
   ...extra,
 });
 
-export const tlsRptMime = (json: string, gz = false) => gz
-  ? mimeWithAttachment(gzipSync(strToU8(json)), 'report.json.gz', 'application/tlsrpt+gzip')
-  : ['From: noreply@google.com', 'To: x', 'Subject: TLS-RPT', 'Content-Type: application/tlsrpt+json', '', json].join('\r\n');
+export const tlsRptMime = (json: string, gz = false, from = 'noreply@google.com') => gz
+  ? mimeWithAttachment(gzipSync(strToU8(json)), 'report.json.gz', 'application/tlsrpt+gzip', from)
+  : [`From: ${from}`, 'To: x', 'Subject: TLS-RPT', 'Content-Type: application/tlsrpt+json', '', json].join('\r\n');
 
 export interface FakeMessage extends ForwardableEmailMessage { setReject: ReturnType<typeof vi.fn>; reply: ReturnType<typeof vi.fn> }
 

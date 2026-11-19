@@ -13,7 +13,8 @@ import { ListSkeleton, LoadError, PageSkeleton, ReadOnlyNotice, Section, WriteBu
 import { ApiError, api, errorMessage } from '../../lib/api';
 import { dmarcRecordProblem, hasReportAddress } from '../../lib/dmarc-record';
 import { dmarcCoverage, offeredDmarcRecord } from '../../lib/dmarc-coverage';
-import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useOnboardingStatus, type MonitorSub } from '../../lib/domain-queries';
+import { domainKeys, invalidateDomain, useDnsCheck, useMonitorSubs, useMtaSts, useOnboardingStatus, type MonitorSub } from '../../lib/domain-queries';
+import { maxAgeWords } from '../../lib/mta-sts';
 import { downloadFile } from '../../lib/download';
 import { formatDate } from '../../lib/format';
 import { useDomain, useDomains } from '../../lib/queries';
@@ -179,6 +180,9 @@ function DangerZone({ domain }: { domain: Domain }) {
 	const qc = useQueryClient();
 	const navigate = useNavigate();
 	const [open, setOpen] = useState(false);
+	// Asked only when the dialog opens (the answer costs a DNS lookup): is MTA-STS enforcing, so senders may still hold its policy?
+	const mta = useMtaSts(domain.id, open);
+	const enforcing = mta.data?.config?.enabled && mta.data.config.mode === 'enforce';
 	const remove = useMutation({
 		mutationFn: () => api<{ ok: boolean; kept?: KeptRecord[] }>(`/api/domains/${domain.id}`, { method: 'DELETE' }),
 		onSuccess: async (res) => {
@@ -207,7 +211,7 @@ function DangerZone({ domain }: { domain: Domain }) {
 					if (!o) remove.reset();
 				}}
 				title={`Remove ${domain.domain}?`}
-				description="All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone."
+				description={`All reports and statistics for this domain are deleted. DNS records you added stay where they are. This cannot be undone.${enforcing ? ` MTA-STS is enforcing: senders that already fetched the policy may refuse to deliver to mail servers that are not in it for up to ${maxAgeWords(mta.data?.max_age ?? 604800)}.` : ''}`}
 				confirmLabel={cleanupFailed ? 'Retry' : 'Yes, remove'}
 				busyLabel="Removing…"
 				variant="danger"

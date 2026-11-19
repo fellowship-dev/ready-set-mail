@@ -96,9 +96,11 @@ import { handleConnectionRoutes } from '../connections/routes';
 import { handleOnboardingRoutes } from '../onboarding/routes';
 import { handleDnsHostRoute } from '../domains/dns-host-routes';
 import { TokenEnvelopeError, TokenKeyError } from '../connections/crypto';
+import { cfFailureBody } from './cf-failure';
 import { handleWorkspaceRoutes, isWorkspaceRoute } from '../workspaces/routes';
 import { handleAccountRoutes, isAccountRoute } from '../account/routes';
-import { disableHosted, HostedError, removeHostedMtaSts, updateHostedMtaSts } from '../hosted/service';
+import { disableHosted, HostedError } from '../hosted/service';
+import { handleMtaStsRoutes } from '../mta-sts/routes';
 import { hostedConfig, hostedEnabled } from '../hosted/config';
 import { openHostedZone } from '../hosted/records';
 import { issueCanary } from '../hosted/canary';
@@ -118,7 +120,7 @@ import { baseUrl } from '../auth/config';
 import { d1RateLimitStorage } from '../auth/rate-limit';
 import { deprovisionDomain, provisionDomain } from '../dns/provision';
 import { parseDomainList, bulkInsertDomains, REPORTS_DOMAIN_MISSING } from '../domains/bulk';
-import { removeAuthRecord, removeHostedRecords } from '../domains/remove';
+import { removeAuthRecord, removeHostedRecords, removeMtaSts } from '../domains/remove';
 import { removalAction, type DnsRemoval, type KeptRecord } from '../dns/removal';
 import { autoVerifyClaims } from '../connections/import';
 import { admitDomain, claimLimitBody, claimView, FIRST_RUN_DOMAIN_KEY, rememberFirstRunDomain, isDomainProven, demoteOrphanedSubdomains, freeingFor, listClaims, proofColumns, refusedInsertBody, restoreInPlace, settleClaims, verifyClaim } from '../domains/ownership';
@@ -148,15 +150,6 @@ import { createResolver, isDkimRecord, normalizeDomainName, isDmarcRecord, isSpf
 import { dmarcFactsFromLookup, dmarcLookupFor, spfFromTxt } from '../email/dns-snapshot';
 import { getAllDkimSelectors } from '@ready-set-mail/dns-checks/email-service-providers';
 import { decodeTxtData } from '@ready-set-mail/dns-checks/txt';
-import {
-  provisionMtaSts,
-  updateMtaStsTxtRecord,
-  deprovisionMtaSts,
-  type MtaStsRemoval,
-  discoverMxHosts,
-  generatePolicyId,
-  buildPolicyFile,
-} from '../email/mta-sts';
 import { MAX_DMARC_RECORD_LENGTH, dmarcRecordProblem, findDmarcRecord, withPolicy, writeDmarcRecord, type DmarcPolicy } from '../dmarc/dns-record';
 
 /** Free-check sessions one IP may create per window. */
@@ -221,28 +214,10 @@ export function intParam(url: URL, name: string, fallback: number, min: number, 
   return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
 }
 
-/** Can the product write this domain's DNS: is its own zone reachable through a connection or the instance token? */
-async function zoneReachable(tenant: TenantContext, domain: string): Promise<boolean> {
-  if (!tenant.hasCloudflare()) return false;
-  try {
-    await (await tenant.cfFor(domain)).zoneFor(domain);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** HTTP status for a Cloudflare failure: config problems are the caller's, the rest is reported as given. */
 function cfFailure(e: unknown, fallbackStatus = 500): Response {
-  if (e instanceof CfNotConfiguredError) return json({ error: e.message, code: e.code }, 400);
-  if (e instanceof CfZoneNotFoundError) return err(e.message, 400);
-  if (e instanceof TokenKeyError || e instanceof TokenEnvelopeError) return err('Cloudflare connections are unavailable: the server\'s encryption key is missing or does not match the stored credentials. This is for the server operator to fix.', 503);
-  // A connection that needs the owner (reconnect), or a zone the owner did not allow: not the caller's mistake to retry.
-  if (e instanceof CfConnectionError) return json({ error: e.message, code: `cf_connection_${e.code}`, connection_id: e.connectionId }, 409);
-  if (e instanceof CfZoneNotAllowedError) return json({ error: e.message, code: 'cf_zone_not_allowed', connection_id: e.connectionId }, 403);
-  if (e instanceof CfRecordNotAllowedError) return json({ error: e.message, code: 'cf_record_not_allowed' }, 403);
-  if (e instanceof CfIncompleteListError) return json({ error: incompleteListMessage(e), code: 'cf_list_incomplete' }, 502);
-  return err(cfErrorText(e), fallbackStatus);
+  const f = cfFailureBody(e, fallbackStatus);
+  return json(f.body, f.status);
 }
 
 async function parseBody<T>(request: Request): Promise<T> {
@@ -397,6 +372,9 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
     throw e;
   }
 
+  // MTA-STS first (RFC 8461 section 8.3): a policy senders may hold is retired, not dropped, and what it needs to finish does not depend on this domain row.
+  const mta = await removeMtaSts(tenant, domain, actor, ctx, 'removed');
+
   await tenant.scope.domains.delete(id);
   // Cloudflare auto-import does not add a removed name back; it is offered as a suggestion instead (src/connections/import.ts).
   await tenant.scope.removals.remember(domain.domain);
@@ -414,7 +392,8 @@ export async function deleteDomain(tenant: TenantContext, domainId: string, acto
   // A record the customer changed is not deleted: the removal still succeeds and says which records were kept and why.
   const kept = await removeAuthRecord(tenant, domain, actor, ctx);
 
-  return json({ ok: true, kept });
+  // `mta_sts` only when a policy senders may hold is being retired (src/mta-sts/retire.ts): what they may still do meanwhile, for the dialog's one sentence.
+  return json({ ok: true, kept: [...mta.kept, ...kept], ...(mta.retiring ? { mta_sts: mta.retiring } : {}) });
 }
 
 /** A stored report as the API shows it: whether it counts toward the numbers, and without the storing attempt's internal id. */
@@ -1112,7 +1091,7 @@ async function _handleApi(
         const has_rua = !!ourRua && records.some(r => r.toLowerCase().includes(ourRua.toLowerCase()));
         const current_record = records[0] ?? null;
         // "Apply via Cloudflare" needs the domain's own zone, not a report authorization record (that lives under the reports domain).
-        const cf_managed = await zoneReachable(tenant, domain.domain);
+        const cf_managed = await tenant.reachesZone(domain.domain);
         if (has_rua) recordsSeenLive(tenant, ctx, domain, 'domain_page'); // docs/analytics.md: records added by hand are seen live here
         return json({ found, has_rua, current_record, cf_managed });
       } catch {
@@ -2067,209 +2046,9 @@ async function _handleApi(
       }
     }
 
-    // MTA-STS routes — GET/POST/PATCH/DELETE /api/domains/:id/mta-sts
-    const mtaStsMatch = path.match(/^\/api\/domains\/([^/]+)\/mta-sts$/);
-    if (mtaStsMatch) {
-      const id = parseInt(mtaStsMatch[1], 10);
-      if (isNaN(id)) return err('invalid domain id', 400);
-      const domain = await tenant.scope.domains.getById(id);
-      if (!domain) return err('domain not found', 404);
-
-      // Hosted domains keep their MTA-STS records in the hosted zone: these methods go through the hosted writer.
-      const isHosted = hostedEnabled(env) && !!(await tenant.scope.hosted.get(id));
-      if (isHosted && method !== 'GET') {
-        try {
-          if (method === 'POST') return err('MTA-STS is hosted for this domain: enable it with POST /api/domains/:id/hosted { mta_sts: true }', 409);
-          if (method === 'DELETE') {
-            await removeHostedMtaSts(tenant, domain);
-            logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'mta_sts.disable', resource_type: 'domain', resource_id: String(id), resource_name: domain.domain }, ctx);
-            return new Response(null, { status: 204 });
-          }
-          if (method === 'PATCH') {
-            const config = await tenant.scope.mtaSts.get(id);
-            if (!config?.enabled) return err('MTA-STS not enabled for this domain', 404);
-            const body = await parseBody<{ mode?: string; refresh_mx?: boolean }>(request);
-            if (body.mode === 'testing' || body.mode === 'enforce') {
-              const r = await updateHostedMtaSts(tenant, domain, { mode: body.mode });
-              return json({ ok: true, mode: body.mode, policy_id: r.policy_id });
-            }
-            if (body.refresh_mx) {
-              let mxHosts: string[];
-              try { mxHosts = await discoverMxHosts(domain.domain); } catch (e) { return err(`DNS lookup failed: ${e instanceof Error ? e.message : String(e)}`, 502); }
-              if (mxHosts.length === 0) return err('No MX records found', 400);
-              const r = await updateHostedMtaSts(tenant, domain, { mxHosts });
-              return json({ ok: true, mx_hosts: mxHosts, policy_id: r.policy_id });
-            }
-            return err('nothing to update', 400);
-          }
-        } catch (e) {
-          if (e instanceof HostedError) return err(e.message, e.status);
-          throw e;
-        }
-      }
-
-      // Hosted, a domain without hosted records cannot have MTA-STS: enabling it needs the install's own reports domain (TLS-RPT goes to tls-rpt@ there) and a Worker
-      // hostname in the customer's zone, and the hosted service has neither. Hosted records carry their own (src/hosted/service.ts), handled above.
-      const hostedWithout = getMode(env) === 'saas' && !isHosted;
-      if (hostedWithout && method !== 'GET') return err('not available on the hosted service', 404);
-
-      if (method === 'GET') {
-        const config = await tenant.scope.mtaSts.get(id);
-        const tlsSince = Math.floor(Date.now() / 1000) - 30 * 86400; // last 30 days
-        const summary = config ? await tenant.scope.reports.tlsSummary(id, tlsSince) : null;
-        return json({ available: tenant.hasCloudflare() && !hostedWithout, config, summary });
-      }
-
-      if (method === 'POST') {
-        // Enable MTA-STS
-        if (!tenant.hasCloudflare() || !tenant.settings.reportsDomain) {
-          return cfFailure(new CfNotConfiguredError());
-        }
-        const existing = await tenant.scope.mtaSts.get(id);
-        if (existing?.enabled) return err('MTA-STS already enabled for this domain', 409);
-
-        try {
-          const result = await provisionMtaSts(tenant, domain.domain);
-          await tenant.scope.mtaSts.insert({
-            domain_id: id,
-            mode: result.mode,
-            mx_hosts: result.mx_hosts.join(','),
-            policy_id: result.policy_id,
-            mta_sts_record_id: result.mta_sts_record_id,
-            tls_rpt_record_id: result.tls_rpt_record_id,
-            cname_record_id: result.cname_record_id,
-          });
-          const rd = tenant.settings.reportsDomain!;
-          logAudit(tenant, {
-                  actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-            action: 'mta_sts.enable',
-            resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-            after_value: { mode: result.mode, mx_hosts: result.mx_hosts, policy_id: result.policy_id },
-          }, ctx);
-          // Log each DNS record created
-          logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.mta_sts_record_id, resource_name: `_mta-sts.${domain.domain}`, after_value: { type: 'TXT', name: `_mta-sts.${domain.domain}`, content: `v=STSv1; id=${result.policy_id}` } }, ctx);
-          logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.tls_rpt_record_id, resource_name: `_smtp._tls.${domain.domain}`, after_value: { type: 'TXT', name: `_smtp._tls.${domain.domain}`, content: `v=TLSRPTv1; rua=mailto:tls-rpt@${rd}` } }, ctx);
-          logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.create', resource_type: 'dns_record', resource_id: result.cname_record_id, resource_name: `mta-sts.${domain.domain}`, after_value: { type: 'CNAME', name: `mta-sts.${domain.domain}`, proxied: true } }, ctx);
-          return json({ ok: true, mode: result.mode, mx_hosts: result.mx_hosts });
-        } catch (e: any) {
-          return err(e.message ?? 'provisioning failed', 500);
-        }
-      }
-
-      if (method === 'PATCH') {
-        // Update mode (testing → enforce) or refresh MX hosts
-        const config = await tenant.scope.mtaSts.get(id);
-        if (!config?.enabled) return err('MTA-STS not enabled for this domain', 404);
-        if (!tenant.hasCloudflare()) return cfFailure(new CfNotConfiguredError());
-
-        const body = await parseBody<{ mode?: string; refresh_mx?: boolean }>(request);
-
-        if (body.mode && (body.mode === 'testing' || body.mode === 'enforce')) {
-          const newPolicyId = generatePolicyId();
-          await updateMtaStsTxtRecord(tenant, domain.domain, config.mta_sts_record_id!, newPolicyId);
-          await tenant.scope.mtaSts.updateMode(id, body.mode, newPolicyId);
-          logAudit(tenant, {
-                  actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-            action: 'mta_sts.mode_change',
-            resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-            before_value: { mode: config.mode, policy_id: config.policy_id },
-            after_value: { mode: body.mode, policy_id: newPolicyId },
-          }, ctx);
-          if (config.mta_sts_record_id) {
-            logAudit(tenant, { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user', action: 'dns.update', resource_type: 'dns_record', resource_id: config.mta_sts_record_id, resource_name: `_mta-sts.${domain.domain}`, before_value: { content: `v=STSv1; id=${config.policy_id}` }, after_value: { content: `v=STSv1; id=${newPolicyId}` } }, ctx);
-          }
-          return json({ ok: true, mode: body.mode, policy_id: newPolicyId });
-        }
-
-        if (body.refresh_mx) {
-          const oldMxHosts = config.mx_hosts ? config.mx_hosts.split(',').filter(Boolean) : [];
-          let mxHosts: string[];
-          try {
-            mxHosts = await discoverMxHosts(domain.domain);
-          } catch (e) {
-            return err(`DNS lookup failed: ${e instanceof Error ? e.message : String(e)}`, 502);
-          }
-          if (mxHosts.length === 0) return err('No MX records found', 400);
-          const newPolicyId = generatePolicyId();
-          await updateMtaStsTxtRecord(tenant, domain.domain, config.mta_sts_record_id!, newPolicyId);
-          await tenant.scope.mtaSts.updateMxHosts(id, mxHosts.join(','), newPolicyId);
-          logAudit(tenant, {
-                  actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user',
-            action: 'mta_sts.mx_refresh',
-            resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-            before_value: { mx_hosts: oldMxHosts, policy_id: config.policy_id },
-            after_value: { mx_hosts: mxHosts, policy_id: newPolicyId },
-          }, ctx);
-          return json({ ok: true, mx_hosts: mxHosts, policy_id: newPolicyId });
-        }
-
-        return err('nothing to update', 400);
-      }
-
-      if (method === 'DELETE') {
-        // Disable + remove DNS records
-        const config = await tenant.scope.mtaSts.get(id);
-        if (!config) return new Response(null, { status: 204 });
-
-        // What became of each record. Without a Cloudflare connection nothing was deleted, and each says so.
-        let removals: MtaStsRemoval[];
-        if (tenant.hasCloudflare()) {
-          removals = await deprovisionMtaSts(
-            tenant,
-            domain.domain,
-            {
-              mta_sts_record_id: config.mta_sts_record_id ?? null,
-              tls_rpt_record_id: config.tls_rpt_record_id ?? null,
-              cname_record_id: config.cname_record_id ?? null,
-            }
-          );
-        } else {
-          const none: DnsRemoval = { state: 'kept', reason: 'no Cloudflare connection is available to delete it' };
-          const d = domain.domain;
-          removals = [];
-          if (config.mta_sts_record_id) removals.push({ id: config.mta_sts_record_id, type: 'TXT', name: `_mta-sts.${d}`, removal: none });
-          if (config.tls_rpt_record_id) removals.push({ id: config.tls_rpt_record_id, type: 'TXT', name: `_smtp._tls.${d}`, removal: none });
-          if (config.cname_record_id) removals.push({ id: config.cname_record_id, type: 'CNAME', name: `mta-sts.${d}`, removal: none });
-        }
-        const kept: KeptRecord[] = removals.flatMap(r => r.removal.state === 'kept' ? [{ type: r.type, name: r.name, reason: r.removal.reason }] : []);
-
-        const rd = tenant.settings.reportsDomain;
-        const who = { actor_id: userBySession?.id, actor_email: userBySession?.email, actor_type: 'user' as const };
-        logAudit(tenant, {
-          ...who,
-          action: 'mta_sts.disable',
-          resource_type: 'domain', resource_id: String(id), resource_name: domain.domain,
-          before_value: { mode: config.mode, mx_hosts: config.mx_hosts?.split(',').filter(Boolean) ?? [], policy_id: config.policy_id },
-          ...(kept.length ? { after_value: { kept } } : {}),
-        }, ctx);
-        // One audit entry per record, saying what really happened to it: dns.delete only for a record that was deleted.
-        const before = (r: MtaStsRemoval) => r.type === 'CNAME' ? { type: 'CNAME', name: r.name } : r.name.startsWith('_mta-sts.')
-          ? { type: 'TXT', name: r.name, content: `v=STSv1; id=${config.policy_id}` } : { type: 'TXT', name: r.name, content: `v=TLSRPTv1; rua=mailto:tls-rpt@${rd}` };
-        for (const r of removals) {
-          logAudit(tenant, {
-            ...who, action: removalAction(r.removal), resource_type: 'dns_record', resource_id: r.id, resource_name: r.name, before_value: before(r),
-            ...(r.removal.state === 'kept' ? { after_value: { kept: true, reason: r.removal.reason } } : {}),
-          }, ctx);
-        }
-        // The row goes even when a record was kept: it drives the policy file and the cron, and a disabled feature serves
-        // neither. The kept record is not forgotten: it is in this response and in its dns.kept audit entry (it is the
-        // customer's record now; re-enabling would need them to remove or fix it first).
-        await tenant.scope.mtaSts.delete(id);
-        return json({ ok: true, kept });
-      }
-    }
-
-    // MTA-STS policy file endpoint — GET /api/domains/:id/mta-sts/policy
-    const mtaStsPolicyMatch = path.match(/^\/api\/domains\/([^/]+)\/mta-sts\/policy$/);
-    if (mtaStsPolicyMatch && method === 'GET') {
-      const id = parseInt(mtaStsPolicyMatch[1], 10);
-      if (isNaN(id)) return err('invalid domain id', 400);
-      const config = await tenant.scope.mtaSts.get(id);
-      if (!config?.enabled) return err('MTA-STS not enabled', 404);
-      const mxHosts = config.mx_hosts ? config.mx_hosts.split(',').filter(Boolean) : [];
-      const policy = buildPolicyFile(config.mode, mxHosts, 86400);
-      return new Response(policy, { headers: { 'Content-Type': 'text/plain' } });
-    }
+    // MTA-STS: /api/domains/:id/mta-sts[/verify|/policy] (src/mta-sts/routes.ts; the member read-only gate above has already run)
+    const mtaStsResponse = await handleMtaStsRoutes(request, tenant, { actor: userBySession ? { id: userBySession.id, email: userBySession.email } : undefined, ctx, instanceOwner });
+    if (mtaStsResponse) return mtaStsResponse;
 
     // GET /api/audit-log — admin only
     if (path === '/api/audit-log' && method === 'GET') {

@@ -46,7 +46,7 @@ export async function runRetention(env: RetentionEnv & PublicReportEnv & { DB: D
       return { deleted: Number(r?.meta?.changes ?? 0), truncated: false };
     }],
     ['aggregate_reports', () => q.purgeAggregateReports(ago(p.reportsDays), limits, unauthCutoff)],
-    ['tls_reports', () => q.purgeTlsReports(ago(p.tlsDays), limits)],
+    ['tls_reports', () => q.purgeTlsReports(ago(p.tlsDays), limits, unauthCutoff)],
     // 0 days: raw XML is never stored, so clear anything still there
     ['raw_xml_cleared', () => q.clearRawXml(ago(p.rawDays), limits)],
     ['tls_raw_cleared', () => q.clearTlsRaw(ago(p.rawDays), limits)],

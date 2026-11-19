@@ -3,16 +3,14 @@ import { createInboxMcpHandler } from './mcp/transport';
 import { handleEmail } from './email/handler';
 import { handleApi } from './api/router';
 import { handleRelay, isRelayPath, relayEnabled } from './connections/relay';
-import { scope } from './db/scope';
 import { loadTenant } from './tenancy/load';
 import { resolveInboundWorkspace } from './tenancy/resolver';
 import { getMode } from './tenancy/mode';
 import { handleHostedEmail } from './hosted/intake';
 import { logIntake } from './hosted/intake-log';
-import { resolvePolicyHost } from './hosted/policy-host';
+import { withPolicyHostFirst } from './mta-sts/serve';
 import { runHostedCron } from './hosted/cron';
 import { runCronForWorkspaces } from './cron';
-import { buildPolicyFile } from './email/mta-sts';
 import { assertSchemaReady, SchemaNotReadyError } from '@ready-set-mail/db';
 import { hostedServiceUrl, hostedServiceSentence } from './hosted-service';
 import { llmsTxt } from './llms-txt';
@@ -124,6 +122,10 @@ export interface Env {
   MAX_WORKSPACES_PER_USER?: string;     // hosted plan cap: workspaces one person may own (default 5; self-host: none)
   MAX_DOMAINS_PER_WORKSPACE?: string;   // hosted plan cap: domains one workspace may hold (default 10; self-host: none)
   HOSTED_RECORDS_TOKEN?: string; // secret: least-privilege DNS:Edit token for that one zone
+  POLICY_HOST_ZONE?: string;     // hosted MTA-STS: the operator's Cloudflare for SaaS zone (docs/hosted.md)
+  POLICY_HOST_TARGET?: string;   // the hostname customers point mta-sts.<domain> at (inside that zone; the zone's fallback origin)
+  POLICY_HOST_TOKEN?: string;    // secret: Zone Read + SSL and Certificates Write + Workers Routes Write on that one zone
+  MAX_POLICY_HOSTS?: string;     // hosted MTA-STS: policy hosts (custom hostnames) the instance may hold (default 100)
   // Email funnel and compliance (docs/email-funnel.md)
   RESEND_API_KEY?: string;       // secret: Resend API key; the monitor confirmation is sent with Resend when there is no SEND_EMAIL binding (Cloudflare Email Service is transactional-only)
   MAIL_FROM?: string;            // sender address of funnel mail, e.g. max@readysetmail.com (default noreply@<CANARY_DOMAIN>)
@@ -180,23 +182,7 @@ export const coreWorker = Object.freeze({
       throw e;
     }
     const url = new URL(request.url);
-    const { pathname, hostname } = url;
-
-    // MTA-STS policy file — served on mta-sts.* hostnames per RFC 8461
-    // mta-sts.domain.com CNAME → this Worker; CF Universal SSL covers HTTPS
-    if (hostname.startsWith('mta-sts.') && pathname === '/.well-known/mta-sts.txt') {
-      const policyHost = await resolvePolicyHost(env, hostname);
-      const config = policyHost && await scope(env.DB, policyHost.workspaceId).mtaSts.getEnabledByDomain(policyHost.domain);
-      if (!config) return new Response('MTA-STS not configured for this domain', { status: 404 });
-      const mxHosts = config.mx_hosts ? config.mx_hosts.split(',').filter(Boolean) : [];
-      const policy = buildPolicyFile(config.mode, mxHosts, 86400);
-      return new Response(policy, {
-        headers: {
-          'Content-Type': 'text/plain',
-          'Cache-Control': 'max-age=300',
-        },
-      });
-    }
+    const { pathname } = url;
 
     if (pathname === '/health' || pathname.startsWith('/api/')) {
       return handleApi(request, env as BoundEnv, ctx);
@@ -239,7 +225,8 @@ export const coreWorker = Object.freeze({
 } satisfies ExportedHandler<Env>);
 
 
-export default withMcpAuthorization(coreWorker, createInboxMcpHandler());
+// Policy hosts first: a request on `mta-sts.<domain>` never reaches the agent endpoints, the API, llms.txt or the dashboard (src/mta-sts/serve.ts).
+export default withPolicyHostFirst(withMcpAuthorization(coreWorker, createInboxMcpHandler()));
 
 export function setupPage(env: Pick<Env, 'MODE' | 'HOSTED_SERVICE_URL'> = {}): Response {
   const hosted = hostedServiceUrl(env);

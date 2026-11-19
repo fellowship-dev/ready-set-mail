@@ -197,7 +197,7 @@ function coreVerdict(
 	// Records we wrote in our zone that the customer's DNS does not point to yet.
 	if (hosted && unverified.length > 0) {
 		const failed = unverified.some((p) => hosted.pointer_status[p as keyof HostedLevelInput['pointer_status']] === 'error');
-		const names = unverified.map((p) => ({ spf: 'SPF', dmarc: 'DMARC', mta_sts: 'MTA-STS' })[p as 'spf']).join(', ');
+		const names = unverified.map((p) => ({ spf: 'SPF', dmarc: 'DMARC' })[p]).join(', ');
 		return {
 			status: failed ? 'unknown' : 'prepared',
 			level,

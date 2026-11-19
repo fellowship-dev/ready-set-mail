@@ -80,6 +80,14 @@ describe('reports.checkSummary', () => {
     expect(await q.reports.checkSummary(id, 0)).toMatchObject({ mta_sts_enabled: 1, mta_sts_mode: 'enforce' });
   });
 
+  it('counts MTA-STS as on only once its setup is finished', async () => {
+    const { q, id } = await seed();
+    await q.mtaSts.insert({ domain_id: id, mode: 'testing', mx_hosts: 'mx.example.com', policy_id: 'p', state: 'waiting_certificate' });
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ mta_sts_enabled: 0, mta_sts_mode: null });
+    await q.mtaSts.update(id, { state: 'active' });
+    expect(await q.reports.checkSummary(id, 0)).toMatchObject({ mta_sts_enabled: 1, mta_sts_mode: 'testing' });
+  });
+
   it('returns null when the domain does not exist', async () => {
     const { q } = await seed();
     expect(await q.reports.checkSummary(999, 0)).toBeNull();

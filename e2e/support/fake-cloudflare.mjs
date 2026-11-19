@@ -43,6 +43,8 @@ function freshState() {
     records,
     routing: new Map(zones.map(z => [z.id, { enabled: false, catchAll: null, rules: [] }])),
     nsOverrides: new Map(), // name -> NS hosts (DoH only)
+    customHostnames: new Map(zones.map(z => [z.id, []])), // zone id -> Cloudflare for SaaS custom hostnames
+    routes: new Map(zones.map(z => [z.id, []])), // zone id -> Worker routes
     txtLag: new Map(), // name -> TXT strings public DNS shows instead of the zone's (POST /__lag)
     failDnsWrites: false, // POST /__fail {writes: true}: every DNS record write answers 500
     addresses: [], // account-level destination addresses
@@ -87,13 +89,15 @@ export function createFakeCloudflare() {
     }
 
     // Test helpers.
-    if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), addresses: st.addresses, zoneReads: st.zoneReads });
+    if (url.pathname === '/__state') return send(200, { zones: st.zones, records: Object.fromEntries(st.records), routing: Object.fromEntries(st.routing), customHostnames: Object.fromEntries(st.customHostnames), routes: Object.fromEntries(st.routes), addresses: st.addresses, zoneReads: st.zoneReads });
     // POST /__zones {name, account?: {id, name}, status?, type?}: add a zone (another Cloudflare account, a pending or partial zone) to the state.
     if (url.pathname === '/__zones' && method === 'POST') {
       const name = String(body?.name ?? '').toLowerCase();
       const z = { id: hex(`zone:${name}`), name, status: body?.status ?? 'active', type: body?.type ?? 'full', account: body?.account ?? { id: ACCOUNT.id, name: ACCOUNT.name } };
       st.zones = st.zones.filter(x => x.name !== name).concat(z);
       st.records.set(z.id, []);
+      st.customHostnames.set(z.id, []);
+      st.routes.set(z.id, []);
       st.routing.set(z.id, { enabled: false, catchAll: null, rules: [] });
       return send(200, { ok: true, id: z.id });
     }
@@ -118,6 +122,12 @@ export function createFakeCloudflare() {
       r.failAfterWrite = !!body?.failAfterWrite; // after a rule is written, the rules list stops answering (a read-back that cannot be done)
       if (Array.isArray(body?.failPosts)) st.failPosts = body.failPosts; // DNS record types whose creation answers 500
       return send(200, { ok: true });
+    }
+    // POST /__activate {hostname}: the certificate of a custom hostname becomes active (what Cloudflare does minutes after the customer's CNAME resolves).
+    if (url.pathname === '/__activate' && method === 'POST') {
+      let n = 0;
+      for (const list of st.customHostnames.values()) for (const h of list) if (h.hostname === String(body?.hostname ?? '').toLowerCase()) { h.status = 'active'; h.ssl.status = 'active'; n++; }
+      return send(200, { ok: true, activated: n });
     }
     if (url.pathname === '/__reset' && method === 'POST') { st = freshState(); return send(200, { ok: true }); }
 
@@ -233,6 +243,45 @@ export function createFakeCloudflare() {
         return ok(rec);
       }
       if (method === 'DELETE') { records.splice(records.indexOf(rec), 1); return ok({ id: rec.id }); }
+    }
+
+    // Cloudflare for SaaS custom hostnames and Worker routes (the operator's zone of the hosted MTA-STS policy host).
+    if (rest === '/custom_hostnames') {
+      const list = st.customHostnames.get(zone.id);
+      if (method === 'GET') {
+        const want = url.searchParams.get('hostname');
+        const [slice, result_info] = paged(url, list.filter(h => !want || h.hostname === want));
+        return ok(slice, { result_info });
+      }
+      if (method === 'POST') {
+        const host = String(body?.hostname ?? '').toLowerCase();
+        if (host === zone.name) return send(403, failure('Custom hostname matches zone name', 1403));
+        if (list.some(h => h.hostname === host)) return send(409, failure('Duplicate custom hostname found', 1409));
+        const h = { id: st.nextId(), hostname: host, status: 'pending', ssl: { status: 'pending_validation', method: body?.ssl?.method ?? 'http', type: body?.ssl?.type ?? 'dv' } };
+        list.push(h);
+        return ok(h);
+      }
+    }
+    m = rest.match(/^\/custom_hostnames\/([^/]+)$/);
+    if (m) {
+      const list = st.customHostnames.get(zone.id);
+      const h = list.find(x => x.id === m[1]);
+      if (!h) return notFound('Custom hostname not found');
+      if (method === 'GET') return ok(h);
+      if (method === 'DELETE') { list.splice(list.indexOf(h), 1); return ok({ id: h.id }); }
+    }
+    if (rest === '/workers/routes') {
+      const list = st.routes.get(zone.id);
+      if (method === 'GET') return ok(list);
+      if (method === 'POST') { const r = { id: st.nextId(), pattern: String(body?.pattern ?? ''), script: body?.script ?? null }; list.push(r); return ok(r); }
+    }
+    m = rest.match(/^\/workers\/routes\/([^/]+)$/);
+    if (m) {
+      const list = st.routes.get(zone.id);
+      const r = list.find(x => x.id === m[1]);
+      if (!r) return notFound('Route not found');
+      if (method === 'GET') return ok(r);
+      if (method === 'DELETE') { list.splice(list.indexOf(r), 1); return ok({ id: r.id }); }
     }
 
     // Email Routing.

@@ -26,6 +26,7 @@ import { reportStored } from '../product-analytics/steps';
 import { carrierFromHeaders, guardEnvelope } from '../dmarc/reporter-auth';
 import { readAuthHeaders, trustedResults, type AuthHeaders } from '../email/sender-proof';
 import { attributeReport, chargeUnattributed, peekReportDomain, takePeek } from './fixed-address';
+import { attributeTlsReport, peekTlsReportDomain } from './tls-intake';
 import { hostedConfig, hostedEnabled, intakeLimits } from './config';
 import { hashToken, isTokenShaped, parseRecipient } from './tokens';
 import { handleCanaryEmail } from './canary';
@@ -112,13 +113,15 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   if (rcpt.base !== 'rua' && rcpt.base !== 'tls-rpt') return refuse('bad_recipient');
   const kind = rcpt.base;
   seen.kind = kind;
+  /** Which identity the sender is matched against: a DMARC report's or a TLS report's (src/dmarc/known-reporters.ts). */
+  const reportKind = kind === 'tls-rpt' ? 'tls' : 'dmarc';
 
   const limits = intakeLimits(env);
   if (message.rawSize > limits.maxRawBytes) return refuse('raw_too_large', rawTooLarge(limits.maxRawBytes));
 
-  // The FIXED address (rua@, no token) has no workspace until the report names its domain. Its order of work:
+  // The FIXED addresses (rua@ and tls-rpt@, no token) has no workspace until the report names its domain. Its order of work:
   //   (1) the carrier's authentication result   (2) one peek against the instance-wide per-minute ceiling (deferred past it)
-  //   (3) a capped peek at the report's policy domain (at most the first 64 KiB inflated)   (4) attribution to the verified, connected
+  //   (3) a capped peek at the report's policy domain (at most the first 64 KiB inflated; XML for rua@, JSON for tls-rpt@ in src/hosted/tls-intake.ts)   (4) attribution to the verified, connected
   //   owner; when there is none the mail is charged to the UNATTRIBUTED budget and refused (no workspace's or instance budget is
   //   touched, and mail for a connected domain never pays for mail for unconnected ones)   then, like a token address: (5) the
   //   attributed caps (chargeIntakeCaps) before the full, capped decompression, (6) the tier decision, (7) the atomic store; the full
@@ -127,11 +130,11 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   let early: { headers: AuthHeaders; carrier: Carrier } | null = null;
   let peeked: string | null = null;
   let target: IntakeTarget | null;
-  if (kind === 'rua' && !rcpt.tag) {
+  if (!rcpt.tag) {
     const [forHeaders, afterHeaders] = raw.tee();
     raw = afterHeaders;
     const headers = await readAuthHeaders(forHeaders);
-    early = { headers, carrier: guardEnvelope(carrierFromHeaders(headers, env), message.from) };
+    early = { headers, carrier: guardEnvelope(carrierFromHeaders(headers, env, reportKind), message.from) };
     if (!(await takePeek(env, early.carrier, Date.now()))) {
       await globalQueries(env.DB).capObservations.note('fixed_address_busy', today()).catch(() => undefined);
       // Unauthenticated mail can never count: refuse it for good (a retry would only hold the ceiling, and nothing depends on what a
@@ -141,10 +144,10 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     }
     const [forPeek, afterPeek] = raw.tee();
     raw = afterPeek;
-    const peek = await peekReportDomain(forPeek);
+    const peek = await (kind === 'rua' ? peekReportDomain(forPeek) : peekTlsReportDomain(forPeek));
     if (!peek.ok) return refuse(peek.reason);
     peeked = peek.domain;
-    target = await attributeReport(env, cfg.intakeDomain, peeked);
+    target = await (kind === 'rua' ? attributeReport(env, cfg.intakeDomain, peeked) : attributeTlsReport(env, peeked));
     if (!target) {
       const over = await chargeUnattributed(env, early.carrier, message.from, today());
       if (over) {
@@ -190,7 +193,7 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
   }
   const trusted = !!(env.AUTHSERV_ID && env.AUTHSERV_HEADER && trustedResults(headers, env.AUTHSERV_ID, env.AUTHSERV_HEADER));
   logAuthservDiscovery(headers, env, trusted);
-  const carrier: Carrier = early?.carrier ?? guardEnvelope(carrierFromHeaders(headers, env), message.from);
+  const carrier: Carrier = early?.carrier ?? guardEnvelope(carrierFromHeaders(headers, env, reportKind), message.from);
   seen.dkim_org = carrier.dkimOrg;
   seen.from_org = carrier.fromOrg;
   const globals = globalQueries(env.DB);
@@ -239,7 +242,9 @@ async function intake(message: ForwardableEmailMessage, env: BoundEnv, seen: See
     Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
     if (result.outcome === 'accepted' && result.reason === 'ok') reportStored(tenant, ctx, tgt.domain_id); // docs/analytics.md
   } else {
-    result = await handleTlsRptReport(body, tenant, { hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
+    // The same carrier the caps were charged for: the tier is decided by the one rule (src/dmarc/reporter-auth.ts), and only counted reports are evidence.
+    result = await handleTlsRptReport(body, tenant, { carrier, authHeaders: headers, hosted: { maxBytes: limits.maxDecompressedBytes, token: { id: tgt.domain_id, domain: tgt.domain } } });
+    Object.assign(seen, { records: result.records, tier: result.tier, reporter: result.identity ?? result.reporter, dedup: result.dedup ?? null, email_matched: result.emailMatched ?? null });
   }
   // Refused after the address was known (a cap on stored records, a report too big): tell the owner.
   if (result.outcome === 'refused' && OWNER_VISIBLE.has(result.reason) && !result.reason.startsWith('storage_failed')) {

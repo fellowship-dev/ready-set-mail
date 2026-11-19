@@ -113,7 +113,30 @@ export function generatePolicyId(now: Date = new Date()): string {
   return now.toISOString().replace(/\D/g, '').slice(0, 14); // YYYYMMDDHHMMSS
 }
 
-export function buildPolicyFile(mode: 'testing' | 'enforce', mxHosts: string[], maxAge: number): string {
+/** A policy id that differs from `previous`: the timestamp id has one-second resolution, and an unchanged id would tell senders nothing changed. */
+export function nextPolicyId(previous: string | null | undefined, now: Date = new Date()): string {
+  const id = generatePolicyId(now);
+  return id === previous ? `${id}a` : id;
+}
+
+/** An IPv4 or IPv6 literal: never a valid MX name for MTA-STS (RFC 8461 §4.1 matches names against the certificate's DNS-ID). */
+export function isIpLiteral(host: string): boolean {
+  const h = normalizeName(host).replace(/^\[|\]$/g, '');
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || (h.includes(':') && /^[0-9a-f:.]+$/.test(h));
+}
+
+/** RFC 8461 §4.1: does `host` match an `mx:` pattern, an exact name or `*.example.com` (the wildcard is exactly the left-most label)? */
+export function mxMatchesPattern(host: string, pattern: string): boolean {
+  const h = normalizeName(host);
+  const p = normalizeName(pattern);
+  if (!h || !p) return false;
+  if (!p.startsWith('*.')) return h === p;
+  const rest = p.slice(2);
+  const i = h.indexOf('.');
+  return i > 0 && h.slice(i + 1) === rest;
+}
+
+export function buildPolicyFile(mode: 'testing' | 'enforce' | 'none', mxHosts: string[], maxAge: number): string {
   return ['version: STSv1', `mode: ${mode}`, ...mxHosts.map(mx => `mx: ${mx}`), `max_age: ${maxAge}`].join('\n') + '\n';
 }
 

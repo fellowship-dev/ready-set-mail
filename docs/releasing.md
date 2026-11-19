@@ -34,6 +34,16 @@ and internal refactors get no line.
 
 A `breaking` change also adds what to do to the version's "Self-hosters: what changes" block when the release is cut.
 
+## After every hosted deploy
+
+A deploy of a config that declares routes replaces the Worker's routes with the declared ones, and a route made any other way is gone (Cloudflare: "Cloudflare dashboard-defined routes will not be added alongside Wrangler-defined routes"). The hosted MTA-STS policy hosts depend on the one route `*/.well-known/mta-sts.txt` in `POLICY_HOST_ZONE`, declared in the hosted deploy config (`wrangler.local.jsonc`; [docs/mta-sts.md](mta-sts.md#the-hosted-operators-setup)). So after each hosted deploy, in this order:
+
+1. `npm run deploy` (migrations first, as always).
+2. `POST /api/instance/mta-sts/reconcile` as the instance owner. It checks the route and every policy host's custom hostname, fetches every policy, and answers `{ ok, visited, changed, errors, removed, served, not_served }`. It is bounded like the daily job (at most half of `SUBREQUEST_LIMIT`, oldest check first): with more rows than one run visits, call it again.
+3. Confirm `not_served` is 0 and that the log has no line saying the declared route "was missing from" the zone. If one is there, the deploy config lacks the route: add it and deploy again. Policy hosts answer again as soon as the route is back; senders that cached a policy keep it meanwhile.
+
+The first time (`readysetmail.com` itself), the safest order is: dogfood the operator's own domain, redeploy, confirm the route survived and the fetch passes, then one outside domain.
+
 ## Cutting a release
 
 Run from a checkout of `main`, with `gh` signed in to an account that can push tags. `X.Y.Z` is the version.
