@@ -152,12 +152,12 @@ describe('every query on tenant data carries a workspace predicate (per statemen
 		expect(scan(walk(join(ROOT, 'src'))).found).toEqual([]);
 	});
 
-	it('the query layer (except global.ts) is scoped, with the documented exemptions (two elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; eight in access-grants.ts: credential id/hash, principal identity, finite portfolio consent, the agent connection records of every workspace (which registered apps they name, how many are live, the counts of a person and of a workspace, the ended ones) and the two deletes of ended ones by the daily clean-up; nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace)', () => {
+	it('the query layer (except global.ts) is scoped, with the documented exemptions (one elsewhere, one in funnel.ts: an unsubscribe removes the address from every workspace, four in workspaces.ts: a user own workspaces, how many they own, and routing by reports domain / hostname, six in auth.ts: resolving a credential to its workspace, five in intake.ts: resolving a report token / hosted id / the verified owner of a report sent to the fixed hosted address, sixteen in claims.ts: who verified a domain first (and whether a related name is held elsewhere), finding and detaching an unproven holder, the zone-verified holders of a name, the two queues of the daily proof re-check and its writes; eight in access-grants.ts: credential id/hash, principal identity, finite portfolio consent, the agent connection records of every workspace (which registered apps they name, how many are live, the counts of a person and of a workspace, the ended ones) and the two deletes of ended ones by the daily clean-up; nine in billing.ts: the Stripe webhook, the instance owner orders list and the daily job find orders and checkout sessions by an id Stripe or the operator supplies, or sweep every workspace)', () => {
 		const files = walk(join(ROOT, 'packages/db/src/queries')).filter((f) => !/global(-lifecycle)?\.ts$/.test(f));
 		expect(files.length).toBeGreaterThan(5);
 		const { found, exemptions } = scan(files);
 		expect(found).toEqual([]);
-		expect(exemptions).toBe(51);
+		expect(exemptions).toBe(50);
 	});
 
 	it('pins the privileged access lookup census without exempting scoped access queries', () => {

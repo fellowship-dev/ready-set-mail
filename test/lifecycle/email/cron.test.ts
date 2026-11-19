@@ -58,6 +58,8 @@ describe('which cron runs what', () => {
 
   it('0 11 * * *: the milestones, the summary and (enabled) the tips, all in the one run', async () => {
     const w = await due();
+    // Its first report was mailed already (the catch-up is first-report-catch-up.test.ts; it would also take one of the three places a person has in a run).
+    w.sql.prepare("INSERT INTO lifecycle_sends (workspace_id, user_id, domain_id, kind, period, state) VALUES (?, ?, 1, 'first_report', 'once', 'sent')").run(WS, w.dana);
     const sent = bindMail(w);
     stubDns((d) => (d === 'new.example' ? recordNamingUs() : null));
     setNow(w, MON_16_NOV);
@@ -67,7 +69,7 @@ describe('which cron runs what', () => {
     expect(subjects).toContain('One service sending as brightwave-mail.com needs SPF or DKIM');
     expect(subjects).toContain('new.example is set up: reports are on their way');
     expect(subjects.filter((x) => /^Week of 9–15 Nov: /.test(x))).toHaveLength(1);
-    expect(w.rows('SELECT kind FROM lifecycle_sends ORDER BY kind').map((r) => r.kind)).toEqual(['records_live', 'summary', 'tip_fix']);
+    expect(w.rows('SELECT kind FROM lifecycle_sends ORDER BY kind').map((r) => r.kind)).toEqual(['first_report', 'records_live', 'summary', 'tip_fix']);
   });
 
   it('0 11 * * *: tips stay off unless the instance names them (a person opting in is not enough)', async () => {

@@ -441,6 +441,7 @@ describe('injection: whatever a report says, the email says only cleaned words',
     afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
     it('a hostile reporter name and source in a stored report reach the sent email only cleaned', async () => {
       const w = await lifecycleWorld();
+      w.catchUp();
       const T0 = MON_16_NOV - 25 * 3600;
       const setNow = (t: number) => { w.clock.now = t; vi.setSystemTime(t * 1000); };
       setNow(T0);

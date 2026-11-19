@@ -132,21 +132,18 @@ describe('first report (c)', () => {
     expect(subjects(w).filter((s) => s.startsWith('First DMARC'))).toHaveLength(1);
   });
 
-  it('catch-up: the daily job sends it when the claim is missing and the first counted report is under 3 days old, not when older', async () => {
+  it('catch-up: the daily job sends it when the claim is missing and the first counted report was stored before the legacy instant, however long ago (rule: first-report-catch-up.test.ts)', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.addDomain({ domain: D });
     w.addReport({ domain: D, day: MON_16_NOV - 3 * DAY, storedAt: MON_16_NOV - 2 * DAY - 3600, records: [ok(20)] });
     await w.run();
     expect(subjects(w).filter((s) => s.startsWith('First DMARC'))).toHaveLength(1);
-    const old = await lifecycleWorld();
-    old.addDomain({ domain: D });
-    old.addReport({ domain: D, day: MON_16_NOV - 6 * DAY, storedAt: MON_16_NOV - 3 * DAY - 60, records: [ok(20)] });
-    await old.run();
-    expect(old.mailer.sent.filter((m) => m.subject.startsWith('First DMARC'))).toHaveLength(0);
   });
 
   it('is about COUNTED reports: an uncounted one is not a first report, and the next counted one is', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.addDomain({ domain: D });
     w.addReport({ domain: D, day: MON_16_NOV - 2 * DAY, tier: 'unauthenticated', records: [ok(5)] });
     await w.run();
@@ -158,6 +155,7 @@ describe('first report (c)', () => {
 
   it('says which source did not pass, and what it passed for, when the report has one', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.addDomain({ domain: D });
     w.addReport({ domain: D, day: MON_16_NOV - DAY, records: [ok(11), bad(3, { dkim: ['pass', 'sendgrid.net'] })] });
     await w.run();
@@ -168,6 +166,7 @@ describe('first report (c)', () => {
 
   it('goes to the owners and to the admin who added the domain, not to another admin or a member, and not to an unverified address', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     const adder = w.addUser({ id: 'u_adder', email: 'adder@brightwave-mail.com', name: 'Ada Adder', role: 'admin' });
     w.addUser({ id: 'u_other', email: 'other@brightwave-mail.com', name: 'Other', role: 'admin' });
     w.addUser({ id: 'u_member', email: 'member@brightwave-mail.com', name: 'Mem', role: 'member' });
@@ -697,6 +696,7 @@ describe('claims, retries and caps', () => {
 
   it('at most 3 lifecycle emails per recipient per run; the rest on the next run', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.addDomain({ domain: D });
     w.addDomain({ domain: 'a.example', createdAt: MON_16_NOV - 20 * DAY });
     w.addDomain({ domain: 'b.example', createdAt: MON_16_NOV - 20 * DAY });

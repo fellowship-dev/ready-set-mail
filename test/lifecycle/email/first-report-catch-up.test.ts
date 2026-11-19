@@ -22,6 +22,7 @@ const setNow = (w: World, t: number) => { w.clock.now = t; vi.setSystemTime(t * 
 /** The owner's instance: one proven domain, reports connected, ONE counted report (Google, with a source that did not pass) stored at T0 without the email, two TEST (uncounted) reports before it. */
 async function owner(milestone: 'seen-by-app' | 'seen-by-job' | 'none') {
   const w = await lifecycleWorld();
+  w.catchUp();
   setNow(w, T0);
   const id = w.addDomain({ domain: D, createdAt: T0 - 3 * DAY, connectedAt: T0 - 3 * DAY });
   w.addReport({ domain: D, day: T0 - 9 * DAY, tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: T0 - 8 * DAY, records: [google] });
@@ -101,6 +102,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
   /** One proven domain, one counted report stored at `storedAt` (none when null), no email for it; then a daily run on each of the days given. */
   async function story(storedAt: number | null, runDays: number[], claimed = false) {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.clock.now = storedAt ?? utc(16, 10);
     const id = w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
     const reportId = storedAt === null ? 0 : w.addReport({ domain: D, day: utc(15, 0), storedAt, records: [google, sendgrid] });
@@ -149,6 +151,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
     const { w } = await story(null, [20, 21]);
     expect(firstReports(w)).toEqual([]);
     const un = await lifecycleWorld();
+    un.catchUp();
     un.clock.now = utc(16, 10);
     un.addDomain({ domain: D });
     un.addReport({ domain: D, day: utc(15, 0), tier: 'unauthenticated', org: 'test.example', knownAs: null, storedAt: utc(16, 10), records: [google] });
@@ -160,6 +163,7 @@ describe('the rule: a first counted report stored before the legacy instant, no 
 
   it('the report\'s own date does not matter, only when it was stored', async () => {
     const w = await lifecycleWorld();
+    w.catchUp();
     w.clock.now = utc(16, 10, 52);
     w.addDomain({ domain: D, createdAt: utc(14, 10), connectedAt: utc(14, 10) });
     w.addReport({ domain: D, day: utc(1, 0), storedAt: utc(16, 10, 52), records: [google] });
