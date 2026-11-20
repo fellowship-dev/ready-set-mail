@@ -42,7 +42,7 @@
     "@ready-set-mail/report": "*",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
-    "better-auth": "^1.7.12",
+    "better-auth": "^1.7.25",
     "fast-xml-parser": "^5.7.2",
     "fflate": "^0.8.3",
     "mimetext": "^3.0.28",
