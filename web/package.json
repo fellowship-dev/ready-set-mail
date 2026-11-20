@@ -14,7 +14,7 @@
 		"@ready-set-mail/dns-checks": "*",
 		"@ready-set-mail/ui": "*",
 		"@tanstack/react-query": "^5.104.5",
-		"jspdf": "^2.5.2",
+		"jspdf": "^4.2.1",
 		"lucide-react": "^1.71.0",
 		"react": "^19.3.1",
 		"react-dom": "^19.3.1",
